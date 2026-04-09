@@ -10,10 +10,11 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -43,6 +44,25 @@ from stage_analysis import add_indicators, check_vcp_volume, compute_signal_comp
 
 SKILL_DIR = Path(__file__).resolve().parent
 LOG = logging.getLogger(__name__)
+
+
+@contextmanager
+def _temporary_env(overrides: dict[str, str] | None) -> Iterator[None]:
+    if not overrides:
+        yield
+        return
+    previous: dict[str, str | None] = {}
+    try:
+        for key, value in overrides.items():
+            previous[key] = os.environ.get(key)
+            os.environ[str(key)] = str(value)
+        yield
+    finally:
+        for key, prior in previous.items():
+            if prior is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prior
 
 HOLD_DAYS = 20
 MIN_BARS = 260
@@ -106,10 +126,12 @@ def _prepare_context(
     start_date: str,
     end_date: str,
     watchlist: list[str] | None = None,
+    skill_dir: Path | None = None,
 ) -> BacktestContext:
     from sector_strength import SECTOR_ETFS, get_ticker_sector_etf
 
-    universe = watchlist if watchlist is not None else _load_watchlist(SKILL_DIR)
+    sd = skill_dir or SKILL_DIR
+    universe = watchlist if watchlist is not None else _load_watchlist(sd)
     cleaned = [str(t).strip().upper() for t in universe if str(t).strip()]
     universe = list(dict.fromkeys(cleaned))
     price_data: dict[str, pd.DataFrame] = {}
@@ -123,7 +145,7 @@ def _prepare_context(
             continue
         price_data[ticker] = add_indicators(df)
         try:
-            sector_etf_by_ticker[ticker] = get_ticker_sector_etf(ticker, skill_dir=SKILL_DIR)
+            sector_etf_by_ticker[ticker] = get_ticker_sector_etf(ticker, skill_dir=sd)
         except Exception:
             sector_etf_by_ticker[ticker] = None
 
@@ -180,13 +202,18 @@ def _sector_filter_pass(ticker: str, entry_idx: int, context: BacktestContext) -
     return True, "sector_winning"
 
 
-def _run_mirofish_for_entry(ticker: str, seeded_df: pd.DataFrame) -> dict[str, Any] | None:
+def _run_mirofish_for_entry(
+    ticker: str,
+    seeded_df: pd.DataFrame,
+    skill_dir: Path | None = None,
+) -> dict[str, Any] | None:
     if os.environ.get("BACKTEST_SKIP_MIROFISH", "").strip().lower() in ("1", "true", "yes"):
         return None
+    sd = skill_dir or SKILL_DIR
     try:
         from engine_analysis import MarketSimulation
 
-        sim = MarketSimulation(ticker, seed_df=seeded_df, skill_dir=SKILL_DIR)
+        sim = MarketSimulation(ticker, seed_df=seeded_df, skill_dir=sd)
         result = sim.run()
         return {
             "conviction_score": result.get("conviction_score"),
@@ -212,7 +239,7 @@ def _simulate_exit(df: pd.DataFrame, entry_idx: int, hold_days: int, stop_pct: f
     return float(df["close"].iloc[last_idx]), df.index[last_idx], "time_exit"
 
 
-def _resolve_stop_pct_for_entry(df: pd.DataFrame, entry_idx: int) -> float:
+def _resolve_stop_pct_for_entry(df: pd.DataFrame, entry_idx: int, skill_dir: Path | None = None) -> float:
     from config import (
         get_adaptive_stop_atr_mult,
         get_adaptive_stop_base_pct,
@@ -222,13 +249,14 @@ def _resolve_stop_pct_for_entry(df: pd.DataFrame, entry_idx: int) -> float:
         get_adaptive_stop_trend_lookback,
     )
 
-    base_pct = float(get_adaptive_stop_base_pct(SKILL_DIR))
-    if not get_adaptive_stop_enabled(SKILL_DIR):
+    sd = skill_dir or SKILL_DIR
+    base_pct = float(get_adaptive_stop_base_pct(sd))
+    if not get_adaptive_stop_enabled(sd):
         return max(0.01, base_pct)
-    min_pct = float(get_adaptive_stop_min_pct(SKILL_DIR))
-    max_pct = float(get_adaptive_stop_max_pct(SKILL_DIR))
-    atr_mult = float(get_adaptive_stop_atr_mult(SKILL_DIR))
-    lookback = max(10, int(get_adaptive_stop_trend_lookback(SKILL_DIR)))
+    min_pct = float(get_adaptive_stop_min_pct(sd))
+    max_pct = float(get_adaptive_stop_max_pct(sd))
+    atr_mult = float(get_adaptive_stop_atr_mult(sd))
+    lookback = max(10, int(get_adaptive_stop_trend_lookback(sd)))
 
     try:
         price = float(df["close"].iloc[entry_idx])
@@ -287,17 +315,18 @@ def _max_drawdown(returns: pd.Series) -> float:
     return float(dd.min())
 
 
-def _quality_mode_should_filter(reasons: list[str]) -> bool:
+def _quality_mode_should_filter(reasons: list[str], skill_dir: Path | None = None) -> bool:
     if not reasons:
         return False
     if "weak_breakout_volume" in reasons:
         return True
-    mode = get_quality_gates_mode(SKILL_DIR)
+    sd = skill_dir or SKILL_DIR
+    mode = get_quality_gates_mode(sd)
     if mode in {"off", "shadow"}:
         return False
     if mode == "hard":
         return True
-    soft_min = max(1, int(get_quality_soft_min_reasons(SKILL_DIR)))
+    soft_min = max(1, int(get_quality_soft_min_reasons(sd)))
     return len(reasons) >= soft_min
 
 
@@ -309,12 +338,38 @@ def run_backtest(
     fee_per_share: float = DEFAULT_FEE_PER_SHARE,
     min_fee_per_order: float = DEFAULT_MIN_FEE_PER_ORDER,
     max_adv_participation: float = DEFAULT_MAX_ADV_PARTICIPATION,
+    skill_dir: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    with _temporary_env(env_overrides):
+        return _run_backtest_core(
+            tickers=tickers,
+            start_date=start_date,
+            end_date=end_date,
+            slippage_bps_per_side=slippage_bps_per_side,
+            fee_per_share=fee_per_share,
+            min_fee_per_order=min_fee_per_order,
+            max_adv_participation=max_adv_participation,
+            skill_dir=skill_dir,
+        )
+
+
+def _run_backtest_core(
+    tickers: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    slippage_bps_per_side: float = DEFAULT_SLIPPAGE_BPS_PER_SIDE,
+    fee_per_share: float = DEFAULT_FEE_PER_SHARE,
+    min_fee_per_order: float = DEFAULT_MIN_FEE_PER_ORDER,
+    max_adv_participation: float = DEFAULT_MAX_ADV_PARTICIPATION,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    sd = skill_dir or SKILL_DIR
     end = end_date or datetime.now().strftime("%Y-%m-%d")
     start = start_date or (datetime.now() - timedelta(days=3652)).strftime("%Y-%m-%d")
 
     requested = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
-    context = _prepare_context(start, end, watchlist=requested if requested else None)
+    context = _prepare_context(start, end, watchlist=requested if requested else None, skill_dir=sd)
 
     all_trades: list[dict[str, Any]] = []
     diagnostics: dict[str, int] = {
@@ -329,18 +384,18 @@ def run_backtest(
         "liquidity_filtered": 0,
     }
 
-    breakout_enabled = get_breakout_confirm_enabled(SKILL_DIR)
-    quality_mode = get_quality_gates_mode(SKILL_DIR)
-    adaptive_stop_enabled = get_adaptive_stop_enabled(SKILL_DIR)
-    stop_pct_base = float(get_adaptive_stop_base_pct(SKILL_DIR))
-    forensic_enabled = get_forensic_enabled(SKILL_DIR)
-    forensic_mode = get_forensic_filter_mode(SKILL_DIR)
-    forensic_cache_hours = float(get_forensic_cache_hours(SKILL_DIR))
-    forensic_sloan_max = float(get_forensic_sloan_max(SKILL_DIR))
-    forensic_beneish_max = float(get_forensic_beneish_max(SKILL_DIR))
-    forensic_altman_min = float(get_forensic_altman_min(SKILL_DIR))
-    pead_enabled = get_pead_enabled(SKILL_DIR)
-    pead_lookback_days = int(get_pead_lookback_days(SKILL_DIR))
+    breakout_enabled = get_breakout_confirm_enabled(sd)
+    quality_mode = get_quality_gates_mode(sd)
+    adaptive_stop_enabled = get_adaptive_stop_enabled(sd)
+    stop_pct_base = float(get_adaptive_stop_base_pct(sd))
+    forensic_enabled = get_forensic_enabled(sd)
+    forensic_mode = get_forensic_filter_mode(sd)
+    forensic_cache_hours = float(get_forensic_cache_hours(sd))
+    forensic_sloan_max = float(get_forensic_sloan_max(sd))
+    forensic_beneish_max = float(get_forensic_beneish_max(sd))
+    forensic_altman_min = float(get_forensic_altman_min(sd))
+    pead_enabled = get_pead_enabled(sd)
+    pead_lookback_days = int(get_pead_lookback_days(sd))
 
     # Pre-compute SPY regime (above 200 SMA) for each date
     spy_df = context.sector_perf.get("SPY")
@@ -370,11 +425,11 @@ def run_backtest(
                     pass
 
             window = df.iloc[: i + 1].copy()
-            if not is_stage_2(window, SKILL_DIR):
+            if not is_stage_2(window, sd):
                 diagnostics["stage2_fail"] += 1
                 i += 1
                 continue
-            if not check_vcp_volume(window, SKILL_DIR):
+            if not check_vcp_volume(window, sd):
                 diagnostics["vcp_fail"] += 1
                 i += 1
                 continue
@@ -397,7 +452,7 @@ def run_backtest(
 
                         forensic_snapshot = compute_forensic_snapshot(
                             ticker,
-                            skill_dir=SKILL_DIR,
+                            skill_dir=sd,
                             cache_hours=forensic_cache_hours,
                             sloan_max=forensic_sloan_max,
                             beneish_max=forensic_beneish_max,
@@ -411,7 +466,7 @@ def run_backtest(
                 except Exception as e:
                     LOG.debug("Backtest forensic check skipped for %s: %s", ticker, e)
 
-            miro = _run_mirofish_for_entry(ticker, window)
+            miro = _run_mirofish_for_entry(ticker, window, skill_dir=sd)
             comps = compute_signal_components(
                 window,
                 mirofish_conviction=miro.get("conviction_score") if miro else None,
@@ -443,8 +498,8 @@ def run_backtest(
                     LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
             signal["pead_surprise_pct"] = (pead_info or {}).get("surprise_pct")
             signal["pead_beat"] = (pead_info or {}).get("beat")
-            reasons = _evaluate_quality_gates(signal, SKILL_DIR)
-            if _quality_mode_should_filter(reasons):
+            reasons = _evaluate_quality_gates(signal, sd)
+            if _quality_mode_should_filter(reasons, sd):
                 diagnostics["quality_gates_filtered"] += 1
                 i += 1
                 continue
@@ -457,7 +512,7 @@ def run_backtest(
                 diagnostics["liquidity_filtered"] += 1
                 i += 1
                 continue
-            stop_pct_entry = _resolve_stop_pct_for_entry(df, i)
+            stop_pct_entry = _resolve_stop_pct_for_entry(df, i, skill_dir=sd)
             exit_price, exit_date, exit_reason = _simulate_exit(df, i, HOLD_DAYS, stop_pct_entry)
             ret = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
             net_ret, cost_ctx = _net_return_after_costs(

@@ -28,7 +28,7 @@ from sec_filing_compare import (
 from sector_strength import get_sector_heatmap
 from signal_scanner import scan_for_signals_detailed
 
-from .db import Base, SessionLocal, engine
+from .db import DATABASE_URL, Base, SessionLocal, engine
 from .models import AppState, PendingTrade, User
 from .schemas import ApiResponse, CreatePendingTrade
 
@@ -97,7 +97,22 @@ def _ensure_local_dashboard_user() -> None:
         db.close()
 
 
+def _run_alembic_upgrade_head_for_sqlite() -> None:
+    """Apply Alembic revisions so existing SQLite files gain new columns (e.g. Stripe billing)."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    alembic_ini = APP_DIR.parent / "alembic.ini"
+    if not alembic_ini.is_file():
+        return
+    from alembic.config import Config
+
+    from alembic import command
+
+    command.upgrade(Config(str(alembic_ini)), "head")
+
+
 Base.metadata.create_all(bind=engine)
+_run_alembic_upgrade_head_for_sqlite()
 _ensure_local_dashboard_user()
 
 app = FastAPI(

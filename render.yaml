@@ -1,0 +1,90 @@
+# Render Blueprint for SamThor98/Tradingbot: app lives in schwab_skill/
+# https://render.com/docs/infrastructure-as-code
+#
+# New → Blueprint → connect this repo → apply.
+# First empty DB: set SAAS_BOOTSTRAP_SCHEMA=1 on web once (see schwab_skill/docs/SAAS_DEPLOYMENT.md).
+
+databases:
+  - name: tradingbot-db
+    databaseName: tradingbot
+    user: tradingbot
+    plan: free
+
+services:
+  - type: keyvalue
+    name: tradingbot-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+  - type: web
+    name: tradingbot-api
+    runtime: docker
+    rootDir: schwab_skill
+    dockerfilePath: ./Dockerfile.saas
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradingbot-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tradingbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: SAAS_HEALTH_REQUIRE_REDIS
+        value: "1"
+      - key: SAAS_RUN_ALEMBIC
+        value: "1"
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SCHWAB_MARKET_APP_KEY
+        sync: false
+      - key: SCHWAB_MARKET_APP_SECRET
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_KEY
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_SECRET
+        sync: false
+      - key: SCHWAB_CALLBACK_URL
+        sync: false
+      - key: WEB_ALLOWED_ORIGINS
+        sync: false
+
+  - type: worker
+    name: tradingbot-worker
+    runtime: docker
+    rootDir: schwab_skill
+    dockerfilePath: ./Dockerfile.saas
+    dockerContext: .
+    dockerCommand: celery -A webapp.tasks worker -Q scan,orders,celery --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradingbot-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tradingbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: SAAS_RUN_ALEMBIC
+        value: "0"
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SCHWAB_MARKET_APP_KEY
+        sync: false
+      - key: SCHWAB_MARKET_APP_SECRET
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_KEY
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_SECRET
+        sync: false
+      - key: SCHWAB_CALLBACK_URL
+        sync: false

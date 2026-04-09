@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -18,8 +18,19 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     auth_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="supabase")
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subscription_current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class StripeWebhookEvent(Base):
+    __tablename__ = "stripe_webhook_events"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class UserCredential(Base):
@@ -35,8 +46,21 @@ class UserCredential(Base):
     token_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    market_token_payload_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    account_token_payload_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    detail_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
 class Order(Base):
@@ -81,6 +105,7 @@ class Position(Base):
 
 class ScanResult(Base):
     __tablename__ = "scan_results"
+    __table_args__ = (Index("ix_scan_results_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
@@ -108,6 +133,26 @@ class AppState(Base):
     )
     key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     value_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BacktestRun(Base):
+    __tablename__ = "backtest_runs"
+    __table_args__ = (Index("ix_backtest_runs_user_created", "user_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    celery_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", index=True)
+    spec_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 

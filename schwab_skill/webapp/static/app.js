@@ -12,6 +12,7 @@ const state = {
   onboarding: null,
   profile: null,
   performance: null,
+  strategyChatMessages: [],
 };
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
@@ -128,6 +129,216 @@ function pct(value, digits = 1) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   return `${(n * 100).toFixed(digits)}%`;
+}
+
+/** Backtest metrics from API are already in percent points (e.g. 55.2 => 55.2%). */
+function formatPercentPoints(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(digits)}%`;
+}
+
+const PRESET_SETTING_LABELS = {
+  POSITION_SIZE_USD: "Position size (USD)",
+  MAX_TRADES_PER_DAY: "Max trades per day",
+  QUALITY_GATES_MODE: "Quality gates",
+  EVENT_RISK_MODE: "Event risk mode",
+  EVENT_ACTION: "Event action",
+  EXEC_QUALITY_MODE: "Execution quality mode",
+};
+
+function presetSettingLabel(key) {
+  return PRESET_SETTING_LABELS[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function renderPerformancePanel(rootEl, data, { error } = {}) {
+  const rawDetails = document.getElementById("performanceRawDetails");
+  const rawPre = document.getElementById("performanceRaw");
+  if (!rootEl) return;
+  if (rawPre && !error && data) rawPre.textContent = prettyJson(data);
+  if (rawDetails) {
+    if (error || !data) rawDetails.classList.add("hidden");
+    else rawDetails.classList.remove("hidden");
+  }
+  if (error) {
+    rootEl.innerHTML = `<div class="panel-error">${safeText(error)}</div>`;
+    return;
+  }
+  if (!data || typeof data !== "object") {
+    rootEl.innerHTML = `<div class="report-empty">No performance snapshot loaded yet.</div>`;
+    return;
+  }
+
+  const bt = data.backtest && typeof data.backtest === "object" ? data.backtest : {};
+  const sp = data.shadow_paper && typeof data.shadow_paper === "object" ? data.shadow_paper : {};
+  const lv = data.live && typeof data.live === "object" ? data.live : {};
+  const val = data.validation && typeof data.validation === "object" ? data.validation : {};
+  const sg = data.separation_guard && typeof data.separation_guard === "object" ? data.separation_guard : {};
+
+  const vstat = val.status && typeof val.status === "object" ? val.status : {};
+  const runStatus = safeText(vstat.run_status);
+  const passed = vstat.passed;
+  let valBadgeClass = "bg-slate-900";
+  let valBadgeText = runStatus || "unknown";
+  if (passed === true) {
+    valBadgeClass = "bg-green-900";
+    valBadgeText = runStatus ? `${runStatus} · pass` : "pass";
+  } else if (passed === false) {
+    valBadgeClass = "bg-red-900";
+    valBadgeText = runStatus ? `${runStatus} · fail` : "fail";
+  } else if (runStatus === "idle" || vstat.exists === false) {
+    valBadgeClass = "bg-slate-900";
+    valBadgeText = runStatus || "idle";
+  }
+  const valMetaParts = [];
+  if (vstat.source) valMetaParts.push(`source: ${safeText(vstat.source)}`);
+  if (vstat.progress_pct != null && vstat.progress_pct !== "") valMetaParts.push(`progress: ${safeText(vstat.progress_pct)}%`);
+  if (vstat.generated_at) valMetaParts.push(`updated: ${safeText(vstat.generated_at)}`);
+  const valMeta = valMetaParts.length ? `<span class="muted">${valMetaParts.join(" · ")}</span>` : "";
+  const artifacts = val.artifacts_present === true ? "present" : val.artifacts_present === false ? "missing" : "—";
+
+  const outcomes = Array.isArray(lv.latest_outcomes) ? lv.latest_outcomes : [];
+  let outcomesTable = "";
+  if (outcomes.length) {
+    const rows = outcomes
+      .map((row) => {
+        const o = row && typeof row === "object" ? row : {};
+        return `<tr>
+          <td>${safeText(o.ticker)}</td>
+          <td>${safeText(o.side)}</td>
+          <td>${safeText(o.qty)}</td>
+          <td>${o.fill_price != null && o.fill_price !== "" ? safeText(o.fill_price) : "—"}</td>
+          <td>${safeText(o.date)}</td>
+          <td>${o.mirofish_conviction != null ? safeText(o.mirofish_conviction) : "—"}</td>
+          <td>${safeText(o.sector_etf)}</td>
+        </tr>`;
+      })
+      .join("");
+    outcomesTable = `
+      <div class="performance-outcomes-wrap">
+        <h3>Latest recorded outcomes</h3>
+        <div class="table-wrap">
+          <table>
+            <caption class="visually-hidden">Latest live trade outcomes</caption>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>Fill</th>
+                <th>Date</th>
+                <th>Conviction</th>
+                <th>Sector ETF</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  const calloutMsg = sg.message != null && String(sg.message).trim() ? safeText(sg.message) : "";
+  const callout = calloutMsg
+    ? `<p class="performance-callout" role="note">${calloutMsg}</p>`
+    : "";
+
+  rootEl.innerHTML = `
+    <div class="performance-buckets">
+      <div class="perf-bucket">
+        <h3>Backtest</h3>
+        <div class="perf-source">${safeText(bt.source)}</div>
+        <div class="perf-metric"><span class="label">Run at</span><span class="value">${safeText(bt.run_at)}</span></div>
+        <div class="perf-metric"><span class="label">Trades</span><span class="value">${safeText(bt.total_trades)}</span></div>
+        <div class="perf-metric"><span class="label">Win rate</span><span class="value">${formatPercentPoints(bt.win_rate)}</span></div>
+        <div class="perf-metric"><span class="label">Avg return</span><span class="value">${formatPercentPoints(bt.avg_return_pct)}</span></div>
+        <div class="perf-metric"><span class="label">Max drawdown</span><span class="value">${formatPercentPoints(bt.max_drawdown_pct)}</span></div>
+      </div>
+      <div class="perf-bucket">
+        <h3>Shadow / paper</h3>
+        <div class="perf-source">${safeText(sp.source)}</div>
+        <div class="perf-metric"><span class="label">Shadow actions</span><span class="value">${safeText(sp.shadow_actions)}</span></div>
+        <p class="perf-bucket-note">${safeText(sp.notes)}</p>
+      </div>
+      <div class="perf-bucket">
+        <h3>Live</h3>
+        <div class="perf-source">${safeText(lv.source)}</div>
+        <div class="perf-metric"><span class="label">Live actions</span><span class="value">${safeText(lv.live_actions)}</span></div>
+        <div class="perf-metric"><span class="label">Recorded outcomes</span><span class="value">${safeText(lv.recorded_outcomes)}</span></div>
+      </div>
+    </div>
+    <div class="performance-validation">
+      <span class="health-badge ${valBadgeClass}">${safeText(valBadgeText)}</span>
+      <span class="muted">Artifacts dir: <strong>${safeText(artifacts)}</strong></span>
+      ${valMeta}
+    </div>
+    ${callout}
+    ${outcomesTable || `<p class="muted perf-outcomes-empty">No recent outcome rows yet.</p>`}
+  `;
+}
+
+function renderProfilePanel(rootEl, data, { error } = {}) {
+  const rawDetails = document.getElementById("profileRawDetails");
+  const rawPre = document.getElementById("profileRaw");
+  if (!rootEl) return;
+  if (rawPre && !error && data) rawPre.textContent = prettyJson(data);
+  if (rawDetails) {
+    if (error || !data) rawDetails.classList.add("hidden");
+    else rawDetails.classList.remove("hidden");
+  }
+  if (error) {
+    rootEl.innerHTML = `<div class="panel-error">${safeText(error)}</div>`;
+    return;
+  }
+  if (!data || typeof data !== "object") {
+    rootEl.innerHTML = `<div class="report-empty">No preset loaded.</div>`;
+    return;
+  }
+
+  const profile = safeText(data.profile || "—");
+  const mode = safeText(data.mode || "standard");
+  const autoOn = Boolean(data.automation_opt_in);
+  const active = data.active_profile_settings && typeof data.active_profile_settings === "object" ? data.active_profile_settings : {};
+  const keys = Object.keys(active).sort();
+
+  const settingsRows = keys
+    .map(
+      (k) =>
+        `<tr><th scope="row">${safeText(presetSettingLabel(k))}</th><td><code class="preset-value">${safeText(active[k])}</code></td></tr>`
+    )
+    .join("");
+
+  const expert = data.expert_runtime_overrides && typeof data.expert_runtime_overrides === "object" ? data.expert_runtime_overrides : null;
+  let expertBlock = "";
+  if (expert) {
+    const ek = Object.keys(expert).sort();
+    const expertRows = ek
+      .map((k) => `<tr><th scope="row"><code>${safeText(k)}</code></th><td>${safeText(expert[k])}</td></tr>`)
+      .join("");
+    expertBlock = `
+      <div class="preset-subsection preset-expert">
+        <h3>Runtime env (read-only)</h3>
+        <table class="preset-kv-table">
+          <tbody>${expertRows || `<tr><td colspan="2" class="muted">No values</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  }
+
+  rootEl.innerHTML = `
+    <div class="preset-chips">
+      <span class="preset-chip">Profile: ${profile}</span>
+      <span class="preset-chip muted-chip">Mode: ${mode}</span>
+      <span class="preset-chip ${autoOn ? "" : "muted-chip"}">${autoOn ? "Automation: on" : "Automation: off"}</span>
+    </div>
+    <div class="preset-subsection">
+      <h3>Active preset parameters</h3>
+      <table class="preset-kv-table">
+        <tbody>${
+          settingsRows || `<tr><td colspan="2" class="muted">No parameters in response.</td></tr>`
+        }</tbody>
+      </table>
+    </div>
+    ${expertBlock}
+  `;
 }
 
 function timeAgo(iso) {
@@ -1106,58 +1317,205 @@ async function refreshStatus() {
   }
 }
 
+const SCAN_START_META = "Scanning market candidates...";
+
+async function waitForSaaScanCompletion(taskId) {
+  const maxPolls = 180;
+  const metaEl = document.getElementById("scanMeta");
+  for (let i = 0; i < maxPolls; i++) {
+    const status = await api.get(`/api/scan/${encodeURIComponent(taskId)}`);
+    if (!status.ok) {
+      metaEl.textContent = "Scan failed.";
+      updateTopStrategyChip(null);
+      logEvent({ kind: "scan", severity: "error", message: `Scan task status failed: ${status.error}` });
+      updateActionCenter({ title: "Scan Failed", message: status.error, severity: "error" });
+      return;
+    }
+    const data = status.data || {};
+    const celeryStatus = safeText(data.status || "").toLowerCase();
+    if (celeryStatus === "pending" || celeryStatus === "received") {
+      metaEl.textContent = "Scan queued… waiting for worker.";
+      updateActionCenter({
+        title: "Scan Queued",
+        message: "Task is waiting for a worker. This page will update when results are ready.",
+        severity: "info",
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
+    }
+    if (celeryStatus === "started" || celeryStatus === "retry") {
+      metaEl.textContent = "Scan running…";
+      updateActionCenter({
+        title: "Scan Running",
+        message: "Scan task is executing. Results will appear below when finished.",
+        severity: "info",
+      });
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    if (celeryStatus === "success") {
+      const result = data.result;
+      if (!result || typeof result !== "object") {
+        metaEl.textContent = "Scan failed.";
+        updateTopStrategyChip(null);
+        const raw = typeof result === "string" ? result : "Invalid task result.";
+        logEvent({ kind: "scan", severity: "error", message: raw });
+        updateActionCenter({ title: "Scan Failed", message: raw, severity: "error" });
+        return;
+      }
+      if (result.ok === false) {
+        metaEl.textContent = "Scan failed.";
+        updateTopStrategyChip(null);
+        const errMsg = safeText(result.error || "Scan task returned error.");
+        logEvent({ kind: "scan", severity: "error", message: errMsg });
+        updateActionCenter({ title: "Scan Failed", message: errMsg, severity: "error" });
+        return;
+      }
+      const jobId = result.job_id;
+      let listOut;
+      if (jobId) {
+        listOut = await api.get(`/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`);
+      } else {
+        listOut = { ok: false, error: "Missing job_id in scan result." };
+      }
+      if (!listOut.ok) {
+        metaEl.textContent = "Scan finished but results could not be loaded.";
+        updateTopStrategyChip(null);
+        logEvent({ kind: "scan", severity: "error", message: `Scan results failed: ${listOut.error}` });
+        updateActionCenter({ title: "Scan Results Failed", message: listOut.error, severity: "error" });
+        return;
+      }
+      const rows = Array.isArray(listOut.data) ? listOut.data : [];
+      const signals = rows.map((r) => r.payload).filter((p) => p && typeof p === "object");
+      state.latestSignals = signals;
+      const diag = result.diagnostics || {};
+      const headline = diagnosticsHeadline(diag);
+      const n = safeNum(result.signals_found, signals.length);
+      metaEl.textContent = headline || buildScanMeta(signals, n);
+      updateTopStrategyChip(null);
+      renderDiagnostics(diag);
+      renderScanRows(signals);
+      logEvent({
+        kind: "scan",
+        severity: "info",
+        message: `Scan complete (SaaS): ${n} signal(s), task ${safeText(taskId).slice(0, 12)}…`,
+      });
+      updateActionCenter({
+        title: "Scan Complete",
+        message: `Found ${n} signal(s). Review queue candidates in Scan Results.`,
+        severity: "success",
+      });
+      return;
+    }
+    if (celeryStatus === "failure" || celeryStatus === "revoked") {
+      metaEl.textContent = "Scan failed.";
+      updateTopStrategyChip(null);
+      const res = data.result;
+      let errMsg = "Scan task failed.";
+      if (typeof res === "string") errMsg = res;
+      else if (res && typeof res === "object")
+        errMsg = safeText(res.error || res.message || res.exc_message || JSON.stringify(res));
+      logEvent({ kind: "scan", severity: "error", message: errMsg });
+      updateActionCenter({ title: "Scan Failed", message: errMsg, severity: "error" });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  metaEl.textContent = "Scan still running. Use Refresh to check progress.";
+  updateTopStrategyChip(null);
+  logEvent({ kind: "scan", severity: "warn", message: "SaaS scan polling window ended." });
+  updateActionCenter({
+    title: "Scan Still Running",
+    message: "Polling window ended. Use Refresh All to check task status.",
+    severity: "warn",
+  });
+}
+
 async function runScan() {
   const btn = document.getElementById("scanBtn");
+  const scanMetaEl = document.getElementById("scanMeta");
   btn.disabled = true;
   btn.textContent = "Scanning...";
-  setLoading({ scan: "Scanning market candidates..." });
+  setLoading({ scan: SCAN_START_META });
   updateActionCenter({ title: "Scan Running", message: "Market scan is running. Results will stream into this page.", severity: "info" });
   try {
     const out = await api.post("/api/scan?async_mode=true", {});
     if (!out.ok) {
-      document.getElementById("scanMeta").textContent = "Scan failed.";
+      scanMetaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
       logEvent({ kind: "scan", severity: "error", message: out.error });
+      updateActionCenter({ title: "Scan Failed", message: out.error, severity: "error" });
       return;
     }
-    if (out.data?.status === "running") {
+    const d = out.data || {};
+    if (d.task_id) {
       logEvent({
         kind: "scan",
         severity: "info",
-        message: out.data?.started ? "Scan started in background." : "Scan already running; monitoring progress.",
+        message: `Scan queued (task ${safeText(d.task_id).slice(0, 12)}…).`,
+      });
+      await waitForSaaScanCompletion(d.task_id);
+      await refreshStatus();
+      return;
+    }
+    if (d.status === "running") {
+      logEvent({
+        kind: "scan",
+        severity: "info",
+        message: d.started ? "Scan started in background." : "Scan already running; monitoring progress.",
       });
       await waitForScanCompletion();
       await refreshStatus();
       return;
     }
-    if (out.data?.signals) {
-      state.latestSignals = out.data.signals || [];
-      const headline = diagnosticsHeadline(out.data.diagnostics_summary || out.data.diagnostics || {});
-      document.getElementById("scanMeta").textContent =
-        (headline || buildScanMeta(state.latestSignals, out.data.signals_found))
-        + formatStrategySummary(out.data.strategy_summary);
-      updateTopStrategyChip(out.data.strategy_summary);
-      renderDiagnostics(out.data.diagnostics || out.data.diagnostics_summary || {});
+    if (d.signals) {
+      state.latestSignals = d.signals || [];
+      const headline = diagnosticsHeadline(d.diagnostics_summary || d.diagnostics || {});
+      scanMetaEl.textContent =
+        (headline || buildScanMeta(state.latestSignals, d.signals_found)) + formatStrategySummary(d.strategy_summary);
+      updateTopStrategyChip(d.strategy_summary);
+      renderDiagnostics(d.diagnostics || d.diagnostics_summary || {});
       renderScanRows(state.latestSignals);
-      logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${out.data.signals_found} signal(s).` });
+      logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${d.signals_found} signal(s).` });
       updateActionCenter({
         title: "Scan Complete",
-        message: `Found ${out.data.signals_found} signal(s). Review queue candidates in Scan Results.`,
+        message: `Found ${d.signals_found} signal(s). Review queue candidates in Scan Results.`,
         severity: "success",
       });
+      return;
     }
+    scanMetaEl.textContent = "Unexpected scan response; try Refresh or check API version.";
+    updateTopStrategyChip(null);
+    logEvent({ kind: "scan", severity: "warn", message: "Scan POST returned ok but unrecognized payload." });
+    updateActionCenter({
+      title: "Scan",
+      message: "Unexpected response from server. Try Refresh All.",
+      severity: "warn",
+    });
   } finally {
     btn.disabled = false;
     btn.textContent = "Run Scan";
+    if (scanMetaEl && scanMetaEl.textContent === SCAN_START_META) {
+      scanMetaEl.textContent = "No scan run yet.";
+      updateActionCenter({
+        title: "Scan",
+        message: "Scan did not start. Check connection and try again.",
+        severity: "warn",
+      });
+    }
   }
 }
 
 async function waitForScanCompletion() {
   const maxPolls = 180;
+  const metaEl = document.getElementById("scanMeta");
   for (let i = 0; i < maxPolls; i++) {
     const status = await api.get("/api/scan/status");
     if (!status.ok) {
+      metaEl.textContent = "Scan failed.";
+      updateTopStrategyChip(null);
       logEvent({ kind: "scan", severity: "error", message: `Scan status failed: ${status.error}` });
+      updateActionCenter({ title: "Scan Status Failed", message: status.error, severity: "error" });
       return;
     }
     const data = status.data || {};
@@ -1166,14 +1524,22 @@ async function waitForScanCompletion() {
       const elapsed = data.elapsed_seconds ?? (
         data.started_at ? Math.max(0, Math.floor((Date.now() - Date.parse(data.started_at)) / 1000)) : null
       );
-      document.getElementById("scanMeta").textContent = elapsed !== null ? `Scan running... ${elapsed}s elapsed` : "Scan running...";
+      metaEl.textContent = elapsed !== null ? `Scan running... ${elapsed}s elapsed` : "Scan running...";
+      updateActionCenter({
+        title: "Scan Running",
+        message:
+          elapsed !== null
+            ? `Local scan in progress (${elapsed}s elapsed). Results will appear when complete.`
+            : "Local scan in progress. Results will appear when complete.",
+        severity: "info",
+      });
       await new Promise((r) => setTimeout(r, 5000));
       continue;
     }
     if (data.status === "completed") {
       state.latestSignals = data.signals || [];
       const headline = diagnosticsHeadline(data.diagnostics_summary || data.diagnostics || {});
-      document.getElementById("scanMeta").textContent =
+      metaEl.textContent =
         (headline || buildScanMeta(state.latestSignals, data.signals_found ?? state.latestSignals.length))
         + formatStrategySummary(data.strategy_summary);
       updateTopStrategyChip(data.strategy_summary);
@@ -1188,21 +1554,33 @@ async function waitForScanCompletion() {
       return;
     }
     if (data.status === "failed") {
-      document.getElementById("scanMeta").textContent = "Scan failed.";
+      metaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
-      logEvent({ kind: "scan", severity: "error", message: data.error || "unknown error" });
+      const errMsg = data.error || "unknown error";
+      logEvent({ kind: "scan", severity: "error", message: errMsg });
+      updateActionCenter({ title: "Scan Failed", message: errMsg, severity: "error" });
       return;
     }
     if (data.status === "idle" && data.last_scan) {
-      document.getElementById("scanMeta").textContent = `Last scan: ${data.last_scan.signals_found ?? 0} signal(s).`;
+      metaEl.textContent = `Last scan: ${data.last_scan.signals_found ?? 0} signal(s).`;
       updateTopStrategyChip(data.last_scan.strategy_summary || null);
+      updateActionCenter({
+        title: "Scan Idle",
+        message: `No active scan. Last run: ${data.last_scan.signals_found ?? 0} signal(s).`,
+        severity: "info",
+      });
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  document.getElementById("scanMeta").textContent = "Scan still running. Use Refresh to check progress.";
+  metaEl.textContent = "Scan still running. Use Refresh to check progress.";
   updateTopStrategyChip(null);
   logEvent({ kind: "scan", severity: "warn", message: "Scan still running in background; polling window ended." });
+  updateActionCenter({
+    title: "Scan Still Running",
+    message: "Polling window ended. Use Refresh All to check progress.",
+    severity: "warn",
+  });
 }
 
 async function refreshPending() {
@@ -1368,17 +1746,17 @@ async function loadProfiles() {
   const mode = document.getElementById("settingsModeSelect")?.value || "standard";
   const expert = mode === "expert";
   const out = await api.get(`/api/settings/profiles?expert=${expert}`);
-  const output = document.getElementById("profileOutput");
-  if (!output) return;
+  const panel = document.getElementById("profilePanel");
+  if (!panel) return;
   if (!out.ok) {
-    output.textContent = `Profile load failed: ${out.error}`;
+    renderProfilePanel(panel, null, { error: `Profile load failed: ${out.error}` });
     return;
   }
   state.profile = out.data;
   document.getElementById("profileSelect").value = out.data.profile || "balanced";
   document.getElementById("settingsModeSelect").value = out.data.mode || "standard";
   document.getElementById("automationOptIn").checked = Boolean(out.data.automation_opt_in);
-  output.textContent = prettyJson(out.data);
+  renderProfilePanel(panel, out.data);
 }
 
 async function applyProfile() {
@@ -1386,14 +1764,14 @@ async function applyProfile() {
   const mode = document.getElementById("settingsModeSelect").value;
   const automationOptIn = document.getElementById("automationOptIn").checked;
   const out = await api.post(`/api/settings/profile?profile=${encodeURIComponent(profile)}&mode=${encodeURIComponent(mode)}&automation_opt_in=${automationOptIn}`, {});
-  const output = document.getElementById("profileOutput");
+  const panel = document.getElementById("profilePanel");
   if (!out.ok) {
-    output.textContent = `Apply preset failed: ${out.error}`;
+    if (panel) renderProfilePanel(panel, null, { error: `Apply preset failed: ${out.error}` });
     logEvent({ kind: "system", severity: "error", message: `Preset apply failed: ${out.error}` });
     return;
   }
-  output.textContent = prettyJson(out.data);
   logEvent({ kind: "system", severity: "info", message: `Applied ${profile} profile (${mode} mode).` });
+  await loadProfiles();
 }
 
 async function loadDecisionCard() {
@@ -1423,14 +1801,153 @@ async function mapRecovery() {
 
 async function refreshPerformance() {
   const out = await api.get("/api/performance");
-  const output = document.getElementById("performanceOutput");
-  if (!output) return;
+  const panel = document.getElementById("performancePanel");
+  if (!panel) return;
   if (!out.ok) {
-    output.textContent = `Performance load failed: ${out.error}`;
+    renderPerformancePanel(panel, null, { error: `Performance load failed: ${out.error}` });
     return;
   }
   state.performance = out.data;
-  output.textContent = prettyJson(out.data);
+  renderPerformancePanel(panel, out.data);
+}
+
+function setDefaultBacktestDates() {
+  const end = new Date();
+  const start = new Date();
+  start.setFullYear(end.getFullYear() - 5);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const startEl = document.getElementById("btStart");
+  const endEl = document.getElementById("btEnd");
+  if (startEl && !startEl.value) startEl.value = fmt(start);
+  if (endEl && !endEl.value) endEl.value = fmt(end);
+}
+
+function renderStrategyChatMessages() {
+  const el = document.getElementById("scMessages");
+  if (!el) return;
+  const msgs = Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [];
+  if (!msgs.length) {
+    el.textContent = "Describe the universe, dates, and any gate tweaks.";
+    return;
+  }
+  el.textContent = msgs.map((m) => `${(m.role || "").toUpperCase()}: ${m.content || ""}`).join("\n\n---\n\n");
+}
+
+async function refreshBacktestRuns() {
+  const list = document.getElementById("btRunList");
+  const out = await api.get("/api/backtest-runs?limit=15");
+  if (!list) return;
+  if (!out.ok) {
+    list.innerHTML = `<li class="muted">List failed: ${safeText(out.error)}</li>`;
+    return;
+  }
+  const rows = Array.isArray(out.data) ? out.data : [];
+  if (!rows.length) {
+    list.innerHTML = `<li class="muted">No backtests yet.</li>`;
+    return;
+  }
+  list.innerHTML = rows
+    .map((r) => {
+      const tid = r.celery_task_id ? `${safeText(r.celery_task_id).slice(0, 12)}…` : "—";
+      return `<li><strong>${safeText(r.status)}</strong> · task ${tid} · ${safeText(r.created_at)}</li>`;
+    })
+    .join("");
+}
+
+async function pollBacktestTask(taskId) {
+  const meta = document.getElementById("btMeta");
+  const pre = document.getElementById("btResult");
+  for (let i = 0; i < 120; i++) {
+    const st = await api.get(`/api/backtest-runs/tasks/${encodeURIComponent(taskId)}`, { timeoutMs: 120000 });
+    if (!st.ok) {
+      if (meta) meta.textContent = `Status poll failed: ${st.error}`;
+      return;
+    }
+    const d = st.data || {};
+    const celery = safeText(d.celery_status || "").toLowerCase();
+    if (meta) meta.textContent = `Celery: ${celery} · DB: ${safeText(d.db_status || "—")}`;
+    if (celery === "success" && d.result && pre) {
+      pre.textContent = prettyJson(d.result);
+      await refreshBacktestRuns();
+      return;
+    }
+    if (celery === "failure" || celery === "revoked") {
+      if (pre) pre.textContent = prettyJson(d.task_result || d);
+      await refreshBacktestRuns();
+      return;
+    }
+    if (d.db_status === "failed" && d.error_message) {
+      if (pre) pre.textContent = safeText(d.error_message);
+      await refreshBacktestRuns();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  if (meta) meta.textContent = "Still running; use Refresh list or check later.";
+}
+
+async function queueUserBacktest() {
+  const meta = document.getElementById("btMeta");
+  const pre = document.getElementById("btResult");
+  const theory = document.getElementById("btTheory")?.value?.trim() || "";
+  const universe = document.getElementById("btUniverse")?.value || "watchlist";
+  const tickersRaw = document.getElementById("btTickers")?.value || "";
+  const tickers = tickersRaw
+    .split(/[\s,]+/)
+    .map((t) => t.trim().toUpperCase())
+    .filter(Boolean);
+  const start = document.getElementById("btStart")?.value;
+  const end = document.getElementById("btEnd")?.value;
+  if (!start || !end) {
+    if (meta) meta.textContent = "Choose start and end dates.";
+    return;
+  }
+  const spec = {
+    schema_version: 1,
+    universe_mode: universe === "tickers" ? "tickers" : "watchlist",
+    tickers: universe === "tickers" ? tickers : [],
+    start_date: start,
+    end_date: end,
+  };
+  if (theory) spec.theory_name = theory;
+  if (meta) meta.textContent = "Queueing…";
+  const out = await api.post("/api/backtest-runs", { spec }, { timeoutMs: 120000 });
+  if (!out.ok) {
+    if (meta) meta.textContent = safeText(out.error);
+    logEvent({ kind: "system", severity: "error", message: `Backtest queue failed: ${out.error}` });
+    return;
+  }
+  const taskId = out.data?.task_id;
+  if (meta) meta.textContent = taskId ? `Queued task ${safeText(taskId).slice(0, 16)}…` : "Queued.";
+  logEvent({ kind: "system", severity: "info", message: "Backtest queued." });
+  if (taskId) await pollBacktestTask(taskId);
+  else await refreshBacktestRuns();
+}
+
+async function sendStrategyChat() {
+  const input = document.getElementById("scInput");
+  const text = input?.value?.trim() || "";
+  if (!text) return;
+  if (!Array.isArray(state.strategyChatMessages)) state.strategyChatMessages = [];
+  state.strategyChatMessages.push({ role: "user", content: text });
+  input.value = "";
+  renderStrategyChatMessages();
+  const out = await api.post("/api/strategy-chat", { messages: state.strategyChatMessages }, { timeoutMs: 180000 });
+  if (!out.ok) {
+    logEvent({ kind: "system", severity: "error", message: `Strategy chat: ${out.error}` });
+    state.strategyChatMessages.push({ role: "assistant", content: `Error: ${out.error}` });
+    renderStrategyChatMessages();
+    return;
+  }
+  const assistant = out.data?.message || "";
+  const tools = out.data?.tool_results;
+  let body = assistant;
+  if (Array.isArray(tools) && tools.length) {
+    body += `\n\n[tools]\n${prettyJson(tools)}`;
+  }
+  state.strategyChatMessages.push({ role: "assistant", content: body || "(empty reply)" });
+  renderStrategyChatMessages();
+  await refreshBacktestRuns();
 }
 
 async function refreshPortfolio() {
@@ -1625,10 +2142,16 @@ async function refreshAll() {
     refreshOnboarding(),
     loadProfiles(),
     refreshPerformance(),
+    refreshBacktestRuns(),
   ]);
 }
 
 function wireEvents() {
+  setDefaultBacktestDates();
+  renderStrategyChatMessages();
+  document.getElementById("btQueueBtn")?.addEventListener("click", queueUserBacktest);
+  document.getElementById("btRefreshListBtn")?.addEventListener("click", refreshBacktestRuns);
+  document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   document.getElementById("scanBtn").addEventListener("click", runScan);
   document.getElementById("refreshBtn").addEventListener("click", refreshAll);
   document.getElementById("onboardingStartBtn").addEventListener("click", startOnboarding);

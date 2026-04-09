@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class ApiResponse(BaseModel):
@@ -35,6 +35,9 @@ class SchwabCredentialUpsert(BaseModel):
     token_type: str | None = None
     expires_at: str | None = None
     scopes: list[str] | None = None
+    # Full JSON body from Schwab token endpoint (encrypted at rest), per OAuth app.
+    market_oauth_json: str | None = None
+    account_oauth_json: str | None = None
 
 
 class ExecuteOrderRequest(BaseModel):
@@ -43,4 +46,30 @@ class ExecuteOrderRequest(BaseModel):
     side: str = Field(default="BUY")
     order_type: str = Field(default="MARKET")
     price: float | None = None
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class BillingCheckoutRequest(BaseModel):
+    success_url: HttpUrl | None = None
+    cancel_url: HttpUrl | None = None
+
+
+class QueueUserBacktestRequest(BaseModel):
+    spec: dict[str, Any]
+
+
+class StrategyChatRequest(BaseModel):
+    messages: list[dict[str, Any]] = Field(min_length=1, max_length=50)
+
+    @field_validator("messages")
+    @classmethod
+    def _message_shape(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for i, m in enumerate(v):
+            if not isinstance(m, dict):
+                raise ValueError(f"message {i} must be an object")
+            if m.get("role") not in ("user", "assistant"):
+                raise ValueError(f"message {i}: role must be user or assistant")
+            if m.get("content") is None:
+                raise ValueError(f"message {i}: content is required")
+        return v
 

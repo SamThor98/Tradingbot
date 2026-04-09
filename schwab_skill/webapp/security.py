@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from .billing_stripe import user_has_paid_entitlement
 from .db import SessionLocal
 from .models import User
 
@@ -116,6 +117,18 @@ def get_current_user(
             user.email = maybe_email
             db.commit()
             db.refresh(user)
+    return user
+
+
+def require_paid_entitlement(user: User = Depends(get_current_user)) -> User:
+    if not user_has_paid_entitlement(user):
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                "Active subscription required. "
+                "Subscribe via POST /api/billing/checkout-session or manage billing via POST /api/billing/portal-session."
+            ),
+        )
     return user
 
 

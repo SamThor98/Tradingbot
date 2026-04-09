@@ -65,6 +65,7 @@
         <a href="#pendingSection">Pending</a>
         <a href="#portfolioSection">Portfolio</a>
         <a href="#performanceSection">Performance</a>
+        <a href="#backtestSection">Backtests</a>
         <a href="#recoverySection">Recovery</a>
         <a href="#quickCheckSection">Quick Check</a>
         <a href="#reportSectionCard">Report</a>
@@ -112,7 +113,13 @@
             <label class="muted"><input id="automationOptIn" type="checkbox" /> opt into live automation</label>
             <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
           </div>
-          <pre id="profileOutput" class="code-block">No preset applied yet.</pre>
+          <div id="profilePanel" class="preset-panel" aria-live="polite">
+            <div class="report-empty">Loading preset…</div>
+          </div>
+          <details id="profileRawDetails" class="details-raw hidden">
+            <summary>Raw JSON</summary>
+            <pre id="profileRaw" class="code-block"></pre>
+          </details>
         </article>
       </section>
 
@@ -301,7 +308,56 @@
           <div class="inline-form">
             <button id="performanceRefreshBtn" class="btn secondary">Refresh Performance</button>
           </div>
-          <pre id="performanceOutput" class="code-block">No performance snapshot loaded yet.</pre>
+          <div id="performancePanel" class="performance-panel" aria-live="polite">
+            <div class="report-empty">No performance snapshot loaded yet.</div>
+          </div>
+          <details id="performanceRawDetails" class="details-raw hidden">
+            <summary>Raw JSON</summary>
+            <pre id="performanceRaw" class="code-block"></pre>
+          </details>
+        </article>
+        <article id="backtestSection" class="card">
+          <div class="section-title">
+            <h2>Your backtests</h2>
+            <small class="muted">Historical Stage 2 + VCP simulation. Queued on the scan worker; uses your tenant config.</small>
+          </div>
+          <div class="inline-form" style="flex-wrap: wrap; gap: 0.5rem">
+            <label class="field-label" for="btTheory">Theory</label>
+            <input id="btTheory" placeholder="Optional name" style="min-width: 120px" />
+            <label class="field-label" for="btUniverse">Universe</label>
+            <select id="btUniverse">
+              <option value="watchlist">Watchlist (.env)</option>
+              <option value="tickers">Custom tickers</option>
+            </select>
+            <label class="field-label" for="btTickers">Tickers</label>
+            <input id="btTickers" placeholder="AAPL, MSFT" style="min-width: 140px" />
+            <label class="field-label" for="btStart">Start</label>
+            <input id="btStart" type="date" />
+            <label class="field-label" for="btEnd">End</label>
+            <input id="btEnd" type="date" />
+            <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
+            <button id="btRefreshListBtn" class="btn secondary" type="button">Refresh list</button>
+          </div>
+          <p id="btMeta" class="muted">Set dates and queue a run.</p>
+          <pre id="btResult" class="code-block">No run yet.</pre>
+          <div class="section-title"><h3>Recent runs</h3></div>
+          <ul id="btRunList" class="report-bullets"></ul>
+        </article>
+        <article id="strategyChatSection" class="card">
+          <div class="section-title">
+            <h2>Strategy chat</h2>
+            <small class="muted">Assistant builds a StrategySpec and can queue backtests (needs OPENAI_API_KEY on server).</small>
+          </div>
+          <div id="scMessages" class="code-block chat-log">Describe the universe, dates, and any gate tweaks.</div>
+          <div class="inline-form" style="margin-top: 0.5rem">
+            <input
+              id="scInput"
+              type="text"
+              placeholder="e.g. Watchlist, last 8 years, skip MiroFish for speed, soft quality gates"
+              style="flex: 1; min-width: 200px"
+            />
+            <button id="scSendBtn" class="btn secondary" type="button">Send</button>
+          </div>
         </article>
         <article id="quickCheckSection" class="card">
           <div class="section-title">

@@ -1,0 +1,94 @@
+# Render Blueprint: Postgres + Redis + FastAPI + Celery worker.
+# https://render.com/docs/infrastructure-as-code
+#
+# Repo layout: use this file when the Git repo root IS schwab_skill (next to Dockerfile.saas).
+# If the repo is a monorepo with schwab_skill as a subfolder, use render.yaml at the repository root instead.
+# Render dashboard: New → Blueprint → connect repo → apply.
+#
+# First deploy (empty database): set SAAS_BOOTSTRAP_SCHEMA=1 on the web service, deploy once, then clear it
+# (SAAS_RUN_ALEMBIC is already set on the web service for later deploys; see docs/SAAS_DEPLOYMENT.md).
+#
+# Set WEB_ALLOWED_ORIGINS to your public API URL (e.g. https://tradingbot-api.onrender.com).
+
+databases:
+  - name: tradingbot-db
+    databaseName: tradingbot
+    user: tradingbot
+    plan: free
+
+services:
+  - type: keyvalue
+    name: tradingbot-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+  - type: web
+    name: tradingbot-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.saas
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradingbot-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tradingbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: SAAS_HEALTH_REQUIRE_REDIS
+        value: "1"
+      - key: SAAS_RUN_ALEMBIC
+        value: "1"
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SCHWAB_MARKET_APP_KEY
+        sync: false
+      - key: SCHWAB_MARKET_APP_SECRET
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_KEY
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_SECRET
+        sync: false
+      - key: SCHWAB_CALLBACK_URL
+        sync: false
+      - key: WEB_ALLOWED_ORIGINS
+        sync: false
+
+  - type: worker
+    name: tradingbot-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.saas
+    dockerContext: .
+    dockerCommand: celery -A webapp.tasks worker -Q scan,orders,celery --loglevel=info
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradingbot-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tradingbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: SAAS_RUN_ALEMBIC
+        value: "0"
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SCHWAB_MARKET_APP_KEY
+        sync: false
+      - key: SCHWAB_MARKET_APP_SECRET
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_KEY
+        sync: false
+      - key: SCHWAB_ACCOUNT_APP_SECRET
+        sync: false
+      - key: SCHWAB_CALLBACK_URL
+        sync: false

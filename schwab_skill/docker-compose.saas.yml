@@ -1,0 +1,58 @@
+# Example stack: Postgres + Redis + API + Celery workers.
+# Usage: from schwab_skill/: docker compose -f docker-compose.saas.yml up --build
+# Provide secrets via .env (not committed) or your environment.
+# Optional Stripe (subscriber billing): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+# STRIPE_PRICE_ID, STRIPE_CHECKOUT_SUCCESS_URL, STRIPE_CHECKOUT_CANCEL_URL,
+# STRIPE_PORTAL_RETURN_URL, SAAS_BILLING_ENFORCE=1
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tradingbot
+      POSTGRES_PASSWORD: tradingbot
+      POSTGRES_DB: tradingbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - saas_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas
+    command: uvicorn webapp.main_saas:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql+psycopg2://tradingbot:tradingbot@postgres:5432/tradingbot
+      REDIS_URL: redis://redis:6379/0
+      # First deploy only: SAAS_BOOTSTRAP_SCHEMA=1 then switch to SAAS_RUN_ALEMBIC=1
+      SAAS_BOOTSTRAP_SCHEMA: "0"
+      SAAS_RUN_ALEMBIC: "0"
+      SAAS_HEALTH_REQUIRE_REDIS: "1"
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas
+    command: celery -A webapp.tasks worker -Q scan,orders,celery --loglevel=info
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql+psycopg2://tradingbot:tradingbot@postgres:5432/tradingbot
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  saas_pgdata:

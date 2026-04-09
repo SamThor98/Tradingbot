@@ -96,6 +96,39 @@ Then open:
 http://127.0.0.1:8000
 ```
 
+## Multi-tenant SaaS API (`webapp/main_saas.py`)
+
+Production-oriented API: Supabase JWT auth, encrypted per-user Schwab tokens, Postgres-friendly pooling, Celery workers with **separate queues** (`scan`, `orders`), Redis-backed scan cooldown and rate limits, audit log table, and per-request `X-Request-ID`.
+
+**Run API (from `schwab_skill/`):**
+
+```
+uvicorn webapp.main_saas:app --host 0.0.0.0 --port 8000
+```
+
+**Run workers** (same working directory, same env as API):
+
+```
+celery -A webapp.tasks worker -Q scan,orders,celery --loglevel=info
+```
+
+**Database migrations (Postgres or existing SQLite file):**
+
+```
+alembic upgrade head
+```
+
+Empty Postgres: run once `python scripts/saas_bootstrap.py` or set `SAAS_BOOTSTRAP_SCHEMA=1` for a single API boot (creates schema + stamps `saas002`). Set `SAAS_RUN_ALEMBIC=1` on API startup to auto-run `alembic upgrade head` (optional). Local SQLite still auto-creates tables via SQLAlchemy when `DATABASE_URL` is sqlite.
+
+**Schwab + SaaS:**
+
+- Platform registers **market** and **account** developer apps; set `SCHWAB_MARKET_*` and `SCHWAB_ACCOUNT_*` on API and workers.
+- Each user stores OAuth token JSON via `/api/credentials/schwab`: `account_oauth_json` and `market_oauth_json` (encrypted), or legacy `access_token` / `refresh_token` (account app only) plus **`SAAS_PLATFORM_MARKET_SKILL_DIR`** pointing at a server-local skill directory that contains `tokens_market.enc` for a shared market session.
+
+**Health:** `GET /api/health/live`, `GET /api/health/ready` (DB + Redis; set `SAAS_HEALTH_REQUIRE_REDIS=0` to skip Redis in dev).
+
+**Deploy:** see `docs/SAAS_DEPLOYMENT.md` and `docker-compose.saas.yml`.
+
 ## Run
 
 - Heartbeat/scheduler: `python main.py`

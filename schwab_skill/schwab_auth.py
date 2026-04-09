@@ -44,6 +44,18 @@ def _encrypt(data: dict, key: bytes) -> bytes:
     return Fernet(key).encrypt(json.dumps(data).encode())
 
 
+def write_encrypted_token_file(token_path: Path, tokens: dict, client_secret: str) -> None:
+    """
+    Persist an OAuth token payload in the same Fernet format used by SchwabSession.
+    Used by SaaS workers when materializing a per-tenant skill directory.
+    """
+    key = _get_encryption_key(client_secret)
+    token_path = Path(token_path)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(token_path, "wb") as f:
+        f.write(_encrypt(tokens, key))
+
+
 def _decrypt(encrypted: bytes, key: bytes) -> dict | None:
     try:
         return json.loads(Fernet(key).decrypt(encrypted).decode())
