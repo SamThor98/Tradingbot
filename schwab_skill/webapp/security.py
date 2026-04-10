@@ -107,6 +107,7 @@ def get_current_user(
             id=user_id,
             email=claims.get("email"),
             auth_provider="supabase",
+            live_execution_enabled=False,
         )
         db.add(user)
         db.commit()

@@ -30,12 +30,17 @@ def _quote_epoch_ms(quote: dict[str, Any] | None) -> float | None:
     if not isinstance(quote, dict):
         return None
     nested = quote.get("quote") if isinstance(quote.get("quote"), dict) else {}
-    for layer in (quote, nested):
+    regular = quote.get("regular") if isinstance(quote.get("regular"), dict) else {}
+    extended = quote.get("extended") if isinstance(quote.get("extended"), dict) else {}
+    for layer in (quote, nested, regular, extended):
         for key in (
             "quoteTimeInLong",
             "tradeTimeInLong",
             "regularMarketTradeTimeInLong",
             "lastUpdateTimeInLong",
+            "quoteTime",
+            "tradeTime",
+            "regularMarketTradeTime",
         ):
             raw = layer.get(key)
             if raw is not None:

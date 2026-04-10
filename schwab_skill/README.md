@@ -84,6 +84,8 @@ A FastAPI-powered website is available under `webapp/` with a modern UI for:
 - portfolio and sector snapshots
 - quick ticker checks
 
+The main dashboard (`webapp/static/index.html`) is organized around **today’s workflow** (health → blockers → scan & pending approvals → quick ticker check), with a **Tools** grid for jumping to deeper capabilities. **Simple / Standard / Pro** (saved in `localStorage`) trims or expands what appears above the fold; diagnostics, detailed status, SEC compare depth, and several panels use a shared **disclosure** pattern and **lazy-load** their backing API calls when sections scroll into view—**Refresh All** still loads everything. Preset **Expert** mode remains the server-backed `standard` vs `expert` setting on `/api/settings/profile` (separate from the display layout).
+
 Run:
 
 ```
@@ -96,9 +98,13 @@ Then open:
 http://127.0.0.1:8000
 ```
 
+**Legal:** The dashboard footer links to **`/static/legal.html`** (not investment advice, third-party trademark notice, risk and “as is” terms). Operators should review **`docs/LEGAL_DISCLOSURES.md`** and have counsel adapt it for your jurisdiction and offering.
+
 ## Multi-tenant SaaS API (`webapp/main_saas.py`)
 
 Production-oriented API: Supabase JWT auth, encrypted per-user Schwab tokens, Postgres-friendly pooling, Celery workers with **separate queues** (`scan`, `orders`), Redis-backed scan cooldown and rate limits, audit log table, and per-request `X-Request-ID`.
+
+**Live execution defaults:** New users have `live_execution_enabled=false` until they call `POST /api/settings/enable-live-trading` (risk checkbox + typing `ENABLE`) with Schwab account **and** market materialization ready (same bar as scans). Broker orders are **not** accepted via `POST /api/orders/execute` (returns 410); use `POST /api/pending-trades` then `POST /api/trades/{id}/approve` with JSON `{"typed_ticker":"TICKER"}` so each live order requires an explicit in-app confirmation. The hosted dashboard exposes the same controls under Strategy Presets.
 
 **Run API (from `schwab_skill/`):**
 

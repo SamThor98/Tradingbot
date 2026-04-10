@@ -65,6 +65,10 @@ def _request_with_backoff(
             time.sleep(backoff)
             backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF)
             continue
+        if resp.status_code in (502, 503, 504) and attempt < MAX_RETRIES - 1:
+            time.sleep(backoff)
+            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF)
+            continue
         return resp
     return resp
 
@@ -146,25 +150,125 @@ def get_daily_history(
         return _get_daily_history_yfinance(ticker, days)
 
 
+def extract_schwab_last_price(quote: dict[str, Any] | None) -> float | None:
+    """Best-effort last trade / mark / prior close from a Schwab quote object (flat or nested)."""
+    if not isinstance(quote, dict):
+        return None
+    paths: tuple[tuple[str, ...], ...] = (
+        ("lastPrice",),
+        ("quote", "lastPrice"),
+        ("quote", "mark"),
+        ("quote", "closePrice"),
+        ("regular", "regularMarketLastPrice"),
+        ("extended", "lastPrice"),
+        ("extended", "mark"),
+    )
+    for path in paths:
+        ptr: Any = quote
+        ok = True
+        for part in path:
+            if not isinstance(ptr, dict) or part not in ptr:
+                ok = False
+                break
+            ptr = ptr[part]
+        if ok:
+            try:
+                value = float(ptr)
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _select_schwab_quote_payload(data: Any, ticker: str) -> dict | None:
+    """Pick the per-symbol quote dict from Schwab /marketdata/v1/quotes JSON."""
+    t = ticker.upper().strip()
+    if isinstance(data, dict):
+        if t in data and isinstance(data[t], dict):
+            return data[t]
+        for k, v in data.items():
+            if isinstance(k, str) and k.upper() == t and isinstance(v, dict):
+                return v
+        sym = data.get("symbol")
+        if isinstance(sym, str) and sym.upper() == t:
+            return data
+        if "lastPrice" in data:
+            return data
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and str(item.get("symbol", "")).upper() == t:
+                return item
+        if data and isinstance(data[0], dict):
+            return data[0]
+    return None
+
+
+def get_current_quote_with_status(
+    ticker: str,
+    auth: DualSchwabAuth | None = None,
+    skill_dir: Path | str | None = None,
+) -> tuple[dict | None, dict[str, Any]]:
+    """
+    Fetch quote via Market Session. Returns (quote_dict_or_none, meta) where meta explains failures
+    for dashboards and operators (HTTP status, reason codes, key names).
+    """
+    ticker_u = ticker.upper().strip()
+    meta: dict[str, Any] = {
+        "symbol": ticker_u,
+        "http_status": None,
+        "reason": None,
+        "top_level_keys": None,
+        "quote_keys": None,
+        "error_detail": None,
+    }
+    auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
+    url = f"{SCHWAB_BASE}/marketdata/v1/quotes"
+    try:
+        resp = _request_with_backoff(auth, "GET", url, params={"symbols": ticker_u})
+        meta["http_status"] = resp.status_code
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            meta["reason"] = "http_error"
+            try:
+                body = (resp.text or "").strip()[:400]
+            except Exception:
+                body = ""
+            meta["error_detail"] = body or str(e)
+            LOG.warning(
+                "Schwab quotes HTTP %s for %s: %s",
+                resp.status_code,
+                ticker_u,
+                meta["error_detail"],
+            )
+            return None, meta
+        data = resp.json()
+        if isinstance(data, dict):
+            meta["top_level_keys"] = sorted(str(k) for k in data.keys())[:32]
+        quote = _select_schwab_quote_payload(data, ticker_u)
+        if quote is None:
+            meta["reason"] = "no_matching_symbol_in_response"
+            return None, meta
+        meta["quote_keys"] = sorted(str(k) for k in quote.keys())[:32]
+        price = extract_schwab_last_price(quote)
+        if price is None:
+            meta["reason"] = "last_price_not_parseable"
+        else:
+            meta["last_price"] = round(price, 6)
+        return quote, meta
+    except Exception as e:
+        meta["reason"] = type(e).__name__
+        meta["error_detail"] = str(e)[:400]
+        LOG.warning("get_current_quote failed for %s: %s", ticker_u, e)
+        return None, meta
+
+
 def get_current_quote(
     ticker: str,
     auth: DualSchwabAuth | None = None,
     skill_dir: Path | str | None = None,
 ) -> dict | None:
     """Fetch real-time quote using Market Session."""
-    auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
-    ticker = ticker.upper().strip()
-    url = f"{SCHWAB_BASE}/marketdata/v1/quotes"
-    try:
-        resp = _request_with_backoff(auth, "GET", url, params={"symbols": ticker})
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and ticker in data:
-            return data[ticker]
-        if isinstance(data, dict) and "lastPrice" in data:
-            return data
-        if isinstance(data, list) and data:
-            return data[0]
-        return None
-    except Exception:
-        return None
+    quote, _meta = get_current_quote_with_status(ticker, auth=auth, skill_dir=skill_dir)
+    return quote

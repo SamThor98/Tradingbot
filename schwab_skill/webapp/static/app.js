@@ -5,20 +5,249 @@ const state = {
   pendingFilter: "all",
   pendingSort: "newest",
   config: { auth_mode: "jwt" },
+  publicConfig: { supabase: null, saas_mode: false, schwab_oauth: false },
+  accountMe: null,
   reportRawView: false,
   lastReportData: null,
   activeReportTab: "summary",
   secCompareResult: null,
   onboarding: null,
   profile: null,
+  presetCatalog: null,
+  savedUiSettings: null,
   performance: null,
   strategyChatMessages: [],
   strategyChatBusy: false,
   backtestQueueBusy: false,
   lastQuoteHealthLogSig: null,
+  queueScanDraft: null,
+  /** Optional scan body: strategy_overrides, universe_mode, tickers (see /api/scan). */
+  scanRunOptions: null,
 };
 
+const UI_VIEW_MODE_KEY = "tradingbot.ui.view_mode";
+
+const lazyLoaded = {
+  portfolio: false,
+  sectors: false,
+  performance: false,
+  backtest: false,
+  onboarding: false,
+  profiles: false,
+};
+
+function resetLazyLoaded() {
+  Object.keys(lazyLoaded).forEach((k) => {
+    lazyLoaded[k] = false;
+  });
+}
+
+function getDisplayMode() {
+  const m = localStorage.getItem(UI_VIEW_MODE_KEY) || "standard";
+  return ["simple", "standard", "pro"].includes(m) ? m : "standard";
+}
+
+function applyDisplayMode(mode) {
+  const m = ["simple", "standard", "pro"].includes(mode) ? mode : "standard";
+  localStorage.setItem(UI_VIEW_MODE_KEY, m);
+  document.body.classList.remove("ui-simple", "ui-standard", "ui-pro");
+  document.body.classList.add(`ui-${m}`);
+  const sel = document.getElementById("displayModeSelect");
+  if (sel) sel.value = m;
+  const pro = m === "pro";
+  const scanDiag = document.getElementById("scanDiagnosticsPanel");
+  const statusDet = document.getElementById("statusDetailsPanel");
+  const secDeep = document.getElementById("secCompareDeepPanel");
+  if (scanDiag) scanDiag.open = pro;
+  if (statusDet) statusDet.open = pro;
+  if (secDeep) secDeep.open = pro;
+  const perfRaw = document.getElementById("performanceRawDetails");
+  if (perfRaw && !pro) perfRaw.open = false;
+}
+
+async function runLazyApi(key) {
+  if (!key || lazyLoaded[key]) return;
+  lazyLoaded[key] = true;
+  try {
+    if (key === "portfolio") await refreshPortfolio();
+    else if (key === "sectors") await refreshSectors();
+    else if (key === "performance") await refreshPerformance();
+    else if (key === "backtest") await refreshBacktestRuns();
+    else if (key === "onboarding") await refreshOnboarding();
+    else if (key === "profiles") {
+      await loadProfiles();
+    }
+  } catch (err) {
+    console.warn("lazy load failed", key, err);
+    lazyLoaded[key] = false;
+  }
+}
+
+function setupLazySectionLoading() {
+  const nodes = document.querySelectorAll("[data-lazy-api]");
+  if (!nodes.length) return;
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const k = e.target.getAttribute("data-lazy-api");
+        if (k) void runLazyApi(k);
+      });
+    },
+    { rootMargin: "120px 0px", threshold: 0.04 }
+  );
+  nodes.forEach((n) => io.observe(n));
+}
+
+function openAncestorDetails(el) {
+  let p = el?.parentElement;
+  while (p) {
+    if (p.tagName === "DETAILS") p.open = true;
+    p = p.parentElement;
+  }
+}
+
+function handleRouteHash() {
+  const id = window.location.hash.slice(1);
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  openAncestorDetails(el);
+  requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+/** Map short query values to element ids, e.g. ?section=backtest → #backtestSection */
+function applyQuerySectionDeepLink() {
+  try {
+    const u = new URL(window.location.href);
+    let sec = (u.searchParams.get("section") || "").trim();
+    if (!sec) return;
+    const aliases = {
+      backtest: "backtestSection",
+      backtests: "backtestSection",
+      pending: "pendingSection",
+      trades: "pendingSection",
+      scan: "workflowPrimary",
+      workflow: "workflowPrimary",
+    };
+    const id = aliases[sec.toLowerCase()] || sec;
+    if (!document.getElementById(id)) return;
+    u.searchParams.delete("section");
+    const q = u.searchParams.toString();
+    window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}#${id}`);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function markDeferredDataPlaceholders() {
+  const pb = document.getElementById("portfolioBody");
+  const firstCell = pb?.querySelector("td");
+  if (pb && firstCell && firstCell.textContent === "Loading...") {
+    pb.innerHTML = `<tr><td colspan="5" class="muted">Portfolio loads when you scroll here (or use Refresh All).</td></tr>`;
+  }
+  const pm = document.getElementById("portfolioMeta");
+  if (pm && pm.textContent === "Loading...") pm.textContent = "Not loaded yet";
+}
+
+function renderLiveTradingSaasPanel() {
+  const block = document.getElementById("liveTradingSaasBlock");
+  if (!block) return;
+  if (!state.publicConfig.saas_mode) {
+    block.classList.add("hidden");
+    return;
+  }
+  block.classList.remove("hidden");
+  const statusEl = document.getElementById("liveTradingStatus");
+  if (statusEl) {
+    const on = Boolean(state.accountMe?.live_execution_enabled);
+    statusEl.textContent = on ? "Account status: live orders from this app are on." : "Account status: live orders from this app are still off.";
+  }
+}
+
+async function refreshAccountMe() {
+  if (!state.publicConfig.saas_mode) {
+    state.accountMe = null;
+    renderLiveTradingSaasPanel();
+    return;
+  }
+  const token = await getApiAccessToken();
+  if (!token) {
+    state.accountMe = null;
+    renderLiveTradingSaasPanel();
+    return;
+  }
+  const out = await api.get("/api/me");
+  state.accountMe = out.ok ? out.data : null;
+  renderLiveTradingSaasPanel();
+}
+
+async function submitEnableLiveTrading() {
+  const ack = Boolean(document.getElementById("enableLiveRiskAck")?.checked);
+  const phrase = document.getElementById("enableLiveTypedPhrase")?.value?.trim() || "";
+  const out = await api.post("/api/settings/enable-live-trading", {
+    risk_acknowledged: ack,
+    typed_phrase: phrase,
+  });
+  if (!out.ok) {
+    const msg = typeof out.error === "string" ? out.error : JSON.stringify(out.error || "Request failed");
+    logEvent({ kind: "system", severity: "error", message: `Enable live trading failed: ${msg}` });
+    updateActionCenter({ title: "Enable live trading", message: msg, severity: "error" });
+    return;
+  }
+  logEvent({ kind: "system", severity: "info", message: "Live trading enabled for this account." });
+  updateActionCenter({
+    title: "Live trading enabled",
+    message: "You can approve pending trades; type the ticker in the dialog to confirm each order.",
+    severity: "success",
+  });
+  const phraseInput = document.getElementById("enableLiveTypedPhrase");
+  if (phraseInput) phraseInput.value = "";
+  await refreshAccountMe();
+  await refreshPending();
+}
+
+async function refreshCritical() {
+  await Promise.all([refreshStatus(), refreshAccountMe(), refreshPending()]);
+}
+
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
+const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
+
+let _resolveAuthReady;
+const authSessionReady = new Promise((r) => {
+  _resolveAuthReady = r;
+});
+
+function markAuthReady() {
+  if (_resolveAuthReady) {
+    _resolveAuthReady();
+    _resolveAuthReady = null;
+  }
+}
+
+async function getApiAccessToken() {
+  if (state.config?.auth_mode === "supabase" && supabaseClient) {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) console.warn("auth.getSession", error);
+    return (data?.session?.access_token || "").trim();
+  }
+  const manual = document.getElementById("jwtInput")?.value?.trim() || "";
+  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  return manual || stored;
+}
+
+function setJobProgress(barId, labelId, fraction, labelText) {
+  const bar = document.getElementById(barId);
+  const lbl = labelId ? document.getElementById(labelId) : null;
+  const wrap = bar?.closest?.(".job-progress-wrap");
+  if (bar && bar.tagName === "PROGRESS") {
+    const pct = Math.max(0, Math.min(100, Math.round((fraction || 0) * 100)));
+    bar.value = pct;
+    if (wrap) wrap.classList.toggle("hidden", pct <= 0 && !labelText);
+  }
+  if (lbl) lbl.textContent = labelText || "";
+}
 
 /** Set when /api/public-config exposes Supabase URL + anon key */
 let supabaseClient = null;
@@ -60,6 +289,7 @@ async function initSupabaseAuth(url, anonKey) {
       severity: "warn",
       message: "Could not load Supabase from CDN; use manual JWT below.",
     });
+    markAuthReady();
     return;
   }
 
@@ -80,6 +310,7 @@ async function initSupabaseAuth(url, anonKey) {
   supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
     persistApiJwtFromSession(nextSession);
     updateSupabaseAuthUI(nextSession);
+    void refreshAccountMe();
   });
 
   document.getElementById("supabaseSignInBtn")?.addEventListener("click", async () => {
@@ -119,6 +350,8 @@ async function initSupabaseAuth(url, anonKey) {
     if (inp) inp.value = "";
     logEvent({ kind: "system", severity: "info", message: "Signed out." });
   });
+
+  markAuthReady();
 }
 
 function updateActionCenter({ title = "System Messages", message = "", severity = "info" }) {
@@ -163,9 +396,7 @@ const api = {
       ...(fetchOptions.headers || {}),
     };
 
-    const tokenInput = document.getElementById("jwtInput")?.value?.trim();
-    const tokenStored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
-    const token = tokenInput || tokenStored;
+    const token = await getApiAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
 
     try {
@@ -386,6 +617,7 @@ function renderPerformancePanel(rootEl, data, { error } = {}) {
     ${callout}
     ${outcomesTable || `<p class="muted perf-outcomes-empty">No recent outcome rows yet.</p>`}
   `;
+  if (rawDetails && data && !error && getDisplayMode() === "pro") rawDetails.open = true;
 }
 
 function renderProfilePanel(rootEl, data, { error } = {}) {
@@ -408,15 +640,26 @@ function renderProfilePanel(rootEl, data, { error } = {}) {
 
   const profile = safeText(data.profile || "—");
   const mode = safeText(data.mode || "standard");
+  const expertUi = mode === "expert";
   const autoOn = Boolean(data.automation_opt_in);
   const active = data.active_profile_settings && typeof data.active_profile_settings === "object" ? data.active_profile_settings : {};
   const keys = Object.keys(active).sort();
+  const catalog = state.presetCatalog && typeof state.presetCatalog === "object" ? state.presetCatalog : {};
+  const profileKey = String(data.profile || "").toLowerCase();
+  const dispMap =
+    catalog[profileKey] && catalog[profileKey].settings_display && typeof catalog[profileKey].settings_display === "object"
+      ? catalog[profileKey].settings_display
+      : {};
 
   const settingsRows = keys
-    .map(
-      (k) =>
-        `<tr><th scope="row">${safeText(presetSettingLabel(k))}</th><td><code class="preset-value">${safeText(active[k])}</code></td></tr>`
-    )
+    .map((k) => {
+      const d = dispMap[k] && typeof dispMap[k] === "object" ? dispMap[k] : {};
+      const label = safeText(d.label || presetSettingLabel(k));
+      const plain = safeText(d.plain || active[k]);
+      const raw = safeText(d.raw != null ? d.raw : active[k]);
+      const valueCell = expertUi ? `${plain}<br/><code class="preset-value">${raw}</code>` : plain;
+      return `<tr><th scope="row">${label}</th><td>${valueCell}</td></tr>`;
+    })
     .join("");
 
   const expert = data.expert_runtime_overrides && typeof data.expert_runtime_overrides === "object" ? data.expert_runtime_overrides : null;
@@ -451,6 +694,60 @@ function renderProfilePanel(rootEl, data, { error } = {}) {
     </div>
     ${expertBlock}
   `;
+}
+
+function renderPresetApplyPreview() {
+  const root = document.getElementById("presetApplyPreview");
+  if (!root) return;
+  const saved = state.savedUiSettings;
+  const catalog = state.presetCatalog;
+  if (!saved || !catalog || typeof catalog !== "object") {
+    root.innerHTML = `<p class="muted small">Load presets to see a change summary.</p>`;
+    return;
+  }
+  const selProfile = document.getElementById("profileSelect")?.value || saved.profile;
+  const selMode = document.getElementById("settingsModeSelect")?.value || saved.mode;
+  const selAuto = Boolean(document.getElementById("automationOptIn")?.checked);
+
+  const cur = String(saved.profile || "balanced").toLowerCase();
+  const next = String(selProfile || "balanced").toLowerCase();
+  const curSet = catalog[cur]?.settings || {};
+  const nextSet = catalog[next]?.settings || {};
+  const keys = [...new Set([...Object.keys(curSet), ...Object.keys(nextSet)])].sort();
+
+  const parts = [];
+  if (next !== cur) {
+    const blurb = safeText(catalog[next]?.blurb || "");
+    parts.push(
+      `<li><strong>Profile:</strong> ${safeText(cur)} → ${safeText(next)}.${blurb ? ` ${blurb}` : ""}</li>`
+    );
+  }
+  keys.forEach((k) => {
+    if (curSet[k] !== nextSet[k]) {
+      const d0 = catalog[cur]?.settings_display?.[k] || {};
+      const d1 = catalog[next]?.settings_display?.[k] || {};
+      const label = safeText(d1.label || d0.label || presetSettingLabel(k));
+      const fromPlain = safeText(d0.plain || curSet[k]);
+      const toPlain = safeText(d1.plain || nextSet[k]);
+      parts.push(`<li><strong>${label}:</strong> ${fromPlain} → ${toPlain}</li>`);
+    }
+  });
+  if (String(selMode) !== String(saved.mode)) {
+    const hint =
+      selMode === "expert" ? "You will see raw env values under presets." : "Raw env values stay hidden.";
+    parts.push(`<li><strong>Dashboard mode:</strong> ${safeText(saved.mode)} → ${safeText(selMode)}. ${hint}</li>`);
+  }
+  if (selAuto !== Boolean(saved.automation_opt_in)) {
+    parts.push(
+      `<li><strong>Automation opt-in (saved setting):</strong> ${saved.automation_opt_in ? "on" : "off"} → ${selAuto ? "on" : "off"}. When off, API clients must pass an explicit live-confirmation flag; this dashboard still makes you type the ticker to approve.</li>`
+    );
+  }
+
+  if (!parts.length) {
+    root.innerHTML = `<p class="muted preset-preview-none">No changes to apply.</p>`;
+    return;
+  }
+  root.innerHTML = `<h3 class="preset-preview-title">If you apply now</h3><ul class="preset-preview-list">${parts.join("")}</ul>`;
 }
 
 function timeAgo(iso) {
@@ -694,6 +991,8 @@ function renderDiagnostics(diag = {}) {
     chip.textContent = `${DIAG_LABELS[key] || key}: ${value}`;
     chipWrap.appendChild(chip);
   });
+  const diagPanel = document.getElementById("scanDiagnosticsPanel");
+  if (diagPanel && getDisplayMode() === "pro") diagPanel.open = true;
 }
 
 function renderScanRows(signals = []) {
@@ -737,32 +1036,16 @@ function renderScanRows(signals = []) {
       <td>${conf}</td>
       <td>${conviction !== null ? `${conviction}` : "—"}</td>
       <td>${safeText(sig.sector_etf || "—")}</td>
-      <td><button class="btn small secondary" data-idx="${idx}">Queue</button></td>
+      <td><button type="button" class="btn small secondary" data-idx="${idx}">Stage…</button></td>
     `;
     body.appendChild(tr);
   });
 
   body.querySelectorAll("button[data-idx]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const clicked = e.currentTarget;
-      clicked.disabled = true;
-      const idx = Number(clicked.getAttribute("data-idx"));
+    btn.addEventListener("click", (e) => {
+      const idx = Number(e.currentTarget.getAttribute("data-idx"));
       const sig = state.latestSignals[idx];
-      const payload = {
-        ticker: sig.ticker || sig.symbol,
-        price: sig.price ?? sig.current_price ?? null,
-        signal: sig,
-        note: "Queued from scan table",
-      };
-      const out = await api.post("/api/pending-trades", payload);
-      if (!out.ok) {
-        logEvent({ kind: "trade", severity: "error", message: `Queue failed: ${out.error}` });
-        clicked.disabled = false;
-        return;
-      }
-      logEvent({ kind: "trade", severity: "info", message: `Queued ${payload.ticker} (${out.data.id})` });
-      await refreshPending();
-      clicked.disabled = false;
+      openQueueScanDialog(sig);
     });
   });
 }
@@ -1123,6 +1406,8 @@ function renderSecCompareVisual(data) {
       ${renderSecAnalysisCard(rightLabel, right)}
     </div>
   `;
+  const deep = document.getElementById("secCompareDeepPanel");
+  if (deep && getDisplayMode() === "pro") deep.open = true;
 }
 
 async function buildFallbackSecCompare(mode, tickerA, tickerB, formType) {
@@ -1260,6 +1545,30 @@ function renderTimeline(row) {
   return `<span class="timeline-badge"><span class="timeline-dot"></span>${safeText(status)}</span>`;
 }
 
+function formatPreflightChecklistHtml(c) {
+  if (!c || typeof c !== "object") return "";
+  const lines = Array.isArray(c.checklist_lines) ? c.checklist_lines : [];
+  const plainItems = lines
+    .map((line) => {
+      if (!line || typeof line !== "object") return "";
+      const lb = safeText(line.label);
+      const vl = safeText(line.value_plain);
+      return `<li><strong>${lb}:</strong> ${vl}</li>`;
+    })
+    .filter(Boolean)
+    .join("");
+  let blockSection = "";
+  if (c.blocked) {
+    const br = Array.isArray(c.block_reasons_plain) ? c.block_reasons_plain : [];
+    const brHtml = br.length ? br.map((t) => `<li>${safeText(t)}</li>`).join("") : "";
+    const fallback = brHtml || "<li>Policy blocked this order.</li>";
+    blockSection = `<p class="approve-blocked"><strong>Cannot send yet</strong></p><ul>${fallback}</ul>`;
+  }
+  const techJson = safeText(prettyJson(c));
+  const tech = `<details class="approve-checklist-details"><summary>Technical checklist</summary><pre class="code-block code-block--tight">${techJson}</pre></details>`;
+  return `<div class="approve-preflight"><strong>Pre-trade summary</strong><ul>${plainItems || "<li>No extra checklist rows.</li>"}</ul>${blockSection}${tech}</div>`;
+}
+
 async function openApproveDialog(row) {
   const dialog = document.getElementById("approveDialog");
   const summary = document.getElementById("approveSummary");
@@ -1273,12 +1582,9 @@ async function openApproveDialog(row) {
   if (preflight.ok) {
     state.approvingChecklist = preflight.data?.checklist || null;
     const c = state.approvingChecklist || {};
-    checklistText = `<br/><strong>Pre-trade checklist:</strong><br/>
-      risk %: ${safeText(c.risk_percent_estimate)} | max/day: ${safeText(c.max_daily_trades)} | live today: ${safeText(c.live_trades_today)}<br/>
-      event risk flagged: ${safeText(c?.event_risk?.flagged || false)} | regime mode: ${safeText(c?.regime_status?.mode || "off")}<br/>
-      blocked: ${safeText(c.blocked)} ${Array.isArray(c.block_reasons) && c.block_reasons.length ? `(${c.block_reasons.join(", ")})` : ""}`;
+    checklistText = formatPreflightChecklistHtml(c);
   } else {
-    checklistText = `<br/><span class="muted">Checklist unavailable: ${safeText(preflight.error)}</span>`;
+    checklistText = `<div class="approve-preflight muted">Checklist unavailable: ${safeText(preflight.error)}</div>`;
   }
   summary.innerHTML = `
     Approve BUY ${row.qty} ${row.ticker} @ ${row.price ? formatMoney(row.price) : "market"}?<br/>
@@ -1286,6 +1592,11 @@ async function openApproveDialog(row) {
     <span class="muted">${riskHint}</span>
     ${checklistText}
   `;
+  const tickerInput = document.getElementById("approveTickerInput");
+  if (tickerInput) {
+    tickerInput.value = "";
+    tickerInput.placeholder = String(row.ticker || "TICKER");
+  }
   state.approvingTradeId = row.id;
   dialog.showModal();
 }
@@ -1297,31 +1608,48 @@ async function loadConfig() {
   const manualSummary = document.getElementById("manualJwtSummary");
   const supabaseBlock = document.getElementById("supabaseAuthBlock");
 
-  let publicCfg = { supabase: null };
+  let publicCfg = { supabase: null, saas_mode: false, schwab_oauth: false };
   try {
     const res = await fetch("/api/public-config", { headers: { Accept: "application/json" } });
     const body = res.ok ? await res.json() : {};
-    if (body?.ok && body?.data) publicCfg = body.data;
+    if (body?.ok && body?.data) publicCfg = { ...publicCfg, ...body.data };
   } catch {
     /* offline or boot — fall back to manual JWT only */
+  }
+  state.publicConfig = publicCfg;
+  renderLiveTradingSaasPanel();
+
+  const implLink = document.getElementById("implementationGuideLink");
+  const implUrl = (publicCfg?.implementation_guide_url || "").trim();
+  if (implLink) {
+    if (implUrl) {
+      implLink.href = implUrl;
+      implLink.classList.remove("hidden");
+    } else {
+      implLink.classList.add("hidden");
+      implLink.setAttribute("href", "#");
+    }
   }
 
   const hasSupabaseUi = Boolean(publicCfg?.supabase?.url && publicCfg?.supabase?.anon_key);
   if (hasSupabaseUi && supabaseBlock) {
     supabaseBlock.classList.remove("hidden");
-    if (manualDetails) manualDetails.open = false;
-    if (manualSummary) {
-      manualSummary.textContent = "Advanced: paste JWT instead";
-      manualSummary.classList.remove("manual-jwt-summary--hidden");
+    if (manualDetails) {
+      manualDetails.classList.add("hidden");
+      manualDetails.open = false;
     }
     await initSupabaseAuth(publicCfg.supabase.url, publicCfg.supabase.anon_key);
   } else {
     if (supabaseBlock) supabaseBlock.classList.add("hidden");
-    if (manualDetails) manualDetails.open = true;
+    if (manualDetails) {
+      manualDetails.classList.remove("hidden");
+      manualDetails.open = true;
+    }
     if (manualSummary) {
       manualSummary.textContent = "Session token";
       manualSummary.classList.add("manual-jwt-summary--hidden");
     }
+    markAuthReady();
   }
 
   if (tokenInput) {
@@ -1343,10 +1671,85 @@ async function loadConfig() {
   updateActionCenter({
     title: "Authentication Required",
     message: hasSupabaseUi
-      ? "Sign in with Supabase, or open Advanced and paste a JWT, to access protected APIs."
+      ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
       : "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
     severity: "warn",
   });
+
+  const params = new URLSearchParams(window.location.search);
+  const oauthSt = params.get("schwab_oauth");
+  if (oauthSt) {
+    const msg = params.get("message") || "";
+    const u = new URL(window.location.href);
+    u.searchParams.delete("schwab_oauth");
+    u.searchParams.delete("message");
+    window.history.replaceState({}, "", u.pathname + (u.search ? u.search : ""));
+    document.getElementById("onboardingSchwabBtn")?.classList.toggle("hidden", !state.publicConfig?.schwab_oauth);
+
+  if (oauthSt === "ok") {
+      logEvent({ kind: "system", severity: "info", message: "Schwab account linked successfully." });
+      updateActionCenter({ title: "Schwab", message: "Broker account connected.", severity: "success" });
+    } else {
+      logEvent({ kind: "system", severity: "error", message: `Schwab OAuth: ${msg || "failed"}` });
+      updateActionCenter({ title: "Schwab OAuth", message: msg || "Connection failed.", severity: "error" });
+    }
+  }
+}
+
+/**
+ * Restore scan table + diagnostics from persisted last_scan (local) or scan-results (SaaS).
+ * Without this, the UI stayed empty after refresh even when a scan had completed.
+ */
+async function hydrateScanTableFromStatus(status) {
+  const ls = status.last_scan;
+  if (!ls || !ls.at) return;
+
+  const diag = ls.diagnostics || ls.diagnostics_summary || {};
+  const metaEl = document.getElementById("scanMeta");
+  const strat = ls.strategy_summary || null;
+
+  if (state.publicConfig.saas_mode) {
+    const jobId = safeText(ls.job_id || "").trim();
+    const foundRaw = ls.signals_found;
+    const foundN = foundRaw === null || foundRaw === undefined ? null : safeNum(foundRaw, 0);
+
+    if (jobId && foundN === 0) {
+      state.latestSignals = [];
+      const headline = diagnosticsHeadline(diag);
+      if (metaEl) metaEl.textContent = (headline || buildScanMeta([], 0)) + formatStrategySummary(strat);
+      updateTopStrategyChip(strat);
+      renderDiagnostics(diag);
+      renderScanRows([]);
+      return;
+    }
+
+    const url = jobId
+      ? `/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`
+      : `/api/scan-results?limit=500`;
+    const listOut = await api.get(url);
+    if (!listOut.ok) return;
+    const rows = Array.isArray(listOut.data) ? listOut.data : [];
+    const signals = rows.map((r) => r.payload).filter((p) => p && typeof p === "object");
+    state.latestSignals = signals;
+    const headline = diagnosticsHeadline(diag);
+    if (metaEl)
+      metaEl.textContent =
+        (headline || buildScanMeta(signals, ls.signals_found ?? signals.length)) + formatStrategySummary(strat);
+    updateTopStrategyChip(strat);
+    renderDiagnostics(diag);
+    renderScanRows(signals);
+    return;
+  }
+
+  const localSignals = Array.isArray(ls.signals) ? ls.signals : [];
+  state.latestSignals = localSignals;
+  const headline = diagnosticsHeadline(diag);
+  if (metaEl)
+    metaEl.textContent =
+      (headline || buildScanMeta(localSignals, ls.signals_found)) + formatStrategySummary(strat);
+  updateTopStrategyChip(strat);
+  renderDiagnostics(diag);
+  renderScanRows(localSignals);
 }
 
 async function refreshStatus() {
@@ -1360,6 +1763,11 @@ async function refreshStatus() {
   }
 
   const status = statusRes.data || {};
+  try {
+    await hydrateScanTableFromStatus(status);
+  } catch (e) {
+    console.warn("hydrateScanTableFromStatus", e);
+  }
   setStatusPill(document.getElementById("marketToken"), status.market_state || (status.market_token_ok ? "Connected" : "Disconnected"));
   setStatusPill(document.getElementById("accountToken"), status.account_state || (status.account_token_ok ? "Connected" : "Disconnected"));
 
@@ -1436,10 +1844,12 @@ async function refreshStatus() {
     }
     const metrics = deepRes.data.metrics || {};
     const req = safeNum(metrics.requests_total, 0);
-    const err = safeNum(metrics.errors_total, 0);
-    const rate = req > 0 ? `${((err / req) * 100).toFixed(1)}%` : "0.0%";
-    errEl.className = statusClass(err > 0 ? "warn" : "info");
-    errEl.textContent = `${rate} (${err}/${req})`;
+    const srvErr = safeNum(metrics.errors_total, 0);
+    const clientErr = safeNum(metrics.client_errors_total, 0);
+    const rate = req > 0 ? `${((srvErr / req) * 100).toFixed(1)}%` : "0.0%";
+    errEl.className = statusClass(srvErr > 0 ? "warn" : clientErr > 0 ? "info" : "info");
+    errEl.textContent =
+      clientErr > 0 ? `${rate} srv (${srvErr}/${req}, 4xx:${clientErr})` : `${rate} srv (${srvErr}/${req})`;
   } else {
     setStatusPill(quoteEl, "Unknown");
     errEl.className = "pill neutral";
@@ -1449,8 +1859,8 @@ async function refreshStatus() {
   const authOk = Boolean(status.market_token_ok && status.account_token_ok);
   const quoteOk = Boolean(deepRes.ok && deepRes.data?.quote_ok);
   const req = safeNum(deepRes?.data?.metrics?.requests_total, 0);
-  const err = safeNum(deepRes?.data?.metrics?.errors_total, 0);
-  const errRate = req > 0 ? (err / req) * 100 : 0;
+  const srvErrRibbon = safeNum(deepRes?.data?.metrics?.errors_total, 0);
+  const errRate = req > 0 ? (srvErrRibbon / req) * 100 : 0;
 
   const ribbonAuth = document.getElementById("ribbonAuth");
   const ribbonQuotes = document.getElementById("ribbonQuotes");
@@ -1478,9 +1888,95 @@ async function refreshStatus() {
 
 const SCAN_START_META = "Scanning market candidates...";
 
+function scanBodyFromBacktestSpec(spec) {
+  if (!spec || typeof spec !== "object") return {};
+  const out = {};
+  if (spec.overrides && typeof spec.overrides === "object" && Object.keys(spec.overrides).length) {
+    out.strategy_overrides = spec.overrides;
+  }
+  const um = safeText(spec.universe_mode || "watchlist").toLowerCase();
+  if (um === "tickers" || um === "watchlist") out.universe_mode = um;
+  if (um === "tickers" && Array.isArray(spec.tickers)) out.tickers = spec.tickers;
+  return out;
+}
+
+function readScanOptionsFromForm() {
+  const ta = document.getElementById("scanOptionsJson");
+  if (!ta) {
+    state.scanRunOptions = null;
+    return true;
+  }
+  const raw = ta.value.trim();
+  if (!raw) {
+    state.scanRunOptions = null;
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Scan options must be a JSON object.");
+    }
+    state.scanRunOptions = parsed;
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logEvent({ kind: "scan", severity: "error", message: `Invalid scan options JSON: ${msg}` });
+    updateActionCenter({ title: "Scan options", message: msg, severity: "error" });
+    return false;
+  }
+}
+
+async function fillScanOptionsFromLatestBacktest() {
+  const ta = document.getElementById("scanOptionsJson");
+  if (!ta) return;
+  const out = await api.get("/api/backtest-runs?limit=1");
+  if (!out.ok) {
+    logEvent({ kind: "scan", severity: "error", message: `Backtest list failed: ${out.error}` });
+    updateActionCenter({ title: "Backtests", message: safeText(out.error), severity: "error" });
+    return;
+  }
+  const rows = Array.isArray(out.data) ? out.data : [];
+  if (!rows.length) {
+    updateActionCenter({ title: "Backtests", message: "No backtest runs yet.", severity: "info" });
+    return;
+  }
+  const spec = rows[0].spec;
+  const body = scanBodyFromBacktestSpec(spec);
+  ta.value = JSON.stringify(body, null, 2);
+  readScanOptionsFromForm();
+  logEvent({ kind: "scan", severity: "info", message: "Scan options filled from latest backtest." });
+  updateActionCenter({
+    title: "Scan options",
+    message: "Filled from your most recent backtest. Edit JSON if needed, then Run Scan.",
+    severity: "info",
+  });
+}
+
+function strategySummaryFromSignals(signals) {
+  const rows = Array.isArray(signals) ? signals : [];
+  const counts = {};
+  rows.forEach((sig) => {
+    const attr = sig?.strategy_attribution;
+    const name = String((attr && attr.top_live) || "unknown");
+    counts[name] = (counts[name] || 0) + 1;
+  });
+  const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const dominant = ranked[0]?.[0] || "—";
+  const dominantCount = ranked[0]?.[1] || 0;
+  return {
+    dominant_live_strategy: dominant,
+    dominant_count: dominantCount,
+    total_ranked: rows.length,
+    counts: Object.fromEntries(ranked),
+  };
+}
+
 async function waitForSaaScanCompletion(taskId) {
-  const maxPolls = 180;
+  const maxPolls = 400;
   const metaEl = document.getElementById("scanMeta");
+  let firstPendingAt = null;
+  let workerHintShown = false;
+  setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.05, "Queued…");
   for (let i = 0; i < maxPolls; i++) {
     const status = await api.get(`/api/scan/${encodeURIComponent(taskId)}`);
     if (!status.ok) {
@@ -1493,23 +1989,40 @@ async function waitForSaaScanCompletion(taskId) {
     const data = status.data || {};
     const celeryStatus = safeText(data.status || "").toLowerCase();
     if (celeryStatus === "pending" || celeryStatus === "received") {
+      if (firstPendingAt === null) firstPendingAt = Date.now();
       metaEl.textContent = "Scan queued… waiting for worker.";
-      updateActionCenter({
-        title: "Scan Queued",
-        message: "Task is waiting for a worker. This page will update when results are ready.",
-        severity: "info",
-      });
+      setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.12, "Queued — waiting for worker");
+      const queuedMs = Date.now() - firstPendingAt;
+      if (queuedMs > 50_000 && !workerHintShown) {
+        workerHintShown = true;
+        metaEl.textContent =
+          "Still queued — no worker yet. Confirm Celery is running with queue \"scan\" and REDIS_URL matches the API.";
+        updateActionCenter({
+          title: "Scan waiting for worker",
+          message:
+            "If this stays queued, start workers with: celery -A webapp.tasks worker -Q scan,orders,celery — and use the same REDIS_URL as the app.",
+          severity: "warn",
+        });
+      } else {
+        updateActionCenter({
+          title: "Scan Queued",
+          message: "Task is waiting for a worker. This page will update when results are ready.",
+          severity: "info",
+        });
+      }
       await new Promise((r) => setTimeout(r, 2000));
       continue;
     }
+    firstPendingAt = null;
     if (celeryStatus === "started" || celeryStatus === "retry") {
       metaEl.textContent = "Scan running…";
+      setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.55, "Running scan…");
       updateActionCenter({
         title: "Scan Running",
         message: "Scan task is executing. Results will appear below when finished.",
         severity: "info",
       });
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 4000));
       continue;
     }
     if (celeryStatus === "success") {
@@ -1550,8 +2063,13 @@ async function waitForSaaScanCompletion(taskId) {
       const diag = result.diagnostics || {};
       const headline = diagnosticsHeadline(diag);
       const n = safeNum(result.signals_found, signals.length);
-      metaEl.textContent = headline || buildScanMeta(signals, n);
-      updateTopStrategyChip(null);
+      const strat =
+        result.strategy_summary && typeof result.strategy_summary === "object"
+          ? result.strategy_summary
+          : strategySummaryFromSignals(signals);
+      metaEl.textContent =
+        (headline || buildScanMeta(signals, n)) + formatStrategySummary(strat);
+      updateTopStrategyChip(strat);
       renderDiagnostics(diag);
       renderScanRows(signals);
       logEvent({
@@ -1564,6 +2082,7 @@ async function waitForSaaScanCompletion(taskId) {
         message: `Found ${n} signal(s). Review queue candidates in Scan Results.`,
         severity: "success",
       });
+      setJobProgress("scanJobProgress", "scanJobProgressLabel", 1, "Complete");
       return;
     }
     if (celeryStatus === "failure" || celeryStatus === "revoked") {
@@ -1576,6 +2095,7 @@ async function waitForSaaScanCompletion(taskId) {
         errMsg = safeText(res.error || res.message || res.exc_message || JSON.stringify(res));
       logEvent({ kind: "scan", severity: "error", message: errMsg });
       updateActionCenter({ title: "Scan Failed", message: errMsg, severity: "error" });
+      setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
@@ -1595,10 +2115,13 @@ async function runScan() {
   const scanMetaEl = document.getElementById("scanMeta");
   btn.disabled = true;
   btn.textContent = "Scanning...";
+  setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
   updateActionCenter({ title: "Scan Running", message: "Market scan is running. Results will stream into this page.", severity: "info" });
   try {
-    const out = await api.post("/api/scan?async_mode=true", {});
+    if (!readScanOptionsFromForm()) return;
+    const scanBody = state.scanRunOptions && typeof state.scanRunOptions === "object" ? state.scanRunOptions : {};
+    const out = await api.post("/api/scan?async_mode=true", scanBody);
     if (!out.ok) {
       scanMetaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
@@ -1666,7 +2189,7 @@ async function runScan() {
 }
 
 async function waitForScanCompletion() {
-  const maxPolls = 180;
+  const maxPolls = 360;
   const metaEl = document.getElementById("scanMeta");
   for (let i = 0; i < maxPolls; i++) {
     const status = await api.get("/api/scan/status");
@@ -1777,6 +2300,12 @@ async function refreshPending() {
     groups[sector].forEach((row) => {
       const score = meterFromScore(row?.signal?.signal_score ?? row?.signal?.score);
       const conviction = meterFromConviction(row?.signal?.mirofish_conviction);
+      const liveBlocked =
+        state.publicConfig.saas_mode &&
+        (!state.accountMe || !state.accountMe.live_execution_enabled);
+      const approveTitle = liveBlocked
+        ? "Live trading is off — enable in Strategy Presets after reviewing risk."
+        : "";
       const card = document.createElement("article");
       card.className = "task-card";
       card.innerHTML = `
@@ -1800,7 +2329,7 @@ async function refreshPending() {
         <div class="context-mini">${renderTimeline(row)}<br/>${renderPendingContext(row)}</div>
         <div class="task-actions">
           <button class="btn small secondary" data-quick="${row.id}">Quick View</button>
-          <button class="btn small approve-btn" data-approve="${row.id}" ${row.status !== "pending" ? "disabled" : ""}>Approve</button>
+          <button class="btn small approve-btn" data-approve="${row.id}" title="${escapeHtml(approveTitle)}" ${row.status !== "pending" || liveBlocked ? "disabled" : ""}>Approve</button>
           <button class="btn small reject-btn" data-reject="${row.id}" ${row.status !== "pending" ? "disabled" : ""}>Reject</button>
         </div>
       `;
@@ -1842,10 +2371,31 @@ async function refreshPending() {
       clicked.disabled = false;
     });
   });
+
+  const pendingN = rows.filter((r) => r.status === "pending").length;
+  const strip = document.getElementById("pendingSummaryStrip");
+  const stripText = document.getElementById("pendingSummaryText");
+  if (strip && stripText) {
+    if (pendingN > 0) {
+      strip.classList.remove("hidden");
+      stripText.textContent = `${pendingN} pending trade(s) need a decision.`;
+    } else {
+      strip.classList.add("hidden");
+    }
+  }
 }
 
 async function approveTradeById(id) {
-  const out = await api.post(`/api/trades/${id}/approve?confirm_live=true`, {});
+  const typed = document.getElementById("approveTickerInput")?.value?.trim() || "";
+  if (!typed) {
+    updateActionCenter({
+      title: "Confirm ticker",
+      message: "Type the trade ticker in the box to confirm this live order.",
+      severity: "warn",
+    });
+    return;
+  }
+  const out = await api.post(`/api/trades/${id}/approve?confirm_live=true`, { typed_ticker: typed });
   if (!out.ok) {
     logEvent({ kind: "trade", severity: "error", message: `Approve ${id} failed: ${out.error}` });
     updateActionCenter({ title: "Approval Failed", message: out.error, severity: "error" });
@@ -1868,20 +2418,26 @@ async function refreshOnboarding() {
   }
   state.onboarding = out.data;
   if (section) {
-    section.style.display = out.data?.onboarding_required ? "block" : "none";
+    section.style.display = out.data?.onboarding_required === false ? "none" : "block";
   }
+  const conn = out.data?.connection_status || (out.data?.schwab_linked ? "connected" : "disconnected");
+  const ah = out.data?.api_health || {};
+  const apiLine = ah.schwab_linked
+    ? `API: market ${ah.market_token_ok ? "ok" : "—"} · account ${ah.account_token_ok ? "ok" : "—"} · quotes ${ah.quote_ok ? "ok" : "—"}`
+    : "API: connect Schwab to probe tokens and quotes.";
   if (!out.data?.onboarding_required) {
-    meta.textContent = "Onboarding complete: Schwab account linked.";
+    meta.textContent = `Connection: ${conn} · ${apiLine}`;
     output.textContent = prettyJson(out.data);
     return;
   }
   const elapsed = out.data?.elapsed_minutes;
   const done = out.data?.completed_under_target;
-  meta.textContent = `Elapsed: ${elapsed ?? "n/a"} min | target <= 20 min | ${done ? "PASS" : "IN PROGRESS"}`;
+  meta.textContent = `Connection: ${conn} · ${apiLine} · Elapsed: ${elapsed ?? "n/a"} min | ${done ? "PASS" : "IN PROGRESS"}`;
   output.textContent = prettyJson(out.data);
 }
 
 async function startOnboarding() {
+  await runLazyApi("onboarding");
   const out = await api.post("/api/onboarding/start", {});
   if (!out.ok) {
     logEvent({ kind: "system", severity: "error", message: `Onboarding start failed: ${out.error}` });
@@ -1892,6 +2448,7 @@ async function startOnboarding() {
 }
 
 async function runOnboardingStep(step) {
+  await runLazyApi("onboarding");
   const out = await api.post(`/api/onboarding/step/${step}`, {});
   if (!out.ok) {
     logEvent({ kind: "system", severity: "error", message: `Onboarding step failed: ${out.error}` });
@@ -1912,10 +2469,18 @@ async function loadProfiles() {
     return;
   }
   state.profile = out.data;
+  state.presetCatalog =
+    out.data.preset_catalog && typeof out.data.preset_catalog === "object" ? out.data.preset_catalog : {};
+  state.savedUiSettings = {
+    profile: out.data.profile || "balanced",
+    mode: out.data.mode || "standard",
+    automation_opt_in: Boolean(out.data.automation_opt_in),
+  };
   document.getElementById("profileSelect").value = out.data.profile || "balanced";
   document.getElementById("settingsModeSelect").value = out.data.mode || "standard";
   document.getElementById("automationOptIn").checked = Boolean(out.data.automation_opt_in);
   renderProfilePanel(panel, out.data);
+  renderPresetApplyPreview();
 }
 
 async function applyProfile() {
@@ -1929,20 +2494,106 @@ async function applyProfile() {
     logEvent({ kind: "system", severity: "error", message: `Preset apply failed: ${out.error}` });
     return;
   }
-  logEvent({ kind: "system", severity: "info", message: `Applied ${profile} profile (${mode} mode).` });
+  logEvent({
+    kind: "system",
+    severity: "info",
+    message: `Preset: ${profile}, automation ${automationOptIn ? "on" : "off"}, ${mode} mode.`,
+  });
+  updateActionCenter({
+    title: "Preset applied",
+    message: `${profile} · ${mode} mode · automation ${automationOptIn ? "on" : "off"}`,
+    severity: "success",
+  });
   await loadProfiles();
+}
+
+function renderDecisionCardView(data, error) {
+  const ph = document.getElementById("decisionPlaceholder");
+  const sum = document.getElementById("decisionSummary");
+  const det = document.getElementById("decisionJsonDetails");
+  const pre = document.getElementById("decisionOutput");
+  if (!pre) return;
+  if (error) {
+    if (ph) {
+      ph.textContent = error;
+      ph.classList.remove("hidden");
+    }
+    if (sum) {
+      sum.classList.add("hidden");
+      sum.innerHTML = "";
+    }
+    if (det) det.classList.add("hidden");
+    pre.textContent = "";
+    return;
+  }
+  if (ph) ph.classList.add("hidden");
+  const ez = data.entry_zone || {};
+  const sz = data.size || {};
+  const conf = data.confidence || {};
+  const blocked = Boolean(data.checklist && data.checklist.blocked);
+  const scoreN = Number(conf.signal_score);
+  const scoreTxt = Number.isFinite(scoreN) ? scoreN.toFixed(1) : "—";
+  const verdict = blocked
+    ? "Safety checks say do not send this live yet."
+    : "Passes current safety snapshot; you still confirm each live order in the queue.";
+  if (sum) {
+    sum.classList.remove("hidden");
+    sum.innerHTML = `
+      <h4 class="tool-summary-title">${safeText(data.ticker)}</h4>
+      <ul class="tool-summary-list">
+        <li><strong>Size:</strong> ${safeNum(sz.qty, 0)} shares (~${formatMoney(sz.usd || 0)}).</li>
+        <li><strong>Entry zone:</strong> ${safeText(ez.low)} – ${safeText(ez.high)}.</li>
+        <li><strong>Stop idea:</strong> near ${safeText(data.stop_invalidation)}.</li>
+        <li><strong>Confidence:</strong> ${safeText(conf.bucket)} (score ${scoreTxt}).</li>
+        <li><strong>Live readiness:</strong> ${verdict}</li>
+      </ul>
+    `;
+  }
+  if (det) det.classList.remove("hidden");
+  pre.textContent = prettyJson(data);
 }
 
 async function loadDecisionCard() {
   const ticker = document.getElementById("decisionTickerInput").value.trim().toUpperCase();
   if (!ticker) return;
   const out = await api.get(`/api/decision-card/${ticker}`);
-  const output = document.getElementById("decisionOutput");
   if (!out.ok) {
-    output.textContent = `Decision card failed: ${out.error}`;
+    renderDecisionCardView(null, `Decision card failed: ${out.error}`);
     return;
   }
-  output.textContent = prettyJson(out.data);
+  renderDecisionCardView(out.data, null);
+}
+
+function renderRecoveryView(data, error) {
+  const ph = document.getElementById("recoveryPlaceholder");
+  const sum = document.getElementById("recoverySummary");
+  const det = document.getElementById("recoveryJsonDetails");
+  const pre = document.getElementById("recoveryOutput");
+  if (!pre) return;
+  if (error) {
+    if (ph) {
+      ph.textContent = error;
+      ph.classList.remove("hidden");
+    }
+    if (sum) {
+      sum.classList.add("hidden");
+      sum.innerHTML = "";
+    }
+    if (det) det.classList.add("hidden");
+    pre.textContent = "";
+    return;
+  }
+  if (ph) ph.classList.add("hidden");
+  if (sum) {
+    sum.classList.remove("hidden");
+    sum.innerHTML = `
+      <h4 class="tool-summary-title">${safeText(data.title)}</h4>
+      <p class="tool-summary-p">${safeText(data.summary)}</p>
+      <p class="tool-summary-next"><strong>Next step:</strong> ${safeText(data.fix_path)}</p>
+    `;
+  }
+  if (det) det.classList.remove("hidden");
+  pre.textContent = prettyJson(data);
 }
 
 async function mapRecovery() {
@@ -1950,12 +2601,11 @@ async function mapRecovery() {
   const message = document.getElementById("recoveryMessage").value.trim();
   if (!message) return;
   const out = await api.get(`/api/recovery/map?source=${encodeURIComponent(source)}&error=${encodeURIComponent(message)}`);
-  const output = document.getElementById("recoveryOutput");
   if (!out.ok) {
-    output.textContent = `Recovery mapping failed: ${out.error}`;
+    renderRecoveryView(null, `Recovery mapping failed: ${out.error}`);
     return;
   }
-  output.textContent = prettyJson(out.data);
+  renderRecoveryView(out.data, null);
 }
 
 async function refreshPerformance() {
@@ -1971,14 +2621,219 @@ async function refreshPerformance() {
 }
 
 function setDefaultBacktestDates() {
+  const startEl = document.getElementById("btStart");
+  const endEl = document.getElementById("btEnd");
+  if (startEl?.value && endEl?.value) return;
   const end = new Date();
   const start = new Date();
   start.setFullYear(end.getFullYear() - 5);
   const fmt = (d) => d.toISOString().slice(0, 10);
-  const startEl = document.getElementById("btStart");
-  const endEl = document.getElementById("btEnd");
   if (startEl && !startEl.value) startEl.value = fmt(start);
   if (endEl && !endEl.value) endEl.value = fmt(end);
+}
+
+function restoreBacktestFormFromStorage() {
+  try {
+    const raw = localStorage.getItem(BACKTEST_PREFS_KEY);
+    if (!raw) return false;
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object") return false;
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (!el || val === undefined || val === null) return;
+      el.value = String(val);
+    };
+    setVal("btUniverse", o.universe);
+    setVal("btTickers", o.tickers);
+    setVal("btTheory", o.theory);
+    setVal("btStart", o.start);
+    setVal("btEnd", o.end);
+    setVal("btSlippage", o.slippage);
+    setVal("btFeeShare", o.feeShare);
+    setVal("btMinFee", o.minFee);
+    setVal("btMaxAdv", o.maxAdv);
+    setVal("btQualityGates", o.qualityGates);
+    setVal("btBreakoutConfirm", o.breakoutConfirm);
+    setVal("btForensicMode", o.forensicMode);
+    setVal("btPead", o.pead);
+    const skip = document.getElementById("btSkipMirofish");
+    if (skip && typeof o.skipMirofish === "boolean") skip.checked = o.skipMirofish;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function snapshotBacktestFormForStorage() {
+  return {
+    universe: document.getElementById("btUniverse")?.value ?? "",
+    tickers: document.getElementById("btTickers")?.value ?? "",
+    theory: document.getElementById("btTheory")?.value ?? "",
+    start: document.getElementById("btStart")?.value ?? "",
+    end: document.getElementById("btEnd")?.value ?? "",
+    slippage: document.getElementById("btSlippage")?.value ?? "",
+    feeShare: document.getElementById("btFeeShare")?.value ?? "",
+    minFee: document.getElementById("btMinFee")?.value ?? "",
+    maxAdv: document.getElementById("btMaxAdv")?.value ?? "",
+    qualityGates: document.getElementById("btQualityGates")?.value ?? "",
+    breakoutConfirm: document.getElementById("btBreakoutConfirm")?.value ?? "",
+    forensicMode: document.getElementById("btForensicMode")?.value ?? "",
+    pead: document.getElementById("btPead")?.value ?? "",
+    skipMirofish: Boolean(document.getElementById("btSkipMirofish")?.checked),
+  };
+}
+
+let _backtestPersistTimer = null;
+function schedulePersistBacktestForm() {
+  if (_backtestPersistTimer) clearTimeout(_backtestPersistTimer);
+  _backtestPersistTimer = setTimeout(() => {
+    _backtestPersistTimer = null;
+    try {
+      localStorage.setItem(BACKTEST_PREFS_KEY, JSON.stringify(snapshotBacktestFormForStorage()));
+    } catch {
+      /* quota */
+    }
+  }, 400);
+}
+
+function wireBacktestFormPersistence() {
+  const root = document.getElementById("backtestSection");
+  if (!root) return;
+  root.addEventListener("input", schedulePersistBacktestForm);
+  root.addEventListener("change", schedulePersistBacktestForm);
+}
+
+function resetBacktestFormToDefaults() {
+  localStorage.removeItem(BACKTEST_PREFS_KEY);
+  const u = document.getElementById("btUniverse");
+  if (u) u.value = "watchlist";
+  const tick = document.getElementById("btTickers");
+  if (tick) tick.value = "";
+  const th = document.getElementById("btTheory");
+  if (th) th.value = "";
+  const s = document.getElementById("btStart");
+  const e = document.getElementById("btEnd");
+  if (s) s.value = "";
+  if (e) e.value = "";
+  setDefaultBacktestDates();
+  const slip = document.getElementById("btSlippage");
+  if (slip) slip.value = "15";
+  const fee = document.getElementById("btFeeShare");
+  if (fee) fee.value = "0.005";
+  const minf = document.getElementById("btMinFee");
+  if (minf) minf.value = "1";
+  const adv = document.getElementById("btMaxAdv");
+  if (adv) adv.value = "0.02";
+  ["btQualityGates", "btBreakoutConfirm", "btForensicMode", "btPead"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const skip = document.getElementById("btSkipMirofish");
+  if (skip) skip.checked = false;
+  syncBtUniverseRow();
+  setBtMetaMessage("Form reset to defaults. Queue when ready.");
+  logEvent({ kind: "system", severity: "info", message: "Backtest form reset." });
+}
+
+function openQueueScanDialog(sig) {
+  const dialog = document.getElementById("queueScanDialog");
+  const headline = document.getElementById("queueScanHeadline");
+  const qty = document.getElementById("queueScanQty");
+  const note = document.getElementById("queueScanNote");
+  if (!dialog || !sig) return;
+  state.queueScanDraft = sig;
+  const t = sig.ticker || sig.symbol || "?";
+  if (headline) {
+    const px = sig.price ?? sig.current_price;
+    headline.innerHTML = `${escapeHtml(t)} · last ${px != null ? escapeHtml(formatMoney(px)) : "—"}`;
+  }
+  if (qty) qty.value = "";
+  if (note) note.value = "Queued from scan table";
+  dialog.showModal();
+}
+
+function closeQueueScanDialog() {
+  const dialog = document.getElementById("queueScanDialog");
+  state.queueScanDraft = null;
+  dialog?.close();
+}
+
+async function confirmQueueScanDialog() {
+  const sig = state.queueScanDraft;
+  if (!sig) {
+    closeQueueScanDialog();
+    return;
+  }
+  const qtyRaw = document.getElementById("queueScanQty")?.value?.trim();
+  const note = document.getElementById("queueScanNote")?.value?.trim() || "Queued from scan table";
+  let qty = null;
+  if (qtyRaw) {
+    const n = parseInt(qtyRaw, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      logEvent({ kind: "trade", severity: "warn", message: "Enter a positive whole number for quantity, or leave blank for auto sizing." });
+      return;
+    }
+    qty = n;
+  }
+  const btn = document.getElementById("queueScanConfirmBtn");
+  if (btn) btn.disabled = true;
+  const payload = {
+    ticker: sig.ticker || sig.symbol,
+    price: sig.price ?? sig.current_price ?? null,
+    signal: sig,
+    note,
+  };
+  if (qty != null) payload.qty = qty;
+  const out = await api.post("/api/pending-trades", payload);
+  if (!out.ok) {
+    logEvent({ kind: "trade", severity: "error", message: `Queue failed: ${out.error}` });
+    updateActionCenter({ title: "Queue failed", message: out.error, severity: "error" });
+  } else {
+    logEvent({ kind: "trade", severity: "info", message: `Queued ${payload.ticker} (${out.data.id})` });
+    updateActionCenter({ title: "Staged for approval", message: `${payload.ticker} added to pending.`, severity: "success" });
+    await refreshPending();
+    closeQueueScanDialog();
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function submitManualPendingTrade() {
+  const tEl = document.getElementById("manualPendingTicker");
+  const qEl = document.getElementById("manualPendingQty");
+  const nEl = document.getElementById("manualPendingNote");
+  const ticker = (tEl?.value || "").trim().toUpperCase();
+  if (!ticker) {
+    logEvent({ kind: "trade", severity: "warn", message: "Enter a ticker to stage a trade." });
+    return;
+  }
+  let qty = null;
+  const qRaw = (qEl?.value || "").trim();
+  if (qRaw) {
+    const n = parseInt(qRaw, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      logEvent({ kind: "trade", severity: "warn", message: "Quantity must be a positive whole number, or leave blank for auto sizing." });
+      return;
+    }
+    qty = n;
+  }
+  const note = (nEl?.value || "").trim() || "Manual staging from dashboard";
+  const btn = document.getElementById("manualPendingBtn");
+  if (btn) btn.disabled = true;
+  const payload = { ticker, note };
+  if (qty != null) payload.qty = qty;
+  const out = await api.post("/api/pending-trades", payload);
+  if (!out.ok) {
+    logEvent({ kind: "trade", severity: "error", message: `Manual queue failed: ${out.error}` });
+    updateActionCenter({ title: "Could not stage trade", message: out.error, severity: "error" });
+  } else {
+    logEvent({ kind: "trade", severity: "info", message: `Queued ${ticker} (${out.data.id})` });
+    updateActionCenter({ title: "Staged for approval", message: `${ticker} added to pending.`, severity: "success" });
+    if (tEl) tEl.value = "";
+    if (qEl) qEl.value = "";
+    if (nEl) nEl.value = "";
+    await refreshPending();
+  }
+  if (btn) btn.disabled = false;
 }
 
 function setBacktestQueueUiBusy(busy) {
@@ -2017,6 +2872,7 @@ function applyBacktestPresetYears(years) {
   if (startEl) startEl.value = fmt(start);
   if (endEl) endEl.value = fmt(end);
   setBtMetaMessage(`Date range set to last ${years} year(s).`);
+  schedulePersistBacktestForm();
 }
 
 function collectBacktestOverrides() {
@@ -2104,7 +2960,7 @@ function renderBacktestResultRaw(result, fallbackText) {
   if (!pre) return;
   if (result && typeof result === "object") {
     pre.textContent = prettyJson(result);
-    if (details) details.open = true;
+    if (details) details.open = getDisplayMode() === "pro";
   } else {
     pre.textContent = fallbackText || "No run yet.";
     if (details) details.open = false;
@@ -2265,6 +3121,7 @@ async function refreshBacktestRuns() {
 async function pollBacktestTask(taskId) {
   const t0 = Date.now();
   const pre = document.getElementById("btResult");
+  setJobProgress("btJobProgress", "btJobProgressLabel", 0.08, "Queued…");
   for (let i = 0; i < 120; i++) {
     const elapsed = Math.floor((Date.now() - t0) / 1000);
     setBtMetaMessage(`Running… ${elapsed}s · waiting for worker`, { sticky: true });
@@ -2276,10 +3133,18 @@ async function pollBacktestTask(taskId) {
     const d = st.data || {};
     const celery = safeText(d.celery_status || "").toLowerCase();
     setBtMetaMessage(`Running… ${elapsed}s · status: ${celery} · saved: ${safeText(d.db_status || "—")}`, { sticky: true });
+    const progFrac =
+      celery === "pending" || celery === "received"
+        ? 0.15
+        : celery === "started" || celery === "retry"
+          ? 0.5 + Math.min(0.45, (i / 120) * 0.45)
+          : 0.2;
+    setJobProgress("btJobProgress", "btJobProgressLabel", progFrac, `${celery} · ${elapsed}s`);
     if (celery === "success" && d.result && pre) {
       renderBacktestResultSummary(d.result);
       renderBacktestResultRaw(d.result, "");
       setBtMetaMessage("Complete. Summary above; full JSON below.", { sticky: true });
+      setJobProgress("btJobProgress", "btJobProgressLabel", 1, "Complete");
       await refreshBacktestRuns();
       return;
     }
@@ -2287,6 +3152,7 @@ async function pollBacktestTask(taskId) {
       renderBacktestResultSummary(null);
       renderBacktestResultRaw(null, prettyJson(d.task_result || d));
       setBtMetaMessage("Run finished with an error.", { sticky: true });
+      setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
       return;
     }
@@ -2294,12 +3160,14 @@ async function pollBacktestTask(taskId) {
       renderBacktestResultSummary(null);
       if (pre) pre.textContent = safeText(d.error_message);
       setBtMetaMessage(safeText(d.error_message), { sticky: true });
+      setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
       return;
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
   setBtMetaMessage("Still running; use Refresh list or check back later.", { sticky: true });
+  setJobProgress("btJobProgress", "btJobProgressLabel", 0.9, "Still running…");
 }
 
 async function queueUserBacktest() {
@@ -2562,9 +3430,11 @@ async function runSecCompare() {
 }
 
 async function refreshAll() {
+  resetLazyLoaded();
   setLoading({ portfolio: "Loading portfolio..." });
   await Promise.all([
     refreshStatus(),
+    refreshAccountMe(),
     refreshPending(),
     refreshPortfolio(),
     refreshSectors(),
@@ -2573,11 +3443,16 @@ async function refreshAll() {
     refreshPerformance(),
     refreshBacktestRuns(),
   ]);
+  Object.keys(lazyLoaded).forEach((k) => {
+    lazyLoaded[k] = true;
+  });
 }
 
 function wireEvents() {
+  restoreBacktestFormFromStorage();
   setDefaultBacktestDates();
   syncBtUniverseRow();
+  wireBacktestFormPersistence();
   renderStrategyChatMessages();
   document.getElementById("btHubTabForm")?.addEventListener("click", () => switchBacktestHubTab("form"));
   document.getElementById("btHubTabChat")?.addEventListener("click", () => switchBacktestHubTab("chat"));
@@ -2604,16 +3479,44 @@ function wireEvents() {
   });
   document.getElementById("btQueueBtn")?.addEventListener("click", queueUserBacktest);
   document.getElementById("btRefreshListBtn")?.addEventListener("click", refreshBacktestRuns);
+  document.getElementById("btResetFormBtn")?.addEventListener("click", resetBacktestFormToDefaults);
+  document.getElementById("queueScanCancelBtn")?.addEventListener("click", closeQueueScanDialog);
+  document.getElementById("queueScanConfirmBtn")?.addEventListener("click", () => void confirmQueueScanDialog());
+  document.getElementById("manualPendingBtn")?.addEventListener("click", () => void submitManualPendingTrade());
+  document.getElementById("queueScanDialog")?.addEventListener("click", (e) => {
+    if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
+  });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   document.getElementById("scanBtn").addEventListener("click", runScan);
+  document.getElementById("scanApplyBacktestSpecBtn")?.addEventListener("click", () => void fillScanOptionsFromLatestBacktest());
+  document.getElementById("scanClearOptionsBtn")?.addEventListener("click", () => {
+    const ta = document.getElementById("scanOptionsJson");
+    if (ta) ta.value = "";
+    state.scanRunOptions = null;
+  });
   document.getElementById("refreshBtn").addEventListener("click", refreshAll);
   document.getElementById("onboardingStartBtn").addEventListener("click", startOnboarding);
   document.getElementById("onboardingConnectBtn").addEventListener("click", () => runOnboardingStep("connect"));
   document.getElementById("onboardingVerifyBtn").addEventListener("click", () => runOnboardingStep("verify_token_health"));
   document.getElementById("onboardingScanBtn").addEventListener("click", () => runOnboardingStep("test_scan"));
   document.getElementById("onboardingPaperBtn").addEventListener("click", () => runOnboardingStep("test_paper_order"));
+  document.getElementById("onboardingSchwabBtn")?.addEventListener("click", async () => {
+    if (!state.publicConfig?.schwab_oauth) {
+      logEvent({ kind: "system", severity: "warn", message: "Schwab OAuth is not configured on this server." });
+      return;
+    }
+    const out = await api.get("/api/oauth/schwab/authorize-url");
+    if (!out.ok || !out.data?.url) {
+      logEvent({ kind: "system", severity: "error", message: out.error || "Could not start Schwab OAuth." });
+      return;
+    }
+    window.location.href = out.data.url;
+  });
   document.getElementById("applyProfileBtn").addEventListener("click", applyProfile);
+  document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
   document.getElementById("settingsModeSelect").addEventListener("change", loadProfiles);
+  document.getElementById("profileSelect")?.addEventListener("change", renderPresetApplyPreview);
+  document.getElementById("automationOptIn")?.addEventListener("change", renderPresetApplyPreview);
   document.getElementById("decisionBtn").addEventListener("click", loadDecisionCard);
   document.getElementById("recoveryBtn").addEventListener("click", mapRecovery);
   document.getElementById("performanceRefreshBtn").addEventListener("click", refreshPerformance);
@@ -2686,14 +3589,44 @@ function wireEvents() {
     });
   }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
   sections.forEach((section) => observer.observe(section));
+
+  window.addEventListener("hashchange", handleRouteHash);
+
+  document.getElementById("displayModeSelect")?.addEventListener("change", (e) => {
+    const v = e.target.value;
+    applyDisplayMode(v);
+    if (v === "pro" && state.performance) {
+      const panel = document.getElementById("performancePanel");
+      if (panel) renderPerformancePanel(panel, state.performance);
+    }
+  });
 }
 
 (async () => {
   wireEvents();
+  applyDisplayMode(getDisplayMode());
   applyReportViewMode();
   applySecCompareMode();
   await loadConfig();
-  await refreshAll();
+  await authSessionReady;
+  const token = await getApiAccessToken();
+  if (token) {
+    await refreshCritical();
+    markDeferredDataPlaceholders();
+    setupLazySectionLoading();
+  } else if (state.config?.auth_mode === "supabase") {
+    updateActionCenter({
+      title: "Sign in",
+      message: "Sign in with Supabase to load portfolio, pending trades, and billing-protected actions.",
+      severity: "warn",
+    });
+    setupLazySectionLoading();
+  } else {
+    await refreshAll();
+    setupLazySectionLoading();
+  }
+  applyQuerySectionDeepLink();
+  handleRouteHash();
   logEvent({ kind: "system", severity: "info", message: "Dashboard loaded." });
 })();
 

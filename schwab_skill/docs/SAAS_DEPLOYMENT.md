@@ -26,6 +26,7 @@
 |----------|---------|
 | `SUPABASE_URL` | Project URL (e.g. `https://xyzcompany.supabase.co`) — returned by `GET /api/public-config` for the dashboard |
 | `SUPABASE_ANON_KEY` | **anon** key from Supabase → Settings → API (public; not the service_role key) |
+| `WEB_IMPLEMENTATION_GUIDE_URL` | Optional `http://` or `https://` URL — when set, the dashboard Onboarding Wizard shows an **Implementation guide** link that opens this URL in a new tab |
 
 If either is unset, the dashboard still works by pasting a JWT under **Advanced**. Workers do **not** need these.
 
@@ -59,6 +60,8 @@ Users POST `/api/credentials/schwab` with:
 Alternatively: legacy `access_token` + `refresh_token` for the account app **and** set `SAAS_PLATFORM_MARKET_SKILL_DIR` to a directory on the worker/API host that contains a valid `tokens_market.enc` for the market app (shared platform session).
 
 ## Migrations
+
+Revision **`saas005`** adds `users.live_execution_enabled` (default false). After upgrading, existing users remain unable to send live orders until they opt in via `POST /api/settings/enable-live-trading` (see README SaaS section).
 
 **Existing database** (already had webapp tables):
 
@@ -128,6 +131,10 @@ Set secrets via environment file or your host’s secret manager — **never** c
 7. Optional Stripe: add the billing env vars from the table above and point Stripe’s webhook to `POST /api/billing/webhook/stripe` on your public API URL.
 
 The API serves the UI at `/` and static assets under `/static`; your live URL is the web service’s HTTPS URL on Render.
+
+## Legal and user-facing disclosures
+
+Ship with **`/static/legal.html`** reachable at your public origin (dashboard footers already link to it). The repo copy for review and edits is **`docs/LEGAL_DISCLOSURES.md`**—keep the static page and that file aligned if you change wording. Have qualified counsel review before customer-facing launch.
 
 ### Render: “Blueprint file … not found on main branch”
 

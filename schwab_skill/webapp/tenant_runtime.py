@@ -77,6 +77,16 @@ def user_has_account_session(db: Session, user_id: str) -> bool:
     return _account_token_dict(row) is not None
 
 
+def user_schwab_ready_for_live_trading(db: Session, user_id: str) -> tuple[bool, str]:
+    """Account + market data path available (same bar as running a scan / placing guarded orders)."""
+    if not user_has_account_session(db, user_id):
+        return False, "Schwab account tokens are not linked."
+    ok, reason = user_can_materialize_for_scan(db, user_id)
+    if not ok:
+        return False, reason
+    return True, ""
+
+
 def user_can_materialize_for_scan(db: Session, user_id: str) -> tuple[bool, str]:
     if not user_has_account_session(db, user_id):
         return False, "Schwab account tokens are not linked."

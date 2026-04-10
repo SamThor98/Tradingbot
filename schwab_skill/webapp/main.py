@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,9 +28,13 @@ from sec_filing_compare import (
 from sector_strength import get_sector_heatmap
 from signal_scanner import scan_for_signals_detailed
 
+from .checklist_language import with_plain_language
 from .db import DATABASE_URL, Base, SessionLocal, engine
 from .models import AppState, PendingTrade, User
-from .schemas import ApiResponse, CreatePendingTrade
+from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
+from .recovery_map import map_failure as _map_failure
+from .scan_payload import parse_scan_run_body, scan_runtime_kwargs
+from .schemas import ApiResponse, ApproveTradeRequest, CreatePendingTrade
 
 LOCAL_DASHBOARD_USER_ID = (os.getenv("WEB_LOCAL_USER_ID", "local") or "local").strip() or "local"
 
@@ -52,33 +56,6 @@ ONBOARDING_TARGET_MINUTES = 20
 DEFAULT_AUTOMATION_OPT_IN = False
 DEFAULT_UI_MODE = "standard"
 DEFAULT_PROFILE = "balanced"
-
-PRESET_PROFILES: dict[str, dict[str, str]] = {
-    "conservative": {
-        "POSITION_SIZE_USD": "300",
-        "MAX_TRADES_PER_DAY": "3",
-        "QUALITY_GATES_MODE": "hard",
-        "EVENT_RISK_MODE": "live",
-        "EVENT_ACTION": "block",
-        "EXEC_QUALITY_MODE": "live",
-    },
-    "balanced": {
-        "POSITION_SIZE_USD": "500",
-        "MAX_TRADES_PER_DAY": "5",
-        "QUALITY_GATES_MODE": "soft",
-        "EVENT_RISK_MODE": "live",
-        "EVENT_ACTION": "downsize",
-        "EXEC_QUALITY_MODE": "live",
-    },
-    "aggressive": {
-        "POSITION_SIZE_USD": "900",
-        "MAX_TRADES_PER_DAY": "8",
-        "QUALITY_GATES_MODE": "soft",
-        "EVENT_RISK_MODE": "shadow",
-        "EVENT_ACTION": "downsize",
-        "EXEC_QUALITY_MODE": "shadow",
-    },
-}
 
 
 def _ensure_local_dashboard_user() -> None:
@@ -145,10 +122,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _metrics_lock = threading.Lock()
 _request_metrics: dict[str, Any] = {
     "requests_total": 0,
+    # Counts HTTP 5xx only (plus worker `_record_endpoint_error`). Client 4xx live in `client_errors_total`.
     "errors_total": 0,
+    "client_errors_total": 0,
     "by_path": {},
     "endpoint_errors": {},
 }
+
+# Cap persisted scan payloads so AppState rows stay reasonable.
+_LAST_SCAN_SIGNALS_CAP = min(200, int(os.getenv("WEB_LAST_SCAN_SIGNALS_CAP", "120") or 120))
 _scan_lock = threading.Lock()
 _scan_job: dict[str, Any] = {
     "job_id": None,
@@ -177,14 +159,28 @@ def _record_request(path: str, method: str, status_code: int, latency_ms: float)
         _request_metrics["requests_total"] = int(_request_metrics.get("requests_total", 0) or 0) + 1
         bucket = _request_metrics.setdefault("by_path", {}).setdefault(
             key,
-            {"count": 0, "errors": 0, "last_status": 0, "last_latency_ms": 0.0},
+            {
+                "count": 0,
+                "errors": 0,
+                "client_errors": 0,
+                "server_errors": 0,
+                "last_status": 0,
+                "last_latency_ms": 0.0,
+            },
         )
         bucket["count"] = int(bucket.get("count", 0) or 0) + 1
         bucket["last_status"] = status_code
         bucket["last_latency_ms"] = round(latency_ms, 2)
-        if status_code >= 400:
+        if status_code >= 500:
+            bucket["server_errors"] = int(bucket.get("server_errors", 0) or 0) + 1
             bucket["errors"] = int(bucket.get("errors", 0) or 0) + 1
             _request_metrics["errors_total"] = int(_request_metrics.get("errors_total", 0) or 0) + 1
+        elif status_code >= 400:
+            bucket["client_errors"] = int(bucket.get("client_errors", 0) or 0) + 1
+            bucket["errors"] = int(bucket.get("errors", 0) or 0) + 1
+            _request_metrics["client_errors_total"] = int(
+                _request_metrics.get("client_errors_total", 0) or 0
+            ) + 1
 
 
 @app.middleware("http")
@@ -254,73 +250,6 @@ def _token_health() -> dict[str, Any]:
     }
 
 
-def _map_failure(message: str, source: str = "unknown") -> dict[str, Any]:
-    raw = str(message or "").strip()
-    msg = raw.lower()
-    mapped = {
-        "source": source,
-        "code": "unknown_error",
-        "title": "Unexpected error",
-        "summary": "The system hit an unknown error.",
-        "fix_path": "Review logs, then retry the action.",
-        "action": "retry",
-    }
-    if any(k in msg for k in ("not authenticated", "token", "oauth", "401", "unauthorized")):
-        mapped.update(
-            {
-                "code": "auth_error",
-                "title": "Authentication issue",
-                "summary": "Broker authorization is missing or expired.",
-                "fix_path": "Click Re-auth, then rerun health check.",
-                "action": "reauth",
-            }
-        )
-    elif any(
-        k in msg
-        for k in (
-            "quote",
-            "market data",
-            "df_empty",
-            "timeout",
-            "connection",
-            "circuit breaker",
-            "connection unstable",
-            "schwab connection unstable",
-        )
-    ):
-        mapped.update(
-            {
-                "code": "data_error",
-                "title": "Market data issue",
-                "summary": "Market data could not be fetched reliably.",
-                "fix_path": "Run `python healthcheck.py` in schwab_skill; refresh market OAuth if quotes fail; wait if the circuit breaker tripped.",
-                "action": "retry",
-            }
-        )
-    elif any(k in msg for k in ("guardrail", "regime", "sector block", "event risk block")):
-        mapped.update(
-            {
-                "code": "risk_block",
-                "title": "Risk policy blocked the action",
-                "summary": "The order was intentionally blocked by safety gates.",
-                "fix_path": "Review pre-trade checklist and lower risk or wait for regime change.",
-                "action": "review_checklist",
-            }
-        )
-    elif any(k in msg for k in ("order", "api error", "status_code", "rejected")):
-        mapped.update(
-            {
-                "code": "order_error",
-                "title": "Order submission failed",
-                "summary": "The broker rejected or failed to process the order.",
-                "fix_path": "Retry once; if repeated, run health check and confirm account permissions.",
-                "action": "retry_or_reauth",
-            }
-        )
-    mapped["raw_error"] = raw[:260]
-    return mapped
-
-
 def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dict[str, Any]:
     env = _read_json_file(EXECUTION_METRICS_PATH, {"days": {}})
     days = env.get("days", {}) if isinstance(env, dict) else {}
@@ -346,17 +275,19 @@ def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> di
         if score < gate:
             blocked.append("regime_v2_block")
 
-    return {
-        "risk_percent_estimate": est_risk_pct,
-        "max_daily_trades": max_trades,
-        "live_trades_today": live_trades_today,
-        "shadow_trades_today": shadow_trades_today,
-        "event_risk": event_risk if isinstance(event_risk, dict) else {},
-        "regime_status": regime if isinstance(regime, dict) else {},
-        "blocked": bool(blocked),
-        "block_reasons": blocked,
-        "requires_explicit_approval": True,
-    }
+    return with_plain_language(
+        {
+            "risk_percent_estimate": est_risk_pct,
+            "max_daily_trades": max_trades,
+            "live_trades_today": live_trades_today,
+            "shadow_trades_today": shadow_trades_today,
+            "event_risk": event_risk if isinstance(event_risk, dict) else {},
+            "regime_status": regime if isinstance(regime, dict) else {},
+            "blocked": bool(blocked),
+            "block_reasons": blocked,
+            "requires_explicit_approval": True,
+        }
+    )
 
 
 def _trade_to_dict(row: PendingTrade) -> dict[str, Any]:
@@ -667,15 +598,18 @@ def _sec_analysis_settings() -> dict[str, Any]:
     }
 
 
-def _scan_worker(job_id: str) -> None:
+def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None:
     try:
-        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR)
+        skw = scan_kwargs or {}
+        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR, **skw)
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         finished_at = datetime.now(timezone.utc).isoformat()
+        signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
         last_scan = {
             "at": finished_at,
             "signals_found": len(signals),
+            "signals": signals_persist,
             "diagnostics": diagnostics,
             "diagnostics_summary": diagnostics_summary,
             "strategy_summary": strategy_summary,
@@ -791,6 +725,18 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/simple")
+def simple_dashboard() -> FileResponse:
+    """Focused scan + diagnostics UI for external users (see also `/`)."""
+    return FileResponse(STATIC_DIR / "simple.html")
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 @app.get("/api/health", response_model=ApiResponse)
 def health() -> ApiResponse:
     return _ok({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
@@ -804,7 +750,11 @@ def public_config() -> ApiResponse:
     supabase: dict[str, str] | None = None
     if url and anon:
         supabase = {"url": url, "anon_key": anon}
-    return _ok({"supabase": supabase})
+    data: dict[str, Any] = {"supabase": supabase, "saas_mode": False, "schwab_oauth": False}
+    impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
+    if impl.startswith(("http://", "https://")):
+        data["implementation_guide_url"] = impl
+    return _ok(data)
 
 
 @app.get("/api/health/deep", response_model=ApiResponse)
@@ -868,6 +818,7 @@ def status(db: Session = Depends(get_db)) -> ApiResponse:
             default={
                 "at": None,
                 "signals_found": None,
+                "signals": [],
                 "diagnostics": None,
                 "diagnostics_summary": None,
                 "strategy_summary": None,
@@ -897,8 +848,18 @@ def validation_status() -> ApiResponse:
 
 
 @app.post("/api/scan", response_model=ApiResponse)
-def scan(async_mode: bool = True, db: Session = Depends(get_db)) -> ApiResponse:
+def scan(
+    async_mode: bool = True,
+    db: Session = Depends(get_db),
+    body: dict[str, Any] | None = Body(default=None),
+) -> ApiResponse:
     try:
+        try:
+            parsed_scan = parse_scan_run_body(body)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        skw = scan_runtime_kwargs(parsed_scan)
+
         if async_mode:
             started = False
             with _scan_lock:
@@ -922,18 +883,25 @@ def scan(async_mode: bool = True, db: Session = Depends(get_db)) -> ApiResponse:
                     )
                     started = True
             if started:
-                thread = threading.Thread(target=_scan_worker, args=(job_id,), daemon=True, name=f"scan-{job_id}")
+                thread = threading.Thread(
+                    target=_scan_worker,
+                    args=(job_id, skw),
+                    daemon=True,
+                    name=f"scan-{job_id}",
+                )
                 thread.start()
             snapshot = _scan_snapshot()
             return _ok({"started": started, **snapshot})
 
-        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR)
+        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR, **skw)
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         now_iso = datetime.now(timezone.utc).isoformat()
+        signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
         last_scan = {
             "at": now_iso,
             "signals_found": len(signals),
+            "signals": signals_persist,
             "diagnostics": diagnostics,
             "diagnostics_summary": diagnostics_summary,
             "strategy_summary": strategy_summary,
@@ -962,6 +930,7 @@ def scan_status(db: Session = Depends(get_db)) -> ApiResponse:
             default={
                 "at": None,
                 "signals_found": None,
+                "signals": [],
                 "diagnostics": None,
                 "diagnostics_summary": None,
                 "strategy_summary": None,
@@ -1178,7 +1147,7 @@ def list_pending_trades(
     sort: str = "newest",
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    rows_query = db.query(PendingTrade)
+    rows_query = db.query(PendingTrade).filter(PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
     if status and status.lower() != "all":
         rows_query = rows_query.filter(PendingTrade.status == status.lower().strip())
     if sort == "oldest":
@@ -1211,6 +1180,7 @@ def create_pending_trade(payload: CreatePendingTrade, db: Session = Depends(get_
         trade_id = uuid.uuid4().hex[:8]
         row = PendingTrade(
             id=trade_id,
+            user_id=LOCAL_DASHBOARD_USER_ID,
             ticker=ticker,
             qty=qty,
             price=last_price if last_price > 0 else None,
@@ -1230,17 +1200,30 @@ def create_pending_trade(payload: CreatePendingTrade, db: Session = Depends(get_
 @app.post("/api/trades/{trade_id}/approve", response_model=ApiResponse)
 def approve_trade(
     trade_id: str,
+    payload: ApproveTradeRequest,
     confirm_live: bool = False,
     auth_ctx: dict[str, str] = Depends(require_trade_api_key),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    row = db.query(PendingTrade).filter(PendingTrade.id == trade_id).first()
+    row = (
+        db.query(PendingTrade)
+        .filter(PendingTrade.id == trade_id, PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
+        .first()
+    )
     if not row:
         _record_endpoint_error("approve_trade")
         return ApiResponse(ok=False, error="Trade not found.")
     if row.status != "pending":
         _record_endpoint_error("approve_trade")
         return ApiResponse(ok=False, error=f"Trade already {row.status}.")
+
+    typed = (payload.typed_ticker or "").strip().upper()
+    if typed != row.ticker.upper():
+        _record_endpoint_error("approve_trade")
+        return ApiResponse(
+            ok=False,
+            error="typed_ticker must exactly match the staged trade ticker (re-type to confirm the live order).",
+        )
 
     signal = json.loads(row.signal_json or "{}")
     ui_settings = _load_ui_settings(db)
@@ -1302,7 +1285,11 @@ def reject_trade(
     auth_ctx: dict[str, str] = Depends(require_trade_api_key),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    row = db.query(PendingTrade).filter(PendingTrade.id == trade_id).first()
+    row = (
+        db.query(PendingTrade)
+        .filter(PendingTrade.id == trade_id, PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
+        .first()
+    )
     if not row:
         _record_endpoint_error("reject_trade")
         return ApiResponse(ok=False, error="Trade not found.")
@@ -1318,7 +1305,11 @@ def reject_trade(
 
 @app.get("/api/trades/{trade_id}/preflight", response_model=ApiResponse)
 def preflight_trade(trade_id: str, db: Session = Depends(get_db)) -> ApiResponse:
-    row = db.query(PendingTrade).filter(PendingTrade.id == trade_id).first()
+    row = (
+        db.query(PendingTrade)
+        .filter(PendingTrade.id == trade_id, PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
+        .first()
+    )
     if not row:
         return ApiResponse(ok=False, error="Trade not found.")
     signal = json.loads(row.signal_json or "{}")
@@ -1350,6 +1341,7 @@ def get_profiles(expert: bool = False, db: Session = Depends(get_db)) -> ApiResp
     }
     if expert:
         payload["expert_runtime_overrides"] = {k: os.environ.get(k) for k in sorted(active.keys())}
+    payload["preset_catalog"] = build_preset_catalog_payload()
     return _ok(payload)
 
 

@@ -496,7 +496,7 @@ def _scan_stage_a_one(
     breakout_enabled: bool,
     breakout_min_time: int,
 ) -> dict[str, Any]:
-    from market_data import get_current_quote, get_daily_history
+    from market_data import extract_schwab_last_price, get_current_quote, get_daily_history
     from sector_strength import get_ticker_sector_etf
     from stage_analysis import (
         add_indicators,
@@ -525,11 +525,9 @@ def _scan_stage_a_one(
 
         quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
         price = float(df["close"].iloc[-1])
-        if isinstance(quote, dict) and quote.get("lastPrice") is not None:
-            try:
-                price = float(quote["lastPrice"])
-            except (TypeError, ValueError):
-                pass
+        live = extract_schwab_last_price(quote) if isinstance(quote, dict) else None
+        if live is not None:
+            price = live
 
         prior_high = (
             float(df["high"].iloc[-2])
@@ -883,13 +881,30 @@ def _scan_stage_b_enrich(
         return {"ok": False, "error": f"{ticker}: {e}", "diag": diag_delta}
 
 
-def scan_for_signals_detailed(skill_dir: Path | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def scan_for_signals_detailed(
+    skill_dir: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+    watchlist_override: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Like scan_for_signals, but also returns lightweight diagnostics counters.
 
     Diagnostics are intended to explain why you might get 0 results without
     dumping full per-ticker logs to Discord.
+
+    env_overrides: applied for this scan only (same keys as backtest StrategyOverrides).
+    watchlist_override: if set, scan these tickers instead of _load_watchlist.
     """
+    if env_overrides:
+        from backtest import _temporary_env
+
+        with _temporary_env(env_overrides):
+            return scan_for_signals_detailed(
+                skill_dir=skill_dir,
+                env_overrides=None,
+                watchlist_override=watchlist_override,
+            )
+
     from notifier import send_alert
     from sector_strength import get_winning_sector_etfs
 
@@ -987,17 +1002,15 @@ def scan_for_signals_detailed(skill_dir: Path | None = None) -> tuple[list[dict[
     # Keep this before regime/sector checks so smoke tests do not depend on live market state.
     import os
     if os.environ.get("DEMO_SIGNAL", "").strip().lower() in ("1", "true", "yes"):
-        from market_data import get_current_quote, get_daily_history
+        from market_data import extract_schwab_last_price, get_current_quote, get_daily_history
         demo_ticker = "AAPL"
         try:
             df = get_daily_history(demo_ticker, days=300, auth=auth, skill_dir=skill_dir)
             price = float(df["close"].iloc[-1]) if not df.empty else 220.0
             quote = get_current_quote(demo_ticker, auth=auth, skill_dir=skill_dir)
-            if isinstance(quote, dict) and quote.get("lastPrice") is not None:
-                try:
-                    price = float(quote["lastPrice"])
-                except (TypeError, ValueError):
-                    pass
+            live = extract_schwab_last_price(quote) if isinstance(quote, dict) else None
+            if live is not None:
+                price = live
         except Exception:
             price = 220.0
         mirofish_result = None
@@ -1128,7 +1141,10 @@ def scan_for_signals_detailed(skill_dir: Path | None = None) -> tuple[list[dict[
     sec_filing_max_chars = get_sec_filing_max_chars(skill_dir)
     pullback_mode = get_strategy_pullback_mode(skill_dir)
 
-    watchlist = _load_watchlist(skill_dir)
+    if watchlist_override is not None:
+        watchlist = [str(t).strip().upper() for t in watchlist_override if str(t).strip()]
+    else:
+        watchlist = _load_watchlist(skill_dir)
     diagnostics["watchlist_size"] = len(watchlist)
     top_n = get_signal_top_n(skill_dir)
     stage_a_workers = get_scan_stage_a_max_workers(skill_dir)

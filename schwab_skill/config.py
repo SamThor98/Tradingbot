@@ -108,7 +108,8 @@ def get_signal_top_n(skill_dir: Path | None = None) -> int:
 
 # Scanner: bounded workers for fast filter stage
 def get_scan_stage_a_max_workers(skill_dir: Path | None = None) -> int:
-    return _get_int("SCAN_STAGE_A_MAX_WORKERS", 8, skill_dir)
+    # Default kept conservative to reduce Schwab 429s during wide watchlists.
+    return _get_int("SCAN_STAGE_A_MAX_WORKERS", 4, skill_dir)
 
 
 # Scanner: bounded workers for heavy enrichment stage
@@ -555,14 +556,14 @@ def get_guidance_score_penalty(skill_dir: Path | None = None) -> float:
 def get_signal_universe_mode(skill_dir: Path | None = None) -> str:
     """
     Universe selection mode for scanning.
-    - focused: default, narrows broad universes for higher expectancy
-    - broad: keep full universe
+    - broad: keep full loaded watchlist (default when unset)
+    - focused: narrows broad universes via prefilter_watchlist
     """
     env = _load_env(skill_dir)
     raw = _env_value("SIGNAL_UNIVERSE_MODE", env).strip().lower()
     if raw in {"focused", "broad"}:
         return raw
-    return "focused"
+    return "broad"
 
 
 def get_signal_universe_target_size(skill_dir: Path | None = None) -> int:

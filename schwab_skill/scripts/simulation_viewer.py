@@ -188,6 +188,15 @@ VIEWER_HTML = """<!DOCTYPE html>
       overflow-y: auto;
     }
     .meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 1rem; }
+    .legal-foot {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .legal-foot a { color: var(--accent); }
     .error-page { text-align: center; padding: 3rem; }
     .error-page h1 { color: var(--bearish); margin-bottom: 0.5rem; }
     .loading { text-align: center; padding: 2rem; color: var(--text-muted); }
@@ -203,6 +212,10 @@ VIEWER_HTML = """<!DOCTYPE html>
     <div id="content">
       <div class="loading">Loading simulation…</div>
     </div>
+    <p class="legal-foot">
+      Informational only—not investment advice. Past or hypothetical results are not a guarantee of future performance.
+      Verify data independently before trading.
+    </p>
   </div>
 
   <script>

@@ -17,9 +17,26 @@
         <div>
           <p class="eyebrow">Schwab + Strategy Control Center</p>
           <h1>TradingBot Web Dashboard</h1>
-          <p class="muted">
-            Run scans, inspect diagnostics, review portfolio health, and approve/reject trade candidates in one place.
+          <p class="muted hero-lead">
+            See what needs attention first—health, blockers, and pending approvals—then run a scan or open a tool when you need it.
+            <a href="/simple">Simple scan page</a> (focused zero-signal diagnostics).
+            Open directly on <a href="/?section=backtest">backtests</a> or <a href="/?section=pending">pending approvals</a> via the URL.
           </p>
+          <p class="muted hero-quick-links">
+            Jump to:
+            <a href="#workflowPrimary">Scan</a> ·
+            <a href="#pendingSection">Pending trades</a> ·
+            <a href="#backtestSection">Backtest</a> ·
+            <a href="/login">Sign in</a>
+          </p>
+          <div class="hero-toolbar" role="group" aria-label="Dashboard layout">
+            <label class="field-label" for="displayModeSelect">View</label>
+            <select id="displayModeSelect" title="Simple shows only today’s workflow; Standard balances depth; Pro surfaces diagnostics faster.">
+              <option value="simple">Simple</option>
+              <option value="standard" selected>Standard</option>
+              <option value="pro">Pro</option>
+            </select>
+          </div>
           <div id="supabaseAuthBlock" class="auth-supabase-block hidden" aria-label="Supabase sign-in">
             <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
               <label class="field-label" for="supabaseEmail">Email</label>
@@ -49,6 +66,7 @@
         </div>
       </header>
 
+      <div id="dashboardToday" class="dashboard-today-stack">
       <section id="healthRibbon" class="card health-ribbon" aria-label="System health ribbon">
         <div class="health-item">
           <span class="health-label">Auth</span>
@@ -73,47 +91,252 @@
         <ul id="blockersAlertList" class="report-bullets"></ul>
       </section>
 
-      <nav class="section-nav card" aria-label="Dashboard sections">
-        <a href="#onboardingSection">Onboarding</a>
-        <a href="#settingsSection">Presets</a>
-        <a href="#decisionSection">Decision</a>
-        <a href="#statusSection">Status</a>
-        <a href="#scanSection">Scan</a>
-        <a href="#pendingSection">Pending</a>
-        <a href="#portfolioSection">Portfolio</a>
-        <a href="#performanceSection">Performance</a>
-        <a href="#backtestSection">Backtests</a>
-        <a href="#recoverySection">Recovery</a>
-        <a href="#quickCheckSection">Quick Check</a>
-        <a href="#reportSectionCard">Report</a>
-        <a href="#secCompareSection">SEC Compare</a>
-        <a href="#activitySection">Activity</a>
-      </nav>
+      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden" aria-live="polite">
+        <div class="pending-summary-inner">
+          <span id="pendingSummaryText" class="pending-summary-text"></span>
+          <a class="btn small secondary pending-summary-link" href="#pendingSection">Review pending</a>
+        </div>
+      </div>
 
       <section id="actionCenter" class="card action-center" aria-live="polite">
         <strong id="actionCenterTitle">System Messages</strong>
         <p id="actionCenterText" class="muted">Ready. Use Run Scan or Refresh All to begin.</p>
       </section>
+      </div>
 
-      <section class="layout-2">
-        <article id="onboardingSection" class="card">
+      <nav class="section-nav card" aria-label="Jump to tasks">
+        <a href="#dashboardToday">Today</a>
+        <a href="#workflowPrimary">Scan &amp; queue</a>
+        <a href="#quickCheckSection">Ticker check</a>
+        <a href="#toolsSection" class="nav-advanced">Tools</a>
+        <a href="#statusDetailsPanel" class="nav-advanced">Detailed status</a>
+        <a href="#onboardingSection" class="nav-advanced">Setup</a>
+        <a href="#settingsSection" class="nav-advanced">Presets</a>
+        <a href="#decisionSection" class="nav-advanced">Decision card</a>
+        <a href="#portfolioSection" class="nav-advanced">Portfolio</a>
+        <a href="#performanceSection" class="nav-advanced">Performance</a>
+        <a href="#backtestSection" class="nav-advanced">Backtests</a>
+        <a href="#recoverySection" class="nav-advanced">Recovery</a>
+        <a href="#reportSectionCard" class="nav-advanced">Report</a>
+        <a href="#secCompareSection" class="nav-advanced">SEC compare</a>
+        <a href="#activitySection" class="nav-advanced">Activity</a>
+      </nav>
+
+      <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
+        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan &amp; pending decisions</h2>
+        <div class="layout-2 layout-workflow">
+        <article id="scanSection" class="card card--primary-task">
+          <div class="section-title">
+            <h2>Scan results</h2>
+            <div class="scan-title-meta">
+              <small id="scanMeta" class="muted">No scan run yet.</small>
+              <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
+            </div>
+          </div>
+          <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
+            <progress id="scanJobProgress" max="100" value="0"></progress>
+            <span id="scanJobProgressLabel" class="muted"></span>
+          </div>
+          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced">
+            <summary class="panel-disclosure-summary">
+              Diagnostics, funnel &amp; breakdown
+              <span class="disclosure-hint muted">why counts look the way they do</span>
+            </summary>
+            <div class="scan-insights">
+              <div class="scan-block">
+                <h3>Top Blockers</h3>
+                <ul id="scanBlockers" class="report-bullets"></ul>
+              </div>
+              <div class="scan-block">
+                <h3>Pass Funnel</h3>
+                <div id="scanFunnel" class="funnel-grid"></div>
+              </div>
+            </div>
+            <div id="scanDiagnostics" class="chip-row"></div>
+          </details>
+          <details id="scanAdvancedOptionsPanel" class="panel-disclosure panel-disclosure--advanced nav-advanced">
+            <summary class="panel-disclosure-summary">
+              Advanced: scan options (backtest parity)
+              <span class="disclosure-hint muted">optional JSON with Run Scan</span>
+            </summary>
+            <p class="muted small" style="margin: 0.5rem 0">
+              <code>strategy_overrides</code> (same fields as backtest), <code>universe_mode</code>:
+              <code>watchlist</code> or <code>tickers</code>, and <code>tickers</code> when mode is
+              <code>tickers</code>.
+            </p>
+            <textarea
+              id="scanOptionsJson"
+              class="input-like"
+              rows="5"
+              style="width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem"
+              placeholder="{}"
+              spellcheck="false"
+            ></textarea>
+            <div class="inline-form compact" style="margin-top: 0.5rem">
+              <button type="button" id="scanApplyBacktestSpecBtn" class="btn small secondary">
+                Fill from latest backtest
+              </button>
+              <button type="button" id="scanClearOptionsBtn" class="btn small secondary">Clear</button>
+            </div>
+          </details>
+          <div class="table-wrap">
+            <table>
+              <caption class="visually-hidden">Signal candidates table</caption>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Strategy</th>
+                  <th>Price</th>
+                  <th>Score</th>
+                  <th>P(up 10d)</th>
+                  <th>Confidence</th>
+                  <th>Conviction</th>
+                  <th>Sector</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="scanTableBody">
+                <tr><td colspan="9" class="muted">Run a scan to load candidates.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article id="pendingSection" class="card card--primary-task">
+          <div class="section-title">
+            <h2>Pending approvals</h2>
+            <small class="muted">Approve, reject, or quick-view before sending live orders.</small>
+          </div>
+          <div class="inline-form compact">
+            <label class="muted">Status
+              <select id="pendingFilter">
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+                <option value="executed">Executed</option>
+                <option value="rejected">Rejected</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label class="muted">Sort
+              <select id="pendingSort">
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+              </select>
+            </label>
+          </div>
+          <details class="panel-disclosure stage-trade-panel">
+            <summary class="panel-disclosure-summary">
+              Stage a trade manually
+              <span class="disclosure-hint muted">optional quantity; otherwise uses your position-size preset</span>
+            </summary>
+            <div class="inline-form compact stage-trade-form">
+              <label class="field-label" for="manualPendingTicker">Ticker</label>
+              <input id="manualPendingTicker" type="text" placeholder="AAPL" maxlength="16" autocomplete="off" />
+              <label class="field-label" for="manualPendingQty">Qty</label>
+              <input id="manualPendingQty" type="number" min="1" step="1" placeholder="Auto" title="Leave blank to size from strategy presets" />
+              <label class="field-label" for="manualPendingNote">Note</label>
+              <input id="manualPendingNote" type="text" placeholder="Why you are staging this" />
+              <button id="manualPendingBtn" class="btn secondary" type="button">Add to pending</button>
+            </div>
+          </details>
+          <div id="pendingBoard" class="task-board">
+            <div class="task-empty muted">No trades yet.</div>
+          </div>
+        </article>
+        </div>
+      </section>
+
+      <div class="layout-2 layout-quick-tools">
+        <article id="quickCheckSection" class="card card--primary-task">
+          <div class="section-title">
+            <h2>Quick ticker check</h2>
+            <small class="muted">Fast health read—no full report unless you need it.</small>
+          </div>
+          <div class="inline-form">
+            <label class="field-label" for="tickerInput">Ticker</label>
+            <input id="tickerInput" placeholder="AAPL" />
+            <button id="checkBtn" class="btn secondary">Check</button>
+          </div>
+          <pre id="checkOutput" class="code-block">No check run yet.</pre>
+        </article>
+
+        <section id="toolsSection" class="card tools-hub section-advanced" aria-labelledby="toolsHeading">
+          <div class="section-title">
+            <h2 id="toolsHeading">Tools</h2>
+            <small class="muted">One jump per job—same APIs underneath.</small>
+          </div>
+          <div class="tools-grid" role="list">
+            <a class="tool-card" role="listitem" href="#scanSection">
+              <h3 class="tool-card-title">Run / focus scan</h3>
+              <p class="tool-card-desc muted">Screen candidates and queue from the table.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#pendingSection">
+              <h3 class="tool-card-title">Pending trades</h3>
+              <p class="tool-card-desc muted">Approve or reject staged orders.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#decisionSection">
+              <h3 class="tool-card-title">Decision card</h3>
+              <p class="tool-card-desc muted">Structured take/pass for one symbol.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#backtestSection">
+              <h3 class="tool-card-title">Backtest</h3>
+              <p class="tool-card-desc muted">Historical replay—no live orders.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#reportSectionCard">
+              <h3 class="tool-card-title">Full report</h3>
+              <p class="tool-card-desc muted">Deep dive with optional raw JSON.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#secCompareSection">
+              <h3 class="tool-card-title">SEC compare</h3>
+              <p class="tool-card-desc muted">Filings contrast and narrative.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#recoverySection">
+              <h3 class="tool-card-title">Recovery mapper</h3>
+              <p class="tool-card-desc muted">Turn errors into next steps.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+            <a class="tool-card" role="listitem" href="#onboardingSection">
+              <h3 class="tool-card-title">Setup wizard</h3>
+              <p class="tool-card-desc muted">Connect Schwab and validate the stack.</p>
+              <span class="tool-card-cta">Go</span>
+            </a>
+          </div>
+        </section>
+      </div>
+
+      <section class="layout-2 section-advanced">
+        <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
             <h2>Onboarding Wizard</h2>
             <small id="onboardingMeta" class="muted">Target completion: under 20 minutes</small>
           </div>
           <div class="inline-form">
             <button id="onboardingStartBtn" class="btn secondary">Start Wizard</button>
+            <button id="onboardingSchwabBtn" class="btn primary small" type="button">Connect Schwab</button>
             <button id="onboardingConnectBtn" class="btn small secondary">1) Connect</button>
             <button id="onboardingVerifyBtn" class="btn small secondary">2) Verify Token Health</button>
             <button id="onboardingScanBtn" class="btn small secondary">3) Test Scan</button>
             <button id="onboardingPaperBtn" class="btn small secondary">4) Test Paper Order</button>
+            <a
+              id="implementationGuideLink"
+              class="btn secondary small hidden"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Implementation guide</a>
           </div>
           <pre id="onboardingOutput" class="code-block">Wizard not started.</pre>
         </article>
-        <article id="settingsSection" class="card">
+        <article id="settingsSection" class="card" data-lazy-api="profiles">
           <div class="section-title">
             <h2>Strategy Presets</h2>
-            <small class="muted">Raw env settings hidden unless Expert mode is enabled.</small>
+            <small class="muted">Standard shows plain English. Expert adds raw env values under each row.</small>
           </div>
           <div class="inline-form">
             <label class="field-label" for="profileSelect">Profile</label>
@@ -127,8 +350,25 @@
               <option value="standard" selected>Standard</option>
               <option value="expert">Expert</option>
             </select>
-            <label class="muted"><input id="automationOptIn" type="checkbox" /> opt into live automation</label>
+            <label class="muted"><input id="automationOptIn" type="checkbox" /> Allow live orders without the extra confirmation step</label>
             <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
+          </div>
+          <div id="presetApplyPreview" class="preset-apply-preview" aria-live="polite"></div>
+          <div id="liveTradingSaasBlock" class="live-trading-saas hidden" style="margin-top: 1rem; padding: 0.75rem; border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 8px">
+            <h3 class="field-label">Live trading (SaaS)</h3>
+            <ul id="liveTradingBullets" class="live-trading-bullets muted small">
+              <li>Turns on broker orders from this app after you confirm below.</li>
+              <li>Each order still needs you to type the ticker in the approve dialog.</li>
+              <li>Nothing is sent until Schwab is linked and you enable here.</li>
+            </ul>
+            <p id="liveTradingStatus" class="muted small live-trading-status-line"></p>
+            <label class="muted"><input id="enableLiveRiskAck" type="checkbox" /> I understand live market orders are
+              risky and not personalized advice.</label>
+            <div class="inline-form compact" style="margin-top: 0.5rem">
+              <label class="field-label" for="enableLiveTypedPhrase">Type ENABLE to confirm</label>
+              <input id="enableLiveTypedPhrase" type="text" autocomplete="off" placeholder="ENABLE" />
+              <button id="enableLiveTradingBtn" type="button" class="btn secondary small">Enable live trading</button>
+            </div>
           </div>
           <div id="profilePanel" class="preset-panel" aria-live="polite">
             <div class="report-empty">Loading preset…</div>
@@ -140,7 +380,7 @@
         </article>
       </section>
 
-      <section class="layout-2">
+      <section class="layout-2 section-advanced">
         <article id="decisionSection" class="card">
           <div class="section-title">
             <h2>Single Trade Decision Card</h2>
@@ -151,7 +391,14 @@
             <input id="decisionTickerInput" placeholder="AAPL" />
             <button id="decisionBtn" class="btn secondary">Load Decision Card</button>
           </div>
-          <pre id="decisionOutput" class="code-block">Run a scan, then load a ticker decision card.</pre>
+          <div id="decisionOutputHost" class="tool-output-host">
+            <p id="decisionPlaceholder" class="muted tool-output-placeholder">Run a scan, then load a ticker decision card.</p>
+            <div id="decisionSummary" class="tool-summary-card hidden" aria-live="polite"></div>
+            <details id="decisionJsonDetails" class="tool-json-details hidden">
+              <summary>Technical details</summary>
+              <pre id="decisionOutput" class="code-block"></pre>
+            </details>
+          </div>
         </article>
         <article id="recoverySection" class="card">
           <div class="section-title">
@@ -168,11 +415,23 @@
             <input id="recoveryMessage" placeholder="Paste an error message..." />
             <button id="recoveryBtn" class="btn secondary">Fix It Path</button>
           </div>
-          <pre id="recoveryOutput" class="code-block">Paste an error to map recovery steps.</pre>
+          <div id="recoveryOutputHost" class="tool-output-host">
+            <p id="recoveryPlaceholder" class="muted tool-output-placeholder">Paste an error to map recovery steps.</p>
+            <div id="recoverySummary" class="tool-summary-card hidden" aria-live="polite"></div>
+            <details id="recoveryJsonDetails" class="tool-json-details hidden">
+              <summary>Technical details</summary>
+              <pre id="recoveryOutput" class="code-block"></pre>
+            </details>
+          </div>
         </article>
       </section>
 
-      <section id="statusSection" class="stats">
+      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced status-details-wrap">
+        <summary class="panel-disclosure-summary">
+          Detailed system status
+          <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
+        </summary>
+        <section id="statusSection" class="stats stats-in-disclosure">
         <article id="statusMarketToken" class="card stat">
           <span class="stat-label">Market Token</span>
           <strong id="marketToken" class="pill neutral">Checking...</strong>
@@ -209,81 +468,11 @@
             </ul>
           </details>
         </article>
-      </section>
+        </section>
+      </details>
 
-      <section class="layout-2">
-        <article id="scanSection" class="card">
-          <div class="section-title">
-            <h2>Scan Results</h2>
-            <div class="scan-title-meta">
-              <small id="scanMeta" class="muted">No scan run yet.</small>
-              <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
-            </div>
-          </div>
-          <div class="scan-insights">
-            <div class="scan-block">
-              <h3>Top Blockers</h3>
-              <ul id="scanBlockers" class="report-bullets"></ul>
-            </div>
-            <div class="scan-block">
-              <h3>Pass Funnel</h3>
-              <div id="scanFunnel" class="funnel-grid"></div>
-            </div>
-          </div>
-          <div id="scanDiagnostics" class="chip-row"></div>
-          <div class="table-wrap">
-            <table>
-              <caption class="visually-hidden">Signal candidates table</caption>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Strategy</th>
-                  <th>Price</th>
-                  <th>Score</th>
-                  <th>P(up 10d)</th>
-                  <th>Confidence</th>
-                  <th>Conviction</th>
-                  <th>Sector</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="scanTableBody">
-                <tr><td colspan="9" class="muted">Run a scan to load candidates.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article id="pendingSection" class="card">
-          <div class="section-title">
-            <h2>Pending Task Board</h2>
-            <small class="muted">Grouped by sector for rapid take/pass decisions.</small>
-          </div>
-          <div class="inline-form compact">
-            <label class="muted">Status
-              <select id="pendingFilter">
-                <option value="all">All</option>
-                <option value="pending">Pending</option>
-                <option value="executed">Executed</option>
-                <option value="rejected">Rejected</option>
-                <option value="failed">Failed</option>
-              </select>
-            </label>
-            <label class="muted">Sort
-              <select id="pendingSort">
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-              </select>
-            </label>
-          </div>
-          <div id="pendingBoard" class="task-board">
-            <div class="task-empty muted">No trades yet.</div>
-          </div>
-        </article>
-      </section>
-
-      <section class="layout-2">
-        <article id="portfolioSection" class="card">
+      <section class="layout-2 section-advanced">
+        <article id="portfolioSection" class="card" data-lazy-api="portfolio">
           <div class="section-title">
             <h2>Portfolio</h2>
             <small id="portfolioMeta" class="muted">Loading...</small>
@@ -307,7 +496,7 @@
           </div>
         </article>
 
-        <article id="sectorsSection" class="card">
+        <article id="sectorsSection" class="card" data-lazy-api="sectors">
           <div class="section-title">
             <h2>Sectors</h2>
             <small class="muted">21-day relative performance vs SPY</small>
@@ -316,8 +505,8 @@
         </article>
       </section>
 
-      <section class="layout-2">
-        <article id="performanceSection" class="card">
+      <section class="layout-2 section-advanced">
+        <article id="performanceSection" class="card" data-lazy-api="performance">
           <div class="section-title">
             <h2>Performance</h2>
             <small class="muted">Backtest vs Shadow/Paper vs Live are separated.</small>
@@ -333,7 +522,7 @@
             <pre id="performanceRaw" class="code-block"></pre>
           </details>
         </article>
-        <article id="backtestSection" class="card backtest-hub">
+        <article id="backtestSection" class="card backtest-hub" data-lazy-api="backtest">
           <div class="section-title">
             <h2>Run a historical backtest</h2>
           </div>
@@ -453,8 +642,18 @@
             <div class="inline-form backtest-actions">
               <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
               <button id="btRefreshListBtn" class="btn secondary" type="button">Refresh list</button>
+              <button id="btResetFormBtn" class="btn secondary" type="button" title="Clear saved backtest preferences in this browser">
+                Reset form
+              </button>
             </div>
+            <p class="muted form-hint" style="margin-top: 0.35rem">
+              Your last backtest choices are saved in this browser so you do not have to re-enter them.
+            </p>
             <p id="btMeta" class="bt-meta muted"><span id="btMetaText">Choose dates, then queue a run.</span><span id="btMetaSpinner" class="bt-spinner hidden" aria-hidden="true"></span></p>
+            <div class="job-progress-wrap" aria-label="Backtest job progress">
+              <progress id="btJobProgress" max="100" value="0"></progress>
+              <span id="btJobProgressLabel" class="muted"></span>
+            </div>
             <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
             <details id="btResultRawDetails" class="details-raw">
               <summary>Full result JSON</summary>
@@ -491,19 +690,9 @@
             </div>
           </div>
         </article>
-        <article id="quickCheckSection" class="card">
-          <div class="section-title">
-            <h2>Quick Check</h2>
-            <small class="muted">Ticker health summary</small>
-          </div>
-          <div class="inline-form">
-            <label class="field-label" for="tickerInput">Ticker</label>
-            <input id="tickerInput" placeholder="AAPL" />
-            <button id="checkBtn" class="btn secondary">Check</button>
-          </div>
-          <pre id="checkOutput" class="code-block">No check run yet.</pre>
-        </article>
+      </section>
 
+      <section class="layout-2 section-advanced">
         <article id="reportSectionCard" class="card">
           <div class="section-title">
             <h2>Full Report</h2>
@@ -533,9 +722,7 @@
           </div>
           <pre id="reportOutput" class="code-block">No report run yet.</pre>
         </article>
-      </section>
 
-      <section class="layout-2">
         <article id="secCompareSection" class="card">
           <div class="section-title">
             <h3>SEC Filing Compare</h3>
@@ -573,15 +760,21 @@
           <div id="secCompareHeadline" class="compare-headline">
             <div class="report-empty">Run SEC compare to generate a headline verdict.</div>
           </div>
-          <div id="secCompareNarrative" class="compare-narrative">
-            <div class="report-empty">Narrative summary will appear here.</div>
-          </div>
-          <div id="secCompareChanges" class="compare-changes">
-            <div class="report-empty">Material changes and shared signals will appear here.</div>
-          </div>
-          <div id="secCompareVisual" class="report-visual">
-            <div class="report-empty">Side-by-side evidence cards will appear here.</div>
-          </div>
+          <details id="secCompareDeepPanel" class="panel-disclosure panel-disclosure--advanced">
+            <summary class="panel-disclosure-summary">
+              Narrative, material changes &amp; evidence
+              <span class="disclosure-hint muted">expand for full compare output</span>
+            </summary>
+            <div id="secCompareNarrative" class="compare-narrative">
+              <div class="report-empty">Narrative summary will appear here.</div>
+            </div>
+            <div id="secCompareChanges" class="compare-changes">
+              <div class="report-empty">Material changes and shared signals will appear here.</div>
+            </div>
+            <div id="secCompareVisual" class="report-visual">
+              <div class="report-empty">Side-by-side evidence cards will appear here.</div>
+            </div>
+          </details>
         </article>
         <article id="activitySection" class="card">
           <div class="section-title">
@@ -591,6 +784,16 @@
           <div class="report-empty">Activity has moved to the collapsible drawer at bottom.</div>
         </article>
       </section>
+
+      <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
+        <p>
+          <strong>Not investment advice.</strong> Scans, backtests, and reports are informational only. Past or hypothetical
+          performance does not guarantee future results. You are responsible for your trades and compliance with applicable law.
+          Charles Schwab and Schwab are trademarks of their respective owners; this software is not affiliated with or endorsed
+          by them.
+          <a href="/static/legal.html">Full legal &amp; risk disclosures</a>
+        </p>
+      </footer>
     </main>
 
     <aside id="quickViewPanel" class="quick-view-panel" aria-label="Quick decision panel">
@@ -614,14 +817,42 @@
       <form method="dialog">
         <h3>Confirm Live Trade</h3>
         <p id="approveSummary" class="muted"></p>
+        <label class="field-label" for="approveTickerInput">Type the ticker to confirm this live order</label>
+        <input id="approveTickerInput" type="text" autocomplete="off" placeholder="e.g. AAPL" />
         <p class="warn-text">
-          This sends a live market order through Schwab.
+          This sends a live market order through Schwab. You alone decide whether the order is suitable; nothing here is
+          personalized investment advice.
         </p>
         <div class="modal-actions">
           <button id="cancelApproveBtn" class="btn secondary" value="cancel">Cancel</button>
           <button id="confirmApproveBtn" class="btn good" value="default">Confirm Approve</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="queueScanDialog" class="modal">
+      <div class="modal-stack">
+        <h3>Stage trade for approval</h3>
+        <p id="queueScanHeadline" class="muted"></p>
+        <div class="inline-form compact modal-form-grid">
+          <label class="field-label" for="queueScanQty">Quantity</label>
+          <input
+            id="queueScanQty"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="Auto from presets"
+            title="Leave blank to use position size from your strategy preset"
+          />
+          <label class="field-label" for="queueScanNote">Note</label>
+          <input id="queueScanNote" type="text" placeholder="e.g. Trim size, earnings watch" />
+        </div>
+        <p class="muted form-hint">You can change quantity here before the trade appears in pending approvals.</p>
+        <div class="modal-actions">
+          <button id="queueScanCancelBtn" class="btn secondary" type="button">Cancel</button>
+          <button id="queueScanConfirmBtn" class="btn primary" type="button">Add to pending</button>
+        </div>
+      </div>
     </dialog>
 
     <script src="/static/app.js"></script>

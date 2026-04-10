@@ -1,0 +1,87 @@
+.simple-wrap {
+  max-width: 42rem;
+}
+
+.simple-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.simple-header-actions {
+  flex-shrink: 0;
+}
+
+.simple-lead {
+  max-width: 36rem;
+  margin-top: 0.5rem;
+}
+
+.simple-h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem;
+}
+
+.simple-note {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.simple-message {
+  min-height: 1.25rem;
+  margin: 0.5rem 0;
+}
+
+.simple-message.warn {
+  color: var(--warn-fg, #fbbf24);
+}
+
+.simple-message.error {
+  color: var(--error-fg, #f87171);
+}
+
+.simple-message.ok {
+  color: var(--ok-fg, #4ade80);
+}
+
+.simple-supabase {
+  margin-bottom: 1rem;
+}
+
+.simple-jwt-details {
+  margin-top: 0.5rem;
+}
+
+.simple-status .simple-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.simple-pill {
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.875rem;
+}
+
+.simple-pill strong {
+  display: inline-block;
+  margin-left: 0.25rem;
+}
+
+.simple-scan-headline {
+  font-weight: 600;
+}
+
+#simpleProgressWrap {
+  margin: 0.75rem 0;
+}
+
+#simpleProgressWrap progress {
+  width: 100%;
+}

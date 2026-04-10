@@ -9,7 +9,7 @@ from typing import Any
 
 import stripe
 from celery.result import AsyncResult
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from execution import get_account_status
 
 from .audit import log_audit
+from .backtest_queue import create_and_queue_backtest
 from .billing_stripe import (
     billing_enforcement_enabled,
     create_billing_portal_session,
@@ -30,19 +31,13 @@ from .billing_stripe import (
     user_has_paid_entitlement,
 )
 from .db import DATABASE_URL, Base, SessionLocal, engine
-from .backtest_queue import create_and_queue_backtest
 from .models import AppState, BacktestRun, Order, Position, ScanResult, User, UserCredential
-from .saas_redis import (
-    acquire_scan_cooldown,
-    fixed_window_rate_limit,
-    order_idempotency_existing_task,
-    order_idempotency_record_task,
-    redis_ping,
-)
+from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping
+from .scan_payload import parse_scan_run_body
 from .schemas import (
     ApiResponse,
     BillingCheckoutRequest,
-    ExecuteOrderRequest,
+    EnableLiveTradingRequest,
     QueueUserBacktestRequest,
     SchwabCredentialUpsert,
     StrategyChatRequest,
@@ -57,8 +52,15 @@ from .security import (
     utcnow_iso,
 )
 from .strategy_chat import run_strategy_chat
-from .tasks import celery_app, execute_order_for_user, scan_for_user
-from .tenant_runtime import tenant_skill_dir, user_can_materialize_for_scan, user_has_account_session
+from .tasks import celery_app, scan_for_user
+from .tenant_dashboard import _tenant_api_health_snapshot
+from .tenant_dashboard import router as tenant_dashboard_router
+from .tenant_runtime import (
+    tenant_skill_dir,
+    user_can_materialize_for_scan,
+    user_has_account_session,
+    user_schwab_ready_for_live_trading,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -71,7 +73,7 @@ if os.getenv("SAAS_BOOTSTRAP_SCHEMA", "").lower() in ("1", "true", "yes"):
 
         from alembic import command
 
-        command.stamp(Config(str(_ALEMBIC_INI)), "saas003")
+        command.stamp(Config(str(_ALEMBIC_INI)), "saas005")
 elif os.getenv("SAAS_RUN_ALEMBIC", "").lower() in ("1", "true", "yes"):
     if _ALEMBIC_INI.is_file():
         from alembic.config import Config
@@ -108,6 +110,8 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+app.include_router(tenant_dashboard_router)
 
 
 @app.middleware("http")
@@ -196,6 +200,18 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/simple")
+def simple_dashboard() -> FileResponse:
+    """Focused scan + diagnostics UI for external users (see also `/`)."""
+    return FileResponse(STATIC_DIR / "simple.html")
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 @app.get("/api/public-config", response_model=ApiResponse)
 def public_config() -> ApiResponse:
     """Non-secret client config (e.g. Supabase URL + anon key for browser sign-in)."""
@@ -204,7 +220,14 @@ def public_config() -> ApiResponse:
     supabase: dict[str, str] | None = None
     if url and anon:
         supabase = {"url": url, "anon_key": anon}
-    return _ok({"supabase": supabase})
+    schwab_oauth = bool(
+        (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip() and (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
+    )
+    data: dict[str, Any] = {"supabase": supabase, "schwab_oauth": schwab_oauth, "saas_mode": True}
+    impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
+    if impl.startswith(("http://", "https://")):
+        data["implementation_guide_url"] = impl
+    return _ok(data)
 
 
 @app.get("/api/health", response_model=ApiResponse)
@@ -255,11 +278,7 @@ def health_ready() -> ApiResponse:
 @app.get("/api/me", response_model=ApiResponse)
 def me(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> ApiResponse:
     linked = _is_schwab_linked(db, user.id)
-    period_end = (
-        user.subscription_current_period_end.isoformat()
-        if user.subscription_current_period_end
-        else None
-    )
+    period_end = user.subscription_current_period_end.isoformat() if user.subscription_current_period_end else None
     return _ok(
         {
             "id": user.id,
@@ -267,6 +286,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> Ap
             "provider": user.auth_provider,
             "schwab_linked": linked,
             "onboarding_required": not linked,
+            "live_execution_enabled": bool(getattr(user, "live_execution_enabled", False)),
             "subscription_status": user.subscription_status,
             "subscription_current_period_end": period_end,
             "has_stripe_customer": bool(user.stripe_customer_id),
@@ -274,6 +294,41 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> Ap
             "subscription_active": user_has_paid_entitlement(user),
         }
     )
+
+
+@app.post("/api/settings/enable-live-trading", response_model=ApiResponse)
+def enable_live_trading(
+    request: Request,
+    payload: EnableLiveTradingRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    if not payload.risk_acknowledged:
+        raise HTTPException(status_code=400, detail="risk_acknowledged must be true.")
+    if (payload.typed_phrase or "").strip() != "ENABLE":
+        raise HTTPException(
+            status_code=400,
+            detail="Type the word ENABLE exactly to confirm you understand live orders are irreversible at market.",
+        )
+    ready, reason = user_schwab_ready_for_live_trading(db, user.id)
+    if not ready:
+        raise HTTPException(status_code=409, detail=reason)
+    row = db.query(User).filter(User.id == user.id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if row.live_execution_enabled:
+        return _ok({"live_execution_enabled": True, "already_enabled": True})
+    row.live_execution_enabled = True
+    db.commit()
+    db.refresh(row)
+    log_audit(
+        db,
+        action="live_execution_enabled",
+        user_id=row.id,
+        detail={"source": "settings_enable_live_trading"},
+        request_id=_request_id(request),
+    )
+    return _ok({"live_execution_enabled": True})
 
 
 @app.post("/api/billing/checkout-session", response_model=ApiResponse)
@@ -449,6 +504,13 @@ def credential_status(user: User = Depends(get_current_user), db: Session = Depe
 @app.get("/api/onboarding/status", response_model=ApiResponse)
 def onboarding_status(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> ApiResponse:
     linked = _is_schwab_linked(db, user.id)
+    api_health = _tenant_api_health_snapshot(db, user.id)
+    wizard = _load_state(
+        db,
+        user.id,
+        "onboarding_wizard",
+        default={},
+    )
     state = _load_state(
         db,
         user.id,
@@ -461,6 +523,9 @@ def onboarding_status(user: User = Depends(get_current_user), db: Session = Depe
     )
     state["schwab_linked"] = linked
     state["onboarding_required"] = not linked
+    state["connection_status"] = "connected" if linked else "disconnected"
+    state["api_health"] = api_health
+    state["wizard"] = wizard
     return _ok(state)
 
 
@@ -469,12 +534,17 @@ def run_scan(
     request: Request,
     user: User = Depends(require_paid_entitlement),
     db: Session = Depends(_db),
+    body: dict[str, Any] | None = Body(default=None),
 ) -> ApiResponse:
     if not _is_schwab_linked(db, user.id):
         raise HTTPException(status_code=409, detail="Link Schwab account before running scans.")
     ok_scan, reason = user_can_materialize_for_scan(db, user.id)
     if not ok_scan:
         raise HTTPException(status_code=409, detail=reason)
+    try:
+        scan_opts = parse_scan_run_body(body)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     _scan_rate_limit(user.id)
     cooldown = int(os.getenv("SAAS_SCAN_COOLDOWN_SEC", "60"))
     if not acquire_scan_cooldown(user.id, cooldown):
@@ -482,12 +552,17 @@ def run_scan(
             status_code=409,
             detail=f"A scan was started recently; wait up to {cooldown}s before retrying.",
         )
-    task = scan_for_user.apply_async(args=[user.id], queue="scan")
+    task = scan_for_user.apply_async(args=[user.id, scan_opts], queue="scan")
     log_audit(
         db,
         action="scan_queued",
         user_id=user.id,
-        detail={"task_id": task.id},
+        detail={
+            "task_id": task.id,
+            "scan_universe_mode": scan_opts.get("universe_mode"),
+            "scan_custom_ticker_count": len(scan_opts.get("tickers") or []),
+            "scan_has_strategy_overrides": bool(scan_opts.get("env_overrides")),
+        },
         request_id=_request_id(request),
     )
     return _ok({"task_id": task.id, "status": "queued"})
@@ -555,48 +630,23 @@ def list_scan_results(
     )
 
 
-@app.post("/api/orders/execute", response_model=ApiResponse)
-def execute_order(
-    request: Request,
-    payload: ExecuteOrderRequest,
-    user: User = Depends(require_paid_entitlement),
-    db: Session = Depends(_db),
-    idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> ApiResponse:
-    if not _is_schwab_linked(db, user.id):
-        raise HTTPException(status_code=409, detail="Link Schwab account before executing orders.")
-    idem = (idempotency_key_header or payload.idempotency_key or "").strip()
-    if idem:
-        existing = order_idempotency_existing_task(user.id, idem)
-        if existing:
-            return _ok({"task_id": existing, "status": "deduplicated"})
-    _order_rate_limit(user.id)
-    task = execute_order_for_user.apply_async(
-        args=[user.id, payload.ticker, payload.qty, payload.side, payload.order_type, payload.price],
-        queue="orders",
+@app.post("/api/orders/execute")
+def execute_order() -> None:
+    """Removed: live orders must be staged (pending) then confirmed in-app with typed ticker."""
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "Direct order execution is disabled. Stage a trade with POST /api/pending-trades, then confirm with POST /api/trades/{id}/approve and a JSON body re-typing the ticker.",
+            "pending_trades": "POST /api/pending-trades",
+            "confirm": "POST /api/trades/{trade_id}/approve",
+        },
     )
-    if idem:
-        order_idempotency_record_task(user.id, idem, task.id)
-    log_audit(
-        db,
-        action="order_queued",
-        user_id=user.id,
-        detail={"task_id": task.id, "ticker": payload.ticker, "qty": payload.qty, "side": payload.side},
-        request_id=_request_id(request),
-    )
-    return _ok({"task_id": task.id, "status": "queued"})
 
 
 @app.get("/api/orders/{task_id}", response_model=ApiResponse)
 def order_task_status(task_id: str, user: User = Depends(get_current_user), db: Session = Depends(_db)) -> ApiResponse:
     task = AsyncResult(task_id, app=celery_app)
-    rows = (
-        db.query(Order)
-        .filter(Order.user_id == user.id)
-        .order_by(Order.created_at.desc())
-        .limit(25)
-        .all()
-    )
+    rows = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).limit(25).all()
     return _ok(
         {
             "task_id": task_id,
@@ -627,13 +677,7 @@ def list_orders(
     user: User = Depends(get_current_user),
     db: Session = Depends(_db),
 ) -> ApiResponse:
-    rows = (
-        db.query(Order)
-        .filter(Order.user_id == user.id)
-        .order_by(Order.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    rows = db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).limit(limit).all()
     return _ok(
         [
             {
@@ -801,11 +845,7 @@ def backtest_run_task_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(_db),
 ) -> ApiResponse:
-    row = (
-        db.query(BacktestRun)
-        .filter(BacktestRun.user_id == user.id, BacktestRun.celery_task_id == task_id)
-        .first()
-    )
+    row = db.query(BacktestRun).filter(BacktestRun.user_id == user.id, BacktestRun.celery_task_id == task_id).first()
     task = AsyncResult(task_id, app=celery_app)
     payload: dict[str, Any] = {"task_id": task_id, "celery_status": task.status.lower()}
     if row:

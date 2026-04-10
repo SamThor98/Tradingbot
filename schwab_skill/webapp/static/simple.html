@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scan — TradingBot</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/simple.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#simpleMain">Skip to main content</a>
+    <div class="bg-blur bg1"></div>
+    <div class="bg-blur bg2"></div>
+
+    <main id="simpleMain" class="container simple-wrap">
+      <header class="card simple-header">
+        <div>
+          <p class="eyebrow">External-friendly view</p>
+          <h1>Signal scan</h1>
+          <p class="muted simple-lead">
+            Connect your session, run one scan, and read why the list is empty when filters block every name. For backtests,
+            staging trades, and approvals use the
+            <a href="/">full dashboard</a>
+            (<a href="/?section=backtest">backtest</a>,
+            <a href="/?section=pending">pending</a>) or sign in only at
+            <a href="/login">/login</a>.
+          </p>
+        </div>
+        <div class="simple-header-actions">
+          <a class="btn secondary" href="/">Full dashboard</a>
+        </div>
+      </header>
+
+      <p id="simpleMessage" class="simple-message muted" role="status" aria-live="polite"></p>
+
+      <section class="card" aria-label="Sign in">
+        <h2 class="simple-h2">Session</h2>
+        <p class="muted simple-note">
+          SaaS hosts require a valid JWT (Supabase sign-in or paste token). Local installs often work without a token for
+          scan APIs.
+        </p>
+        <div id="simpleSupabase" class="simple-supabase hidden">
+          <div id="simpleSbOut" class="inline-form compact">
+            <label class="field-label" for="simpleSbEmail">Email</label>
+            <input id="simpleSbEmail" type="email" autocomplete="username" />
+            <label class="field-label" for="simpleSbPass">Password</label>
+            <input id="simpleSbPass" type="password" autocomplete="current-password" />
+            <button id="simpleSbSignIn" class="btn small secondary" type="button">Sign in</button>
+            <button id="simpleSbSignUp" class="btn small secondary" type="button">Sign up</button>
+          </div>
+          <div id="simpleSbIn" class="inline-form compact hidden">
+            <span id="simpleSbLabel" class="muted"></span>
+            <button id="simpleSbSignOut" class="btn small secondary" type="button">Sign out</button>
+          </div>
+        </div>
+        <details class="simple-jwt-details">
+          <summary class="muted">Access token (JWT)</summary>
+          <div class="inline-form compact">
+            <label class="field-label" for="simpleJwt">Token</label>
+            <input id="simpleJwt" type="password" autocomplete="off" placeholder="Paste JWT if not using Supabase UI" />
+            <button id="simpleJwtSave" class="btn small secondary" type="button">Save</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="card simple-status" aria-label="Connection">
+        <h2 class="simple-h2">Status</h2>
+        <div class="simple-pills">
+          <div class="simple-pill"><span class="muted">Market</span> <strong id="simpleMarket">—</strong></div>
+          <div class="simple-pill"><span class="muted">Account</span> <strong id="simpleAccount">—</strong></div>
+          <div class="simple-pill"><span class="muted">Quotes</span> <strong id="simpleQuotes">—</strong></div>
+          <div class="simple-pill"><span class="muted">Last scan</span> <strong id="simpleLastScan">—</strong></div>
+        </div>
+        <button id="simpleRefreshStatus" class="btn small secondary" type="button">Refresh status</button>
+      </section>
+
+      <section class="card" aria-label="Run scan">
+        <h2 class="simple-h2">Scan</h2>
+        <p class="muted">
+          <strong id="simpleScanHeadline" class="simple-scan-headline">No scan yet.</strong>
+        </p>
+        <div id="simpleProgressWrap" class="job-progress-wrap hidden">
+          <progress id="simpleProgress" max="100" value="0"></progress>
+          <span id="simpleProgressLabel" class="muted"></span>
+        </div>
+        <button id="simpleScanBtn" class="btn primary" type="button">Run scan</button>
+      </section>
+
+      <section class="card" aria-label="Why no signals">
+        <h2 class="simple-h2">When the list is empty</h2>
+        <p class="muted">
+          These counters come from the scanner. Large numbers in Stage 2 or VCP mean the strategy rules rejected most
+          names—not a UI bug.
+        </p>
+        <ul id="simpleBlockers" class="report-bullets">
+          <li class="muted">Run a scan to populate diagnostics.</li>
+        </ul>
+      </section>
+
+      <section class="card" aria-label="Results">
+        <h2 class="simple-h2">Candidates</h2>
+        <div class="table-wrap">
+          <table>
+            <caption class="visually-hidden">Scan candidates</caption>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Score</th>
+                <th>Sector ETF</th>
+              </tr>
+            </thead>
+            <tbody id="simpleTableBody">
+              <tr>
+                <td colspan="3" class="muted">Run a scan to load rows.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
+        <p>
+          <strong>Not investment advice.</strong> Scan output is informational only. Past performance does not guarantee future
+          results.
+          <a href="/static/legal.html">Full legal &amp; risk disclosures</a>
+        </p>
+      </footer>
+    </main>
+    <script src="/static/simple.js" type="module"></script>
+  </body>
+</html>

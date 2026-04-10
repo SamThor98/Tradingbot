@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from celery import Celery
@@ -13,8 +14,11 @@ from signal_scanner import scan_for_signals_detailed
 
 from .billing_stripe import user_has_paid_entitlement
 from .db import SessionLocal
-from .models import BacktestRun, Order, ScanResult, User
+from .models import AppState, BacktestRun, Order, ScanResult, User
+from .scan_payload import scan_runtime_kwargs
 from .tenant_runtime import tenant_skill_dir
+
+LOG = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -44,36 +48,117 @@ def _json_default(value: Any) -> Any:
     return str(value)
 
 
+def _strategy_summary_from_signals(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = signals or []
+    counts: dict[str, int] = {}
+    for sig in rows:
+        attr = sig.get("strategy_attribution") if isinstance(sig, dict) else None
+        name = str((attr or {}).get("top_live") or "unknown")
+        counts[name] = int(counts.get(name, 0) or 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    dominant = ranked[0][0] if ranked else None
+    dominant_count = ranked[0][1] if ranked else 0
+    return {
+        "dominant_live_strategy": dominant,
+        "dominant_count": dominant_count,
+        "total_ranked": len(rows),
+        "counts": {k: v for k, v in ranked},
+    }
+
+
+def _persist_user_last_scan(
+    db: Any,
+    user_id: str,
+    job_id: str,
+    signals_found: int,
+    diagnostics: dict[str, Any],
+    strategy_summary: dict[str, Any] | None = None,
+) -> None:
+    import json
+
+    summary_keys = (
+        "watchlist_size",
+        "stage2_fail",
+        "vcp_fail",
+        "exceptions",
+        "scan_blocked",
+    )
+    diagnostics_summary = {k: diagnostics.get(k) for k in summary_keys}
+    payload = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "job_id": job_id,
+        "signals_found": signals_found,
+        "diagnostics": diagnostics,
+        "diagnostics_summary": diagnostics_summary,
+        "strategy_summary": strategy_summary,
+    }
+    row = db.query(AppState).filter(AppState.user_id == user_id, AppState.key == "last_scan").first()
+    blob = json.dumps(payload, default=_json_default)
+    if not row:
+        db.add(AppState(user_id=user_id, key="last_scan", value_json=blob))
+    else:
+        row.value_json = blob
+    db.commit()
+
+
 @celery_app.task(name="webapp.scan_for_user")
-def scan_for_user(user_id: str) -> dict[str, Any]:
+def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> dict[str, Any]:
     job_id = uuid.uuid4().hex
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user_has_paid_entitlement(user):
             return {"ok": False, "job_id": job_id, "error": "Active subscription required."}
+        opts = scan_options if isinstance(scan_options, dict) else {}
+        skw = scan_runtime_kwargs(opts)
         with tenant_skill_dir(db, user_id) as skill_dir:
-            signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir)
+            signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir, **skw)
             inserted = 0
             for sig in signals:
                 row = ScanResult(
                     user_id=user_id,
                     job_id=job_id,
                     ticker=str(sig.get("ticker") or sig.get("symbol") or "").upper(),
-                    signal_score=(
-                        float(sig.get("signal_score")) if sig.get("signal_score") is not None else None
-                    ),
+                    signal_score=(float(sig.get("signal_score")) if sig.get("signal_score") is not None else None),
                     payload_json=json.dumps(sig, default=_json_default),
                 )
                 db.add(row)
                 inserted += 1
             db.commit()
-            return {
+            strat = _strategy_summary_from_signals(signals)
+            try:
+                _persist_user_last_scan(
+                    db,
+                    user_id,
+                    job_id,
+                    inserted,
+                    diagnostics if isinstance(diagnostics, dict) else {},
+                    strategy_summary=strat,
+                )
+            except Exception as persist_exc:
+                LOG.exception(
+                    "last_scan persist failed user_id=%s job_id=%s: %s",
+                    user_id,
+                    job_id,
+                    persist_exc,
+                )
+            # Celery JSON backend requires a JSON-serializable payload (no numpy, etc.).
+            out = {
                 "ok": True,
                 "job_id": job_id,
                 "signals_found": inserted,
-                "diagnostics": diagnostics,
+                "diagnostics": diagnostics if isinstance(diagnostics, dict) else {},
+                "strategy_summary": strat,
             }
+            try:
+                return json.loads(json.dumps(out, default=str))
+            except Exception:
+                return {
+                    "ok": True,
+                    "job_id": job_id,
+                    "signals_found": inserted,
+                    "diagnostics": {},
+                }
     except Exception as exc:
         db.rollback()
         return {"ok": False, "job_id": job_id, "error": str(exc)}
@@ -138,6 +223,8 @@ def execute_order_for_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user_has_paid_entitlement(user):
         return {"ok": False, "error": "Active subscription required."}
+    if not user or not getattr(user, "live_execution_enabled", False):
+        return {"ok": False, "error": "Live execution is disabled for this account."}
     order_id = uuid.uuid4().hex[:12]
     row = Order(
         id=order_id,

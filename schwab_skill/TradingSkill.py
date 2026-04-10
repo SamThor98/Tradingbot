@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from execution import get_account_status, place_order
-from market_data import get_current_quote, get_daily_history
+from market_data import extract_schwab_last_price, get_current_quote, get_daily_history
 from schwab_auth import DualSchwabAuth
 from stage_analysis import add_indicators, check_vcp_volume, is_stage_2
 
@@ -70,11 +70,9 @@ def analyze_ticker_trend(ticker: str, days: int = 300) -> str:
         vcp_ok = check_vcp_volume(df)
         quote = get_current_quote(ticker, auth=auth, skill_dir=SKILL_DIR)
         current = float(latest["close"])
-        if isinstance(quote, dict) and quote.get("lastPrice") is not None:
-            try:
-                current = float(quote["lastPrice"])
-            except (TypeError, ValueError):
-                pass
+        live = extract_schwab_last_price(quote) if isinstance(quote, dict) else None
+        if live is not None:
+            current = live
 
         # Sector strength (winning sectors only for trading)
         sector_etf = None

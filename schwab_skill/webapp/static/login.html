@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in — TradingBot</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#loginMain">Skip to main content</a>
+    <div class="bg-blur bg1"></div>
+    <div class="bg-blur bg2"></div>
+
+    <main id="loginMain" class="container" style="max-width: 520px; padding-top: 2rem">
+      <header class="card">
+        <p class="eyebrow">TradingBot</p>
+        <h1>Sign in</h1>
+        <p class="muted">
+          Same session as the <a href="/">full dashboard</a>. After signing in, open the dashboard to run scans, backtests, and
+          approvals.
+        </p>
+      </header>
+
+      <section class="card" aria-label="Sign in options">
+        <div id="loginSupabase" class="hidden">
+          <div id="loginSbOut" class="inline-form compact">
+            <label class="field-label" for="loginSbEmail">Email</label>
+            <input id="loginSbEmail" type="email" autocomplete="username" placeholder="you@example.com" />
+            <label class="field-label" for="loginSbPass">Password</label>
+            <input id="loginSbPass" type="password" autocomplete="current-password" placeholder="••••••••" />
+            <button id="loginSbSignIn" class="btn secondary" type="button">Sign in</button>
+            <button id="loginSbSignUp" class="btn small secondary" type="button">Sign up</button>
+          </div>
+          <div id="loginSbIn" class="inline-form compact hidden">
+            <span id="loginSbLabel" class="muted"></span>
+            <button id="loginSbSignOut" class="btn small secondary" type="button">Sign out</button>
+          </div>
+        </div>
+        <details class="login-jwt-details" open>
+          <summary class="muted">Access token (JWT)</summary>
+          <div class="inline-form compact">
+            <label class="field-label" for="loginJwt">Token</label>
+            <input id="loginJwt" type="password" autocomplete="off" placeholder="Paste Supabase access token" />
+            <button id="loginJwtSave" class="btn small secondary" type="button">Save</button>
+          </div>
+        </details>
+        <p id="loginMessage" class="muted" style="margin-top: 12px" role="status" aria-live="polite"></p>
+        <div class="inline-form" style="margin-top: 16px">
+          <a class="btn primary" href="/">Open dashboard</a>
+          <a class="btn secondary" href="/simple">Simple scan</a>
+        </div>
+      </section>
+
+      <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
+        <p>
+          <strong>Not investment advice.</strong>
+          <a href="/static/legal.html">Legal &amp; risk disclosures</a>
+        </p>
+      </footer>
+    </main>
+    <script src="/static/login.js" type="module"></script>
+  </body>
+</html>

@@ -20,7 +20,7 @@ from typing import Any
 import requests
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
-from market_data import get_current_quote
+from market_data import extract_schwab_last_price, get_current_quote
 from notifier import send_alert
 from schwab_auth import DualSchwabAuth
 
@@ -316,11 +316,9 @@ class GuardrailWrapper:
 
     def _get_quote_price(self, ticker: str) -> float | None:
         q = get_current_quote(ticker, auth=self.auth, skill_dir=self.skill_dir)
-        if isinstance(q, dict) and q.get("lastPrice") is not None:
-            try:
-                return float(q["lastPrice"])
-            except (TypeError, ValueError):
-                pass
+        p = extract_schwab_last_price(q) if isinstance(q, dict) else None
+        if p is not None and p > 0:
+            return p
         # Fallback: yfinance when Schwab quote fails (e.g. DTE, rate limits)
         try:
             import yfinance as yf

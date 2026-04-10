@@ -50,9 +50,9 @@ def main() -> None:
     market = skill_dir / "tokens_market.enc"
     account = skill_dir / "tokens_account.enc"
     if not market.exists() or not account.exists():
-        print("NOT READY: OAuth tokens missing.")
-        print("  Run: python run_dual_auth_browser.py")
-        print("  Add https://127.0.0.1:8182 to BOTH apps in Schwab Developer Portal.")
+        print("NOT READY: OAuth token files are missing (market and/or account).")
+        print("  Fix: run `python run_dual_auth_browser.py` from the schwab_skill directory.")
+        print("  Fix: add https://127.0.0.1:8182 as a redirect URL on BOTH Schwab Developer Portal apps.")
         sys.exit(1)
 
     from logger_setup import get_logger, setup_logging
@@ -95,12 +95,13 @@ def main() -> None:
             failures.append(msg)
 
     if failures:
-        print("\nNOT READY: Schwab authorization check failed.")
+        print("\nNOT READY: One or more Schwab API checks failed (see lines above).")
         print("Recommended repair:")
-        print("  1) Delete tokens_market.enc and tokens_account.enc")
-        print("  2) Run: python run_dual_auth_browser.py")
-        print("  3) Verify both apps are Ready for use in Schwab portal")
-        print("  4) Verify account app has Accounts/Trading + linked brokerage account")
+        print("  1) Delete tokens_market.enc and/or tokens_account.enc if tokens are corrupt or expired.")
+        print("  2) Run: python run_dual_auth_browser.py (complete both market and account flows).")
+        print("  3) In the Schwab Developer Portal, confirm both apps are Ready and market app can access quotes.")
+        print("  4) Confirm the account app has Accounts/Trading scope and a linked brokerage account.")
+        print("  5) If only quotes fail: check network/VPN/firewall to api.schwabapi.com.")
         log.warning("Healthcheck failed: %s", "; ".join(failures))
         sys.exit(1)
 

@@ -40,6 +40,17 @@ class SchwabCredentialUpsert(BaseModel):
     account_oauth_json: str | None = None
 
 
+class ApproveTradeRequest(BaseModel):
+    """In-app confirmation: user must re-type the trade ticker before a live order is sent."""
+
+    typed_ticker: str = Field(min_length=1, max_length=16)
+
+
+class EnableLiveTradingRequest(BaseModel):
+    risk_acknowledged: bool = False
+    typed_phrase: str = Field(min_length=1, max_length=32)
+
+
 class ExecuteOrderRequest(BaseModel):
     ticker: str = Field(min_length=1, max_length=16)
     qty: int = Field(gt=0)
