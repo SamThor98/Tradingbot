@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from execution import get_account_status, get_position_size_usd, place_order
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
-from market_data import get_current_quote
+from market_data import extract_schwab_last_price, get_current_quote, get_current_quote_with_status
 from schwab_auth import DualSchwabAuth
 from sec_filing_compare import (
     analyze_latest_filing_for_ticker,
@@ -210,7 +210,13 @@ def _ok(data: Any = None) -> ApiResponse:
 def _err(endpoint: str, exc: Exception) -> ApiResponse:
     _record_endpoint_error(endpoint)
     mapped = _map_failure(str(exc), source=endpoint)
-    return ApiResponse(ok=False, error=str(exc), data={"recovery": mapped})
+    raw = str(mapped.get("raw_error") or "").strip()
+    headline = f"{mapped.get('title', 'Error')}: {mapped.get('summary', 'Something went wrong.')}"
+    summary = str(mapped.get("summary") or "")
+    err_out = headline
+    if raw and raw.lower() not in summary.lower():
+        err_out = f"{headline} — {raw[:220]}"
+    return ApiResponse(ok=False, error=err_out, data={"recovery": mapped})
 
 
 def _read_json_file(path: Path, default: Any) -> Any:
@@ -269,13 +275,25 @@ def _map_failure(message: str, source: str = "unknown") -> dict[str, Any]:
                 "action": "reauth",
             }
         )
-    elif any(k in msg for k in ("quote", "market data", "df_empty", "timeout", "connection")):
+    elif any(
+        k in msg
+        for k in (
+            "quote",
+            "market data",
+            "df_empty",
+            "timeout",
+            "connection",
+            "circuit breaker",
+            "connection unstable",
+            "schwab connection unstable",
+        )
+    ):
         mapped.update(
             {
                 "code": "data_error",
                 "title": "Market data issue",
                 "summary": "Market data could not be fetched reliably.",
-                "fix_path": "Retry data fetch; if persistent, wait briefly and retry scan.",
+                "fix_path": "Run `python healthcheck.py` in schwab_skill; refresh market OAuth if quotes fail; wait if the circuit breaker tripped.",
                 "action": "retry",
             }
         )
@@ -355,30 +373,34 @@ def _trade_to_dict(row: PendingTrade) -> dict[str, Any]:
     }
 
 
-def _extract_last_price(quote: dict[str, Any] | str) -> float | None:
-    if not isinstance(quote, dict):
+def _quote_health_hint(meta: dict[str, Any], quote_ok: bool) -> str | None:
+    if quote_ok:
         return None
-    for path in (
-        ("lastPrice",),
-        ("quote", "lastPrice"),
-        ("regular", "regularMarketLastPrice"),
-        ("extended", "lastPrice"),
-    ):
-        ptr: Any = quote
-        ok = True
-        for part in path:
-            if not isinstance(ptr, dict) or part not in ptr:
-                ok = False
-                break
-            ptr = ptr[part]
-        if ok:
-            try:
-                value = float(ptr)
-                if value > 0:
-                    return value
-            except Exception:
-                pass
-    return None
+    reason = str(meta.get("reason") or "")
+    detail = str(meta.get("error_detail") or "")
+    if reason == "http_error":
+        return (
+            "Schwab returned an error for the market-data quotes request. "
+            "Run `python healthcheck.py` and re-authenticate the market app if it keeps failing."
+        )
+    if reason == "no_matching_symbol_in_response":
+        return (
+            "The quotes response did not contain the probe symbol. "
+            "Confirm the Schwab API is up and your market token has quotes access."
+        )
+    if reason == "last_price_not_parseable":
+        return (
+            "Quote JSON was received but no usable last/mark/close price was found. "
+            "If this persists after a Schwab API update, extend extract_schwab_last_price in market_data.py."
+        )
+    if "circuit" in detail.lower() or reason == "RuntimeError":
+        return (
+            "Repeated connection failures may have opened the Schwab circuit breaker. "
+            "Wait a minute, check network/DNS, then retry."
+        )
+    if reason:
+        return f"Quote check failed ({reason}). See trading_bot.log for details."
+    return "Quote check failed for an unknown reason. See trading_bot.log for details."
 
 
 def _build_portfolio_summary(account_status: dict[str, Any]) -> dict[str, Any]:
@@ -774,6 +796,17 @@ def health() -> ApiResponse:
     return _ok({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
 
+@app.get("/api/public-config", response_model=ApiResponse)
+def public_config() -> ApiResponse:
+    """Non-secret client config (optional Supabase browser sign-in)."""
+    url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    supabase: dict[str, str] | None = None
+    if url and anon:
+        supabase = {"url": url, "anon_key": anon}
+    return _ok({"supabase": supabase})
+
+
 @app.get("/api/health/deep", response_model=ApiResponse)
 def health_deep(db: Session = Depends(get_db)) -> ApiResponse:
     try:
@@ -781,16 +814,28 @@ def health_deep(db: Session = Depends(get_db)) -> ApiResponse:
         auth = DualSchwabAuth(skill_dir=SKILL_DIR)
         market_token_ok = bool(auth.get_market_token())
         account_token_ok = bool(auth.get_account_token())
-        quote = get_current_quote("AAPL", auth=auth, skill_dir=SKILL_DIR)
-        quote_ok = _extract_last_price(quote) is not None
+        quote, qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=SKILL_DIR)
+        quote_ok = extract_schwab_last_price(quote) is not None
         with _metrics_lock:
             metrics = json.loads(json.dumps(_request_metrics))
+        qh = {
+            "symbol": qmeta.get("symbol"),
+            "ok": quote_ok,
+            "reason": None if quote_ok else (qmeta.get("reason") or "unknown"),
+            "operator_hint": _quote_health_hint(qmeta, quote_ok),
+            "http_status": qmeta.get("http_status"),
+            "top_level_keys": qmeta.get("top_level_keys"),
+            "quote_keys": qmeta.get("quote_keys"),
+        }
+        if not quote_ok and qmeta.get("error_detail"):
+            qh["error_detail"] = str(qmeta["error_detail"])[:400]
         return _ok(
             {
                 "db_ok": db_ok,
                 "market_token_ok": market_token_ok,
                 "account_token_ok": account_token_ok,
                 "quote_ok": quote_ok,
+                "quote_health": qh,
                 "metrics": metrics,
             }
         )
@@ -1152,7 +1197,7 @@ def create_pending_trade(payload: CreatePendingTrade, db: Session = Depends(get_
 
         auth = DualSchwabAuth(skill_dir=SKILL_DIR)
         quote = get_current_quote(ticker, auth=auth, skill_dir=SKILL_DIR)
-        last_price = payload.price or _extract_last_price(quote) or float(signal.get("price", 0) or 0)
+        last_price = payload.price or extract_schwab_last_price(quote) or float(signal.get("price", 0) or 0)
 
         qty = payload.qty
         if qty is None:
@@ -1379,7 +1424,7 @@ def onboarding_step(step: str, db: Session = Depends(get_db)) -> ApiResponse:
             market_ok = bool(auth.get_market_token())
             account_ok = bool(auth.get_account_token())
             quote = get_current_quote("AAPL", auth=auth, skill_dir=SKILL_DIR)
-            quote_ok = _extract_last_price(quote) is not None
+            quote_ok = extract_schwab_last_price(quote) is not None
             ok = market_ok and account_ok and quote_ok
             steps["verify_token_health"] = {
                 "ok": ok,
@@ -1424,7 +1469,7 @@ def onboarding_step(step: str, db: Session = Depends(get_db)) -> ApiResponse:
         try:
             auth = DualSchwabAuth(skill_dir=SKILL_DIR)
             quote = get_current_quote("AAPL", auth=auth, skill_dir=SKILL_DIR)
-            price = _extract_last_price(quote) or 100.0
+            price = extract_schwab_last_price(quote) or 100.0
             result = place_order(
                 ticker="AAPL",
                 qty=1,

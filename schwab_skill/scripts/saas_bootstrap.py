@@ -27,8 +27,8 @@ def main() -> None:
     Base.metadata.create_all(bind=engine)
     ini = ROOT / "alembic.ini"
     if ini.is_file():
-        command.stamp(Config(str(ini)), "saas002")
-    print("Bootstrap complete (schema + stamp saas002).")
+        command.stamp(Config(str(ini)), "saas003")
+    print("Bootstrap complete (schema + stamp saas003).")
 
 
 if __name__ == "__main__":

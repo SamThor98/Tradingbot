@@ -1,5 +1,6 @@
 # Render Blueprint: Postgres + Redis + FastAPI + Celery worker.
-# https://render.com/docs/infrastructure-as-code
+# In Render: blueprint path = render.yaml (repo root). Do not paste documentation URLs as the path.
+# Spec: https://render.com/docs/infrastructure-as-code
 #
 # Repo layout: use this file when the Git repo root IS schwab_skill (next to Dockerfile.saas).
 # If the repo is a monorepo with schwab_skill as a subfolder, use render.yaml at the repository root instead.
@@ -46,6 +47,10 @@ services:
       - key: CREDENTIAL_ENCRYPTION_KEY
         sync: false
       - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: SCHWAB_MARKET_APP_KEY
         sync: false

@@ -25,6 +25,16 @@ def upgrade() -> None:
     insp = sa.inspect(conn)
     tables = set(insp.get_table_names())
 
+    # Fresh Postgres (e.g. Render first deploy): later revisions expect `users` and related tables.
+    # Migrations only altered/added pieces; without create_all, FK creation fails (ProgrammingError).
+    if "users" not in tables:
+        import webapp.models  # noqa: F401
+        from webapp.db import Base
+
+        Base.metadata.create_all(bind=conn)
+        insp = sa.inspect(conn)
+        tables = set(insp.get_table_names())
+
     if "audit_logs" not in tables:
         op.create_table(
             "audit_logs",
@@ -67,8 +77,10 @@ def upgrade() -> None:
 
     if "scan_results" in tables:
         op.execute(
-            "CREATE INDEX IF NOT EXISTS ix_scan_results_user_created "
-            "ON scan_results (user_id, created_at)"
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_scan_results_user_created "
+                "ON scan_results (user_id, created_at)"
+            )
         )
 
 

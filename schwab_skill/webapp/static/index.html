@@ -20,11 +20,28 @@
           <p class="muted">
             Run scans, inspect diagnostics, review portfolio health, and approve/reject trade candidates in one place.
           </p>
-          <div class="inline-form compact">
-            <label class="field-label" for="jwtInput">JWT</label>
-            <input id="jwtInput" type="password" placeholder="Supabase access token (Bearer JWT)" />
-            <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
+          <div id="supabaseAuthBlock" class="auth-supabase-block hidden" aria-label="Supabase sign-in">
+            <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
+              <label class="field-label" for="supabaseEmail">Email</label>
+              <input id="supabaseEmail" type="email" autocomplete="username" placeholder="you@example.com" />
+              <label class="field-label" for="supabasePassword">Password</label>
+              <input id="supabasePassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+              <button id="supabaseSignInBtn" class="btn small secondary" type="button">Sign in</button>
+              <button id="supabaseSignUpBtn" class="btn small secondary" type="button">Sign up</button>
+            </div>
+            <div id="supabaseSignedIn" class="inline-form compact auth-supabase-row hidden">
+              <span id="supabaseUserLabel" class="muted"></span>
+              <button id="supabaseSignOutBtn" class="btn small secondary" type="button">Sign out</button>
+            </div>
           </div>
+          <details id="manualJwtDetails" class="auth-manual-jwt" open>
+            <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
+            <div class="inline-form compact">
+              <label class="field-label" for="jwtInput">JWT</label>
+              <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
+              <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
+            </div>
+          </details>
         </div>
         <div class="hero-actions">
           <button id="refreshBtn" class="btn secondary">Refresh All</button>
@@ -316,47 +333,162 @@
             <pre id="performanceRaw" class="code-block"></pre>
           </details>
         </article>
-        <article id="backtestSection" class="card">
+        <article id="backtestSection" class="card backtest-hub">
           <div class="section-title">
-            <h2>Your backtests</h2>
-            <small class="muted">Historical Stage 2 + VCP simulation. Queued on the scan worker; uses your tenant config.</small>
+            <h2>Run a historical backtest</h2>
           </div>
-          <div class="inline-form" style="flex-wrap: wrap; gap: 0.5rem">
-            <label class="field-label" for="btTheory">Theory</label>
-            <input id="btTheory" placeholder="Optional name" style="min-width: 120px" />
-            <label class="field-label" for="btUniverse">Universe</label>
-            <select id="btUniverse">
-              <option value="watchlist">Watchlist (.env)</option>
-              <option value="tickers">Custom tickers</option>
-            </select>
-            <label class="field-label" for="btTickers">Tickers</label>
-            <input id="btTickers" placeholder="AAPL, MSFT" style="min-width: 140px" />
-            <label class="field-label" for="btStart">Start</label>
-            <input id="btStart" type="date" />
-            <label class="field-label" for="btEnd">End</label>
-            <input id="btEnd" type="date" />
-            <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
-            <button id="btRefreshListBtn" class="btn secondary" type="button">Refresh list</button>
+          <p class="backtest-intro muted">
+            This replays the <strong>Stage 2 + VCP</strong> rules on past prices. It does <strong>not</strong> place live trades.
+            Results use your account&rsquo;s saved scanner settings unless you change the advanced options below.
+            Use the <strong>form</strong> for precise control, or <strong>chat</strong> to describe what you want in plain language (server needs an OpenAI API key).
+          </p>
+          <div class="tab-bar" role="tablist" aria-label="Backtest entry mode">
+            <button type="button" id="btHubTabForm" class="tab-btn tab-btn-active" role="tab" aria-selected="true" aria-controls="btHubPanelForm">
+              Simple form
+            </button>
+            <button type="button" id="btHubTabChat" class="tab-btn" role="tab" aria-selected="false" aria-controls="strategyChatPanel">
+              Chat assistant
+            </button>
           </div>
-          <p id="btMeta" class="muted">Set dates and queue a run.</p>
-          <pre id="btResult" class="code-block">No run yet.</pre>
-          <div class="section-title"><h3>Recent runs</h3></div>
-          <ul id="btRunList" class="report-bullets"></ul>
-        </article>
-        <article id="strategyChatSection" class="card">
-          <div class="section-title">
-            <h2>Strategy chat</h2>
-            <small class="muted">Assistant builds a StrategySpec and can queue backtests (needs OPENAI_API_KEY on server).</small>
+
+          <div id="btHubPanelForm" class="tab-panel" role="tabpanel">
+            <div class="preset-row" aria-label="Date presets">
+              <span class="field-label">Presets</span>
+              <button type="button" class="btn small secondary bt-preset" data-years="2">Last 2 years</button>
+              <button type="button" class="btn small secondary bt-preset" data-years="5">Last 5 years</button>
+              <button type="button" class="btn small secondary bt-preset" data-years="8">Last 8 years</button>
+            </div>
+            <div class="backtest-form-grid">
+              <div class="form-row">
+                <label class="field-label" for="btUniverse">Universe</label>
+                <select id="btUniverse" aria-describedby="btUniverseHint">
+                  <option value="watchlist">Saved watchlist</option>
+                  <option value="tickers">Custom tickers</option>
+                </select>
+                <span id="btUniverseHint" class="muted form-hint">Watchlist uses symbols from your environment / tenant config.</span>
+              </div>
+              <div class="form-row" id="btTickersRow">
+                <label class="field-label" for="btTickers">Tickers</label>
+                <input id="btTickers" placeholder="AAPL, MSFT, GOOGL" autocomplete="off" />
+              </div>
+              <div class="form-row form-row-dates">
+                <div>
+                  <label class="field-label" for="btStart">Start</label>
+                  <input id="btStart" type="date" />
+                </div>
+                <div>
+                  <label class="field-label" for="btEnd">End</label>
+                  <input id="btEnd" type="date" />
+                </div>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="btTheory">Label (optional)</label>
+                <input id="btTheory" placeholder="e.g. Q1 experiment" />
+              </div>
+            </div>
+            <details class="advanced-details">
+              <summary>Advanced — costs &amp; rule overrides</summary>
+              <div class="backtest-form-grid advanced-grid">
+                <div class="form-row">
+                  <label class="field-label" for="btSlippage">Slippage (bps / side)</label>
+                  <input id="btSlippage" type="number" min="0" max="200" step="1" value="15" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btFeeShare">Fee / share ($)</label>
+                  <input id="btFeeShare" type="number" min="0" max="1" step="0.001" value="0.005" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btMinFee">Min fee / order ($)</label>
+                  <input id="btMinFee" type="number" min="0" max="50" step="0.5" value="1" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btMaxAdv">Max ADV participation</label>
+                  <input id="btMaxAdv" type="number" min="0.001" max="0.1" step="0.001" value="0.02" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btQualityGates">Quality gates</label>
+                  <select id="btQualityGates">
+                    <option value="">Account default</option>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="soft">Soft</option>
+                    <option value="hard">Hard</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btBreakoutConfirm">Breakout confirmation</label>
+                  <select id="btBreakoutConfirm">
+                    <option value="">Account default</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btForensicMode">Forensic filter</label>
+                  <select id="btForensicMode">
+                    <option value="">Account default</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="soft">Soft</option>
+                    <option value="hard">Hard</option>
+                    <option value="off">On, mode off</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btPead">PEAD</label>
+                  <select id="btPead">
+                    <option value="">Account default</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div class="form-row form-row-check">
+                  <label class="field-check">
+                    <input id="btSkipMirofish" type="checkbox" />
+                    Skip MiroFish / LLM during backtest (faster)
+                  </label>
+                </div>
+              </div>
+            </details>
+            <div class="inline-form backtest-actions">
+              <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
+              <button id="btRefreshListBtn" class="btn secondary" type="button">Refresh list</button>
+            </div>
+            <p id="btMeta" class="bt-meta muted"><span id="btMetaText">Choose dates, then queue a run.</span><span id="btMetaSpinner" class="bt-spinner hidden" aria-hidden="true"></span></p>
+            <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
+            <details id="btResultRawDetails" class="details-raw">
+              <summary>Full result JSON</summary>
+              <pre id="btResult" class="code-block">No run yet.</pre>
+            </details>
+            <div class="section-title"><h3>Recent runs</h3></div>
+            <ul id="btRunList" class="report-bullets bt-run-list"></ul>
           </div>
-          <div id="scMessages" class="code-block chat-log">Describe the universe, dates, and any gate tweaks.</div>
-          <div class="inline-form" style="margin-top: 0.5rem">
-            <input
-              id="scInput"
-              type="text"
-              placeholder="e.g. Watchlist, last 8 years, skip MiroFish for speed, soft quality gates"
-              style="flex: 1; min-width: 200px"
-            />
-            <button id="scSendBtn" class="btn secondary" type="button">Send</button>
+
+          <div id="strategyChatPanel" class="tab-panel hidden" role="tabpanel">
+            <p class="muted chat-subhead">The assistant validates your settings and can queue the same backtest job as the form. Tool details stay collapsed unless you expand them.</p>
+            <div id="scMessages" class="chat-log-scroll" role="log" aria-live="polite"></div>
+            <div id="scEmptyChips" class="preset-row chat-chips" aria-label="Example prompts">
+              <span class="field-label">Try</span>
+              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 5 years, skip MiroFish for speed.">
+                Watchlist · 5y · fast
+              </button>
+              <button type="button" class="btn small secondary sc-chip" data-text="Tickers AAPL MSFT GOOGL, last 3 years, soft quality gates.">
+                Custom tickers · 3y
+              </button>
+              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 8 years, use account defaults for gates.">
+                Watchlist · 8y · defaults
+              </button>
+            </div>
+            <div id="scQueueCallout" class="callout callout-info hidden" aria-live="polite"></div>
+            <div class="inline-form chat-input-row">
+              <input
+                id="scInput"
+                type="text"
+                placeholder="Describe universe, date range, and any rule tweaks…"
+                autocomplete="off"
+              />
+              <button id="scSendBtn" class="btn secondary" type="button">Send</button>
+            </div>
           </div>
         </article>
         <article id="quickCheckSection" class="card">

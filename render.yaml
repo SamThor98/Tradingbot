@@ -1,5 +1,6 @@
 # Render Blueprint for SamThor98/Tradingbot: app lives in schwab_skill/
-# https://render.com/docs/infrastructure-as-code
+# In Render: use blueprint file name "render.yaml" (repo root). Do not paste any URL as the path.
+# Spec reference: https://render.com/docs/infrastructure-as-code
 #
 # New → Blueprint → connect this repo → apply.
 # First empty DB: set SAAS_BOOTSTRAP_SCHEMA=1 on web once (see schwab_skill/docs/SAAS_DEPLOYMENT.md).
@@ -41,6 +42,10 @@ services:
       - key: CREDENTIAL_ENCRYPTION_KEY
         sync: false
       - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: SCHWAB_MARKET_APP_KEY
         sync: false

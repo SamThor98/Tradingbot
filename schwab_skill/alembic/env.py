@@ -25,7 +25,8 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return os.getenv("DATABASE_URL", DATABASE_URL)
+    # Use webapp.db.DATABASE_URL so Alembic gets the same postgres:// normalization as the app.
+    return DATABASE_URL
 
 
 def run_migrations_offline() -> None:

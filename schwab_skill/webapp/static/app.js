@@ -13,9 +13,113 @@ const state = {
   profile: null,
   performance: null,
   strategyChatMessages: [],
+  strategyChatBusy: false,
+  backtestQueueBusy: false,
+  lastQuoteHealthLogSig: null,
 };
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
+
+/** Set when /api/public-config exposes Supabase URL + anon key */
+let supabaseClient = null;
+const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
+
+function persistApiJwtFromSession(session) {
+  if (session?.access_token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
+    const inp = document.getElementById("jwtInput");
+    if (inp) inp.value = "";
+  }
+}
+
+function updateSupabaseAuthUI(session) {
+  const out = document.getElementById("supabaseSignedOut");
+  const inn = document.getElementById("supabaseSignedIn");
+  const label = document.getElementById("supabaseUserLabel");
+  if (!out || !inn) return;
+  if (session?.user) {
+    out.classList.add("hidden");
+    inn.classList.remove("hidden");
+    if (label) label.textContent = session.user.email || session.user.id || "Signed in";
+  } else {
+    inn.classList.add("hidden");
+    out.classList.remove("hidden");
+    if (label) label.textContent = "";
+  }
+}
+
+async function initSupabaseAuth(url, anonKey) {
+  let createClient;
+  try {
+    const mod = await import(SUPABASE_ESM);
+    createClient = mod.createClient;
+  } catch (err) {
+    console.warn("Supabase client SDK failed to load", err);
+    logEvent({
+      kind: "system",
+      severity: "warn",
+      message: "Could not load Supabase from CDN; use manual JWT below.",
+    });
+    return;
+  }
+
+  supabaseClient = createClient(url, anonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+  persistApiJwtFromSession(session);
+  updateSupabaseAuthUI(session);
+
+  supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
+    persistApiJwtFromSession(nextSession);
+    updateSupabaseAuthUI(nextSession);
+  });
+
+  document.getElementById("supabaseSignInBtn")?.addEventListener("click", async () => {
+    const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
+    const password = document.getElementById("supabasePassword")?.value || "";
+    if (!email || !password) {
+      logEvent({ kind: "system", severity: "warn", message: "Enter email and password." });
+      return;
+    }
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) logEvent({ kind: "system", severity: "error", message: error.message });
+    else logEvent({ kind: "system", severity: "info", message: "Signed in." });
+  });
+
+  document.getElementById("supabaseSignUpBtn")?.addEventListener("click", async () => {
+    const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
+    const password = document.getElementById("supabasePassword")?.value || "";
+    if (!email || !password) {
+      logEvent({ kind: "system", severity: "warn", message: "Enter email and password to sign up." });
+      return;
+    }
+    const { error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) logEvent({ kind: "system", severity: "error", message: error.message });
+    else {
+      logEvent({
+        kind: "system",
+        severity: "info",
+        message: "Sign-up sent. Check email if confirmation is required, then sign in.",
+      });
+    }
+  });
+
+  document.getElementById("supabaseSignOutBtn")?.addEventListener("click", async () => {
+    await supabaseClient.auth.signOut();
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    const inp = document.getElementById("jwtInput");
+    if (inp) inp.value = "";
+    logEvent({ kind: "system", severity: "info", message: "Signed out." });
+  });
+}
 
 function updateActionCenter({ title = "System Messages", message = "", severity = "info" }) {
   const wrap = document.getElementById("actionCenter");
@@ -106,6 +210,14 @@ const api = {
 function safeText(value) {
   if (value === null || value === undefined) return "—";
   return String(value);
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function safeNum(value, fallback = 0) {
@@ -1181,6 +1293,37 @@ async function openApproveDialog(row) {
 async function loadConfig() {
   const tokenInput = document.getElementById("jwtInput");
   const saveBtn = document.getElementById("saveJwtBtn");
+  const manualDetails = document.getElementById("manualJwtDetails");
+  const manualSummary = document.getElementById("manualJwtSummary");
+  const supabaseBlock = document.getElementById("supabaseAuthBlock");
+
+  let publicCfg = { supabase: null };
+  try {
+    const res = await fetch("/api/public-config", { headers: { Accept: "application/json" } });
+    const body = res.ok ? await res.json() : {};
+    if (body?.ok && body?.data) publicCfg = body.data;
+  } catch {
+    /* offline or boot — fall back to manual JWT only */
+  }
+
+  const hasSupabaseUi = Boolean(publicCfg?.supabase?.url && publicCfg?.supabase?.anon_key);
+  if (hasSupabaseUi && supabaseBlock) {
+    supabaseBlock.classList.remove("hidden");
+    if (manualDetails) manualDetails.open = false;
+    if (manualSummary) {
+      manualSummary.textContent = "Advanced: paste JWT instead";
+      manualSummary.classList.remove("manual-jwt-summary--hidden");
+    }
+    await initSupabaseAuth(publicCfg.supabase.url, publicCfg.supabase.anon_key);
+  } else {
+    if (supabaseBlock) supabaseBlock.classList.add("hidden");
+    if (manualDetails) manualDetails.open = true;
+    if (manualSummary) {
+      manualSummary.textContent = "Session token";
+      manualSummary.classList.add("manual-jwt-summary--hidden");
+    }
+  }
+
   if (tokenInput) {
     tokenInput.value = localStorage.getItem(AUTH_TOKEN_KEY) || "";
   }
@@ -1196,10 +1339,12 @@ async function loadConfig() {
       }
     });
   }
-  state.config = { auth_mode: "jwt" };
+  state.config = { auth_mode: hasSupabaseUi ? "supabase" : "jwt" };
   updateActionCenter({
     title: "Authentication Required",
-    message: "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
+    message: hasSupabaseUi
+      ? "Sign in with Supabase, or open Advanced and paste a JWT, to access protected APIs."
+      : "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
     severity: "warn",
   });
 }
@@ -1275,6 +1420,20 @@ async function refreshStatus() {
   renderValidationRecentSteps(validation);
   if (deepRes.ok) {
     setStatusPill(quoteEl, deepRes.data.quote_ok ? "Connected" : "Degraded");
+    const qh = deepRes.data.quote_health;
+    if (!deepRes.data.quote_ok && qh && qh.operator_hint) {
+      const sig = `${qh.reason || ""}|${qh.operator_hint}`;
+      if (sig !== state.lastQuoteHealthLogSig) {
+        state.lastQuoteHealthLogSig = sig;
+        logEvent({
+          kind: "system",
+          severity: "warn",
+          message: `Quotes: ${qh.reason || "issue"} — ${qh.operator_hint}`,
+        });
+      }
+    } else if (deepRes.data.quote_ok) {
+      state.lastQuoteHealthLogSig = null;
+    }
     const metrics = deepRes.data.metrics || {};
     const req = safeNum(metrics.requests_total, 0);
     const err = safeNum(metrics.errors_total, 0);
@@ -1822,15 +1981,248 @@ function setDefaultBacktestDates() {
   if (endEl && !endEl.value) endEl.value = fmt(end);
 }
 
-function renderStrategyChatMessages() {
-  const el = document.getElementById("scMessages");
-  if (!el) return;
-  const msgs = Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [];
-  if (!msgs.length) {
-    el.textContent = "Describe the universe, dates, and any gate tweaks.";
+function setBacktestQueueUiBusy(busy) {
+  state.backtestQueueBusy = busy;
+  const btn = document.getElementById("btQueueBtn");
+  if (btn) btn.disabled = busy;
+  const spin = document.getElementById("btMetaSpinner");
+  const metaText = document.getElementById("btMetaText");
+  if (spin) spin.classList.toggle("hidden", !busy);
+  if (metaText && busy && !metaText.dataset.sticky) metaText.textContent = "Running…";
+}
+
+function setBtMetaMessage(text, { sticky = false } = {}) {
+  const metaText = document.getElementById("btMetaText");
+  if (!metaText) return;
+  metaText.textContent = text;
+  if (sticky) metaText.dataset.sticky = "1";
+  else delete metaText.dataset.sticky;
+}
+
+function syncBtUniverseRow() {
+  const sel = document.getElementById("btUniverse");
+  const row = document.getElementById("btTickersRow");
+  if (!row) return;
+  const mode = sel?.value || "watchlist";
+  row.classList.toggle("hidden", mode !== "tickers");
+}
+
+function applyBacktestPresetYears(years) {
+  const end = new Date();
+  const start = new Date();
+  start.setFullYear(end.getFullYear() - Number(years));
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const startEl = document.getElementById("btStart");
+  const endEl = document.getElementById("btEnd");
+  if (startEl) startEl.value = fmt(start);
+  if (endEl) endEl.value = fmt(end);
+  setBtMetaMessage(`Date range set to last ${years} year(s).`);
+}
+
+function collectBacktestOverrides() {
+  const o = {};
+  const q = document.getElementById("btQualityGates")?.value || "";
+  if (q) o.quality_gates_mode = q;
+  const bo = document.getElementById("btBreakoutConfirm")?.value || "";
+  if (bo === "on") o.breakout_confirm_enabled = true;
+  if (bo === "off") o.breakout_confirm_enabled = false;
+  const pead = document.getElementById("btPead")?.value || "";
+  if (pead === "on") o.pead_enabled = true;
+  if (pead === "off") o.pead_enabled = false;
+  if (document.getElementById("btSkipMirofish")?.checked) o.skip_mirofish = true;
+  const fm = document.getElementById("btForensicMode")?.value || "";
+  if (fm === "disabled") o.forensic_enabled = false;
+  else if (fm === "shadow" || fm === "soft" || fm === "hard") {
+    o.forensic_enabled = true;
+    o.forensic_filter_mode = fm;
+  } else if (fm === "off") {
+    o.forensic_enabled = true;
+    o.forensic_filter_mode = "off";
+  }
+  return Object.keys(o).length ? o : null;
+}
+
+function collectBacktestSpecFromForm() {
+  const theory = document.getElementById("btTheory")?.value?.trim() || "";
+  const universe = document.getElementById("btUniverse")?.value || "watchlist";
+  const tickersRaw = document.getElementById("btTickers")?.value || "";
+  const tickers = tickersRaw
+    .split(/[\s,]+/)
+    .map((t) => t.trim().toUpperCase())
+    .filter(Boolean);
+  const start = document.getElementById("btStart")?.value;
+  const end = document.getElementById("btEnd")?.value;
+  const slip = Number(document.getElementById("btSlippage")?.value);
+  const fee = Number(document.getElementById("btFeeShare")?.value);
+  const minf = Number(document.getElementById("btMinFee")?.value);
+  const adv = Number(document.getElementById("btMaxAdv")?.value);
+  const spec = {
+    schema_version: 1,
+    universe_mode: universe === "tickers" ? "tickers" : "watchlist",
+    tickers: universe === "tickers" ? tickers : [],
+    start_date: start,
+    end_date: end,
+  };
+  if (theory) spec.theory_name = theory;
+  if (Number.isFinite(slip)) spec.slippage_bps_per_side = slip;
+  if (Number.isFinite(fee)) spec.fee_per_share = fee;
+  if (Number.isFinite(minf)) spec.min_fee_per_order = minf;
+  if (Number.isFinite(adv)) spec.max_adv_participation = adv;
+  const ov = collectBacktestOverrides();
+  if (ov) spec.overrides = ov;
+  return spec;
+}
+
+function renderBacktestResultSummary(result) {
+  const box = document.getElementById("btResultSummary");
+  if (!box) return;
+  if (!result || typeof result !== "object") {
+    box.innerHTML = "";
     return;
   }
-  el.textContent = msgs.map((m) => `${(m.role || "").toUpperCase()}: ${m.content || ""}`).join("\n\n---\n\n");
+  const tt = result.total_trades;
+  if (tt === undefined || tt === null) {
+    box.innerHTML = "";
+    return;
+  }
+  const findings = typeof result.findings === "string" ? result.findings : "";
+  box.innerHTML = `
+    <div class="bt-metric-grid">
+      <div class="bt-metric"><div class="bt-metric-label">Trades</div><div class="bt-metric-value">${safeText(tt)}</div></div>
+      <div class="bt-metric"><div class="bt-metric-label">Win rate (net)</div><div class="bt-metric-value">${formatPercentPoints(result.win_rate_net, 1)}</div></div>
+      <div class="bt-metric"><div class="bt-metric-label">Total return (net)</div><div class="bt-metric-value">${formatPercentPoints(result.total_return_net_pct, 2)}</div></div>
+      <div class="bt-metric"><div class="bt-metric-label">CAGR (net)</div><div class="bt-metric-value">${formatPercentPoints(result.cagr_net_pct, 2)}</div></div>
+      <div class="bt-metric"><div class="bt-metric-label">Max drawdown (net)</div><div class="bt-metric-value">${formatPercentPoints(result.max_drawdown_net_pct, 2)}</div></div>
+    </div>
+    ${findings ? `<div class="bt-findings">${escapeHtml(findings)}</div>` : ""}
+  `;
+}
+
+function renderBacktestResultRaw(result, fallbackText) {
+  const pre = document.getElementById("btResult");
+  const details = document.getElementById("btResultRawDetails");
+  if (!pre) return;
+  if (result && typeof result === "object") {
+    pre.textContent = prettyJson(result);
+    if (details) details.open = true;
+  } else {
+    pre.textContent = fallbackText || "No run yet.";
+    if (details) details.open = false;
+  }
+}
+
+function backtestSpecSummaryLine(spec) {
+  if (!spec || typeof spec !== "object") return "";
+  const mode = spec.universe_mode === "tickers" ? "custom tickers" : "watchlist";
+  const dr = spec.start_date && spec.end_date ? `${safeText(spec.start_date)} → ${safeText(spec.end_date)}` : "";
+  const n = Array.isArray(spec.tickers) ? spec.tickers.length : 0;
+  const tickPart = spec.universe_mode === "tickers" && n ? ` · ${n} names` : "";
+  return `${mode}${tickPart}${dr ? ` · ${dr}` : ""}`;
+}
+
+function strategyChatPayloadMessages() {
+  return (Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+    .map((m) => ({ role: m.role, content: String(m.content ?? "") }));
+}
+
+function scrollStrategyChatToEnd() {
+  const el = document.getElementById("scMessages");
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function renderStrategyChatMessages() {
+  const el = document.getElementById("scMessages");
+  const chips = document.getElementById("scEmptyChips");
+  if (!el) return;
+  const msgs = Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [];
+  el.innerHTML = "";
+  if (!msgs.length) {
+    const hint = document.createElement("div");
+    hint.className = "chat-empty-hint";
+    hint.textContent = "Describe the universe, date range, and any rule tweaks. Examples below.";
+    el.appendChild(hint);
+    if (chips) chips.classList.remove("hidden");
+    return;
+  }
+  if (chips) chips.classList.add("hidden");
+  msgs.forEach((m) => {
+    const wrap = document.createElement("div");
+    const role = m.role === "user" ? "user" : "assistant";
+    wrap.className = `chat-bubble chat-bubble-${role}`;
+    const roleEl = document.createElement("div");
+    roleEl.className = "chat-bubble-role";
+    roleEl.textContent = role === "user" ? "You" : "Assistant";
+    wrap.appendChild(roleEl);
+    const body = document.createElement("div");
+    body.textContent = m.content != null ? String(m.content) : "";
+    wrap.appendChild(body);
+    if (role === "assistant" && Array.isArray(m.toolResults) && m.toolResults.length) {
+      const det = document.createElement("details");
+      det.className = "chat-tool-details";
+      const sum = document.createElement("summary");
+      sum.textContent = "Tool calls & raw results";
+      det.appendChild(sum);
+      const pre = document.createElement("pre");
+      pre.className = "code-block";
+      pre.textContent = prettyJson(m.toolResults);
+      det.appendChild(pre);
+      wrap.appendChild(det);
+    }
+    el.appendChild(wrap);
+  });
+  scrollStrategyChatToEnd();
+}
+
+function hideScQueueCallout() {
+  const c = document.getElementById("scQueueCallout");
+  if (c) {
+    c.classList.add("hidden");
+    c.innerHTML = "";
+  }
+}
+
+function showScQueueCallout(taskId, runId) {
+  const c = document.getElementById("scQueueCallout");
+  if (!c || !taskId) return;
+  const tid = safeText(taskId);
+  const rid = runId ? safeText(runId) : "";
+  c.classList.remove("hidden");
+  c.innerHTML = `
+    <strong>Backtest queued.</strong> It runs in the background (often a few minutes). Results appear in <strong>Recent runs</strong> below when finished.
+    <div class="callout-actions">
+      <code id="scTaskIdCopy">${tid}</code>
+      <button type="button" class="btn small secondary" id="scCopyTaskBtn">Copy task id</button>
+      <button type="button" class="btn small secondary" id="scSwitchFormTabBtn">Open form tab</button>
+    </div>
+    ${rid ? `<div class="muted" style="margin-top:8px;font-size:0.82rem">Run id: ${rid.slice(0, 12)}…</div>` : ""}
+  `;
+  document.getElementById("scCopyTaskBtn")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(tid);
+      logEvent({ kind: "system", severity: "info", message: "Task id copied." });
+    } catch {
+      logEvent({ kind: "system", severity: "warn", message: "Could not copy task id." });
+    }
+  });
+  document.getElementById("scSwitchFormTabBtn")?.addEventListener("click", () => switchBacktestHubTab("form"));
+}
+
+function switchBacktestHubTab(which) {
+  const formTab = document.getElementById("btHubTabForm");
+  const chatTab = document.getElementById("btHubTabChat");
+  const formPanel = document.getElementById("btHubPanelForm");
+  const chatPanel = document.getElementById("strategyChatPanel");
+  const isForm = which === "form";
+  if (formTab && chatTab) {
+    formTab.classList.toggle("tab-btn-active", isForm);
+    chatTab.classList.toggle("tab-btn-active", !isForm);
+    formTab.setAttribute("aria-selected", isForm ? "true" : "false");
+    chatTab.setAttribute("aria-selected", isForm ? "false" : "true");
+  }
+  if (formPanel) formPanel.classList.toggle("hidden", !isForm);
+  if (chatPanel) chatPanel.classList.toggle("hidden", isForm);
+  if (!isForm) scrollStrategyChatToEnd();
 }
 
 async function refreshBacktestRuns() {
@@ -1849,105 +2241,142 @@ async function refreshBacktestRuns() {
   list.innerHTML = rows
     .map((r) => {
       const tid = r.celery_task_id ? `${safeText(r.celery_task_id).slice(0, 12)}…` : "—";
-      return `<li><strong>${safeText(r.status)}</strong> · task ${tid} · ${safeText(r.created_at)}</li>`;
+      const specLine = backtestSpecSummaryLine(r.spec);
+      const sum = r.result_summary && typeof r.result_summary === "object" ? r.result_summary : null;
+      let metrics = "";
+      if (sum) {
+        metrics = `<div class="bt-run-metrics">
+          Trades ${safeText(sum.total_trades)} · Win ${formatPercentPoints(sum.win_rate_net, 1)} ·
+          Return ${formatPercentPoints(sum.total_return_net_pct, 2)} · CAGR ${formatPercentPoints(sum.cagr_net_pct, 2)} ·
+          Max DD ${formatPercentPoints(sum.max_drawdown_net_pct, 2)}
+        </div>`;
+        if (sum.findings_preview) {
+          metrics += `<div class="muted" style="margin-top:4px;font-size:0.78rem">${escapeHtml(sum.findings_preview)}</div>`;
+        }
+      } else if (r.error_message) {
+        metrics = `<div class="bt-run-metrics muted">${safeText(r.error_message)}</div>`;
+      }
+      return `<li class="bt-run-item"><strong>${safeText(r.status)}</strong> · task ${tid} · ${safeText(r.created_at)}
+        <div class="bt-run-spec">${safeText(specLine)}</div>${metrics}</li>`;
     })
     .join("");
 }
 
 async function pollBacktestTask(taskId) {
-  const meta = document.getElementById("btMeta");
+  const t0 = Date.now();
   const pre = document.getElementById("btResult");
   for (let i = 0; i < 120; i++) {
+    const elapsed = Math.floor((Date.now() - t0) / 1000);
+    setBtMetaMessage(`Running… ${elapsed}s · waiting for worker`, { sticky: true });
     const st = await api.get(`/api/backtest-runs/tasks/${encodeURIComponent(taskId)}`, { timeoutMs: 120000 });
     if (!st.ok) {
-      if (meta) meta.textContent = `Status poll failed: ${st.error}`;
+      setBtMetaMessage(`Status poll failed: ${st.error}`, { sticky: true });
       return;
     }
     const d = st.data || {};
     const celery = safeText(d.celery_status || "").toLowerCase();
-    if (meta) meta.textContent = `Celery: ${celery} · DB: ${safeText(d.db_status || "—")}`;
+    setBtMetaMessage(`Running… ${elapsed}s · status: ${celery} · saved: ${safeText(d.db_status || "—")}`, { sticky: true });
     if (celery === "success" && d.result && pre) {
-      pre.textContent = prettyJson(d.result);
+      renderBacktestResultSummary(d.result);
+      renderBacktestResultRaw(d.result, "");
+      setBtMetaMessage("Complete. Summary above; full JSON below.", { sticky: true });
       await refreshBacktestRuns();
       return;
     }
     if (celery === "failure" || celery === "revoked") {
-      if (pre) pre.textContent = prettyJson(d.task_result || d);
+      renderBacktestResultSummary(null);
+      renderBacktestResultRaw(null, prettyJson(d.task_result || d));
+      setBtMetaMessage("Run finished with an error.", { sticky: true });
       await refreshBacktestRuns();
       return;
     }
     if (d.db_status === "failed" && d.error_message) {
+      renderBacktestResultSummary(null);
       if (pre) pre.textContent = safeText(d.error_message);
+      setBtMetaMessage(safeText(d.error_message), { sticky: true });
       await refreshBacktestRuns();
       return;
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
-  if (meta) meta.textContent = "Still running; use Refresh list or check later.";
+  setBtMetaMessage("Still running; use Refresh list or check back later.", { sticky: true });
 }
 
 async function queueUserBacktest() {
-  const meta = document.getElementById("btMeta");
+  if (state.backtestQueueBusy) return;
   const pre = document.getElementById("btResult");
-  const theory = document.getElementById("btTheory")?.value?.trim() || "";
-  const universe = document.getElementById("btUniverse")?.value || "watchlist";
-  const tickersRaw = document.getElementById("btTickers")?.value || "";
-  const tickers = tickersRaw
-    .split(/[\s,]+/)
-    .map((t) => t.trim().toUpperCase())
-    .filter(Boolean);
   const start = document.getElementById("btStart")?.value;
   const end = document.getElementById("btEnd")?.value;
   if (!start || !end) {
-    if (meta) meta.textContent = "Choose start and end dates.";
+    setBtMetaMessage("Choose start and end dates.");
     return;
   }
-  const spec = {
-    schema_version: 1,
-    universe_mode: universe === "tickers" ? "tickers" : "watchlist",
-    tickers: universe === "tickers" ? tickers : [],
-    start_date: start,
-    end_date: end,
-  };
-  if (theory) spec.theory_name = theory;
-  if (meta) meta.textContent = "Queueing…";
-  const out = await api.post("/api/backtest-runs", { spec }, { timeoutMs: 120000 });
-  if (!out.ok) {
-    if (meta) meta.textContent = safeText(out.error);
-    logEvent({ kind: "system", severity: "error", message: `Backtest queue failed: ${out.error}` });
+  const spec = collectBacktestSpecFromForm();
+  if (spec.universe_mode === "tickers" && (!spec.tickers || !spec.tickers.length)) {
+    setBtMetaMessage("Add at least one ticker, or switch universe to saved watchlist.");
     return;
   }
-  const taskId = out.data?.task_id;
-  if (meta) meta.textContent = taskId ? `Queued task ${safeText(taskId).slice(0, 16)}…` : "Queued.";
-  logEvent({ kind: "system", severity: "info", message: "Backtest queued." });
-  if (taskId) await pollBacktestTask(taskId);
-  else await refreshBacktestRuns();
+  setBacktestQueueUiBusy(true);
+  setBtMetaMessage("Queueing…", { sticky: true });
+  try {
+    const out = await api.post("/api/backtest-runs", { spec }, { timeoutMs: 120000 });
+    if (!out.ok) {
+      setBtMetaMessage(safeText(out.error), { sticky: true });
+      logEvent({ kind: "system", severity: "error", message: `Backtest queue failed: ${out.error}` });
+      return;
+    }
+    const taskId = out.data?.task_id;
+    setBtMetaMessage(taskId ? `Queued. Tracking task ${safeText(taskId).slice(0, 14)}…` : "Queued.", { sticky: true });
+    logEvent({ kind: "system", severity: "info", message: "Backtest queued." });
+    if (taskId) await pollBacktestTask(taskId);
+    else await refreshBacktestRuns();
+  } finally {
+    setBacktestQueueUiBusy(false);
+  }
 }
 
 async function sendStrategyChat() {
+  if (state.strategyChatBusy) return;
   const input = document.getElementById("scInput");
   const text = input?.value?.trim() || "";
   if (!text) return;
   if (!Array.isArray(state.strategyChatMessages)) state.strategyChatMessages = [];
+  hideScQueueCallout();
   state.strategyChatMessages.push({ role: "user", content: text });
   input.value = "";
   renderStrategyChatMessages();
-  const out = await api.post("/api/strategy-chat", { messages: state.strategyChatMessages }, { timeoutMs: 180000 });
-  if (!out.ok) {
-    logEvent({ kind: "system", severity: "error", message: `Strategy chat: ${out.error}` });
-    state.strategyChatMessages.push({ role: "assistant", content: `Error: ${out.error}` });
+  state.strategyChatBusy = true;
+  const sendBtn = document.getElementById("scSendBtn");
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    const out = await api.post("/api/strategy-chat", { messages: strategyChatPayloadMessages() }, { timeoutMs: 180000 });
+    if (!out.ok) {
+      logEvent({ kind: "system", severity: "error", message: `Strategy chat: ${out.error}` });
+      state.strategyChatMessages.push({ role: "assistant", content: `Error: ${out.error}` });
+      renderStrategyChatMessages();
+      return;
+    }
+    const assistant = out.data?.message || "";
+    const tools = out.data?.tool_results;
+    state.strategyChatMessages.push({
+      role: "assistant",
+      content: assistant || "(empty reply)",
+      toolResults: Array.isArray(tools) && tools.length ? tools : null,
+    });
+    if (Array.isArray(tools)) {
+      for (const t of tools) {
+        if (t && t.tool === "queue_backtest" && t.result && t.result.task_id) {
+          showScQueueCallout(t.result.task_id, t.result.run_id);
+          break;
+        }
+      }
+    }
     renderStrategyChatMessages();
-    return;
+    await refreshBacktestRuns();
+  } finally {
+    state.strategyChatBusy = false;
+    if (sendBtn) sendBtn.disabled = false;
   }
-  const assistant = out.data?.message || "";
-  const tools = out.data?.tool_results;
-  let body = assistant;
-  if (Array.isArray(tools) && tools.length) {
-    body += `\n\n[tools]\n${prettyJson(tools)}`;
-  }
-  state.strategyChatMessages.push({ role: "assistant", content: body || "(empty reply)" });
-  renderStrategyChatMessages();
-  await refreshBacktestRuns();
 }
 
 async function refreshPortfolio() {
@@ -2148,7 +2577,31 @@ async function refreshAll() {
 
 function wireEvents() {
   setDefaultBacktestDates();
+  syncBtUniverseRow();
   renderStrategyChatMessages();
+  document.getElementById("btHubTabForm")?.addEventListener("click", () => switchBacktestHubTab("form"));
+  document.getElementById("btHubTabChat")?.addEventListener("click", () => switchBacktestHubTab("chat"));
+  document.getElementById("btUniverse")?.addEventListener("change", syncBtUniverseRow);
+  document.querySelectorAll(".bt-preset").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const y = btn.getAttribute("data-years");
+      if (y) applyBacktestPresetYears(y);
+    });
+  });
+  document.querySelectorAll(".sc-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const t = btn.getAttribute("data-text") || "";
+      const input = document.getElementById("scInput");
+      if (input) input.value = t;
+      input?.focus();
+    });
+  });
+  document.getElementById("scInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendStrategyChat();
+    }
+  });
   document.getElementById("btQueueBtn")?.addEventListener("click", queueUserBacktest);
   document.getElementById("btRefreshListBtn")?.addEventListener("click", refreshBacktestRuns);
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);

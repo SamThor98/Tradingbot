@@ -196,13 +196,27 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/api/public-config", response_model=ApiResponse)
+def public_config() -> ApiResponse:
+    """Non-secret client config (e.g. Supabase URL + anon key for browser sign-in)."""
+    url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    supabase: dict[str, str] | None = None
+    if url and anon:
+        supabase = {"url": url, "anon_key": anon}
+    return _ok({"supabase": supabase})
+
+
 @app.get("/api/health", response_model=ApiResponse)
 def health() -> ApiResponse:
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
     return _ok(
         {
             "status": "ok",
             "time": datetime.now(timezone.utc).isoformat(),
             "auth_mode": "jwt",
+            "supabase_browser_auth": bool(url and anon),
             "queue_backend": celery_app.conf.result_backend,
         }
     )
@@ -731,6 +745,24 @@ def queue_backtest_run(
     return _ok(out)
 
 
+def _backtest_result_summary(result: Any) -> dict[str, Any] | None:
+    """Short metrics for list UI; full JSON remains on the run row."""
+    if not isinstance(result, dict) or "total_trades" not in result:
+        return None
+    out: dict[str, Any] = {
+        "total_trades": result.get("total_trades"),
+        "win_rate_net": result.get("win_rate_net"),
+        "total_return_net_pct": result.get("total_return_net_pct"),
+        "cagr_net_pct": result.get("cagr_net_pct"),
+        "max_drawdown_net_pct": result.get("max_drawdown_net_pct"),
+    }
+    findings = result.get("findings")
+    if isinstance(findings, str) and findings.strip():
+        snippet = findings.strip()
+        out["findings_preview"] = snippet[:280] + ("…" if len(snippet) > 280 else "")
+    return out
+
+
 @app.get("/api/backtest-runs", response_model=ApiResponse)
 def list_backtest_runs(
     limit: int = Query(default=20, ge=1, le=100),
@@ -744,20 +776,23 @@ def list_backtest_runs(
         .limit(limit)
         .all()
     )
-    return _ok(
-        [
-            {
-                "id": row.id,
-                "celery_task_id": row.celery_task_id,
-                "status": row.status,
-                "spec": parse_json(row.spec_json, {}),
-                "error_message": row.error_message,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "has_result": bool(row.result_json),
-            }
-            for row in rows
-        ]
-    )
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        parsed_result = parse_json(row.result_json, {}) if row.result_json else {}
+        item: dict[str, Any] = {
+            "id": row.id,
+            "celery_task_id": row.celery_task_id,
+            "status": row.status,
+            "spec": parse_json(row.spec_json, {}),
+            "error_message": row.error_message,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "has_result": bool(row.result_json),
+        }
+        summary = _backtest_result_summary(parsed_result)
+        if summary is not None:
+            item["result_summary"] = summary
+        payload.append(item)
+    return _ok(payload)
 
 
 @app.get("/api/backtest-runs/tasks/{task_id}", response_model=ApiResponse)
