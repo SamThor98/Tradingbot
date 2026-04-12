@@ -34,10 +34,36 @@ function clearStoredApiJwt() {
   clearLegacyApiJwtKeys();
 }
 
+async function createCookieSession(token) {
+  if (!token) return;
+  try {
+    await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ access_token: token }),
+    });
+  } catch (e) {
+    console.warn("auth cookie set failed", e);
+  }
+}
+
+async function clearCookieSession() {
+  try {
+    await fetch("/api/auth/session", {
+      method: "DELETE",
+      credentials: "include",
+    });
+  } catch (e) {
+    console.warn("auth cookie clear failed", e);
+  }
+}
+
 function persistJwt(session) {
   if (session?.access_token) {
     localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
     clearLegacyApiJwtKeys();
+    void createCookieSession(session.access_token);
     const inp = document.getElementById("loginJwt");
     if (inp) inp.value = "";
   }
@@ -107,6 +133,7 @@ async function initSupabase(url, anonKey) {
   });
   document.getElementById("loginSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
+    await clearCookieSession();
     clearStoredApiJwt();
     const inp = document.getElementById("loginJwt");
     if (inp) inp.value = "";
@@ -124,8 +151,10 @@ async function main() {
     if (val) {
       localStorage.setItem(AUTH_TOKEN_KEY, val);
       clearLegacyApiJwtKeys();
+      void createCookieSession(val);
       setMessage("Token saved for this browser.");
     } else {
+      void clearCookieSession();
       clearStoredApiJwt();
       setMessage("Token cleared.");
     }

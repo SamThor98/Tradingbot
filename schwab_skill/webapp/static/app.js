@@ -257,6 +257,8 @@ function markAuthReady() {
 }
 
 async function getApiAccessToken() {
+  const cookieSession = await ensureCookieAuthSession();
+  if (cookieSession) return "";
   const manual = document.getElementById("jwtInput")?.value?.trim() || "";
   if (manual) return manual;
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
@@ -290,6 +292,50 @@ function clearStoredApiJwt() {
   clearLegacyApiJwtKeys();
 }
 
+async function ensureCookieAuthSession() {
+  try {
+    const out = await fetch("/api/auth/session", {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    if (!out.ok) return false;
+    const body = await out.json();
+    const data = body?.data && typeof body.data === "object" ? body.data : {};
+    return Boolean(data.authenticated);
+  } catch {
+    return false;
+  }
+}
+
+async function createCookieAuthSession(accessToken) {
+  const token = safeText(accessToken).trim();
+  if (!token) return false;
+  try {
+    const out = await fetch("/api/auth/session", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ access_token: token }),
+    });
+    return out.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearCookieAuthSession() {
+  try {
+    await fetch("/api/auth/session", {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 function setJobProgress(barId, labelId, fraction, labelText) {
   const bar = document.getElementById(barId);
   const lbl = labelId ? document.getElementById(labelId) : null;
@@ -310,6 +356,7 @@ function persistApiJwtFromSession(session) {
   if (session?.access_token) {
     localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
     clearLegacyApiJwtKeys();
+    void createCookieAuthSession(session.access_token);
     const inp = document.getElementById("jwtInput");
     if (inp) inp.value = "";
   }
@@ -400,6 +447,7 @@ async function initSupabaseAuth(url, anonKey) {
   document.getElementById("supabaseSignOutBtn")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
     clearStoredApiJwt();
+    await clearCookieAuthSession();
     const inp = document.getElementById("jwtInput");
     if (inp) inp.value = "";
     logEvent({ kind: "system", severity: "info", message: "Signed out." });
@@ -1795,9 +1843,11 @@ async function loadConfig() {
       if (val) {
         localStorage.setItem(AUTH_TOKEN_KEY, val);
         clearLegacyApiJwtKeys();
+        void createCookieAuthSession(val);
         logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
       } else {
         clearStoredApiJwt();
+        void clearCookieAuthSession();
         logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
       }
     });

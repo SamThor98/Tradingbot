@@ -15,6 +15,37 @@ const state = {
 
 let supabaseClient = null;
 
+function jsonHeaders(extra = {}) {
+  return { "Content-Type": "application/json", ...extra };
+}
+
+async function applyCookieSessionToken(token) {
+  const clean = String(token || "").trim();
+  if (!clean) return;
+  try {
+    await fetch("/api/auth/session", {
+      method: "POST",
+      credentials: "include",
+      headers: jsonHeaders({ Accept: "application/json" }),
+      body: JSON.stringify({ access_token: clean }),
+    });
+  } catch (err) {
+    console.warn("simple auth/session set failed", err);
+  }
+}
+
+async function clearCookieSession() {
+  try {
+    await fetch("/api/auth/session", {
+      method: "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+  } catch (err) {
+    console.warn("simple auth/session clear failed", err);
+  }
+}
+
 function safeText(value) {
   if (value === null || value === undefined) return "—";
   return String(value);
@@ -241,8 +272,11 @@ const api = {
 
 function persistJwt(session) {
   if (session?.access_token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
+    const token = String(session.access_token).trim();
+    if (!token) return;
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
     clearLegacyApiJwtKeys();
+    void applyCookieSessionToken(token);
     const inp = document.getElementById("simpleJwt");
     if (inp) inp.value = "";
   }
@@ -310,6 +344,7 @@ async function initSupabase(url, anonKey) {
   });
   document.getElementById("simpleSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
+    await clearCookieSession();
     clearStoredApiJwt();
     const inp = document.getElementById("simpleJwt");
     if (inp) inp.value = "";
@@ -604,8 +639,10 @@ function wireJwt() {
     if (v) {
       localStorage.setItem(AUTH_TOKEN_KEY, v);
       clearLegacyApiJwtKeys();
+      void applyCookieSessionToken(v);
     } else {
       clearStoredApiJwt();
+      void clearCookieSession();
     }
     setMessage(v ? "Token saved." : "Cleared — enter a token to save.", v ? "ok" : "warn");
   });
