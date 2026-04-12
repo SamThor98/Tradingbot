@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -110,6 +111,7 @@ allowed_origins = [
 if not allowed_origins:
     allowed_origins = ["http://127.0.0.1:8000"]
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -119,6 +121,20 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def security_and_cache_headers(request: Request, call_next: Any) -> Any:
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Frame-Options"] = "DENY"
+    path = request.url.path
+    if path.startswith("/static/") and (path.endswith((".css", ".js"))):
+        response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
+    elif path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
 
 _metrics_lock = threading.Lock()
 _request_metrics: dict[str, Any] = {

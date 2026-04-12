@@ -13,6 +13,7 @@ import stripe
 from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -105,6 +106,7 @@ allowed_origins = [
 if not allowed_origins:
     allowed_origins = ["http://127.0.0.1:8000"]
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -133,6 +135,14 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = rid
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        path = request.url.path
+        if path.startswith("/static/") and path.endswith((".css", ".js")):
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
+        elif path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
         try:
             from .prometheus_metrics import inc, observe
 

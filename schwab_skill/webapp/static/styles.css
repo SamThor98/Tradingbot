@@ -21,6 +21,9 @@
 }
 
 * { box-sizing: border-box; }
+html {
+  scroll-behavior: smooth;
+}
 html, body {
   margin: 0;
   padding: 0;
@@ -29,6 +32,14 @@ html, body {
   color: var(--text);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .mono-nums {
@@ -2002,6 +2013,21 @@ select:focus-visible,
   color: var(--muted);
   font-size: 0.88rem;
   padding: 8px 4px;
+}
+
+/* —— Rendering performance: skip painting off-screen sections —— */
+.section-advanced,
+.status-details-wrap,
+#calibrationSection,
+#backtestSection,
+#performanceSection,
+#portfolioSection,
+#secCompareSection,
+#reportSectionCard,
+#recoverySection,
+#activitySection {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
 }
 
 /* —— Task-first layout, progressive disclosure, view modes —— */
