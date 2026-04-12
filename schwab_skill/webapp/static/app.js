@@ -241,6 +241,7 @@ async function refreshCritical() {
 }
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
+const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
 
 let _resolveAuthReady;
@@ -256,14 +257,37 @@ function markAuthReady() {
 }
 
 async function getApiAccessToken() {
+  const manual = document.getElementById("jwtInput")?.value?.trim() || "";
+  if (manual) return manual;
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("auth.getSession", error);
-    return (data?.session?.access_token || "").trim();
+    const sessionToken = (data?.session?.access_token || "").trim();
+    if (sessionToken) return sessionToken;
   }
-  const manual = document.getElementById("jwtInput")?.value?.trim() || "";
-  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
-  return manual || stored;
+  return readStoredApiJwt();
+}
+
+function clearLegacyApiJwtKeys() {
+  LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
+}
+
+function readStoredApiJwt() {
+  const current = (localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+  if (current) return current;
+  for (const key of LEGACY_AUTH_TOKEN_KEYS) {
+    const legacy = (localStorage.getItem(key) || "").trim();
+    if (!legacy) continue;
+    localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    clearLegacyApiJwtKeys();
+    return legacy;
+  }
+  return "";
+}
+
+function clearStoredApiJwt() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearLegacyApiJwtKeys();
 }
 
 function setJobProgress(barId, labelId, fraction, labelText) {
@@ -285,6 +309,7 @@ const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 function persistApiJwtFromSession(session) {
   if (session?.access_token) {
     localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
+    clearLegacyApiJwtKeys();
     const inp = document.getElementById("jwtInput");
     if (inp) inp.value = "";
   }
@@ -374,7 +399,7 @@ async function initSupabaseAuth(url, anonKey) {
 
   document.getElementById("supabaseSignOutBtn")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    clearStoredApiJwt();
     const inp = document.getElementById("jwtInput");
     if (inp) inp.value = "";
     logEvent({ kind: "system", severity: "info", message: "Signed out." });
@@ -1762,16 +1787,17 @@ async function loadConfig() {
   }
 
   if (tokenInput) {
-    tokenInput.value = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+    tokenInput.value = readStoredApiJwt();
   }
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const val = tokenInput?.value?.trim() || "";
       if (val) {
         localStorage.setItem(AUTH_TOKEN_KEY, val);
+        clearLegacyApiJwtKeys();
         logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
       } else {
-        localStorage.removeItem(AUTH_TOKEN_KEY);
+        clearStoredApiJwt();
         logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
       }
     });

@@ -4,6 +4,7 @@
  */
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
+const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const state = {
@@ -155,14 +156,37 @@ function renderTable(signals) {
 }
 
 async function getApiAccessToken() {
+  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
+  if (manual) return manual;
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("getSession", error);
-    return (data?.session?.access_token || "").trim();
+    const sessionToken = (data?.session?.access_token || "").trim();
+    if (sessionToken) return sessionToken;
   }
-  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
-  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
-  return manual || stored;
+  return readStoredApiJwt();
+}
+
+function clearLegacyApiJwtKeys() {
+  LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
+}
+
+function readStoredApiJwt() {
+  const current = (localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+  if (current) return current;
+  for (const key of LEGACY_AUTH_TOKEN_KEYS) {
+    const legacy = (localStorage.getItem(key) || "").trim();
+    if (!legacy) continue;
+    localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    clearLegacyApiJwtKeys();
+    return legacy;
+  }
+  return "";
+}
+
+function clearStoredApiJwt() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearLegacyApiJwtKeys();
 }
 
 const api = {
@@ -218,6 +242,7 @@ const api = {
 function persistJwt(session) {
   if (session?.access_token) {
     localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
+    clearLegacyApiJwtKeys();
     const inp = document.getElementById("simpleJwt");
     if (inp) inp.value = "";
   }
@@ -285,7 +310,7 @@ async function initSupabase(url, anonKey) {
   });
   document.getElementById("simpleSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    clearStoredApiJwt();
     const inp = document.getElementById("simpleJwt");
     if (inp) inp.value = "";
     setMessage("Signed out.", "ok");
@@ -571,12 +596,17 @@ async function runScan() {
 }
 
 function wireJwt() {
-  const saved = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  const saved = readStoredApiJwt();
   const inp = document.getElementById("simpleJwt");
   if (inp && saved && !inp.value) inp.placeholder = "Token saved in browser";
   document.getElementById("simpleJwtSave")?.addEventListener("click", () => {
     const v = document.getElementById("simpleJwt")?.value?.trim() || "";
-    if (v) localStorage.setItem(AUTH_TOKEN_KEY, v);
+    if (v) {
+      localStorage.setItem(AUTH_TOKEN_KEY, v);
+      clearLegacyApiJwtKeys();
+    } else {
+      clearStoredApiJwt();
+    }
     setMessage(v ? "Token saved." : "Cleared — enter a token to save.", v ? "ok" : "warn");
   });
 }
