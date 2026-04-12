@@ -155,14 +155,16 @@ function renderTable(signals) {
 }
 
 async function getApiAccessToken() {
+  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
+  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  const fallbackToken = manual || stored;
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("getSession", error);
-    return (data?.session?.access_token || "").trim();
+    const sbToken = (data?.session?.access_token || "").trim();
+    return sbToken || fallbackToken;
   }
-  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
-  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
-  return manual || stored;
+  return fallbackToken;
 }
 
 const api = {
