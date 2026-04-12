@@ -255,14 +255,21 @@ function markAuthReady() {
   }
 }
 
+/** Trim and strip a leading "Bearer " if the user pasted a full Authorization value. */
+function normalizeUserJwt(raw) {
+  let t = String(raw ?? "").trim();
+  if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
+  return t;
+}
+
 async function getApiAccessToken() {
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("auth.getSession", error);
     return (data?.session?.access_token || "").trim();
   }
-  const manual = document.getElementById("jwtInput")?.value?.trim() || "";
-  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  const manual = normalizeUserJwt(document.getElementById("jwtInput")?.value);
+  const stored = normalizeUserJwt(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   return manual || stored;
 }
 
@@ -1762,11 +1769,11 @@ async function loadConfig() {
   }
 
   if (tokenInput) {
-    tokenInput.value = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+    tokenInput.value = normalizeUserJwt(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   }
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
-      const val = tokenInput?.value?.trim() || "";
+      const val = normalizeUserJwt(tokenInput?.value);
       if (val) {
         localStorage.setItem(AUTH_TOKEN_KEY, val);
         logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });

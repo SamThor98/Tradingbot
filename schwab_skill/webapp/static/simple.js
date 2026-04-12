@@ -154,14 +154,20 @@ function renderTable(signals) {
   });
 }
 
+function normalizeUserJwt(raw) {
+  let t = String(raw ?? "").trim();
+  if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
+  return t;
+}
+
 async function getApiAccessToken() {
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("getSession", error);
     return (data?.session?.access_token || "").trim();
   }
-  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
-  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  const manual = normalizeUserJwt(document.getElementById("simpleJwt")?.value);
+  const stored = normalizeUserJwt(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   return manual || stored;
 }
 
@@ -575,7 +581,7 @@ function wireJwt() {
   const inp = document.getElementById("simpleJwt");
   if (inp && saved && !inp.value) inp.placeholder = "Token saved in browser";
   document.getElementById("simpleJwtSave")?.addEventListener("click", () => {
-    const v = document.getElementById("simpleJwt")?.value?.trim() || "";
+    const v = normalizeUserJwt(document.getElementById("simpleJwt")?.value);
     if (v) localStorage.setItem(AUTH_TOKEN_KEY, v);
     setMessage(v ? "Token saved." : "Cleared — enter a token to save.", v ? "ok" : "warn");
   });

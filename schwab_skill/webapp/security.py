@@ -96,6 +96,11 @@ def get_current_user(
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing Authorization: Bearer <jwt> header.")
     token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Empty bearer token. Paste your Supabase access token (three dot-separated segments), not the anon key alone.",
+        )
     claims = decode_supabase_jwt(token)
     user_id = str(claims.get("sub") or "").strip()
     if not user_id:

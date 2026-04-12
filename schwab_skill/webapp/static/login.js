@@ -96,7 +96,8 @@ async function main() {
   if (jwtInput) jwtInput.value = localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
   document.getElementById("loginJwtSave")?.addEventListener("click", () => {
-    const val = jwtInput?.value?.trim() || "";
+    let val = String(jwtInput?.value ?? "").trim();
+    if (/^bearer\s+/i.test(val)) val = val.replace(/^bearer\s+/i, "").trim();
     if (val) {
       localStorage.setItem(AUTH_TOKEN_KEY, val);
       setMessage("Token saved for this browser.");
