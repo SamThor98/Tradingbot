@@ -519,9 +519,9 @@ def billing_checkout_session(
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(_db),
-    payload: BillingCheckoutRequest | None = Body(default=None),
+    payload: BillingCheckoutRequest = Body(),
 ) -> ApiResponse:
-    body = payload if payload is not None else BillingCheckoutRequest()
+    body = payload
     success = str(body.success_url) if body.success_url else (os.getenv("STRIPE_CHECKOUT_SUCCESS_URL") or "").strip()
     cancel = str(body.cancel_url) if body.cancel_url else (os.getenv("STRIPE_CHECKOUT_CANCEL_URL") or "").strip()
     if not success or not cancel:
