@@ -1,6 +1,6 @@
 /**
  * Shared helpers for Supabase access JWTs (browser + classic script bundles).
- * Loaded before app.js / login.js / simple.js.
+ * Loaded before auth-client.js, app.js, login.js, and simple.js.
  */
 (function (w) {
   "use strict";
@@ -18,7 +18,7 @@
   }
 
   const JWT_BAD_SHAPE_HINT =
-    "That value is not a Supabase access token. It must be one long string with two dots (three parts). Sign in with email/password, or paste the access token—not the refresh token or anon key.";
+    "That value does not look like a sign-in token. Use email and password to sign in, or paste only the access token from Supabase (one long string with two dots)—not the anon key or a refresh token.";
 
   w.TradingBotAuthJwt = {
     normalizeUserJwt,

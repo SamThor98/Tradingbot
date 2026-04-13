@@ -1,11 +1,8 @@
 /**
- * Focused sign-in page: shares JWT localStorage key with the main dashboard (`tradingbot.jwt`).
+ * Sign-in page: email/password via Supabase when configured; optional advanced token paste.
  */
-const AUTH_TOKEN_KEY = "tradingbot.jwt";
-const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-/** Set by /static/auth-jwt-utils.js (loaded before this module). */
 const AuthJwt = globalThis.TradingBotAuthJwt || {
   normalizeUserJwt(raw) {
     let t = String(raw ?? "").trim();
@@ -18,6 +15,20 @@ const AuthJwt = globalThis.TradingBotAuthJwt || {
   JWT_BAD_SHAPE_HINT: "",
 };
 
+const AuthClient = globalThis.TradingBotAuthClient || {
+  readStoredApiJwt() {
+    return "";
+  },
+  clearStoredApiJwt() {},
+  createCookieSession() {
+    return Promise.resolve(false);
+  },
+  clearCookieSession() {
+    return Promise.resolve();
+  },
+  persistAccessToken() {},
+};
+
 let supabaseClient = null;
 
 function setMessage(text) {
@@ -25,79 +36,8 @@ function setMessage(text) {
   if (el) el.textContent = text || "";
 }
 
-function clearLegacyApiJwtKeys() {
-  LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
-}
-
 function normalizeUserJwt(raw) {
   return AuthJwt.normalizeUserJwt(raw);
-}
-
-function readStoredApiJwt() {
-  const accept = (raw) => {
-    const n = normalizeUserJwt(raw);
-    if (!n) return "";
-    if (!AuthJwt.isProbablyAccessJwt(n)) {
-      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
-      clearStoredApiJwt();
-      return "";
-    }
-    return n;
-  };
-  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
-  if (current) return current;
-  for (const key of LEGACY_AUTH_TOKEN_KEYS) {
-    const legacy = (localStorage.getItem(key) || "").trim();
-    if (!legacy) continue;
-    const migrated = accept(legacy);
-    if (!migrated) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
-    clearLegacyApiJwtKeys();
-    return migrated;
-  }
-  return "";
-}
-
-function clearStoredApiJwt() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-  clearLegacyApiJwtKeys();
-}
-
-async function createCookieSession(token) {
-  const clean = normalizeUserJwt(token);
-  if (!clean || !AuthJwt.isProbablyAccessJwt(clean)) return;
-  try {
-    await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ access_token: clean }),
-    });
-  } catch (e) {
-    console.warn("auth cookie set failed", e);
-  }
-}
-
-async function clearCookieSession() {
-  try {
-    await fetch("/api/auth/session", {
-      method: "DELETE",
-      credentials: "include",
-    });
-  } catch (e) {
-    console.warn("auth cookie clear failed", e);
-  }
-}
-
-function persistJwt(session) {
-  const at = normalizeUserJwt(session?.access_token ?? "");
-  if (at && AuthJwt.isProbablyAccessJwt(at)) {
-    localStorage.setItem(AUTH_TOKEN_KEY, at);
-    clearLegacyApiJwtKeys();
-    void createCookieSession(at);
-    const inp = document.getElementById("loginJwt");
-    if (inp) inp.value = "";
-  }
 }
 
 function updateSbUi(session) {
@@ -109,12 +49,16 @@ function updateSbUi(session) {
     out.classList.add("hidden");
     inn.classList.remove("hidden");
     if (label) label.textContent = session.user.email || session.user.id || "Signed in";
-    setMessage("You are signed in. Continue to the dashboard.");
+    setMessage("You are signed in. Open the dashboard when you are ready.");
   } else {
     inn.classList.add("hidden");
     out.classList.remove("hidden");
     if (label) label.textContent = "";
   }
+}
+
+function persistJwt(session) {
+  AuthClient.persistAccessToken(session?.access_token ?? "", "loginJwt");
 }
 
 async function initSupabase(url, anonKey) {
@@ -124,7 +68,7 @@ async function initSupabase(url, anonKey) {
     createClient = mod.createClient;
   } catch (e) {
     console.warn(e);
-    setMessage("Could not load Supabase from CDN; paste a JWT below.");
+    setMessage("Could not load sign-in library. Use Advanced to paste a token, or try again later.");
     return;
   }
   supabaseClient = createClient(url, anonKey, {
@@ -164,8 +108,8 @@ async function initSupabase(url, anonKey) {
   });
   document.getElementById("loginSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
-    await clearCookieSession();
-    clearStoredApiJwt();
+    await AuthClient.clearCookieSession();
+    AuthClient.clearStoredApiJwt();
     const inp = document.getElementById("loginJwt");
     if (inp) inp.value = "";
     setMessage("Signed out.");
@@ -175,7 +119,7 @@ async function initSupabase(url, anonKey) {
 async function main() {
   const jwtInput = document.getElementById("loginJwt");
   const wrap = document.getElementById("loginSupabase");
-  if (jwtInput) jwtInput.value = readStoredApiJwt();
+  if (jwtInput) jwtInput.value = AuthClient.readStoredApiJwt();
 
   document.getElementById("loginJwtSave")?.addEventListener("click", () => {
     const val = normalizeUserJwt(jwtInput?.value ?? "");
@@ -184,14 +128,12 @@ async function main() {
         setMessage(AuthJwt.JWT_BAD_SHAPE_HINT);
         return;
       }
-      localStorage.setItem(AUTH_TOKEN_KEY, val);
-      clearLegacyApiJwtKeys();
-      void createCookieSession(val);
+      AuthClient.persistAccessToken(val, "loginJwt");
       setMessage("Token saved for this browser.");
     } else {
-      void clearCookieSession();
-      clearStoredApiJwt();
-      setMessage("Token cleared.");
+      void AuthClient.clearCookieSession();
+      AuthClient.clearStoredApiJwt();
+      setMessage("Cleared.");
     }
   });
 
@@ -205,10 +147,10 @@ async function main() {
       await initSupabase(sb.url, sb.anon_key);
     } else {
       wrap?.classList.add("hidden");
-      setMessage("Paste a JWT and save, or use the dashboard if this host does not expose Supabase sign-in.");
+      setMessage("This host has no browser sign-in configured. Use Advanced to paste a token, or ask your admin to set SUPABASE_URL and SUPABASE_ANON_KEY.");
     }
   } catch {
-    setMessage("Could not load server config. You can still paste and save a JWT.");
+    setMessage("Could not load server config. You can still use Advanced to paste a token.");
   }
 }
 

@@ -419,7 +419,11 @@ def auth_session_status(
     token = (request.cookies.get(auth_session_cookie_name()) or "").strip()
     if not token:
         return _ok({"authenticated": False})
-    claims = decode_supabase_jwt(token)
+    try:
+        claims = decode_supabase_jwt(token)
+    except HTTPException:
+        # Expired / misconfigured verification: tell the browser to drop stale cookie + stored JWT.
+        return _ok({"authenticated": False, "invalid_token": True})
     return _ok({"authenticated": True, "sub": claims.get("sub"), "email": claims.get("email")})
 
 

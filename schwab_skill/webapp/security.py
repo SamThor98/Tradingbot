@@ -253,7 +253,10 @@ def get_current_user(
     if not tokens:
         raise HTTPException(
             status_code=401,
-            detail="Missing authentication. Provide Authorization: Bearer <jwt> or a valid auth session cookie.",
+            detail=(
+                "Sign in required. Open /login and sign in with email and password, "
+                "or use a valid session after signing in."
+            ),
         )
 
     last_error: HTTPException | None = None

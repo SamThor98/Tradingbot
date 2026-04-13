@@ -3,8 +3,6 @@
  * Works with local webapp (threaded scan + /api/scan/status) and SaaS (Celery + /api/scan/{id}).
  */
 
-const AUTH_TOKEN_KEY = "tradingbot.jwt";
-const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 /** Set by /static/auth-jwt-utils.js (loaded before this module). */
@@ -20,6 +18,27 @@ const AuthJwt = globalThis.TradingBotAuthJwt || {
   JWT_BAD_SHAPE_HINT: "",
 };
 
+/** Set by /static/auth-client.js (loaded before this module). */
+const AuthClient = globalThis.TradingBotAuthClient || {
+  readStoredApiJwt() {
+    return "";
+  },
+  clearStoredApiJwt() {},
+  createCookieSession() {
+    return Promise.resolve(false);
+  },
+  clearCookieSession() {
+    return Promise.resolve();
+  },
+  getBearerAccessToken() {
+    return Promise.resolve("");
+  },
+  persistAccessToken() {},
+  refreshSessionFromSupabase() {
+    return Promise.resolve("");
+  },
+};
+
 const state = {
   publicConfig: { supabase: null, saas_mode: false },
   config: { auth_mode: "jwt" },
@@ -27,37 +46,6 @@ const state = {
 };
 
 let supabaseClient = null;
-
-function jsonHeaders(extra = {}) {
-  return { "Content-Type": "application/json", ...extra };
-}
-
-async function applyCookieSessionToken(token) {
-  const clean = AuthJwt.normalizeUserJwt(token ?? "");
-  if (!clean || !AuthJwt.isProbablyAccessJwt(clean)) return;
-  try {
-    await fetch("/api/auth/session", {
-      method: "POST",
-      credentials: "include",
-      headers: jsonHeaders({ Accept: "application/json" }),
-      body: JSON.stringify({ access_token: clean }),
-    });
-  } catch (err) {
-    console.warn("simple auth/session set failed", err);
-  }
-}
-
-async function clearCookieSession() {
-  try {
-    await fetch("/api/auth/session", {
-      method: "DELETE",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    });
-  } catch (err) {
-    console.warn("simple auth/session clear failed", err);
-  }
-}
 
 function safeText(value) {
   if (value === null || value === undefined) return "—";
@@ -203,56 +191,39 @@ function normalizeUserJwt(raw) {
   return AuthJwt.normalizeUserJwt(raw);
 }
 
-async function getApiAccessToken() {
-  const manual = normalizeUserJwt(document.getElementById("simpleJwt")?.value ?? "");
-  if (manual) {
-    if (!AuthJwt.isProbablyAccessJwt(manual)) {
-      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
-      return "";
-    }
-    return manual;
-  }
-  if (state.config?.auth_mode === "supabase" && supabaseClient) {
-    const { data, error } = await supabaseClient.auth.getSession();
-    if (error) console.warn("getSession", error);
-    const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
-    if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
-  }
-  return readStoredApiJwt();
+/** JWT for Authorization header. HttpOnly session cookies are sent when credentials are included. */
+async function getBearerAccessToken() {
+  return AuthClient.getBearerAccessToken({
+    manualInputId: "simpleJwt",
+    supabaseClient,
+    authMode: state.config?.auth_mode,
+  });
 }
 
-function clearLegacyApiJwtKeys() {
-  LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
+async function ensureFreshSimpleAuth() {
+  const fresh = await AuthClient.refreshSessionFromSupabase(supabaseClient);
+  if (fresh) {
+    AuthClient.persistAccessToken(fresh, "simpleJwt");
+    return true;
+  }
+  return false;
 }
 
 function readStoredApiJwt() {
-  const accept = (raw) => {
-    const n = normalizeUserJwt(raw);
-    if (!n) return "";
-    if (!AuthJwt.isProbablyAccessJwt(n)) {
-      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
-      clearStoredApiJwt();
-      return "";
-    }
-    return n;
-  };
-  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
-  if (current) return current;
-  for (const key of LEGACY_AUTH_TOKEN_KEYS) {
-    const legacy = (localStorage.getItem(key) || "").trim();
-    if (!legacy) continue;
-    const migrated = accept(legacy);
-    if (!migrated) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
-    clearLegacyApiJwtKeys();
-    return migrated;
-  }
-  return "";
+  return AuthClient.readStoredApiJwt();
 }
 
 function clearStoredApiJwt() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-  clearLegacyApiJwtKeys();
+  AuthClient.clearStoredApiJwt();
+}
+
+function humanReadableAuthError(raw) {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return "Sign in required. Open /login.";
+  if (/missing authentication|authorization:\s*bearer|jwt/i.test(s) && !/sign in required/i.test(s)) {
+    return "Sign in required. Open /login.";
+  }
+  return s;
 }
 
 const api = {
@@ -262,18 +233,19 @@ const api = {
     delete fetchOptions.timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const headers = {
-      "Content-Type": "application/json",
-      ...(fetchOptions.headers || {}),
+
+    const buildHeaders = async () => {
+      const h = {
+        "Content-Type": "application/json",
+        ...(fetchOptions.headers || {}),
+      };
+      const token = await getBearerAccessToken();
+      if (token) h.Authorization = `Bearer ${token}`;
+      else delete h.Authorization;
+      return h;
     };
-    const token = await getApiAccessToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-    try {
-      const res = await fetch(path, {
-        ...fetchOptions,
-        headers,
-        signal: controller.signal,
-      });
+
+    const parseResponse = async (res) => {
       const text = await res.text();
       let data;
       try {
@@ -281,10 +253,44 @@ const api = {
       } catch {
         data = { ok: false, error: `Invalid JSON (${res.status})` };
       }
+      return { res, data };
+    };
+
+    try {
+      let headers = await buildHeaders();
+      let { res, data } = await parseResponse(
+        await fetch(path, {
+          ...fetchOptions,
+          credentials: fetchOptions.credentials ?? "same-origin",
+          headers,
+          signal: controller.signal,
+        })
+      );
+      if (
+        !res.ok &&
+        res.status === 401 &&
+        state.publicConfig?.saas_mode &&
+        state.config?.auth_mode === "supabase" &&
+        supabaseClient
+      ) {
+        const refreshed = await ensureFreshSimpleAuth();
+        if (refreshed) {
+          headers = await buildHeaders();
+          ({ res, data } = await parseResponse(
+            await fetch(path, {
+              ...fetchOptions,
+              credentials: fetchOptions.credentials ?? "same-origin",
+              headers,
+              signal: controller.signal,
+            })
+          ));
+        }
+      }
       if (!res.ok) {
+        const rawErr = data?.error || data?.detail || `HTTP ${res.status}`;
         return {
           ok: false,
-          error: data?.error || data?.detail || `HTTP ${res.status}`,
+          error: res.status === 401 ? humanReadableAuthError(rawErr) : rawErr,
           status: res.status,
           data: data?.data ?? null,
         };
@@ -306,14 +312,7 @@ const api = {
 };
 
 function persistJwt(session) {
-  const token = normalizeUserJwt(session?.access_token ?? "");
-  if (token && AuthJwt.isProbablyAccessJwt(token)) {
-    localStorage.setItem(AUTH_TOKEN_KEY, token);
-    clearLegacyApiJwtKeys();
-    void applyCookieSessionToken(token);
-    const inp = document.getElementById("simpleJwt");
-    if (inp) inp.value = "";
-  }
+  AuthClient.persistAccessToken(session?.access_token ?? "", "simpleJwt");
 }
 
 function updateSbUi(session) {
@@ -378,7 +377,7 @@ async function initSupabase(url, anonKey) {
   });
   document.getElementById("simpleSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
-    await clearCookieSession();
+    await AuthClient.clearCookieSession();
     clearStoredApiJwt();
     const inp = document.getElementById("simpleJwt");
     if (inp) inp.value = "";
@@ -667,7 +666,7 @@ async function runScan() {
 function wireJwt() {
   const saved = readStoredApiJwt();
   const inp = document.getElementById("simpleJwt");
-  if (inp && saved && !inp.value) inp.placeholder = "Token saved in browser";
+  if (inp && saved && !inp.value) inp.placeholder = "Session saved in browser";
   document.getElementById("simpleJwtSave")?.addEventListener("click", () => {
     const v = normalizeUserJwt(document.getElementById("simpleJwt")?.value ?? "");
     if (v) {
@@ -675,20 +674,21 @@ function wireJwt() {
         setMessage(AuthJwt.JWT_BAD_SHAPE_HINT, "error");
         return;
       }
-      localStorage.setItem(AUTH_TOKEN_KEY, v);
-      clearLegacyApiJwtKeys();
-      void applyCookieSessionToken(v);
+      AuthClient.persistAccessToken(v, "simpleJwt");
     } else {
       clearStoredApiJwt();
-      void clearCookieSession();
+      void AuthClient.clearCookieSession();
     }
-    setMessage(v ? "Token saved." : "Cleared — enter a token to save.", v ? "ok" : "warn");
+    setMessage(v ? "Session saved." : "Cleared.", v ? "ok" : "warn");
   });
 }
 
 async function main() {
   wireJwt();
   await loadPublicConfig();
+  if (state.publicConfig?.saas_mode && state.config?.auth_mode === "supabase" && supabaseClient) {
+    await ensureFreshSimpleAuth();
+  }
   await refreshStatus();
   document.getElementById("simpleRefreshStatus")?.addEventListener("click", () => refreshStatus());
   document.getElementById("simpleScanBtn")?.addEventListener("click", () => runScan());
