@@ -200,8 +200,9 @@ async function refreshAccountMe() {
     renderLiveTradingSaasPanel();
     return;
   }
-  const token = await getApiAccessToken();
-  if (!token) {
+  const bearer = await getBearerAccessToken();
+  const cookieAuthed = bearer ? false : await hasCookieAuthSession();
+  if (!bearer && !cookieAuthed) {
     state.accountMe = null;
     renderLiveTradingSaasPanel();
     return;
@@ -274,7 +275,8 @@ function normalizeUserJwt(raw) {
   return AuthJwt.normalizeUserJwt(raw);
 }
 
-async function getApiAccessToken() {
+/** JWT string for Authorization header only. HttpOnly session cookies are sent separately by the browser. */
+async function getBearerAccessToken() {
   const manual = normalizeUserJwt(document.getElementById("jwtInput")?.value ?? "");
   if (manual) {
     if (!AuthJwt.isProbablyAccessJwt(manual)) {
@@ -291,7 +293,6 @@ async function getApiAccessToken() {
     const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
     if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
   }
-  if (await ensureCookieAuthSession()) return "";
   return "";
 }
 
@@ -329,7 +330,7 @@ function clearStoredApiJwt() {
   clearLegacyApiJwtKeys();
 }
 
-async function ensureCookieAuthSession() {
+async function hasCookieAuthSession() {
   try {
     const out = await fetch("/api/auth/session", {
       method: "GET",
@@ -536,7 +537,7 @@ const api = {
       ...(fetchOptions.headers || {}),
     };
 
-    const token = await getApiAccessToken();
+    const token = await getBearerAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
 
     try {
@@ -4042,8 +4043,9 @@ function wireEvents() {
   applySecCompareMode();
   await loadConfig();
   await authSessionReady;
-  const token = await getApiAccessToken();
-  if (token) {
+  const bearer = await getBearerAccessToken();
+  const cookieAuthed = bearer ? false : await hasCookieAuthSession();
+  if (bearer || cookieAuthed) {
     await refreshCritical();
     markDeferredDataPlaceholders();
     setupLazySectionLoading();

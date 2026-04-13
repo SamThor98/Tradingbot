@@ -203,7 +203,8 @@ function normalizeUserJwt(raw) {
   return AuthJwt.normalizeUserJwt(raw);
 }
 
-async function getApiAccessToken() {
+/** JWT for Authorization header. HttpOnly session cookies are sent when credentials are included. */
+async function getBearerAccessToken() {
   const manual = normalizeUserJwt(document.getElementById("simpleJwt")?.value ?? "");
   if (manual) {
     if (!AuthJwt.isProbablyAccessJwt(manual)) {
@@ -266,11 +267,12 @@ const api = {
       "Content-Type": "application/json",
       ...(fetchOptions.headers || {}),
     };
-    const token = await getApiAccessToken();
+    const token = await getBearerAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     try {
       const res = await fetch(path, {
         ...fetchOptions,
+        credentials: fetchOptions.credentials ?? "same-origin",
         headers,
         signal: controller.signal,
       });
