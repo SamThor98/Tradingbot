@@ -72,6 +72,7 @@ from .security import (
     parse_scopes,
     parse_token_expiry,
     require_paid_entitlement,
+    supabase_api_base_url,
     utcnow_iso,
 )
 from .security_headers import SecurityHeadersMiddleware
@@ -717,7 +718,8 @@ def public_config() -> ApiResponse:
         "on",
     )
     jwt_secret_ok = bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip())
-    jwks_ready = bool(url)  # ES256/RS256 access tokens verify via SUPABASE_URL + JWKS
+    # JWKS URL is derived from SUPABASE_URL or from Supabase DATABASE_URL (db.<ref>.supabase.co / pooler).
+    jwks_ready = bool(supabase_api_base_url())
     data: dict[str, Any] = {
         "supabase": supabase,
         "schwab_oauth": schwab_oauth,
@@ -795,6 +797,7 @@ def health() -> ApiResponse:
             "time": datetime.now(timezone.utc).isoformat(),
             "auth_mode": "jwt",
             "supabase_browser_auth": bool(url and anon),
+            "supabase_jwks_ready": bool(supabase_api_base_url()),
             "supabase_jwt_secret_configured": bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip()),
             "supabase_jwt_legacy_configured": bool((os.getenv("SUPABASE_JWT_SECRET_LEGACY") or "").strip()),
             "cors_allowed_origin_count": len(allowed_origins),
