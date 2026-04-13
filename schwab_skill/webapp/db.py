@@ -22,19 +22,26 @@ def _strip_invalid_host_brackets(url: str) -> str:
         scheme, sep, tail = url.partition("://")
         if not sep:
             return url
+        authority = tail
+        suffix = ""
+        for marker in ("/", "?", "#"):
+            idx = authority.find(marker)
+            if idx != -1:
+                authority, suffix = authority[:idx], authority[idx:]
+                break
         userinfo = ""
-        host_port_path = tail
-        if "@" in tail:
-            userinfo, _, host_port_path = tail.rpartition("@")
-        if not host_port_path.startswith("[") or "]" not in host_port_path:
+        host_port = authority
+        if "@" in authority:
+            userinfo, _, host_port = authority.rpartition("@")
+        if not host_port.startswith("[") or "]" not in host_port:
             return url
-        host, sep, suffix = host_port_path[1:].partition("]")
+        host, sep, host_suffix = host_port[1:].partition("]")
         if not sep:
             return url
         if ":" in host:
             return url
         auth = f"{userinfo}@" if userinfo else ""
-        return f"{scheme}://{auth}{host}{suffix}"
+        return f"{scheme}://{auth}{host}{host_suffix}{suffix}"
     except Exception:
         return url
     return url
