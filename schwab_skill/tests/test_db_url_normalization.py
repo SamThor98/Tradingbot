@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from webapp.db import (
+    _maybe_force_ipv4_for_supabase,
     _normalize_database_url,
     _strip_invalid_host_brackets,
     _validate_database_url,
@@ -64,3 +65,59 @@ def test_validate_accepts_sanitized_bracketed_hostname() -> None:
 def test_validate_accepts_bracketed_hostname_without_userinfo() -> None:
     raw = "postgresql://[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres"
     assert _validate_database_url(raw) == "postgresql://db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+
+
+def test_strip_invalid_bracketed_hostname_with_querystring() -> None:
+    raw = "postgresql://postgres:pw@[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres?sslmode=require"
+    assert _strip_invalid_host_brackets(raw) == (
+        "postgresql://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres?sslmode=require"
+    )
+
+
+def test_validate_accepts_sanitized_bracketed_hostname_with_querystring() -> None:
+    raw = "postgresql+psycopg2://postgres:pw@[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres?sslmode=require"
+    assert _validate_database_url(raw) == (
+        "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres?sslmode=require"
+    )
+
+
+def test_force_ipv4_for_supabase_adds_hostaddr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dsn = "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+
+    def _fake_getaddrinfo(*_args, **_kwargs):
+        return [
+            (2, 1, 6, "", ("1.2.3.4", 5432)),
+            (2, 1, 6, "", ("1.2.3.5", 5432)),
+        ]
+
+    monkeypatch.setattr("webapp.db.socket.getaddrinfo", _fake_getaddrinfo)
+    out = _maybe_force_ipv4_for_supabase(dsn)
+    assert out == f"{dsn}?hostaddr=1.2.3.4"
+
+
+def test_force_ipv4_for_supabase_preserves_existing_hostaddr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dsn = (
+        "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+        "?sslmode=require&hostaddr=1.2.3.4"
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("getaddrinfo should not be called when hostaddr exists")
+
+    monkeypatch.setattr("webapp.db.socket.getaddrinfo", _boom)
+    assert _maybe_force_ipv4_for_supabase(dsn) == dsn
+
+
+def test_force_ipv4_for_supabase_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    dsn = "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+    monkeypatch.setenv("DATABASE_FORCE_IPV4", "false")
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("getaddrinfo should not be called when disabled")
+
+    monkeypatch.setattr("webapp.db.socket.getaddrinfo", _boom)
+    assert _maybe_force_ipv4_for_supabase(dsn) == dsn

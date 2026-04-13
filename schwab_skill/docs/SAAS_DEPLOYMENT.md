@@ -166,5 +166,6 @@ That link is a generic **ProgrammingError** wrapper—the real message is in the
 That code wraps **`OperationalError`**: the driver could not complete a DB operation—usually **connection refused**, **SSL required**, **auth failed**, **timeout**, or the DB is **still provisioning / suspended** (free tier).
 
 - **SSL:** For hostnames ending in **`.render.com`**, if the URL has no `sslmode`, the app appends **`sslmode=require`**. Override with env **`DATABASE_SSLMODE=disable`** for local testing only.
+- **Supabase + IPv6-limited hosts:** For `*.supabase.co` Postgres DSNs, the app now attempts to resolve an IPv4 and appends `hostaddr=<ipv4>` automatically (default on). Set **`DATABASE_FORCE_IPV4=0`** to disable. If your Supabase DB hostname is IPv6-only from your runtime network, use Supabase's IPv4-capable connection string (typically the pooler DSN) in `DATABASE_URL`.
 - **Wrong `DATABASE_URL`:** Web and worker must use the **internal** URL Render injects from the database resource (Blueprint), not a stale or external string unless you know it’s valid from that service.
 - Read the **line above** the SQLAlchemy link in the logs (e.g. `could not connect`, `SSL connection required`) for the exact cause.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -21,19 +22,26 @@ def _strip_invalid_host_brackets(url: str) -> str:
         scheme, sep, tail = url.partition("://")
         if not sep:
             return url
+        authority = tail
+        suffix = ""
+        for marker in ("/", "?", "#"):
+            idx = authority.find(marker)
+            if idx != -1:
+                authority, suffix = authority[:idx], authority[idx:]
+                break
         userinfo = ""
-        host_port_path = tail
-        if "@" in tail:
-            userinfo, _, host_port_path = tail.rpartition("@")
-        if not host_port_path.startswith("[") or "]" not in host_port_path:
+        host_port = authority
+        if "@" in authority:
+            userinfo, _, host_port = authority.rpartition("@")
+        if not host_port.startswith("[") or "]" not in host_port:
             return url
-        host, sep, suffix = host_port_path[1:].partition("]")
+        host, sep, host_suffix = host_port[1:].partition("]")
         if not sep:
             return url
         if ":" in host:
             return url
         auth = f"{userinfo}@" if userinfo else ""
-        return f"{scheme}://{auth}{host}{suffix}"
+        return f"{scheme}://{auth}{host}{host_suffix}{suffix}"
     except Exception:
         return url
     return url
@@ -116,9 +124,50 @@ def _maybe_require_ssl_for_render(url: str) -> str:
     )
 
 
+def _maybe_force_ipv4_for_supabase(url: str) -> str:
+    """Set libpq hostaddr to IPv4 for Supabase hosts in IPv6-limited networks."""
+    if not url.startswith("postgresql"):
+        return url
+    flag = (os.getenv("DATABASE_FORCE_IPV4") or "1").strip().lower()
+    if flag in ("disable", "0", "false", "off", "no"):
+        return url
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+    except Exception:
+        return url
+    if not host.endswith(".supabase.co"):
+        return url
+    q = list(parse_qsl(parsed.query, keep_blank_values=True))
+    if any(k == "hostaddr" and v.strip() for k, v in q):
+        return url
+    try:
+        ipv4_addrs = {
+            info[4][0]
+            for info in socket.getaddrinfo(host, parsed.port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+            if info and info[4]
+        }
+    except OSError:
+        return url
+    if not ipv4_addrs:
+        return url
+    q.append(("hostaddr", str(sorted(ipv4_addrs)[0])))
+    new_query = urlencode(q)
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            new_query,
+            parsed.fragment,
+        )
+    )
+
+
 _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}")
 DATABASE_URL = _validate_database_url(
-    _maybe_require_ssl_for_render(_normalize_database_url(_raw_db_url))
+    _maybe_force_ipv4_for_supabase(_maybe_require_ssl_for_render(_normalize_database_url(_raw_db_url)))
 )
 
 engine_kwargs: dict[str, object] = {}
