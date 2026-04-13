@@ -67,6 +67,20 @@ def test_validate_accepts_bracketed_hostname_without_userinfo() -> None:
     assert _validate_database_url(raw) == "postgresql://db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
 
 
+def test_strip_invalid_bracketed_hostname_with_querystring() -> None:
+    raw = "postgresql://postgres:pw@[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres?sslmode=require"
+    assert _strip_invalid_host_brackets(raw) == (
+        "postgresql://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres?sslmode=require"
+    )
+
+
+def test_validate_accepts_sanitized_bracketed_hostname_with_querystring() -> None:
+    raw = "postgresql+psycopg2://postgres:pw@[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres?sslmode=require"
+    assert _validate_database_url(raw) == (
+        "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres?sslmode=require"
+    )
+
+
 def test_force_ipv4_for_supabase_adds_hostaddr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
