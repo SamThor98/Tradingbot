@@ -105,6 +105,9 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET_LEGACY
         sync: false
+      # Same as web: ES256 access tokens verify via JWKS at SUPABASE_URL (or inferred from Supabase DATABASE_URL).
+      - key: SUPABASE_URL
+        sync: false
       - key: SCHWAB_MARKET_APP_KEY
         sync: false
       - key: SCHWAB_MARKET_APP_SECRET

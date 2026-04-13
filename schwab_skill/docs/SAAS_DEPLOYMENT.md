@@ -15,11 +15,12 @@
 | `CREDENTIAL_ENCRYPTION_KEY` | URL-safe base64, 32 bytes — encrypts rows in `user_credentials` |
 | `SUPABASE_JWT_SECRET` | Validates `Authorization: Bearer` tokens |
 | `SUPABASE_JWT_SECRET_LEGACY` | Optional — previous JWT secret; used if primary signature fails |
+| `SUPABASE_JWT_STRICT_CLAIMS` | Optional — set to `1` to verify `aud=authenticated` and `iss=https://<ref>.supabase.co/auth/v1` for Supabase access tokens (matches browser-issued tokens) |
 | `SCHWAB_MARKET_APP_KEY` / `SCHWAB_MARKET_APP_SECRET` | Market API app |
 | `SCHWAB_ACCOUNT_APP_KEY` / `SCHWAB_ACCOUNT_APP_SECRET` | Account/trading app |
 | `SCHWAB_CALLBACK_URL` | Redirect URI for the **account** Schwab app (browser OAuth callback) |
 | `SCHWAB_MARKET_CALLBACK_URL` | Redirect URI for the **market** Schwab app — register `https://<api-host>/api/oauth/schwab/market/callback` on the market app |
-| `DATABASE_URL` | SQLAlchemy URL |
+| `DATABASE_URL` | SQLAlchemy URL (must not be the `https://…` project URL). If this points at Supabase Postgres (`db.<ref>.supabase.co` or the shared pooler with user `postgres.<ref>`), the API can derive the JWKS host without duplicating `SUPABASE_URL` on workers. |
 | `REDIS_URL` | Celery + rate limits + scan cooldown |
 
 ## Web service only (optional browser sign-in)
