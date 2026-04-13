@@ -16,20 +16,25 @@ def _strip_invalid_host_brackets(url: str) -> str:
     try:
         parsed = urlparse(url)
     except ValueError:
-        if "@[" not in url:
+        if "[" not in url:
             return url
-        userinfo, _, rest = url.rpartition("@")
-        if not rest.startswith("[") or "]" not in rest:
+        scheme, sep, tail = url.partition("://")
+        if not sep:
             return url
-        host, sep, tail = rest[1:].partition("]")
+        userinfo = ""
+        host_port_path = tail
+        if "@" in tail:
+            userinfo, _, host_port_path = tail.rpartition("@")
+        if not host_port_path.startswith("[") or "]" not in host_port_path:
+            return url
+        host, sep, suffix = host_port_path[1:].partition("]")
         if not sep:
             return url
         if ":" in host:
             return url
-        return f"{userinfo}@{host}{tail}"
-
-    host = parsed.hostname or ""
-    if not host.startswith("[") and not host.endswith("]"):
+        auth = f"{userinfo}@" if userinfo else ""
+        return f"{scheme}://{auth}{host}{suffix}"
+    except Exception:
         return url
     return url
 
@@ -66,17 +71,24 @@ def _normalize_database_url(url: str) -> str:
 
 
 def _validate_database_url(url: str) -> str:
-    parsed = urlparse(url)
+    sanitized_url = _strip_invalid_host_brackets(url)
+    try:
+        parsed = urlparse(sanitized_url)
+    except ValueError as exc:
+        raise ValueError(
+            "Invalid DATABASE_URL: URL parsing failed. Check hostname formatting "
+            "(especially bracketed hosts) and provide a valid Postgres DSN."
+        ) from exc
     scheme = (parsed.scheme or "").lower()
     if scheme.startswith("sqlite") or scheme.startswith("postgresql"):
-        return url
+        return sanitized_url
     if scheme in {"http", "https"}:
         raise ValueError(
             "Invalid DATABASE_URL: got an http(s) URL. Use a Postgres DSN "
             "(postgres:// or postgresql://), or Render's database "
             "connectionString env binding."
         )
-    return url
+    return sanitized_url
 
 
 def _maybe_require_ssl_for_render(url: str) -> str:

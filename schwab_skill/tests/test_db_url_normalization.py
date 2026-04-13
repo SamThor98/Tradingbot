@@ -45,3 +45,17 @@ def test_normalize_bracketed_hostname_then_apply_driver() -> None:
     assert _normalize_database_url(raw) == (
         "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
     )
+
+
+def test_strip_invalid_bracketed_hostname_without_userinfo() -> None:
+    raw = "postgresql://[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres"
+    assert _strip_invalid_host_brackets(raw) == (
+        "postgresql://db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+    )
+
+
+def test_validate_accepts_sanitized_bracketed_hostname() -> None:
+    raw = "postgresql+psycopg2://postgres:pw@[db.blfzgeamkovnwlxqbruo.supabase.co]:5432/postgres"
+    assert _validate_database_url(raw) == (
+        "postgresql+psycopg2://postgres:pw@db.blfzgeamkovnwlxqbruo.supabase.co:5432/postgres"
+    )
