@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -86,23 +88,81 @@ def _jwt_leeway_seconds() -> int:
 def _jwt_verify_audience() -> str | None:
     """If set, jwt.decode verifies the aud claim (Supabase user access tokens often use 'authenticated')."""
     aud = (os.getenv("SUPABASE_JWT_AUDIENCE") or "").strip()
-    return aud or None
+    if aud:
+        return aud
+    if (os.getenv("SUPABASE_JWT_STRICT_CLAIMS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return "authenticated"
+    return None
 
 
 def _jwt_verify_issuer() -> str | None:
     """If set, jwt.decode verifies iss (e.g. https://<ref>.supabase.co/auth/v1)."""
     iss = (os.getenv("SUPABASE_JWT_ISSUER") or "").strip()
-    return iss or None
+    if iss:
+        return iss
+    if (os.getenv("SUPABASE_JWT_STRICT_CLAIMS") or "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return None
+    base = supabase_api_base_url()
+    if not base:
+        return None
+    return f"{base}/auth/v1"
+
+
+def _infer_supabase_api_url_from_database_url() -> str | None:
+    """Derive https://<ref>.supabase.co from a Supabase Postgres DATABASE_URL (JWKS parity without duplicating env)."""
+    raw = (os.getenv("DATABASE_URL") or "").strip()
+    if not raw or raw.lower().startswith("sqlite"):
+        return None
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return None
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return None
+    m = re.fullmatch(r"db\.([a-z0-9]{15,25})\.supabase\.co", host)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    if host.endswith(".pooler.supabase.com"):
+        user = (parsed.username or "").strip()
+        if user.startswith("postgres.") and len(user) > len("postgres."):
+            ref = user.split(".", 1)[1]
+            if re.fullmatch(r"[a-z0-9]{15,25}", ref):
+                return f"https://{ref}.supabase.co"
+    return None
+
+
+def supabase_api_base_url() -> str | None:
+    """Supabase project API origin (https://<ref>.supabase.co) for JWKS and browser config.
+
+    Uses ``SUPABASE_URL`` when set; otherwise infers from ``DATABASE_URL`` when it points at Supabase Postgres.
+    """
+    explicit = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return _infer_supabase_api_url_from_database_url()
 
 
 def _supabase_jwks_url() -> str:
-    base = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    base = supabase_api_base_url()
     if not base:
         raise HTTPException(
             status_code=503,
             detail=(
-                "SUPABASE_URL is not configured; it is required to verify asymmetric "
-                "(ES256/RS256) Supabase JWTs via JWKS."
+                "Cannot resolve Supabase API URL for JWKS: set SUPABASE_URL to your project URL "
+                "(https://<ref>.supabase.co), or use a Supabase DATABASE_URL (db.<ref>.supabase.co "
+                "or pooler host with user postgres.<ref>). "
+                "Asymmetric access tokens (ES256) require JWKS."
             ),
         )
     return f"{base}/auth/v1/.well-known/jwks.json"
@@ -158,8 +218,7 @@ def _decode_supabase_jwt_symmetric(token: str) -> dict[str, Any]:
     msg = str(last_exc).lower()
     if "not enough segments" in msg or "segments" in msg:
         detail = (
-            "Invalid JWT: expected a Supabase access token (three dot-separated parts), "
-            "not a refresh token or API key."
+            "Invalid JWT: expected a Supabase access token (three dot-separated parts), not a refresh token or API key."
         )
     else:
         detail = f"Invalid JWT: {last_exc}"

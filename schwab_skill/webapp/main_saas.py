@@ -56,6 +56,7 @@ from .security import (
     parse_scopes,
     parse_token_expiry,
     require_paid_entitlement,
+    supabase_api_base_url,
     utcnow_iso,
 )
 from .strategy_chat import run_strategy_chat
@@ -326,8 +327,7 @@ def public_config() -> ApiResponse:
         (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip() and (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
     )
     schwab_market_oauth = bool(
-        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        and (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
+        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip() and (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
     )
     plat_kill = (os.getenv("LIVE_TRADING_KILL_SWITCH") or "").strip().lower() in (
         "1",
@@ -336,7 +336,8 @@ def public_config() -> ApiResponse:
         "on",
     )
     jwt_secret_ok = bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip())
-    jwks_ready = bool(url)  # ES256/RS256 access tokens verify via SUPABASE_URL + JWKS
+    # JWKS URL is derived from SUPABASE_URL or from Supabase DATABASE_URL (db.<ref>.supabase.co / pooler).
+    jwks_ready = bool(supabase_api_base_url())
     data: dict[str, Any] = {
         "supabase": supabase,
         "schwab_oauth": schwab_oauth,
@@ -381,6 +382,7 @@ def health() -> ApiResponse:
             "time": datetime.now(timezone.utc).isoformat(),
             "auth_mode": "jwt",
             "supabase_browser_auth": bool(url and anon),
+            "supabase_jwks_ready": bool(supabase_api_base_url()),
             "supabase_jwt_secret_configured": bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip()),
             "supabase_jwt_legacy_configured": bool((os.getenv("SUPABASE_JWT_SECRET_LEGACY") or "").strip()),
             "cors_allowed_origin_count": len(allowed_origins),
