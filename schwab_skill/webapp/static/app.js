@@ -241,9 +241,6 @@ async function refreshCritical() {
   await Promise.all([refreshStatus(), refreshAccountMe(), refreshPending()]);
 }
 
-const AUTH_TOKEN_KEY = "tradingbot.jwt";
-const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
-
 /** Set by /static/auth-jwt-utils.js (loaded before this file). */
 const AuthJwt = window.TradingBotAuthJwt || {
   normalizeUserJwt(raw) {
@@ -255,6 +252,29 @@ const AuthJwt = window.TradingBotAuthJwt || {
     return true;
   },
   JWT_BAD_SHAPE_HINT: "",
+};
+/** Set by /static/auth-client.js (loaded before this file). */
+const AuthClient = window.TradingBotAuthClient || {
+  readStoredApiJwt() {
+    return "";
+  },
+  clearStoredApiJwt() {},
+  createCookieSession() {
+    return Promise.resolve(false);
+  },
+  clearCookieSession() {
+    return Promise.resolve();
+  },
+  hasCookieAuthSession() {
+    return Promise.resolve(false);
+  },
+  getBearerAccessToken() {
+    return Promise.resolve("");
+  },
+  persistAccessToken() {},
+  refreshSessionFromSupabase() {
+    return Promise.resolve("");
+  },
 };
 const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
 
@@ -277,101 +297,41 @@ function normalizeUserJwt(raw) {
 
 /** JWT string for Authorization header only. HttpOnly session cookies are sent separately by the browser. */
 async function getBearerAccessToken() {
-  const manual = normalizeUserJwt(document.getElementById("jwtInput")?.value ?? "");
-  if (manual) {
-    if (!AuthJwt.isProbablyAccessJwt(manual)) {
-      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
-      return "";
-    }
-    return manual;
-  }
-  const stored = readStoredApiJwt();
-  if (stored) return stored;
-  if (state.config?.auth_mode === "supabase" && supabaseClient) {
-    const { data, error } = await supabaseClient.auth.getSession();
-    if (error) console.warn("auth.getSession", error);
-    const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
-    if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
-  }
-  return "";
-}
-
-function clearLegacyApiJwtKeys() {
-  LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
+  return AuthClient.getBearerAccessToken({
+    manualInputId: "jwtInput",
+    supabaseClient,
+    authMode: state.config?.auth_mode,
+  });
 }
 
 function readStoredApiJwt() {
-  const accept = (raw) => {
-    const n = normalizeUserJwt(raw);
-    if (!n) return "";
-    if (!AuthJwt.isProbablyAccessJwt(n)) {
-      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
-      clearStoredApiJwt();
-      return "";
-    }
-    return n;
-  };
-  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
-  if (current) return current;
-  for (const key of LEGACY_AUTH_TOKEN_KEYS) {
-    const legacy = (localStorage.getItem(key) || "").trim();
-    if (!legacy) continue;
-    const migrated = accept(legacy);
-    if (!migrated) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
-    clearLegacyApiJwtKeys();
-    return migrated;
-  }
-  return "";
+  return AuthClient.readStoredApiJwt();
 }
 
 function clearStoredApiJwt() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-  clearLegacyApiJwtKeys();
+  AuthClient.clearStoredApiJwt();
 }
 
 async function hasCookieAuthSession() {
-  try {
-    const out = await fetch("/api/auth/session", {
-      method: "GET",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    });
-    if (!out.ok) return false;
-    const body = await out.json();
-    const data = body?.data && typeof body.data === "object" ? body.data : {};
-    return Boolean(data.authenticated);
-  } catch {
-    return false;
-  }
+  return AuthClient.hasCookieAuthSession();
 }
 
 async function createCookieAuthSession(accessToken) {
-  const token = normalizeUserJwt(safeText(accessToken));
-  if (!token || !AuthJwt.isProbablyAccessJwt(token)) return false;
-  try {
-    const out = await fetch("/api/auth/session", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ access_token: token }),
-    });
-    return out.ok;
-  } catch {
-    return false;
-  }
+  return AuthClient.createCookieSession(safeText(accessToken));
 }
 
 async function clearCookieAuthSession() {
-  try {
-    await fetch("/api/auth/session", {
-      method: "DELETE",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    });
-  } catch {
-    /* ignore */
+  await AuthClient.clearCookieSession();
+}
+
+/** When the HttpOnly cookie holds an expired JWT, refresh via Supabase and re-set the app session cookie. */
+async function ensureFreshAuthCredentials() {
+  const fresh = await AuthClient.refreshSessionFromSupabase(supabaseClient);
+  if (fresh) {
+    AuthClient.persistAccessToken(fresh, "jwtInput");
+    return true;
   }
+  return false;
 }
 
 function setJobProgress(barId, labelId, fraction, labelText) {
@@ -391,14 +351,7 @@ let supabaseClient = null;
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 function persistApiJwtFromSession(session) {
-  const at = normalizeUserJwt(session?.access_token ?? "");
-  if (at && AuthJwt.isProbablyAccessJwt(at)) {
-    localStorage.setItem(AUTH_TOKEN_KEY, at);
-    clearLegacyApiJwtKeys();
-    void createCookieAuthSession(at);
-    const inp = document.getElementById("jwtInput");
-    if (inp) inp.value = "";
-  }
+  AuthClient.persistAccessToken(session?.access_token ?? "", "jwtInput");
 }
 
 function updateSupabaseAuthUI(session) {
@@ -506,6 +459,15 @@ function updateActionCenter({ title = "System Messages", message = "", severity 
   textEl.textContent = message || "Ready.";
 }
 
+function humanReadableAuthError(raw) {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return "Sign in required. Open /login or use Sign in in the header.";
+  if (/missing authentication|authorization:\s*bearer|jwt/i.test(s) && !/sign in required/i.test(s)) {
+    return "Sign in required. Open /login or use Sign in in the header.";
+  }
+  return s;
+}
+
 const DIAG_LABELS = {
   watchlist_size: "Watchlist",
   stage2_fail: "Stage 2 failed",
@@ -532,21 +494,19 @@ const api = {
     delete fetchOptions.timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const headers = {
-      "Content-Type": "application/json",
-      ...(fetchOptions.headers || {}),
+
+    const buildHeaders = async () => {
+      const h = {
+        "Content-Type": "application/json",
+        ...(fetchOptions.headers || {}),
+      };
+      const token = await getBearerAccessToken();
+      if (token) h.Authorization = `Bearer ${token}`;
+      else delete h.Authorization;
+      return h;
     };
 
-    const token = await getBearerAccessToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    try {
-      const res = await fetch(path, {
-        ...fetchOptions,
-        credentials: fetchOptions.credentials ?? "same-origin",
-        headers,
-        signal: controller.signal,
-      });
+    const parseResponse = async (res) => {
       const text = await res.text();
       let data;
       try {
@@ -554,10 +514,44 @@ const api = {
       } catch {
         data = { ok: false, error: `Invalid JSON response (${res.status})` };
       }
+      return { res, data };
+    };
+
+    try {
+      let headers = await buildHeaders();
+      let { res, data } = await parseResponse(
+        await fetch(path, {
+          ...fetchOptions,
+          credentials: fetchOptions.credentials ?? "same-origin",
+          headers,
+          signal: controller.signal,
+        })
+      );
+      if (
+        !res.ok &&
+        res.status === 401 &&
+        state.publicConfig?.saas_mode &&
+        state.config?.auth_mode === "supabase" &&
+        supabaseClient
+      ) {
+        const refreshed = await ensureFreshAuthCredentials();
+        if (refreshed) {
+          headers = await buildHeaders();
+          ({ res, data } = await parseResponse(
+            await fetch(path, {
+              ...fetchOptions,
+              credentials: fetchOptions.credentials ?? "same-origin",
+              headers,
+              signal: controller.signal,
+            })
+          ));
+        }
+      }
       if (!res.ok) {
+        const rawErr = data?.error || data?.detail || `HTTP ${res.status}`;
         return {
           ok: false,
-          error: data?.error || data?.detail || `HTTP ${res.status}`,
+          error: res.status === 401 ? humanReadableAuthError(rawErr) : rawErr,
           status: res.status,
           data: data?.data ?? null,
         };
@@ -1891,14 +1885,12 @@ async function loadConfig() {
           logEvent({ kind: "system", severity: "error", message: AuthJwt.JWT_BAD_SHAPE_HINT });
           return;
         }
-        localStorage.setItem(AUTH_TOKEN_KEY, val);
-        clearLegacyApiJwtKeys();
-        void createCookieAuthSession(val);
-        logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
+        AuthClient.persistAccessToken(val, "jwtInput");
+        logEvent({ kind: "system", severity: "info", message: "Session saved for this browser." });
       } else {
         clearStoredApiJwt();
         void clearCookieAuthSession();
-        logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
+        logEvent({ kind: "system", severity: "warn", message: "Session cleared." });
       }
     });
   }
@@ -1920,16 +1912,16 @@ async function loadConfig() {
     updateActionCenter({
       title: "Hosted sign-in not configured",
       message: hasSupabaseUi
-        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
-        : `This server did not expose Supabase browser sign-in (set SUPABASE_URL and SUPABASE_ANON_KEY in Render to match your local .env). Until then: paste your Supabase access token under Session token → Save. In Supabase → Authentication → URL configuration, add ${originHint} to Site URL and Redirect URLs.`,
+        ? "Use Sign in on this page or open /login. Your session stays in the browser automatically."
+        : `Open /login and paste an access token under Advanced, or set SUPABASE_URL and SUPABASE_ANON_KEY on the server. In Supabase → Authentication → URL configuration, add ${originHint} to Site URL and Redirect URLs.`,
       severity: "warn",
     });
   } else {
     updateActionCenter({
-      title: "Authentication Required",
+      title: "Sign in",
       message: hasSupabaseUi
-        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
-        : "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
+        ? "Use email and password above or open /login. No need to copy tokens unless you use Advanced."
+        : "Open /login and sign in, or paste a token under Advanced → Save.",
       severity: "warn",
     });
   }
@@ -4043,6 +4035,9 @@ function wireEvents() {
   applySecCompareMode();
   await loadConfig();
   await authSessionReady;
+  if (state.publicConfig?.saas_mode && state.config?.auth_mode === "supabase" && supabaseClient) {
+    await ensureFreshAuthCredentials();
+  }
   const bearer = await getBearerAccessToken();
   const cookieAuthed = bearer ? false : await hasCookieAuthSession();
   if (bearer || cookieAuthed) {
@@ -4052,7 +4047,7 @@ function wireEvents() {
   } else if (state.config?.auth_mode === "supabase") {
     updateActionCenter({
       title: "Sign in",
-      message: "Sign in with Supabase to load portfolio, pending trades, and billing-protected actions.",
+      message: "Sign in above or open /login to load portfolio, pending trades, and billing-protected actions.",
       severity: "warn",
     });
     setupLazySectionLoading();

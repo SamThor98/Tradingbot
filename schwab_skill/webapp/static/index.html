@@ -64,11 +64,14 @@
             </div>
           </div>
           <details id="manualJwtDetails" class="auth-manual-jwt">
-            <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
+            <summary id="manualJwtSummary" class="muted manual-jwt-summary">Advanced — access token</summary>
+            <p class="muted" style="margin: 0 0 8px; font-size: 0.88rem">
+              Only if support asked you to paste a token. Normal sign-in does not need this.
+            </p>
             <div class="inline-form compact">
-              <label class="field-label" for="jwtInput">JWT</label>
-              <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
-              <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
+              <label class="field-label" for="jwtInput">Token</label>
+              <input id="jwtInput" type="password" placeholder="Paste only if instructed" autocomplete="off" />
+              <button id="saveJwtBtn" class="btn small secondary" type="button">Save</button>
             </div>
           </details>
         </div>
@@ -980,6 +983,7 @@
     </dialog>
 
     <script src="/static/auth-jwt-utils.js"></script>
+    <script src="/static/auth-client.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
