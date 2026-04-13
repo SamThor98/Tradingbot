@@ -23,6 +23,21 @@ def _normalize_database_url(url: str) -> str:
     return u
 
 
+def _reject_http_scheme_database_url(url: str) -> None:
+    """Fail fast when DATABASE_URL is a web/API URL (common Supabase misconfiguration)."""
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return
+    scheme = (parsed.scheme or "").lower()
+    if scheme in ("http", "https"):
+        raise ValueError(
+            "DATABASE_URL must be a SQLAlchemy database URL (e.g. postgresql+psycopg2://user:pass@host:5432/dbname), "
+            "not an HTTP(S) site URL. For Supabase, copy the Postgres connection string from "
+            "Project Settings → Database (URI), not the project's https://… URL."
+        )
+
+
 def _maybe_require_ssl_for_render(url: str) -> str:
     """Render Postgres often needs sslmode=require; missing it causes OperationalError (sqlalche.me/e/20/e3q8)."""
     if not url.startswith("postgresql"):
@@ -57,6 +72,7 @@ def _maybe_require_ssl_for_render(url: str) -> str:
 
 _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}")
 DATABASE_URL = _maybe_require_ssl_for_render(_normalize_database_url(_raw_db_url))
+_reject_http_scheme_database_url(DATABASE_URL)
 
 engine_kwargs: dict[str, object] = {}
 if DATABASE_URL.startswith("sqlite"):
@@ -72,4 +88,3 @@ else:
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
