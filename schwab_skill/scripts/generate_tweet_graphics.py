@@ -87,7 +87,7 @@ def _draw_card(ticker: str, closes: list[float], output_path: Path) -> None:
     )
 
     change_color = (124, 241, 165) if change >= 0 else (255, 137, 137)
-    change_arrow = "▲" if change >= 0 else "▼"
+    change_prefix = "+" if change >= 0 else "-"
 
     # Metrics row.
     metric_y = 580
@@ -97,7 +97,7 @@ def _draw_card(ticker: str, closes: list[float], output_path: Path) -> None:
     draw.text((395, metric_y), "1D", fill=(160, 187, 237), font=label_font)
     draw.text(
         (395, metric_y + 36),
-        f"{change_arrow} {abs(change_pct):.2f}%",
+        f"{change_prefix}{abs(change_pct):.2f}%",
         fill=change_color,
         font=value_font,
     )
@@ -108,7 +108,7 @@ def _draw_card(ticker: str, closes: list[float], output_path: Path) -> None:
     draw.text((930, metric_y), "3M Range", fill=(160, 187, 237), font=label_font)
     draw.text(
         (930, metric_y + 36),
-        f"{_format_money(low_3m)}–{_format_money(high_3m)}",
+        f"{_format_money(low_3m)}-{_format_money(high_3m)}",
         fill=(238, 247, 255),
         font=small_font,
     )
