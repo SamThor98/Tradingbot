@@ -30,6 +30,7 @@ from signal_scanner import scan_for_signals_detailed
 
 from .calibration_snapshot import build_calibration_snapshot
 from .checklist_language import with_plain_language
+from .cors_config import build_allowed_origins
 from .db import DATABASE_URL, Base, SessionLocal, engine
 from .models import AppState, PendingTrade, User
 from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
@@ -99,16 +100,7 @@ app = FastAPI(
     description="Web API for scanning, approvals, portfolio, and sector health.",
 )
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "WEB_ALLOWED_ORIGINS",
-        "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:5173,http://localhost:5173",
-    ).split(",")
-    if origin.strip()
-]
-if not allowed_origins:
-    allowed_origins = ["http://127.0.0.1:8000"]
+allowed_origins = build_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,

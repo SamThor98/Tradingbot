@@ -5,6 +5,19 @@ const AUTH_TOKEN_KEY = "tradingbot.jwt";
 const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+/** Set by /static/auth-jwt-utils.js (loaded before this module). */
+const AuthJwt = globalThis.TradingBotAuthJwt || {
+  normalizeUserJwt(raw) {
+    let t = String(raw ?? "").trim();
+    if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
+    return t;
+  },
+  isProbablyAccessJwt() {
+    return true;
+  },
+  JWT_BAD_SHAPE_HINT: "",
+};
+
 let supabaseClient = null;
 
 function setMessage(text) {
@@ -16,15 +29,31 @@ function clearLegacyApiJwtKeys() {
   LEGACY_AUTH_TOKEN_KEYS.forEach((key) => localStorage.removeItem(key));
 }
 
+function normalizeUserJwt(raw) {
+  return AuthJwt.normalizeUserJwt(raw);
+}
+
 function readStoredApiJwt() {
-  const current = (localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+  const accept = (raw) => {
+    const n = normalizeUserJwt(raw);
+    if (!n) return "";
+    if (!AuthJwt.isProbablyAccessJwt(n)) {
+      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
+      clearStoredApiJwt();
+      return "";
+    }
+    return n;
+  };
+  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   if (current) return current;
   for (const key of LEGACY_AUTH_TOKEN_KEYS) {
     const legacy = (localStorage.getItem(key) || "").trim();
     if (!legacy) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    const migrated = accept(legacy);
+    if (!migrated) continue;
+    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
     clearLegacyApiJwtKeys();
-    return legacy;
+    return migrated;
   }
   return "";
 }
@@ -35,13 +64,14 @@ function clearStoredApiJwt() {
 }
 
 async function createCookieSession(token) {
-  if (!token) return;
+  const clean = normalizeUserJwt(token);
+  if (!clean || !AuthJwt.isProbablyAccessJwt(clean)) return;
   try {
     await fetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ access_token: token }),
+      body: JSON.stringify({ access_token: clean }),
     });
   } catch (e) {
     console.warn("auth cookie set failed", e);
@@ -60,10 +90,11 @@ async function clearCookieSession() {
 }
 
 function persistJwt(session) {
-  if (session?.access_token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, session.access_token);
+  const at = normalizeUserJwt(session?.access_token ?? "");
+  if (at && AuthJwt.isProbablyAccessJwt(at)) {
+    localStorage.setItem(AUTH_TOKEN_KEY, at);
     clearLegacyApiJwtKeys();
-    void createCookieSession(session.access_token);
+    void createCookieSession(at);
     const inp = document.getElementById("loginJwt");
     if (inp) inp.value = "";
   }
@@ -147,9 +178,12 @@ async function main() {
   if (jwtInput) jwtInput.value = readStoredApiJwt();
 
   document.getElementById("loginJwtSave")?.addEventListener("click", () => {
-    let val = String(jwtInput?.value ?? "").trim();
-    if (/^bearer\s+/i.test(val)) val = val.replace(/^bearer\s+/i, "").trim();
+    const val = normalizeUserJwt(jwtInput?.value ?? "");
     if (val) {
+      if (!AuthJwt.isProbablyAccessJwt(val)) {
+        setMessage(AuthJwt.JWT_BAD_SHAPE_HINT);
+        return;
+      }
       localStorage.setItem(AUTH_TOKEN_KEY, val);
       clearLegacyApiJwtKeys();
       void createCookieSession(val);

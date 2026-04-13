@@ -59,26 +59,44 @@ def decrypt_secret(ciphertext: str | None) -> str | None:
     return out.decode("utf-8")
 
 
-def _jwt_secret() -> str:
-    secret = (os.getenv("SUPABASE_JWT_SECRET") or "").strip()
-    if not secret:
+def _jwt_secrets_for_decode() -> list[str]:
+    """Primary JWT secret first, then optional legacy (Supabase secret rotation / migration)."""
+    primary = (os.getenv("SUPABASE_JWT_SECRET") or "").strip()
+    if not primary:
         raise HTTPException(
             status_code=503,
             detail="SUPABASE_JWT_SECRET is not configured.",
         )
-    return secret
+    out: list[str] = [primary]
+    legacy = (os.getenv("SUPABASE_JWT_SECRET_LEGACY") or "").strip()
+    if legacy and legacy not in out:
+        out.append(legacy)
+    return out
 
 
 def decode_supabase_jwt(token: str) -> dict[str, Any]:
-    try:
-        return jwt.decode(
-            token,
-            _jwt_secret(),
-            algorithms=["HS256"],
-            options={"verify_aud": False},
+    last_exc: jwt.PyJWTError | None = None
+    for secret in _jwt_secrets_for_decode():
+        try:
+            return jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+        except jwt.PyJWTError as exc:
+            last_exc = exc
+            continue
+    assert last_exc is not None
+    msg = str(last_exc).lower()
+    if "not enough segments" in msg or "segments" in msg:
+        detail = (
+            "Invalid JWT: expected a Supabase access token (three dot-separated parts), "
+            "not a refresh token or API key."
         )
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid JWT: {exc}") from exc
+    else:
+        detail = f"Invalid JWT: {last_exc}"
+    raise HTTPException(status_code=401, detail=detail) from last_exc
 
 
 def auth_session_cookie_name() -> str:
@@ -102,12 +120,8 @@ def get_current_user(
     tokens: list[str] = []
     if authorization and authorization.lower().startswith("bearer "):
         bearer = authorization.split(" ", 1)[1].strip()
-        if not bearer:
-            raise HTTPException(
-                status_code=401,
-                detail="Empty bearer token. Paste your Supabase access token (three dot-separated segments), not the anon key alone.",
-            )
-        tokens.append(bearer)
+        if bearer:
+            tokens.append(bearer)
     cookie_token = (request.cookies.get(auth_session_cookie_name()) or "").strip()
     if cookie_token:
         tokens.append(cookie_token)

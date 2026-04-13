@@ -32,11 +32,12 @@ from .billing_stripe import (
     try_claim_stripe_webhook_event,
     user_has_paid_entitlement,
 )
+from .cors_config import build_allowed_origins
 from .db import DATABASE_URL, Base, SessionLocal, engine
 from .models import AppState, BacktestRun, Order, Position, ScanResult, User, UserCredential
+from .prometheus_metrics import render_prometheus_text
 from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping
 from .scan_payload import parse_scan_run_body
-from .prometheus_metrics import render_prometheus_text
 from .schemas import (
     ApiResponse,
     BillingCheckoutPayload,
@@ -90,16 +91,7 @@ app = FastAPI(
     description="Multi-tenant TradingBot API with JWT auth, encrypted credentials, and async workers.",
 )
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "WEB_ALLOWED_ORIGINS",
-        "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:5173,http://localhost:5173",
-    ).split(",")
-    if origin.strip()
-]
-if not allowed_origins:
-    allowed_origins = ["http://127.0.0.1:8000"]
+allowed_origins = build_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,
@@ -191,9 +183,13 @@ def _set_auth_session_cookie(response: Response, token: str) -> None:
 
 
 def _clear_auth_session_cookie(response: Response) -> None:
+    # Must match set_cookie flags or browsers keep the Secure HttpOnly session cookie.
     response.delete_cookie(
         key=auth_session_cookie_name(),
         path="/",
+        secure=_auth_cookie_secure(),
+        httponly=True,
+        samesite="lax",
     )
 
 
@@ -325,12 +321,18 @@ def public_config() -> ApiResponse:
         "yes",
         "on",
     )
+    jwt_secret_ok = bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip())
     data: dict[str, Any] = {
         "supabase": supabase,
         "schwab_oauth": schwab_oauth,
         "schwab_market_oauth": schwab_market_oauth,
         "saas_mode": True,
         "platform_live_trading_kill_switch": plat_kill,
+        # Helps hosted dashboards explain “works locally, not on Render” without exposing secrets.
+        "auth_setup": {
+            "supabase_sign_in_available": bool(url and anon),
+            "jwt_secret_configured": jwt_secret_ok,
+        },
     }
     impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
     if impl.startswith(("http://", "https://")):
@@ -353,13 +355,18 @@ def prometheus_metrics() -> PlainTextResponse:
 def health() -> ApiResponse:
     url = (os.getenv("SUPABASE_URL") or "").strip()
     anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    rb = str(celery_app.conf.result_backend or "").strip()
+    redis_ok = bool(rb) and not rb.startswith("memory")
     return _ok(
         {
             "status": "ok",
             "time": datetime.now(timezone.utc).isoformat(),
             "auth_mode": "jwt",
             "supabase_browser_auth": bool(url and anon),
-            "queue_backend": celery_app.conf.result_backend,
+            "supabase_jwt_secret_configured": bool((os.getenv("SUPABASE_JWT_SECRET") or "").strip()),
+            "supabase_jwt_legacy_configured": bool((os.getenv("SUPABASE_JWT_SECRET_LEGACY") or "").strip()),
+            "cors_allowed_origin_count": len(allowed_origins),
+            "celery_redis_backend_configured": redis_ok,
         }
     )
 

@@ -7,6 +7,19 @@ const AUTH_TOKEN_KEY = "tradingbot.jwt";
 const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+/** Set by /static/auth-jwt-utils.js (loaded before this module). */
+const AuthJwt = globalThis.TradingBotAuthJwt || {
+  normalizeUserJwt(raw) {
+    let t = String(raw ?? "").trim();
+    if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
+    return t;
+  },
+  isProbablyAccessJwt() {
+    return true;
+  },
+  JWT_BAD_SHAPE_HINT: "",
+};
+
 const state = {
   publicConfig: { supabase: null, saas_mode: false },
   config: { auth_mode: "jwt" },
@@ -20,8 +33,8 @@ function jsonHeaders(extra = {}) {
 }
 
 async function applyCookieSessionToken(token) {
-  const clean = String(token || "").trim();
-  if (!clean) return;
+  const clean = AuthJwt.normalizeUserJwt(token ?? "");
+  if (!clean || !AuthJwt.isProbablyAccessJwt(clean)) return;
   try {
     await fetch("/api/auth/session", {
       method: "POST",
@@ -187,19 +200,23 @@ function renderTable(signals) {
 }
 
 function normalizeUserJwt(raw) {
-  let t = String(raw ?? "").trim();
-  if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
-  return t;
+  return AuthJwt.normalizeUserJwt(raw);
 }
 
 async function getApiAccessToken() {
-  const manual = document.getElementById("simpleJwt")?.value?.trim() || "";
-  if (manual) return manual;
+  const manual = normalizeUserJwt(document.getElementById("simpleJwt")?.value ?? "");
+  if (manual) {
+    if (!AuthJwt.isProbablyAccessJwt(manual)) {
+      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
+      return "";
+    }
+    return manual;
+  }
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("getSession", error);
-    const sessionToken = (data?.session?.access_token || "").trim();
-    if (sessionToken) return sessionToken;
+    const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
+    if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
   }
   return readStoredApiJwt();
 }
@@ -209,14 +226,26 @@ function clearLegacyApiJwtKeys() {
 }
 
 function readStoredApiJwt() {
-  const current = (localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+  const accept = (raw) => {
+    const n = normalizeUserJwt(raw);
+    if (!n) return "";
+    if (!AuthJwt.isProbablyAccessJwt(n)) {
+      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
+      clearStoredApiJwt();
+      return "";
+    }
+    return n;
+  };
+  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   if (current) return current;
   for (const key of LEGACY_AUTH_TOKEN_KEYS) {
     const legacy = (localStorage.getItem(key) || "").trim();
     if (!legacy) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    const migrated = accept(legacy);
+    if (!migrated) continue;
+    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
     clearLegacyApiJwtKeys();
-    return legacy;
+    return migrated;
   }
   return "";
 }
@@ -277,9 +306,8 @@ const api = {
 };
 
 function persistJwt(session) {
-  if (session?.access_token) {
-    const token = String(session.access_token).trim();
-    if (!token) return;
+  const token = normalizeUserJwt(session?.access_token ?? "");
+  if (token && AuthJwt.isProbablyAccessJwt(token)) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
     clearLegacyApiJwtKeys();
     void applyCookieSessionToken(token);
@@ -641,8 +669,12 @@ function wireJwt() {
   const inp = document.getElementById("simpleJwt");
   if (inp && saved && !inp.value) inp.placeholder = "Token saved in browser";
   document.getElementById("simpleJwtSave")?.addEventListener("click", () => {
-    const v = document.getElementById("simpleJwt")?.value?.trim() || "";
+    const v = normalizeUserJwt(document.getElementById("simpleJwt")?.value ?? "");
     if (v) {
+      if (!AuthJwt.isProbablyAccessJwt(v)) {
+        setMessage(AuthJwt.JWT_BAD_SHAPE_HINT, "error");
+        return;
+      }
       localStorage.setItem(AUTH_TOKEN_KEY, v);
       clearLegacyApiJwtKeys();
       void applyCookieSessionToken(v);

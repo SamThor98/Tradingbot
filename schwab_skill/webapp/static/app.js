@@ -242,6 +242,19 @@ async function refreshCritical() {
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
 const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
+
+/** Set by /static/auth-jwt-utils.js (loaded before this file). */
+const AuthJwt = window.TradingBotAuthJwt || {
+  normalizeUserJwt(raw) {
+    let t = String(raw ?? "").trim();
+    if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
+    return t;
+  },
+  isProbablyAccessJwt() {
+    return true;
+  },
+  JWT_BAD_SHAPE_HINT: "",
+};
 const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
 
 let _resolveAuthReady;
@@ -258,21 +271,25 @@ function markAuthReady() {
 
 /** Trim and strip a leading "Bearer " if the user pasted a full Authorization value. */
 function normalizeUserJwt(raw) {
-  let t = String(raw ?? "").trim();
-  if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, "").trim();
-  return t;
+  return AuthJwt.normalizeUserJwt(raw);
 }
 
 async function getApiAccessToken() {
   const cookieSession = await ensureCookieAuthSession();
   if (cookieSession) return "";
-  const manual = document.getElementById("jwtInput")?.value?.trim() || "";
-  if (manual) return manual;
+  const manual = normalizeUserJwt(document.getElementById("jwtInput")?.value ?? "");
+  if (manual) {
+    if (!AuthJwt.isProbablyAccessJwt(manual)) {
+      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
+      return "";
+    }
+    return manual;
+  }
   if (state.config?.auth_mode === "supabase" && supabaseClient) {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) console.warn("auth.getSession", error);
-    const sessionToken = (data?.session?.access_token || "").trim();
-    if (sessionToken) return sessionToken;
+    const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
+    if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
   }
   return readStoredApiJwt();
 }
@@ -282,14 +299,26 @@ function clearLegacyApiJwtKeys() {
 }
 
 function readStoredApiJwt() {
-  const current = (localStorage.getItem(AUTH_TOKEN_KEY) || "").trim();
+  const accept = (raw) => {
+    const n = normalizeUserJwt(raw);
+    if (!n) return "";
+    if (!AuthJwt.isProbablyAccessJwt(n)) {
+      console.warn(AuthJwt.JWT_BAD_SHAPE_HINT);
+      clearStoredApiJwt();
+      return "";
+    }
+    return n;
+  };
+  const current = accept(localStorage.getItem(AUTH_TOKEN_KEY) || "");
   if (current) return current;
   for (const key of LEGACY_AUTH_TOKEN_KEYS) {
     const legacy = (localStorage.getItem(key) || "").trim();
     if (!legacy) continue;
-    localStorage.setItem(AUTH_TOKEN_KEY, legacy);
+    const migrated = accept(legacy);
+    if (!migrated) continue;
+    localStorage.setItem(AUTH_TOKEN_KEY, migrated);
     clearLegacyApiJwtKeys();
-    return legacy;
+    return migrated;
   }
   return "";
 }
@@ -316,8 +345,8 @@ async function ensureCookieAuthSession() {
 }
 
 async function createCookieAuthSession(accessToken) {
-  const token = safeText(accessToken).trim();
-  if (!token) return false;
+  const token = normalizeUserJwt(safeText(accessToken));
+  if (!token || !AuthJwt.isProbablyAccessJwt(token)) return false;
   try {
     const out = await fetch("/api/auth/session", {
       method: "POST",
@@ -1796,7 +1825,13 @@ async function loadConfig() {
   const manualSummary = document.getElementById("manualJwtSummary");
   const supabaseBlock = document.getElementById("supabaseAuthBlock");
 
-  let publicCfg = { supabase: null, saas_mode: false, schwab_oauth: false, schwab_market_oauth: false };
+  let publicCfg = {
+    supabase: null,
+    saas_mode: false,
+    schwab_oauth: false,
+    schwab_market_oauth: false,
+    auth_setup: null,
+  };
   try {
     const res = await fetch("/api/public-config", { headers: { Accept: "application/json" } });
     const body = res.ok ? await res.json() : {};
@@ -1848,6 +1883,10 @@ async function loadConfig() {
     saveBtn.addEventListener("click", () => {
       const val = normalizeUserJwt(tokenInput?.value);
       if (val) {
+        if (!AuthJwt.isProbablyAccessJwt(val)) {
+          logEvent({ kind: "system", severity: "error", message: AuthJwt.JWT_BAD_SHAPE_HINT });
+          return;
+        }
         localStorage.setItem(AUTH_TOKEN_KEY, val);
         clearLegacyApiJwtKeys();
         void createCookieAuthSession(val);
@@ -1860,13 +1899,33 @@ async function loadConfig() {
     });
   }
   state.config = { auth_mode: hasSupabaseUi ? "supabase" : "jwt" };
-  updateActionCenter({
-    title: "Authentication Required",
-    message: hasSupabaseUi
-      ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
-      : "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
-    severity: "warn",
-  });
+  const authSetup = publicCfg?.auth_setup && typeof publicCfg.auth_setup === "object" ? publicCfg.auth_setup : {};
+  const saasHost = Boolean(publicCfg?.saas_mode);
+  const originHint = window.location.origin || "";
+  if (saasHost && authSetup.jwt_secret_configured === false) {
+    updateActionCenter({
+      title: "Server missing JWT secret",
+      message:
+        "This host cannot validate logins: SUPABASE_JWT_SECRET is not set (or is empty) on the server. In Render → your web service → Environment, add the JWT Secret from Supabase → Project Settings → API, then redeploy.",
+      severity: "error",
+    });
+  } else if (saasHost && authSetup.supabase_sign_in_available === false) {
+    updateActionCenter({
+      title: "Hosted sign-in not configured",
+      message: hasSupabaseUi
+        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
+        : `This server did not expose Supabase browser sign-in (set SUPABASE_URL and SUPABASE_ANON_KEY in Render to match your local .env). Until then: paste your Supabase access token under Session token → Save. In Supabase → Authentication → URL configuration, add ${originHint} to Site URL and Redirect URLs.`,
+      severity: "warn",
+    });
+  } else {
+    updateActionCenter({
+      title: "Authentication Required",
+      message: hasSupabaseUi
+        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
+        : "Paste a valid Supabase JWT and click Save Token to access protected APIs.",
+      severity: "warn",
+    });
+  }
 
   const params = new URLSearchParams(window.location.search);
   const oauthSt = params.get("schwab_oauth");

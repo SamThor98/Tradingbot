@@ -6,7 +6,7 @@
 - **Workers:** Celery `webapp.tasks` with queues `scan`, `orders`, and default `celery`
 - **Broker / cache:** Redis (`REDIS_URL`)
 - **Database:** PostgreSQL recommended (`DATABASE_URL`, e.g. `postgresql+psycopg2://user:pass@host:5432/dbname`)
-- **Auth:** Supabase JWT — set `SUPABASE_JWT_SECRET` (HS256). Optional browser sign-in uses `SUPABASE_URL` + `SUPABASE_ANON_KEY` on the **web** service only.
+- **Auth:** Supabase JWT — set `SUPABASE_JWT_SECRET` (HS256). Optional **`SUPABASE_JWT_SECRET_LEGACY`**: if set, tokens signed with the previous secret still verify (rotation / migration). Optional browser sign-in uses `SUPABASE_URL` + `SUPABASE_ANON_KEY` on the **web** service only.
 
 ## Required secrets (API + workers)
 
@@ -14,6 +14,7 @@
 |----------|---------|
 | `CREDENTIAL_ENCRYPTION_KEY` | URL-safe base64, 32 bytes — encrypts rows in `user_credentials` |
 | `SUPABASE_JWT_SECRET` | Validates `Authorization: Bearer` tokens |
+| `SUPABASE_JWT_SECRET_LEGACY` | Optional — previous JWT secret; used if primary signature fails |
 | `SCHWAB_MARKET_APP_KEY` / `SCHWAB_MARKET_APP_SECRET` | Market API app |
 | `SCHWAB_ACCOUNT_APP_KEY` / `SCHWAB_ACCOUNT_APP_SECRET` | Account/trading app |
 | `SCHWAB_CALLBACK_URL` | Redirect URI for the **account** Schwab app (browser OAuth callback) |
@@ -102,7 +103,7 @@ celery -A webapp.tasks worker -Q scan,orders,celery --loglevel=info
 | `SAAS_RATE_ORDER_PER_MIN` | `30` | Order enqueue per user per window |
 | `SAAS_RATE_LIMIT_WINDOW_SEC` | `60` | Fixed window for rate limits |
 | `SAAS_HEALTH_REQUIRE_REDIS` | `1` | If `0`, readiness skips Redis |
-| `WEB_ALLOWED_ORIGINS` | localhost | CORS allowlist (comma-separated) |
+| `WEB_ALLOWED_ORIGINS` | (see below) | Optional CORS allowlist (comma-separated). If unset or empty, local dev origins apply. **`RENDER_EXTERNAL_URL` is always merged** (injected on Render). Use **`WEB_PUBLIC_ORIGIN`** (`https://your-custom-domain.com`) if the UI is on a custom domain. |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT` | `5` / `10` / `30` | Postgres pool (non-SQLite) |
 | `CELERY_WORKER_POOL` | (Celery default) | e.g. `solo` on low-RAM workers |
 | `CELERY_WORKER_CONCURRENCY` | (pool default) | Cap prefork/gevent concurrency when set |
@@ -132,7 +133,7 @@ Set secrets via environment file or your host’s secret manager — **never** c
 1. Push to GitHub/GitLab/Bitbucket.
 2. In [Render](https://dashboard.render.com/): **New** → **Blueprint** → select the Git repository whose **root** contains `render.yaml` → leave the blueprint file as **`render.yaml`** (default) or type exactly `render.yaml`. Do **not** put a documentation URL in the blueprint path field (the comment link inside `render.yaml` is not the file path).
 3. When prompted, set the `sync: false` variables (Schwab, Supabase JWT, optional `SUPABASE_URL` + `SUPABASE_ANON_KEY` for dashboard sign-in, encryption key, callback URL, CORS).
-4. Set **`WEB_ALLOWED_ORIGINS`** to your public site origin (comma-separated if needed), e.g. `https://<your-web-service>.onrender.com`.
+4. **`WEB_ALLOWED_ORIGINS`** is optional: the app merges **`RENDER_EXTERNAL_URL`** automatically so `https://…onrender.com` works. Add **`WEB_PUBLIC_ORIGIN`** if you use a custom domain, or set **`WEB_ALLOWED_ORIGINS`** explicitly if you need extra origins.
 5. **First deploy on an empty database:** either set **`SAAS_BOOTSTRAP_SCHEMA=1`** on the web service for one deploy, then remove it; or run `python scripts/saas_bootstrap.py` against `DATABASE_URL` once. After that, keep **`SAAS_RUN_ALEMBIC=1`** on the web service (already in the Blueprint) so migrations apply on boot, or run `alembic upgrade head` in CI.
 6. Register **`SCHWAB_CALLBACK_URL`** on the **account** app and **`SCHWAB_MARKET_CALLBACK_URL`** on the **market** app (typically `…/api/oauth/schwab/callback` vs `…/api/oauth/schwab/market/callback`).
 7. Optional Stripe: add the billing env vars from the table above and point Stripe’s webhook to `POST /api/billing/webhook/stripe` on your public API URL.
