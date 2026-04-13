@@ -14,7 +14,7 @@ DEFAULT_SQLITE_PATH = BASE_DIR / "webapp.db"
 def _strip_invalid_host_brackets(url: str) -> str:
     """Unwrap [host] when brackets wrap a normal hostname instead of IPv6."""
     try:
-        parsed = urlparse(url)
+        urlparse(url)
     except ValueError:
         if "[" not in url:
             return url
