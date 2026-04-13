@@ -22,7 +22,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     conn = op.get_bind()
+    insp = sa.inspect(conn)
     dialect = conn.dialect.name
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if "live_execution_enabled" in cols:
+        return
     if dialect == "sqlite":
         with op.batch_alter_table("users", schema=None) as batch:
             batch.add_column(
@@ -47,7 +53,13 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    insp = sa.inspect(conn)
     dialect = conn.dialect.name
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if "live_execution_enabled" not in cols:
+        return
     if dialect == "sqlite":
         with op.batch_alter_table("users", schema=None) as batch:
             batch.drop_column("live_execution_enabled")
