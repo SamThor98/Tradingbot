@@ -22,6 +22,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     conn = op.get_bind()
+    insp = sa.inspect(conn)
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if "live_execution_enabled" in cols:
+        return
     dialect = conn.dialect.name
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
@@ -53,6 +59,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    insp = sa.inspect(conn)
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if "live_execution_enabled" not in cols:
+        return
     dialect = conn.dialect.name
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
