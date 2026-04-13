@@ -40,14 +40,13 @@ def upgrade() -> None:
                 )
             )
     else:
-        op.add_column(
-            "users",
-            sa.Column(
-                "live_execution_enabled",
-                sa.Boolean(),
-                nullable=False,
-                server_default=sa.false(),
-            ),
+        # Postgres IF NOT EXISTS prevents duplicate-column races if multiple
+        # processes attempt migrations at the same time.
+        op.execute(
+            sa.text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "live_execution_enabled BOOLEAN DEFAULT false NOT NULL"
+            )
         )
 
 
@@ -64,4 +63,4 @@ def downgrade() -> None:
         with op.batch_alter_table("users", schema=None) as batch:
             batch.drop_column("live_execution_enabled")
     else:
-        op.drop_column("users", "live_execution_enabled")
+        op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS live_execution_enabled"))
