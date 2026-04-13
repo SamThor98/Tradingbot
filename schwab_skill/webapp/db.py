@@ -11,9 +11,32 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SQLITE_PATH = BASE_DIR / "webapp.db"
 
 
+def _strip_invalid_host_brackets(url: str) -> str:
+    """Unwrap [host] when brackets wrap a normal hostname instead of IPv6."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        if "@[" not in url:
+            return url
+        userinfo, _, rest = url.rpartition("@")
+        if not rest.startswith("[") or "]" not in rest:
+            return url
+        host, sep, tail = rest[1:].partition("]")
+        if not sep:
+            return url
+        if ":" in host:
+            return url
+        return f"{userinfo}@{host}{tail}"
+
+    host = parsed.hostname or ""
+    if not host.startswith("[") and not host.endswith("]"):
+        return url
+    return url
+
+
 def _normalize_database_url(url: str) -> str:
     """Render/Heroku often use postgres://; SQLAlchemy 2 + psycopg2 expect postgresql+psycopg2://."""
-    u = url.strip()
+    u = _strip_invalid_host_brackets(url.strip())
     if u.startswith("sqlite"):
         return u
     if u.startswith("postgres://"):
