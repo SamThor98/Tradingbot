@@ -1,5 +1,9 @@
 # SaaS deployment notes
 
+## Paste-ready env (Supabase)
+
+For a single file you can copy into `.env` or split into Render **Environment** key/value rows, see **`env.supabase.example`** in this folder. It pre-fills the Supabase project host for this deployment; replace every `PASTE_*` placeholder with values from **Project Settings → API** and **→ Database** (never commit filled-in files).
+
 ## Stack
 
 - **API:** FastAPI `webapp.main_saas:app`

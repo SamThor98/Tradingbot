@@ -134,7 +134,7 @@ Empty Postgres: run once `python scripts/saas_bootstrap.py` or set `SAAS_BOOTSTR
 
 **Health:** `GET /api/health/live`, `GET /api/health/ready` (DB + Redis; set `SAAS_HEALTH_REQUIRE_REDIS=0` to skip Redis in dev).
 
-**Deploy:** see `docs/SAAS_DEPLOYMENT.md` and `docker-compose.saas.yml`.
+**Deploy:** see `docs/SAAS_DEPLOYMENT.md` and `docker-compose.saas.yml`. Supabase: start from `env.supabase.example` (copy to `.env`, fill `PASTE_*` placeholders).
 
 ## Run
 
