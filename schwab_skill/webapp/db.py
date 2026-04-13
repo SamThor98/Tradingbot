@@ -20,7 +20,40 @@ def _normalize_database_url(url: str) -> str:
         return "postgresql+psycopg2://" + u[len("postgres://") :]
     if u.startswith("postgresql://") and not u.split("://", 1)[0].endswith("psycopg2"):
         return "postgresql+psycopg2://" + u[len("postgresql://") :]
+    if u.startswith(("http://", "https://")):
+        # Some hosts copy/paste or rewrite DSNs with an http(s) scheme. If the
+        # value otherwise looks like a Postgres DSN, coerce it safely.
+        try:
+            parsed = urlparse(u)
+            has_db_name = bool(parsed.path and parsed.path != "/")
+            if parsed.username and parsed.hostname and has_db_name:
+                return urlunparse(
+                    (
+                        "postgresql+psycopg2",
+                        parsed.netloc,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
+        except Exception:
+            return u
     return u
+
+
+def _validate_database_url(url: str) -> str:
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme.startswith("sqlite") or scheme.startswith("postgresql"):
+        return url
+    if scheme in {"http", "https"}:
+        raise ValueError(
+            "Invalid DATABASE_URL: got an http(s) URL. Use a Postgres DSN "
+            "(postgres:// or postgresql://), or Render's database "
+            "connectionString env binding."
+        )
+    return url
 
 
 def _maybe_require_ssl_for_render(url: str) -> str:
@@ -56,7 +89,9 @@ def _maybe_require_ssl_for_render(url: str) -> str:
 
 
 _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}")
-DATABASE_URL = _maybe_require_ssl_for_render(_normalize_database_url(_raw_db_url))
+DATABASE_URL = _validate_database_url(
+    _maybe_require_ssl_for_render(_normalize_database_url(_raw_db_url))
+)
 
 engine_kwargs: dict[str, object] = {}
 if DATABASE_URL.startswith("sqlite"):
