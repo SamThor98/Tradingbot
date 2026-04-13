@@ -144,7 +144,7 @@ def _maybe_force_ipv4_for_supabase(url: str) -> str:
         return url
     if not ipv4_addrs:
         return url
-    q.append(("hostaddr", sorted(ipv4_addrs)[0]))
+    q.append(("hostaddr", str(sorted(ipv4_addrs)[0])))
     new_query = urlencode(q)
     return urlunparse(
         (
