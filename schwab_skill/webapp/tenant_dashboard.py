@@ -386,6 +386,37 @@ def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
+def _is_loopback_host(hostname: str) -> bool:
+    host = str(hostname or "").strip().lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _request_origin(request: Request) -> str:
+    # Respect reverse-proxy forwarded headers first, then fall back to request URL.
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.url.netloc or "").split(",")[0].strip()
+    if host:
+        return f"{proto}://{host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
+    env_key = "SCHWAB_MARKET_CALLBACK_URL" if market else "SCHWAB_CALLBACK_URL"
+    configured = (os.getenv(env_key) or "").strip()
+    suffix = "/api/oauth/schwab/market/callback" if market else "/api/oauth/schwab/callback"
+    inferred = f"{_request_origin(request)}{suffix}"
+    if not configured:
+        return inferred
+
+    parsed = urllib.parse.urlparse(configured)
+    configured_host = str(parsed.hostname or "").strip().lower()
+    inferred_host = str(urllib.parse.urlparse(inferred).hostname or "").strip().lower()
+    # Avoid hosted flows breaking when local loopback callback env leaks into SaaS.
+    if _is_loopback_host(configured_host) and not _is_loopback_host(inferred_host):
+        return inferred
+    return configured
+
+
 def _global_live_trading_kill_switch_on() -> bool:
     return (os.getenv("LIVE_TRADING_KILL_SWITCH") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -1690,13 +1721,13 @@ def tenant_onboarding_step(
 
 
 @router.get("/api/oauth/schwab/authorize-url", response_model=ApiResponse)
-def schwab_authorize_url_endpoint(user: User = Depends(get_current_user)) -> ApiResponse:
+def schwab_authorize_url_endpoint(request: Request, user: User = Depends(get_current_user)) -> ApiResponse:
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-    redirect_uri = (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
-    if not client_id or not redirect_uri:
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    if not client_id:
         raise HTTPException(
             status_code=503,
-            detail="Configure SCHWAB_ACCOUNT_APP_KEY and SCHWAB_CALLBACK_URL for OAuth.",
+            detail="Configure SCHWAB_ACCOUNT_APP_KEY for OAuth.",
         )
     try:
         state = sign_schwab_oauth_state(user.id, SCHWAB_OAUTH_KIND_ACCOUNT)
@@ -1710,13 +1741,13 @@ def schwab_authorize_url_endpoint(user: User = Depends(get_current_user)) -> Api
 
 
 @router.get("/api/oauth/schwab/market/authorize-url", response_model=ApiResponse)
-def schwab_market_authorize_url_endpoint(user: User = Depends(get_current_user)) -> ApiResponse:
+def schwab_market_authorize_url_endpoint(request: Request, user: User = Depends(get_current_user)) -> ApiResponse:
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-    redirect_uri = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
-    if not client_id or not redirect_uri:
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+    if not client_id:
         raise HTTPException(
             status_code=503,
-            detail="Configure SCHWAB_MARKET_APP_KEY and SCHWAB_MARKET_CALLBACK_URL for market OAuth.",
+            detail="Configure SCHWAB_MARKET_APP_KEY for market OAuth.",
         )
     try:
         state = sign_schwab_oauth_state(user.id, SCHWAB_OAUTH_KIND_MARKET)
@@ -1756,8 +1787,8 @@ def schwab_oauth_callback(
 
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
     client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
-    if not client_id or not client_secret or not redirect_uri:
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    if not client_id or not client_secret:
         return red("schwab_oauth=error&message=" + urllib.parse.quote("server_oauth_not_configured"))
 
     try:
@@ -1845,8 +1876,8 @@ def schwab_market_oauth_callback(
 
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
-    redirect_uri = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
-    if not client_id or not client_secret or not redirect_uri:
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+    if not client_id or not client_secret:
         return red(
             "schwab_market_oauth=error&message="
             + urllib.parse.quote("server_market_oauth_not_configured")

@@ -505,7 +505,7 @@ def test_metrics_rejected_in_production_without_internal_key(
     assert "WEB_INTERNAL_API_KEY" in (resp.json().get("detail") or "")
 
 
-def test_market_oauth_authorize_requires_callback_url(
+def test_market_oauth_authorize_falls_back_to_request_origin_when_callback_missing(
     saas_client: TestClient, test_db: sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = test_db()
@@ -516,7 +516,11 @@ def test_market_oauth_authorize_requires_callback_url(
         db.close()
     monkeypatch.delenv("SCHWAB_MARKET_CALLBACK_URL", raising=False)
     r = saas_client.get("/api/oauth/schwab/market/authorize-url", headers=_auth_header())
-    assert r.status_code == 503
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("ok") is True
+    url = (body.get("data") or {}).get("url") or ""
+    assert "redirect_uri=http%3A%2F%2Ftestserver%2Fapi%2Foauth%2Fschwab%2Fmarket%2Fcallback" in url
 
 
 def test_market_oauth_authorize_returns_url(
@@ -543,7 +547,7 @@ def test_market_oauth_authorize_returns_url(
 def test_market_oauth_callback_stores_payload(
     saas_client: TestClient, test_db: sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("SCHWAB_MARKET_CALLBACK_URL", "https://cb.example/m")
+    monkeypatch.setenv("SCHWAB_MARKET_CALLBACK_URL", "https://127.0.0.1:8182")
     monkeypatch.setenv("SAAS_FRONTEND_URL", "http://front.test")
     db = test_db()
     try:
@@ -559,7 +563,7 @@ def test_market_oauth_callback_stores_payload(
             "refresh_token": "mr",
             "token_type": "Bearer",
         },
-    ):
+    ) as exchange_mock:
         r = saas_client.get(
             "/api/oauth/schwab/market/callback",
             params={"code": "c1", "state": state},
@@ -568,6 +572,8 @@ def test_market_oauth_callback_stores_payload(
     assert r.status_code == 302
     loc = r.headers.get("location") or ""
     assert "schwab_market_oauth=ok" in loc
+    exchange_mock.assert_called_once()
+    assert exchange_mock.call_args.args[3] == "http://testserver/api/oauth/schwab/market/callback"
 
     db = test_db()
     try:
@@ -609,3 +615,21 @@ def test_account_oauth_callback_rejects_market_state(
     )
     assert r.status_code == 302
     assert "schwab_oauth=error" in (r.headers.get("location") or "")
+
+
+def test_account_oauth_authorize_ignores_loopback_callback_on_hosted_origin(
+    saas_client: TestClient, test_db: sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
+    db = test_db()
+    try:
+        db.add(User(id="user_1", email="a@b.c", auth_provider="supabase"))
+        db.commit()
+    finally:
+        db.close()
+    r = saas_client.get("/api/oauth/schwab/authorize-url", headers=_auth_header())
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("ok") is True
+    url = (body.get("data") or {}).get("url") or ""
+    assert "redirect_uri=http%3A%2F%2Ftestserver%2Fapi%2Foauth%2Fschwab%2Fcallback" in url
