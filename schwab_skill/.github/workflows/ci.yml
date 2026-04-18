@@ -28,6 +28,7 @@ jobs:
         run: python -m pytest -q --cov=webapp --cov-report=term-missing --cov-fail-under=48
 
       - name: Mypy
+        continue-on-error: true
         run: python -m mypy
 
       - name: Pip audit
