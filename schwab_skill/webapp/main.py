@@ -16,8 +16,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
@@ -67,6 +66,7 @@ from .routes.research import router as research_router
 from .scan_payload import parse_scan_run_body, scan_runtime_kwargs
 from .schemas import ApiResponse, ApproveTradeRequest, CreatePendingTrade
 from .security_headers import SecurityHeadersMiddleware
+from .static_assets import NoCacheStaticFiles, render_versioned_html
 
 LOCAL_DASHBOARD_USER_ID = (os.getenv("WEB_LOCAL_USER_ID", "local") or "local").strip() or "local"
 
@@ -162,7 +162,7 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(research_router)
 app.include_router(learning_router)
@@ -813,20 +813,20 @@ def require_api_key_if_set(
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+def index() -> HTMLResponse:
+    return render_versioned_html(STATIC_DIR / "index.html")
 
 
 @app.get("/simple")
-def simple_dashboard() -> FileResponse:
+def simple_dashboard() -> HTMLResponse:
     """Focused scan + diagnostics UI for external users (see also `/`)."""
-    return FileResponse(STATIC_DIR / "simple.html")
+    return render_versioned_html(STATIC_DIR / "simple.html")
 
 
 @app.get("/login")
-def login_page() -> FileResponse:
+def login_page() -> HTMLResponse:
     """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
-    return FileResponse(STATIC_DIR / "login.html")
+    return render_versioned_html(STATIC_DIR / "login.html")
 
 
 _STARTUP_TIME = datetime.now(timezone.utc)

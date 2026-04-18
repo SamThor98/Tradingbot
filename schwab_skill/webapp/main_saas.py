@@ -14,8 +14,7 @@ import stripe
 from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -72,6 +71,7 @@ from .security import (
     utcnow_iso,
 )
 from .security_headers import SecurityHeadersMiddleware
+from .static_assets import NoCacheStaticFiles, render_versioned_html
 from .strategy_chat import run_strategy_chat
 from .tasks import celery_app, scan_for_user
 from .tenant_dashboard import _tenant_api_health_snapshot
@@ -140,7 +140,7 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(tenant_dashboard_router)
 
@@ -451,20 +451,20 @@ def _backtest_rate_limit(user_id: str) -> None:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+def index() -> HTMLResponse:
+    return render_versioned_html(STATIC_DIR / "index.html")
 
 
 @app.get("/simple")
-def simple_dashboard() -> FileResponse:
+def simple_dashboard() -> HTMLResponse:
     """Focused scan + diagnostics UI for external users (see also `/`)."""
-    return FileResponse(STATIC_DIR / "simple.html")
+    return render_versioned_html(STATIC_DIR / "simple.html")
 
 
 @app.get("/login")
-def login_page() -> FileResponse:
+def login_page() -> HTMLResponse:
     """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
-    return FileResponse(STATIC_DIR / "login.html")
+    return render_versioned_html(STATIC_DIR / "login.html")
 
 
 @app.get("/api/public-config", response_model=ApiResponse)

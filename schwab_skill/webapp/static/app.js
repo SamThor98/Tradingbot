@@ -1887,6 +1887,25 @@ async function refreshAll() {
   });
 }
 
+/**
+ * Safe DOM binder. Logs (but never throws) when an element is missing so a
+ * single stale id can't take down the whole bootstrap. Returns the element
+ * (or null) for callers that want to do more with it.
+ */
+function bindEvent(elementId, eventName, handler, options) {
+  const el = document.getElementById(elementId);
+  if (!el) {
+    logEvent({
+      kind: "system",
+      severity: "warn",
+      message: `wireEvents: missing #${elementId} (skipped ${eventName} binding)`,
+    });
+    return null;
+  }
+  el.addEventListener(eventName, handler, options);
+  return el;
+}
+
 function wireEvents() {
   restoreBacktestFormFromStorage();
   setDefaultBacktestDates();
@@ -1926,14 +1945,14 @@ function wireEvents() {
     if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
-  document.getElementById("scanBtn").addEventListener("click", runScan);
+  bindEvent("scanBtn", "click", runScan);
   document.getElementById("scanApplyBacktestSpecBtn")?.addEventListener("click", () => void fillScanOptionsFromLatestBacktest());
   document.getElementById("scanClearOptionsBtn")?.addEventListener("click", () => {
     const ta = document.getElementById("scanOptionsJson");
     if (ta) ta.value = "";
     state.scanRunOptions = null;
   });
-  document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+  bindEvent("refreshBtn", "click", refreshAll);
   document.getElementById("onboardingStartBtn")?.addEventListener("click", startOnboarding);
   document.getElementById("onboardingConnectBtn")?.addEventListener("click", () => runOnboardingStep("connect"));
   document.getElementById("onboardingVerifyBtn")?.addEventListener("click", () => runOnboardingStep("verify_token_health"));
@@ -1949,19 +1968,19 @@ function wireEvents() {
     e.preventDefault();
     void triggerSchwabMarketOAuth();
   });
-  document.getElementById("applyProfileBtn").addEventListener("click", applyProfile);
+  bindEvent("applyProfileBtn", "click", applyProfile);
   document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
   document.getElementById("saveTradingHaltBtn")?.addEventListener("click", () => void submitTradingHaltSave());
   document.getElementById("calibrationRefreshBtn")?.addEventListener("click", () => void refreshCalibration());
   document.getElementById("portfolioRiskPanel")?.addEventListener("toggle", (e) => {
     if (e.target.open) void loadPortfolioRisk();
   });
-  document.getElementById("settingsModeSelect").addEventListener("change", loadProfiles);
+  bindEvent("settingsModeSelect", "change", loadProfiles);
   document.getElementById("profileSelect")?.addEventListener("change", renderPresetApplyPreview);
   document.getElementById("automationOptIn")?.addEventListener("change", renderPresetApplyPreview);
-  document.getElementById("decisionBtn").addEventListener("click", loadDecisionCard);
-  document.getElementById("recoveryBtn").addEventListener("click", mapRecovery);
-  document.getElementById("performanceRefreshBtn").addEventListener("click", refreshPerformance);
+  bindEvent("decisionBtn", "click", loadDecisionCard);
+  bindEvent("recoveryBtn", "click", mapRecovery);
+  bindEvent("performanceRefreshBtn", "click", refreshPerformance);
   document.getElementById("evolveBtn")?.addEventListener("click", async () => {
     const btn = document.getElementById("evolveBtn");
     const panel = document.getElementById("learningPanel");
@@ -1997,17 +2016,18 @@ function wireEvents() {
     }
   });
   // Close button + Esc + backdrop are wired inside panels/tradeDrawer.js.
-  document.getElementById("activityDrawerToggle").addEventListener("click", () => {
+  bindEvent("activityDrawerToggle", "click", () => {
     const body = document.getElementById("activityDrawerBody");
     const toggle = document.getElementById("activityDrawerToggle");
+    if (!body || !toggle) return;
     const expanded = toggle.getAttribute("aria-expanded") === "true";
     toggle.setAttribute("aria-expanded", expanded ? "false" : "true");
     body.classList.toggle("open", !expanded);
   });
-  document.getElementById("checkBtn").addEventListener("click", quickCheck);
-  document.getElementById("reportBtn").addEventListener("click", runReport);
-  document.getElementById("secCompareBtn").addEventListener("click", runSecCompare);
-  document.getElementById("secCompareMode").addEventListener("change", applySecCompareMode);
+  bindEvent("checkBtn", "click", quickCheck);
+  bindEvent("reportBtn", "click", runReport);
+  bindEvent("secCompareBtn", "click", runSecCompare);
+  bindEvent("secCompareMode", "change", applySecCompareMode);
   document.querySelectorAll("#secComparePresetButtons button[data-a]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const node = e.currentTarget;
@@ -2025,12 +2045,12 @@ function wireEvents() {
       });
     });
   });
-  document.getElementById("toggleReportViewBtn").addEventListener("click", () => {
+  bindEvent("toggleReportViewBtn", "click", () => {
     state.reportRawView = !state.reportRawView;
     applyReportViewMode();
   });
-  document.getElementById("pendingFilter").addEventListener("change", refreshPending);
-  document.getElementById("pendingSort").addEventListener("change", refreshPending);
+  bindEvent("pendingFilter", "change", refreshPending);
+  bindEvent("pendingSort", "change", refreshPending);
   document.getElementById("clearPendingBtn")?.addEventListener("click", async () => {
     const btn = document.getElementById("clearPendingBtn");
     if (!btn || btn.disabled) return;
@@ -2077,22 +2097,23 @@ function wireEvents() {
   });
 
   const dialog = document.getElementById("approveDialog");
-  document.getElementById("confirmApproveBtn").addEventListener("click", async (e) => {
+  bindEvent("confirmApproveBtn", "click", async (e) => {
     e.preventDefault();
     const id = state.approvingTradeId;
     if (!id) {
-      dialog.close();
+      dialog?.close();
       return;
     }
-    document.getElementById("confirmApproveBtn").disabled = true;
+    const confirmBtn = document.getElementById("confirmApproveBtn");
+    if (confirmBtn) confirmBtn.disabled = true;
     await approveTradeById(id);
-    document.getElementById("confirmApproveBtn").disabled = false;
+    if (confirmBtn) confirmBtn.disabled = false;
     state.approvingTradeId = null;
-    dialog.close();
+    dialog?.close();
   });
-  document.getElementById("cancelApproveBtn").addEventListener("click", () => {
+  bindEvent("cancelApproveBtn", "click", () => {
     state.approvingTradeId = null;
-    dialog.close();
+    dialog?.close();
   });
 
   const navLinks = [...document.querySelectorAll(".section-nav a")];
@@ -2178,40 +2199,64 @@ function connectSSE() {
 }
 
 (async () => {
-  wireEvents();
-  setupScrollToTop();
-  setupCommandPalette({ runLazyApi, applyDisplayMode, openTradeDrawer });
-  setupKeyboardShortcuts({
-    openCommandPalette,
-    closeCommandPalette,
-    showToast,
-    applyDisplayMode,
-  });
-  setupNotifications();
-  applyDisplayMode(getDisplayMode());
-  applyReportViewMode();
-  applySecCompareMode();
-  await loadConfig();
-  if (state.sseEnabled) connectSSE();
+  // Wrap each step so a stale/missing element in one area can't kill all the
+  // downstream init (and leave the page looking dead with no buttons working).
+  function safeInit(label, fn) {
+    try {
+      const result = fn();
+      return result instanceof Promise
+        ? result.catch((err) => {
+            console.error(`[init] ${label} failed`, err);
+            logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+            try { showToast(`Init step failed: ${label}. Some buttons may not work.`, "error", 6000); } catch { /* ignore */ }
+          })
+        : result;
+    } catch (err) {
+      console.error(`[init] ${label} failed`, err);
+      logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+      try { showToast(`Init step failed: ${label}. Some buttons may not work.`, "error", 6000); } catch { /* ignore */ }
+      return undefined;
+    }
+  }
+
+  safeInit("wireEvents", wireEvents);
+  safeInit("setupScrollToTop", setupScrollToTop);
+  safeInit("setupCommandPalette", () =>
+    setupCommandPalette({ runLazyApi, applyDisplayMode, openTradeDrawer }),
+  );
+  safeInit("setupKeyboardShortcuts", () =>
+    setupKeyboardShortcuts({
+      openCommandPalette,
+      closeCommandPalette,
+      showToast,
+      applyDisplayMode,
+    }),
+  );
+  safeInit("setupNotifications", setupNotifications);
+  safeInit("applyDisplayMode", () => applyDisplayMode(getDisplayMode()));
+  safeInit("applyReportViewMode", applyReportViewMode);
+  safeInit("applySecCompareMode", applySecCompareMode);
+  await safeInit("loadConfig", loadConfig);
+  if (state.sseEnabled) safeInit("connectSSE", connectSSE);
   await authSessionReady;
   const token = await getApiAccessToken();
   if (token) {
-    await refreshCritical();
-    markDeferredDataPlaceholders();
-    setupLazySectionLoading();
+    await safeInit("refreshCritical", refreshCritical);
+    safeInit("markDeferredDataPlaceholders", markDeferredDataPlaceholders);
+    safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else if (state.config?.auth_mode === "supabase") {
     updateActionCenter({
       title: "Sign in",
       message: "Sign in with Supabase to load portfolio, pending trades, and billing-protected actions.",
       severity: "warn",
     });
-    setupLazySectionLoading();
+    safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else {
-    await refreshAll();
-    setupLazySectionLoading();
+    await safeInit("refreshAll", refreshAll);
+    safeInit("setupLazySectionLoading", setupLazySectionLoading);
   }
-  installRouter();
-  updateActivityBadge();
+  safeInit("installRouter", installRouter);
+  safeInit("updateActivityBadge", updateActivityBadge);
   logEvent({ kind: "system", severity: "info", message: "Dashboard loaded." });
 })();
 

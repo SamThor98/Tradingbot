@@ -97,7 +97,14 @@ def test_app_js_uses_router_module(app_source: str) -> None:
         "are supposed to live in modules/router.js after #7 of the "
         "website improvement plan."
     )
-    assert "installRouter()" in app_source, (
+    # Boot sequence should invoke installRouter — either directly or via
+    # a wrapper like safeInit("installRouter", installRouter). Accept both
+    # so the contract is about behaviour, not literal call syntax.
+    boot_invokes_router = (
+        "installRouter()" in app_source
+        or 'safeInit("installRouter", installRouter' in app_source
+    )
+    assert boot_invokes_router, (
         "app.js boot sequence should call installRouter() from router.js"
     )
 

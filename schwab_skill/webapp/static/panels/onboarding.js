@@ -18,6 +18,7 @@ import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
+import { showToast } from "../modules/notifications.js";
 
 const STEP_NAMES = {
   connect: "Link Schwab",
@@ -219,14 +220,26 @@ export function renderOnboardingCards(data) {
  * Kick off the Schwab account OAuth flow. Exposed so the stepper CTA
  * and the legacy "Connect Schwab (account)" button share one path.
  */
+function _flashOAuthError(title, message) {
+  logEvent({ kind: "system", severity: "error", message });
+  updateActionCenter({ title, message, severity: "error" });
+  try { showToast(message, "error", 6000); } catch { /* ignore */ }
+}
+
 export async function triggerSchwabAccountOAuth() {
   if (!state.publicConfig?.schwab_oauth) {
-    logEvent({ kind: "system", severity: "warn", message: "Schwab OAuth is not configured on this server." });
+    _flashOAuthError(
+      "Schwab account OAuth not configured",
+      "The server is missing SCHWAB_ACCOUNT_APP_KEY / SCHWAB_ACCOUNT_APP_SECRET. Set them in your hosting env and redeploy.",
+    );
     return;
   }
   const out = await api.get("/api/oauth/schwab/authorize-url");
   if (!out.ok || !out.data?.url) {
-    logEvent({ kind: "system", severity: "error", message: out.error || "Could not start Schwab OAuth." });
+    _flashOAuthError(
+      "Could not start Schwab account OAuth",
+      out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
+    );
     return;
   }
   window.location.href = out.data.url;
@@ -234,20 +247,18 @@ export async function triggerSchwabAccountOAuth() {
 
 export async function triggerSchwabMarketOAuth() {
   if (!state.publicConfig?.schwab_market_oauth) {
-    logEvent({
-      kind: "system",
-      severity: "warn",
-      message: "Schwab market OAuth is not configured on this server.",
-    });
+    _flashOAuthError(
+      "Schwab market OAuth not configured",
+      "The server is missing SCHWAB_MARKET_APP_KEY / SCHWAB_MARKET_APP_SECRET. Set them in your hosting env and redeploy.",
+    );
     return;
   }
   const out = await api.get("/api/oauth/schwab/market/authorize-url");
   if (!out.ok || !out.data?.url) {
-    logEvent({
-      kind: "system",
-      severity: "error",
-      message: out.error || "Could not start Schwab market OAuth.",
-    });
+    _flashOAuthError(
+      "Could not start Schwab market OAuth",
+      out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
+    );
     return;
   }
   window.location.href = out.data.url;
