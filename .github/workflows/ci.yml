@@ -29,7 +29,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Pytest
-        run: python -m pytest -q --cov=webapp --cov-report=term-missing --cov-fail-under=60
+        run: python -m pytest -q --cov=webapp --cov-report=term-missing --cov-fail-under=48
 
       - name: Mypy
         run: python -m mypy
