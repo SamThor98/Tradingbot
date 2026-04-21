@@ -322,6 +322,7 @@ def _saas_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dic
 def _tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[str, Any]:
     linked = user_has_account_session(db, user_id)
     market_ok = account_ok = quote_ok = False
+    qmeta: dict[str, Any] = {}
     if linked:
         try:
             with tenant_skill_dir(db, user_id) as skill_dir:
@@ -331,18 +332,32 @@ def _tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[str, Any]:
                     quote, qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=skill_dir)
                     quote_ok = extract_schwab_last_price(quote) is not None
         except Exception as exc:
+            err_msg = safe_exception_message(exc, fallback="token_probe_failed")[:200]
             return {
                 "schwab_linked": True,
                 "market_token_ok": False,
                 "account_token_ok": False,
                 "quote_ok": False,
-                "error": safe_exception_message(exc, fallback="token_probe_failed")[:200],
+                "error": err_msg,
+                "quote_health": {
+                    "symbol": "AAPL",
+                    "ok": False,
+                    "reason": err_msg,
+                    "operator_hint": None,
+                },
             }
+    qh: dict[str, Any] = {
+        "symbol": "AAPL",
+        "ok": quote_ok,
+        "reason": None if quote_ok else (qmeta.get("reason") if qmeta else "not_linked_or_probe_failed"),
+        "operator_hint": _quote_health_hint(qmeta, quote_ok) if qmeta else None,
+    }
     return {
         "schwab_linked": linked,
         "market_token_ok": market_ok,
         "account_token_ok": account_ok,
         "quote_ok": quote_ok,
+        "quote_health": qh,
     }
 
 
@@ -659,21 +674,12 @@ def tenant_health_deep(user: User = Depends(get_current_user), db: OrmSession = 
         market_token_ok = bool(snap.get("market_token_ok"))
         account_token_ok = bool(snap.get("account_token_ok"))
         quote_ok = bool(snap.get("quote_ok"))
-        qh: dict[str, Any] = {
+        qh = snap.get("quote_health") or {
             "symbol": "AAPL",
             "ok": quote_ok,
             "reason": None if quote_ok else (snap.get("error") or "not_linked_or_probe_failed"),
             "operator_hint": None,
         }
-        if not quote_ok and snap.get("schwab_linked"):
-            try:
-                with tenant_skill_dir(db, user.id) as skill_dir:
-                    with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
-                        _quote, qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=skill_dir)
-                        qh["operator_hint"] = _quote_health_hint(qmeta, quote_ok)
-                        qh["reason"] = qmeta.get("reason")
-            except Exception:
-                pass
         return _ok(
             {
                 "db_ok": db_ok,

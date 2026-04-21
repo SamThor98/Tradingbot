@@ -526,7 +526,7 @@ function setHealthRibbonTiles(authOk, quoteOk, errRate, validation) {
   setTile("healthTileValidation", vState, vGauge);
 }
 
-function prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation, topBlocker }) {
+function prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
   const runStatus = safeText(validation?.run_status || "").toLowerCase();
   const blocker = safeText(topBlocker || "").trim();
   if (!authOk) {
@@ -538,9 +538,22 @@ function prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation
     return;
   }
   if (!quoteOk || errRate >= 3.0) {
+    const qh = quoteHealth && typeof quoteHealth === "object" ? quoteHealth : {};
+    const quoteReason = safeText(qh.reason || "").trim();
+    const quoteHint = safeText(qh.operator_hint || "").trim();
+    const quoteMsg = quoteOk
+      ? ""
+      : `Quotes unhealthy${quoteReason ? ` (${quoteReason})` : ""}${quoteHint ? `: ${quoteHint}` : "."}`;
+    const apiMsg = `API server error rate is ${errRate.toFixed(1)}%.`;
+    const message =
+      !quoteOk && errRate >= 3.0
+        ? `${quoteMsg} ${apiMsg} Check provider status and fallback readiness.`
+        : !quoteOk
+          ? `${quoteMsg} Check provider status and fallback readiness.`
+          : `${apiMsg} Check provider status and fallback readiness.`;
     updateActionCenter({
       title: "P1: Market Data Reliability Degraded",
-      message: `Quotes unhealthy or API error rate elevated (${errRate.toFixed(1)}%). Check provider status and fallback readiness.`,
+      message,
       severity: "warn",
     });
     return;
@@ -1087,11 +1100,40 @@ async function hydrateScanTableFromStatus(status) {
 }
 
 async function refreshStatus() {
-  const statusReq = api.get("/api/status");
-  const deepReq = state.publicConfig?.saas_mode
-    ? Promise.resolve({ ok: false, error: "deep health disabled for SaaS" })
-    : api.get("/api/health/deep", { timeoutMs: 30000 });
-  const [statusRes, deepRes] = await Promise.all([statusReq, deepReq]);
+  const saasMode = !!state.publicConfig?.saas_mode;
+  // In SaaS mode the Schwab quote probe inside /api/status already populates
+  // status.api_health (quote_ok + quote_health). Calling /api/health/deep on
+  // top would trigger a SECOND probe per dashboard refresh, doubling Schwab
+  // load and racing on the rotating refresh token. Synthesize deepRes from
+  // the status payload instead. (Local mode keeps the legacy split because
+  // /api/health/deep there also surfaces server-wide metrics counters.)
+  const statusRes = await api.get("/api/status");
+  let deepRes;
+  if (saasMode) {
+    if (statusRes.ok) {
+      const ah = statusRes.data?.api_health || {};
+      deepRes = {
+        ok: true,
+        data: {
+          db_ok: true,
+          market_token_ok: !!ah.market_token_ok,
+          account_token_ok: !!ah.account_token_ok,
+          quote_ok: !!ah.quote_ok,
+          quote_health: ah.quote_health || {
+            symbol: "AAPL",
+            ok: !!ah.quote_ok,
+            reason: ah.quote_ok ? null : ah.error || "not_linked_or_probe_failed",
+            operator_hint: null,
+          },
+          metrics: ah.metrics || { requests_total: 0, errors_total: 0, client_errors_total: 0 },
+        },
+      };
+    } else {
+      deepRes = { ok: false, error: statusRes.error };
+    }
+  } else {
+    deepRes = await api.get("/api/health/deep", { timeoutMs: 30000 });
+  }
   if (!statusRes.ok) {
     logEvent({ kind: "system", severity: "error", message: `Status failed: ${statusRes.error}` });
     return;
@@ -1224,7 +1266,14 @@ async function refreshStatus() {
     status?.last_scan?.diagnostics_summary?.top_blockers?.[0]?.key ||
     status?.last_scan?.diagnostics_summary?.headline ||
     "";
-  prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation, topBlocker });
+  prioritizeActionCenterFromHealth({
+    authOk,
+    quoteOk,
+    errRate,
+    validation,
+    topBlocker,
+    quoteHealth: deepRes?.data?.quote_health || null,
+  });
   updateHeroInfographic();
 }
 
