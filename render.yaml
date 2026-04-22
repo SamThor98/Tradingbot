@@ -94,6 +94,12 @@ services:
         sync: false
       - key: WEB_ALLOWED_ORIGINS
         sync: false
+      - key: MIROFISH_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_KEY
+        sync: false
 
   - type: worker
     name: tradingbot-worker
@@ -148,5 +154,11 @@ services:
       - key: SCHWAB_CALLBACK_URL
         sync: false
       - key: SCHWAB_MARKET_CALLBACK_URL
+        sync: false
+      - key: MIROFISH_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_KEY
         sync: false
 
