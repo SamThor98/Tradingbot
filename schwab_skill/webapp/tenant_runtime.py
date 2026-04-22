@@ -25,6 +25,12 @@ from .security import decrypt_secret
 
 LOG = logging.getLogger(__name__)
 
+_LLM_KEY_ENV_ALIASES = (
+    "MIROFISH_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_KEY",
+)
+
 # Optional platform overrides forwarded into each tenant .env when set in process env.
 _ENV_OPTIONAL_FOR_TENANT = (
     "PAPER_TRADING_ENABLED",
@@ -154,7 +160,7 @@ def _copy_platform_advisory_model_if_available(skill_dir: Path) -> bool:
     so a platform-level artifact at schwab_skill/artifacts/... must be copied
     into each temp skill dir to keep advisory scoring available in SaaS mode.
     """
-    raw = (os.getenv("ADVISORY_MODEL_PATH") or "").strip() or "artifacts/advisory_model_v1.json"
+    raw = (os.getenv("ADVISORY_MODEL_PATH") or "").strip() or "advisory_model_v1.json"
     rel_path = Path(raw)
     if rel_path.is_absolute():
         # Absolute model paths remain valid without copying.
@@ -176,15 +182,12 @@ def scan_runtime_prerequisite_errors(skill_dir: Path | None = None) -> list[str]
     ready to produce real MiroFish/advisory outputs.
     """
     errors: list[str] = []
-    if not (
-        (os.getenv("MIROFISH_API_KEY") or "").strip()
-        or (os.getenv("OPENAI_API_KEY") or "").strip()
-    ):
+    if not any((os.getenv(k) or "").strip() for k in _LLM_KEY_ENV_ALIASES):
         errors.append("LLM key missing: set MIROFISH_API_KEY or OPENAI_API_KEY on the worker.")
 
     advisory_enabled = (os.getenv("ADVISORY_MODEL_ENABLED") or "1").strip().lower() in ("1", "true", "yes", "on")
     if advisory_enabled:
-        raw = (os.getenv("ADVISORY_MODEL_PATH") or "").strip() or "artifacts/advisory_model_v1.json"
+        raw = (os.getenv("ADVISORY_MODEL_PATH") or "").strip() or "advisory_model_v1.json"
         model_path = Path(raw)
         if not model_path.is_absolute():
             base = skill_dir if skill_dir is not None else _platform_skill_root()
@@ -287,7 +290,7 @@ def materialize_tenant_skill_dir(db: Session, user_id: str, skill_dir: Path) -> 
         if not copied:
             LOG.warning(
                 "Advisory model enabled but artifact unavailable for tenant runtime "
-                "(expected ADVISORY_MODEL_PATH or artifacts/advisory_model_v1.json)."
+                "(expected ADVISORY_MODEL_PATH or advisory_model_v1.json)."
             )
 
 

@@ -1,0 +1,81 @@
+{
+  "model_type": "logistic_l2_with_bin_calibration",
+  "model_version": "phase1-pup10d-bootstrap-20260422",
+  "training_profile": "bootstrap",
+  "allow_model_upgrades": false,
+  "model_selected": "bootstrap_heuristic",
+  "target": "y_up_10d",
+  "feature_columns": [
+    "signal_score",
+    "pct_from_52w_high",
+    "avg_vcp_volume_ratio",
+    "close_vs_sma50_pct",
+    "close_vs_sma200_pct",
+    "atr_pct",
+    "ret_5d_prev",
+    "ret_20d_prev",
+    "volume_ratio",
+    "sector_rel_21d",
+    "sec_risk_score",
+    "miro_continuation_prob",
+    "miro_bull_trap_prob"
+  ],
+  "base_feature_columns": [
+    "signal_score",
+    "pct_from_52w_high",
+    "avg_vcp_volume_ratio",
+    "close_vs_sma50_pct",
+    "close_vs_sma200_pct",
+    "atr_pct",
+    "ret_5d_prev",
+    "ret_20d_prev",
+    "volume_ratio",
+    "sector_rel_21d",
+    "sec_risk_score",
+    "miro_continuation_prob",
+    "miro_bull_trap_prob"
+  ],
+  "interaction_feature_columns": [],
+  "label_columns": [
+    "y_up_5d",
+    "y_up_10d",
+    "y_return_bucket_10d",
+    "y_drawdown_gt5_10d",
+    "ret_5d_fwd",
+    "ret_10d_fwd",
+    "drawdown_10d"
+  ],
+  "feature_mu": [60.0, 80.0, 0.8, 4.0, 10.0, 0.03, 0.01, 0.03, 1.1, 0.0, 0.0, 0.55, 0.45],
+  "feature_sigma": [15.0, 10.0, 0.35, 8.0, 15.0, 0.02, 0.05, 0.12, 0.8, 0.08, 1.0, 0.15, 0.15],
+  "coef": [0.34, 0.12, 0.09, 0.16, 0.1, -0.08, 0.07, 0.06, 0.08, 0.1, 0.05, 0.24, -0.24],
+  "intercept": 0.0,
+  "calibration_bins": [],
+  "calibration_monotonicity": {
+    "is_monotonic": true,
+    "violations": 0,
+    "worst_drop": 0.0,
+    "max_allowed_drop": 0.03
+  },
+  "training_summary": {
+    "rows_total": 0,
+    "rows_train": 0,
+    "rows_calibration": 0,
+    "date_min": null,
+    "date_max": null,
+    "avg_abs_move_10d": 0.03,
+    "positive_rate": 0.5
+  },
+  "walk_forward": {
+    "fold_count": 0,
+    "folds": [],
+    "summary": {}
+  },
+  "calibration_metrics": {},
+  "acceptance_gates": {
+    "min_fold_count": 0,
+    "max_brier": 1.0,
+    "min_auc": 0.0,
+    "min_top20_hit_rate": 0.0
+  },
+  "trained_at_utc": "2026-04-22T00:00:00Z"
+}

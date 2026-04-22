@@ -1005,6 +1005,28 @@ def run_scan(
         scan_opts = parse_scan_run_body(body)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    # Forward platform model/runtime env into the queued scan context so the
+    # worker always evaluates with the same enrichment config as the API
+    # process (important when services drift in Render env settings).
+    env_overrides = scan_opts.get("env_overrides") if isinstance(scan_opts, dict) else {}
+    env_overrides = dict(env_overrides) if isinstance(env_overrides, dict) else {}
+    for key in (
+        "MIROFISH_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL_NAME",
+        "ADVISORY_MODEL_ENABLED",
+        "ADVISORY_MODEL_PATH",
+        "ADVISORY_CONFIDENCE_HIGH",
+        "ADVISORY_CONFIDENCE_LOW",
+        "ADVISORY_REQUIRE_MODEL",
+    ):
+        val = (os.getenv(key) or "").strip()
+        if val and key not in env_overrides:
+            env_overrides[key] = val
+    if env_overrides:
+        scan_opts["env_overrides"] = env_overrides
     _scan_rate_limit(user.id)
     _scan_daily_limit_check(user.id, user)
     cooldown = int(os.getenv("SAAS_SCAN_COOLDOWN_SEC", "60"))

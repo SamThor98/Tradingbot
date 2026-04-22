@@ -318,11 +318,20 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
         user = db.query(User).filter(User.id == user_id).first()
         if not user_has_paid_entitlement(user):
             return {"ok": False, "job_id": job_id, "error": "Active subscription required."}
-        runtime_errors = scan_runtime_prerequisite_errors()
-        if runtime_errors:
-            return {"ok": False, "job_id": job_id, "error": "; ".join(runtime_errors)}
         opts = scan_options if isinstance(scan_options, dict) else {}
         skw = scan_runtime_kwargs(opts)
+        runtime_errors = scan_runtime_prerequisite_errors()
+        scan_env = skw.get("env_overrides")
+        if isinstance(scan_env, dict) and scan_env:
+            try:
+                from env_overrides import temporary_env
+
+                with temporary_env(scan_env):
+                    runtime_errors = scan_runtime_prerequisite_errors()
+            except Exception:
+                pass
+        if runtime_errors:
+            return {"ok": False, "job_id": job_id, "error": "; ".join(runtime_errors)}
         with tenant_skill_dir(db, user_id) as skill_dir:
             signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir, **skw)
             inserted = 0

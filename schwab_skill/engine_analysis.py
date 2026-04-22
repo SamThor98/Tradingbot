@@ -160,6 +160,7 @@ def _call_llm(prompt: str, system: str, env: dict) -> str:
         env.get("MIROFISH_API_KEY")
         or os.environ.get("MIROFISH_API_KEY", "")
         or os.environ.get("OPENAI_API_KEY", "")
+        or os.environ.get("OPENAI_KEY", "")
     )
     base_url = (env.get("LLM_BASE_URL") or os.environ.get("LLM_BASE_URL") or "").strip()
     model = env.get("LLM_MODEL_NAME") or os.environ.get("LLM_MODEL_NAME") or "gpt-4o-mini"

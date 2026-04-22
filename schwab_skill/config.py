@@ -948,7 +948,7 @@ def get_advisory_model_path(skill_dir: Path | None = None) -> str:
     """Path to advisory model artifact JSON (relative to skill dir or absolute)."""
     env = _load_env(skill_dir)
     raw = _env_value("ADVISORY_MODEL_PATH", env).strip()
-    return raw or "artifacts/advisory_model_v1.json"
+    return raw or "advisory_model_v1.json"
 
 
 def get_advisory_confidence_high(skill_dir: Path | None = None) -> float:
