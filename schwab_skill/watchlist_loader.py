@@ -145,20 +145,45 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
                 return tickers
 
     LOG.info("Fetching S&P 500 + S&P 400 + S&P 600 + Russell 2000...")
-    try:
-        sp500 = _fetch_sp500()
-        sp400 = _fetch_sp400()
-        sp600 = _fetch_sp600()
-        russell2000 = _fetch_russell2000()
-    except Exception as e:
-        LOG.warning("Watchlist fetch failed: %s. Using fallback.", e)
+    # Fetch each index independently. A single failure (e.g. lxml missing,
+    # Russell 2000 GitHub URL 404, transient Wikipedia outage) used to wipe
+    # the entire universe down to the 18-ticker fallback because all four
+    # fetches lived in one try block. Now any combination of successful
+    # fetches contributes; only when every fetch fails do we fall back.
+    fetched: list[list[str]] = []
+    for label, fn in (
+        ("S&P 500", _fetch_sp500),
+        ("S&P 400", _fetch_sp400),
+        ("S&P 600", _fetch_sp600),
+        ("Russell 2000", _fetch_russell2000),
+    ):
+        try:
+            tickers = fn()
+            if tickers:
+                fetched.append(tickers)
+                LOG.info("Fetched %d tickers from %s", len(tickers), label)
+            else:
+                LOG.warning("Fetch returned 0 tickers for %s", label)
+        except Exception as e:
+            LOG.warning("Fetch failed for %s: %s", label, e)
+
+    if not fetched:
+        LOG.warning("All watchlist fetches failed. Using fallback.")
         return _fallback_watchlist()
 
     extra = ["IWM"]  # Russell 2000 ETF - small cap basket
-    combined = list(dict.fromkeys(sp500 + sp400 + sp600 + russell2000 + extra))
+    merged: list[str] = []
+    for lst in fetched:
+        merged.extend(lst)
+    merged.extend(extra)
+    combined = list(dict.fromkeys(merged))
     if combined:
         _save_cache(combined)
-        LOG.info("Loaded %d tickers (S&P 500 + 400 + 600 + Russell 2000)", len(combined))
+        LOG.info(
+            "Loaded %d tickers (%d index fetches succeeded)",
+            len(combined),
+            len(fetched),
+        )
     return combined or _fallback_watchlist()
 
 
