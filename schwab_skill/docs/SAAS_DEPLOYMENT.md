@@ -155,6 +155,22 @@ These paths remain supported for migration safety, but new tenants should use fu
 | JWT accepted locally, rejected in prod | Missing claim config | Set `SUPABASE_JWT_AUDIENCE` and `SUPABASE_JWT_ISSUER` |
 | Browser sign-in UI missing | `SUPABASE_URL`/`SUPABASE_ANON_KEY` not set on web service | Set both on web service or use manual JWT input path |
 
+## Hosted Phase 2 Stage 1 rerun (remote, no local token files)
+
+Use this path when your laptop/local token files are gone and you need to
+resume the augmented multi-era reruns from the deployed SaaS environment.
+
+- Queue rerun job: `POST /api/phase2/stage1-runs`
+- Poll status: `GET /api/phase2/stage1-runs/tasks/{task_id}`
+- Task uses tenant OAuth from `user_credentials` (via `tenant_skill_dir`) and
+  writes artifacts under `SAAS_PHASE2_ARTIFACT_ROOT/<user_id>/` (or
+  `validation_artifacts/saas_phase2/<user_id>/` when unset).
+- Runtime script env wiring:
+  - `TB_RUNTIME_SKILL_DIR` -> tenant temp skill dir with per-user tokens
+  - `BACKTEST_ARTIFACT_DIR` -> persistent SaaS artifact directory
+- Automatic safety: poisoned tiny chunks (`trades=[]`, `excluded_count=0`,
+  size `<1KB`) are deleted before resume so retries regenerate only bad chunks.
+
 ## Migrations
 
 Revision **`saas005`** adds `users.live_execution_enabled` (default false). After upgrading, existing users remain unable to send live orders until they opt in via `POST /api/settings/enable-live-trading` (see README SaaS section).

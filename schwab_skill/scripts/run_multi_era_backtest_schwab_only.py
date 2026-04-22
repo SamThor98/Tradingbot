@@ -12,9 +12,35 @@ from pathlib import Path
 from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
+# Hosted workers may route outputs to a per-user persistent directory.
+_art_root = (os.getenv("BACKTEST_ARTIFACT_DIR") or "").strip()
+ARTIFACT_DIR = Path(_art_root) if _art_root else (SKILL_DIR / "validation_artifacts")
+# Legacy single-writer progress file. Kept for backwards-compat reads when no
+# per-run-id file exists (e.g. older artifacts).
 PROGRESS_PATH = ARTIFACT_DIR / "multi_era_backtest_schwab_only_progress.json"
 sys.path.insert(0, str(SKILL_DIR))
+
+
+def _runtime_skill_dir() -> Path:
+    """Resolve the skill_dir used by run_backtest inside chunk workers."""
+    raw = (os.getenv("TB_RUNTIME_SKILL_DIR") or "").strip()
+    return Path(raw) if raw else SKILL_DIR
+
+
+def _progress_path_for(run_id: str | None) -> Path:
+    """Per-run-id progress file so concurrent multi-era runs don't race.
+
+    Multiple orchestrators (e.g. one for control configs, one for treatment
+    configs) launch independent multi-era subprocesses. Each writes its own
+    progress checkpoint frequently (after every chunk). Sharing a single
+    file caused PermissionError races on Windows (2026-04-19 incident
+    crashed control_legacy mid-late_bull). Per-run-id files eliminate the
+    race entirely.
+    """
+    if run_id:
+        safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in str(run_id))
+        return ARTIFACT_DIR / f"multi_era_backtest_schwab_only_{safe}_progress.json"
+    return PROGRESS_PATH
 
 
 ERAS: list[tuple[str, str | None, str]] = [
@@ -127,6 +153,83 @@ def _aggregate_era(
     }
 
 
+def _augmented_logging_enabled() -> bool:
+    """Opt-in via env. When ON, chunk JSON includes ticker, prices, MFE/MAE,
+    overlay decisions and (if BACKTEST_OHLC_PATH=true) the daily OHLCV slice
+    needed by the Phase 2 replay engine. Default OFF -> byte-identical legacy
+    schema."""
+    return os.environ.get("BACKTEST_AUGMENTED_LOGGING", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _maybe_float(v: Any) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[dict[str, Any]]:
+    """Pure projection from the in-memory trade dicts produced by
+    ``backtest.run_backtest`` to the per-chunk JSON schema. Pulled out as a
+    top-level function so the projection contract can be unit-tested without
+    touching the backtest itself."""
+    if augmented:
+        out: list[dict[str, Any]] = []
+        for t in trades_in:
+            row: dict[str, Any] = {
+                "return": float(t.get("return", 0.0) or 0.0),
+                "net_return": float(t.get("net_return", 0.0) or 0.0),
+                "entry_date": str(t.get("entry_date") or ""),
+                "exit_date": str(t.get("exit_date") or ""),
+                "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
+                "signal_score": _maybe_float(t.get("signal_score")),
+                "mirofish_conviction": _maybe_float(t.get("mirofish_conviction")),
+                "exit_reason": str(t.get("exit_reason") or ""),
+                "ticker": t.get("ticker"),
+                "entry_price": _maybe_float(t.get("entry_price")),
+                "exit_price": _maybe_float(t.get("exit_price")),
+                "qty_estimate": int(t.get("qty_estimate") or 0),
+                "day_volume": _maybe_float(t.get("day_volume")),
+                "slippage_pct": _maybe_float(t.get("slippage_pct")),
+                "fees_pct": _maybe_float(t.get("fees_pct")),
+                "mfe": _maybe_float(t.get("mfe")),
+                "mae": _maybe_float(t.get("mae")),
+                "meta_policy_decision": t.get("meta_policy_decision"),
+                "meta_policy_size_multiplier": _maybe_float(t.get("meta_policy_size_multiplier")),
+                "event_risk_action": t.get("event_risk_action"),
+                "event_risk_size_multiplier": _maybe_float(t.get("event_risk_size_multiplier")),
+                "exec_quality_regime": t.get("exec_quality_regime"),
+                "exec_quality_effective_slippage_bps": _maybe_float(t.get("exec_quality_effective_slippage_bps")),
+                "exit_manager_partial_done": bool(t.get("exit_manager_partial_done")),
+            }
+            path = t.get("ohlc_path") or []
+            if path:
+                row["ohlc_path"] = path
+            out.append(row)
+        return out
+    # Legacy projection: byte-identical to the pre-augmentation schema so
+    # existing artifacts and downstream consumers (phase1_trade_diagnostics,
+    # phase2_common.load_trades fallback) keep working unchanged.
+    return [
+        {
+            "return": float(t.get("return", 0.0) or 0.0),
+            "net_return": float(t.get("net_return", 0.0) or 0.0),
+            "entry_date": str(t.get("entry_date") or ""),
+            "exit_date": str(t.get("exit_date") or ""),
+            "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
+            "signal_score": _maybe_float(t.get("signal_score")),
+            "mirofish_conviction": _maybe_float(t.get("mirofish_conviction")),
+            "exit_reason": str(t.get("exit_reason") or ""),
+        }
+        for t in trades_in
+    ]
+
+
 def _run_single_chunk(
     *,
     start_date: str,
@@ -139,25 +242,25 @@ def _run_single_chunk(
     os.environ["BACKTEST_SKIP_MIROFISH"] = "true"
     os.environ["SEC_FILING_LLM_SUMMARY_ENABLED"] = "false"
     from backtest import run_backtest
+    from backtest_intelligence import BacktestIntelligenceConfig
 
     tickers = json.loads(tickers_file.read_text(encoding="utf-8"))
+    # The multi-era runner historically called run_backtest with no overlay,
+    # which forced ``BacktestIntelligenceConfig.all_off()``. That made the
+    # EVENT_RISK_MODE / EXIT_MANAGER_MODE / META_POLICY_MODE / EXEC_QUALITY_MODE
+    # env vars no-ops in this code path. Pulling the overlay from the env here
+    # so the Phase 1 sweep actually exercises the overlays it sets.
+    overlay_cfg = BacktestIntelligenceConfig.from_env(SKILL_DIR)
     metrics = run_backtest(
         tickers=[str(t).strip().upper() for t in tickers if str(t).strip()],
         start_date=start_date,
         end_date=end_date,
         include_all_trades=True,
+        intelligence_overlay=overlay_cfg,
+        skill_dir=_runtime_skill_dir(),
     )
     trades_in = list(metrics.get("trades") or [])
-    compact_trades = [
-        {
-            "return": float(t.get("return", 0.0) or 0.0),
-            "net_return": float(t.get("net_return", 0.0) or 0.0),
-            "entry_date": str(t.get("entry_date") or ""),
-            "exit_date": str(t.get("exit_date") or ""),
-            "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
-        }
-        for t in trades_in
-    ]
+    compact_trades = _project_trades(trades_in, _augmented_logging_enabled())
     payload = {
         "era": era_name,
         "start": start_date,
@@ -288,14 +391,85 @@ def _write_progress(
         "failed": failed or [],
         "era_state": era_state or {},
     }
-    PROGRESS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    target = _progress_path_for(run_id)
+    # Atomic write with retry. On OneDrive-mounted volumes the sync agent
+    # often holds the destination file briefly after a previous write,
+    # causing PermissionError [WinError 5] on the os.replace below. We retry
+    # with exponential backoff so a transient antivirus / OneDrive lock
+    # doesn't crash an 8-hour backtest. (Discovered 2026-04-19.) If all
+    # retries fail we treat progress writes as non-fatal — the run can
+    # still complete; we just lose the resume hint.
+    _safe_atomic_write(target, json.dumps(payload, indent=2))
+    # Best-effort mirror to the legacy shared path so single-writer monitors
+    # (e.g. older _check_progress.py invocations) keep working. Failure here
+    # is non-fatal (this is the file that races; we no longer rely on it).
+    try:
+        _safe_atomic_write(PROGRESS_PATH, json.dumps(payload, indent=2))
+    except Exception:
+        pass
 
 
-def _load_progress_if_any() -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-    if not PROGRESS_PATH.exists():
+def _safe_atomic_write(target: Path, contents: str, max_attempts: int = 6) -> None:
+    """os.replace with retry-on-PermissionError for OneDrive/AV contention.
+
+    Raises the last exception only after exhausting retries.
+    """
+    import time as _time
+
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    try:
+        tmp.write_text(contents, encoding="utf-8")
+    except PermissionError:
+        # Even the tempfile write can be blocked. Sleep + retry.
+        for attempt in range(max_attempts):
+            _time.sleep(0.25 * (2**attempt))
+            try:
+                tmp.write_text(contents, encoding="utf-8")
+                break
+            except PermissionError:
+                continue
+        else:
+            raise
+
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            _time.sleep(0.25 * (2**attempt))
+        except FileNotFoundError as exc:
+            # tmp got consumed by something between write and replace; bail.
+            last_exc = exc
+            break
+    # Final fall-back: try non-atomic overwrite. We've already lost the
+    # atomicity guarantee, but the alternative is crashing the backtest.
+    try:
+        target.write_text(contents, encoding="utf-8")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return
+    except Exception:
+        if last_exc is not None:
+            raise last_exc
+        raise
+
+
+def _load_progress_if_any(run_tag: str | None = None) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    # Prefer the per-run-id file; fall back to the legacy shared path for
+    # backwards compatibility with older artifacts.
+    candidates = []
+    if run_tag:
+        candidates.append(_progress_path_for(run_tag))
+    candidates.append(PROGRESS_PATH)
+    src = next((p for p in candidates if p.exists()), None)
+    if src is None:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), [], []
     try:
-        data = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(src.read_text(encoding="utf-8"))
     except Exception:
         return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), [], []
     run_id = str(data.get("run_id") or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -310,12 +484,30 @@ def _orchestrate(
     resume: bool,
     chunk_size: int,
     max_workers: int,
+    run_tag: str | None = None,
+    ticker_limit: int | None = None,
 ) -> int:
-    run_id, completed, failed = _load_progress_if_any() if resume else (
-        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
-        [],
-        [],
-    )
+    if run_tag:
+        run_id = str(run_tag)
+        # If a per-run-id progress file from a prior interrupted run exists,
+        # honour its completed-era list so we resume rather than re-do work.
+        # Chunk-level resume already happens via the on-disk chunk_NNNN.json
+        # files; this just lets us also skip whole completed eras quickly.
+        if resume and _progress_path_for(run_tag).exists():
+            _, completed, failed = _load_progress_if_any(run_tag=run_tag)
+        else:
+            completed = []
+            failed = []
+    else:
+        run_id, completed, failed = (
+            _load_progress_if_any()
+            if resume
+            else (
+                datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                [],
+                [],
+            )
+        )
     completed_by_era = {str(r.get("era")) for r in completed}
     failed = []
     era_state: dict[str, Any] = {}
@@ -326,6 +518,8 @@ def _orchestrate(
             print(f"[multi-era] skipping completed era {name}")
             continue
         watchlist = _load_universe_tickers()
+        if ticker_limit and ticker_limit > 0:
+            watchlist = watchlist[:ticker_limit]
         chunks = _chunk(watchlist, chunk_size)
         era_dir = ARTIFACT_DIR / "multi_era_chunks" / run_id / name
         era_dir.mkdir(parents=True, exist_ok=True)
@@ -371,7 +565,11 @@ def _orchestrate(
                 try:
                     ok, payload, err = fut.result()
                 except Exception as e:
-                    ok, payload, err = False, None, {"era": name, "chunk": idx, "reason": f"future_exception:{type(e).__name__}"}
+                    ok, payload, err = (
+                        False,
+                        None,
+                        {"era": name, "chunk": idx, "reason": f"future_exception:{type(e).__name__}"},
+                    )
                 if not ok or payload is None:
                     era_failed = True
                     failed.append(err or {"era": name, "chunk": idx, "reason": "unknown_failure"})
@@ -415,9 +613,13 @@ def _orchestrate(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run strict Schwab-only multi-era backtests with progress checkpoints.")
+    parser = argparse.ArgumentParser(
+        description="Run strict Schwab-only multi-era backtests with progress checkpoints."
+    )
     parser.add_argument("--single-era", action="store_true", help="Internal mode: run one era and emit compact JSON.")
-    parser.add_argument("--single-chunk", action="store_true", help="Internal mode: run one ticker chunk and write JSON.")
+    parser.add_argument(
+        "--single-chunk", action="store_true", help="Internal mode: run one ticker chunk and write JSON."
+    )
     parser.add_argument("--start-date", default="", help="Era start date YYYY-MM-DD (single-era mode).")
     parser.add_argument("--end-date", default="", help="Era end date YYYY-MM-DD (single-era mode).")
     parser.add_argument("--era-name", default="", help="Era label (single-era mode).")
@@ -428,7 +630,33 @@ def main() -> int:
     parser.add_argument("--max-workers", type=int, default=4, help="Parallel chunk worker subprocesses per era.")
     parser.add_argument("--tickers-file", default="", help="JSON file with chunk tickers (single-chunk mode).")
     parser.add_argument("--out-file", default="", help="Output JSON file path (single-chunk mode).")
+    parser.add_argument(
+        "--run-tag",
+        default="",
+        help="Override run_id (lets multiple sweep configs write to distinct chunk directories).",
+    )
+    parser.add_argument(
+        "--env-overrides",
+        default="",
+        help="Path to JSON file mapping env var name -> string value, applied for the duration of this run.",
+    )
+    parser.add_argument(
+        "--ticker-limit",
+        type=int,
+        default=0,
+        help="Truncate the universe to the first N tickers (0 = use full Schwab watchlist; for smoke tests).",
+    )
     args = parser.parse_args()
+
+    if args.env_overrides:
+        try:
+            overrides = json.loads(Path(args.env_overrides).read_text(encoding="utf-8"))
+            if isinstance(overrides, dict):
+                for k, v in overrides.items():
+                    os.environ[str(k)] = str(v)
+        except Exception as exc:
+            print(f"[multi-era] failed to apply env overrides from {args.env_overrides}: {exc}")
+            return 3
 
     if args.single_chunk:
         if not args.start_date or not args.era_name or not args.tickers_file or not args.out_file:
@@ -447,6 +675,8 @@ def main() -> int:
         resume=not args.no_resume,
         chunk_size=args.chunk_size,
         max_workers=args.max_workers,
+        run_tag=args.run_tag or None,
+        ticker_limit=args.ticker_limit or None,
     )
 
 

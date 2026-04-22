@@ -61,9 +61,24 @@ SKILL_DIR = Path(__file__).resolve().parent
 LOG = logging.getLogger(__name__)
 
 
+def _runtime_skill_dir() -> Path:
+    """Optional runtime override for hosted workers.
+
+    Celery SaaS tasks materialize per-user token files into a temporary skill
+    directory. Backtest internals that instantiate DualSchwabAuth directly
+    need this override to read tenant-scoped token files instead of the
+    repository root.
+    """
+    raw = (os.getenv("TB_RUNTIME_SKILL_DIR") or "").strip()
+    if raw:
+        return Path(raw)
+    return SKILL_DIR
+
+
 def _temporary_env(overrides: dict[str, str] | None) -> Iterator[None]:
     # Compatibility wrapper retained for existing imports/call sites.
     return temporary_env(overrides)
+
 
 HOLD_DAYS = 20
 MIN_BARS = 260
@@ -110,6 +125,74 @@ def _normalize_history(df: pd.DataFrame) -> pd.DataFrame:
 def _fetch_history(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     df, _meta = _fetch_history_with_meta(symbol, start_date, end_date)
     return df
+
+
+def _is_ohlc_path_logging_enabled() -> bool:
+    """Opt-in: include the daily OHLCV slice between entry and exit on each
+    trade record. Roughly +2-3 KB per trade and only useful for the Phase 2
+    replay engine (alternate exits, tighter stops, partial TPs, trailing
+    stops). Default OFF so production runs and the existing chunk schema
+    are unaffected."""
+    return os.environ.get("BACKTEST_OHLC_PATH", "").lower() in ("1", "true", "yes", "on")
+
+
+def _compute_mfe_mae(
+    df: pd.DataFrame, entry_idx: int, exit_idx: int, entry_price: float
+) -> tuple[float | None, float | None]:
+    """Maximum Favorable / Adverse Excursion as fractional returns.
+
+    Walks the *intraday* high and low between entry and exit (exclusive of
+    entry day, inclusive of exit day) so the result reflects the worst /
+    best print the trade ever saw, not just close-to-close moves. Returns
+    (None, None) when the window is empty or the entry price is invalid.
+    """
+    if entry_price <= 0 or exit_idx < entry_idx:
+        return None, None
+    last = min(exit_idx, len(df) - 1)
+    if last <= entry_idx:
+        return 0.0, 0.0
+    window = df.iloc[entry_idx + 1 : last + 1]
+    if window.empty:
+        return 0.0, 0.0
+    try:
+        high_series = window["high"] if "high" in window.columns else window["close"]
+        low_series = window["low"] if "low" in window.columns else window["close"]
+    except KeyError:
+        return None, None
+    try:
+        max_high = float(high_series.max())
+        min_low = float(low_series.min())
+    except (TypeError, ValueError):
+        return None, None
+    return (max_high - entry_price) / entry_price, (min_low - entry_price) / entry_price
+
+
+def _build_ohlc_path(df: pd.DataFrame, entry_idx: int, exit_idx: int) -> list[dict[str, Any]]:
+    """Serialize the inclusive [entry, exit] OHLCV slice as a list of small
+    dicts so the path round-trips through chunk JSON. ~80 bytes/day, capped
+    by the trade's hold window."""
+    if exit_idx < entry_idx:
+        return []
+    last = min(exit_idx, len(df) - 1)
+    window = df.iloc[entry_idx : last + 1]
+    if window.empty:
+        return []
+    out: list[dict[str, Any]] = []
+    for ts, row in window.iterrows():
+        try:
+            out.append(
+                {
+                    "date": pd.Timestamp(ts).isoformat()[:10],
+                    "open": float(row.get("open", 0.0) or 0.0),
+                    "high": float(row.get("high", 0.0) or 0.0),
+                    "low": float(row.get("low", 0.0) or 0.0),
+                    "close": float(row.get("close", 0.0) or 0.0),
+                    "volume": float(row.get("volume", 0.0) or 0.0),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _fetch_history_with_meta(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -168,7 +251,7 @@ def _fetch_history_schwab(symbol: str, start_date: str, end_date: str) -> pd.Dat
         "endDate": int(datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).timestamp() * 1000),
     }
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = DualSchwabAuth(skill_dir=_runtime_skill_dir())
         token = auth.get_market_token()
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         resp = requests.get(url, params=params, headers=headers, timeout=30)
@@ -234,7 +317,9 @@ def _prepare_context(
         if provider == "schwab":
             data_integrity["history_provider_schwab"] = int(data_integrity.get("history_provider_schwab", 0) or 0) + 1
         elif provider == "yfinance":
-            data_integrity["history_provider_yfinance"] = int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
+            data_integrity["history_provider_yfinance"] = (
+                int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
+            )
         else:
             data_integrity["history_provider_unknown"] = int(data_integrity.get("history_provider_unknown", 0) or 0) + 1
         if bool(history_meta.get("used_fallback")):
@@ -243,9 +328,9 @@ def _prepare_context(
             if df.empty:
                 data_integrity["history_fetch_empty"] = int(data_integrity.get("history_fetch_empty", 0) or 0) + 1
             else:
-                data_integrity["history_fetch_too_short"] = int(
-                    data_integrity.get("history_fetch_too_short", 0) or 0
-                ) + 1
+                data_integrity["history_fetch_too_short"] = (
+                    int(data_integrity.get("history_fetch_too_short", 0) or 0) + 1
+                )
             excluded.append({"ticker": ticker, "reason": "insufficient_history", "bars": len(df)})
             continue
         price_data[ticker] = add_indicators(df)
@@ -332,7 +417,9 @@ def _run_mirofish_for_entry(
         return None
 
 
-def _simulate_exit(df: pd.DataFrame, entry_idx: int, hold_days: int, stop_pct: float) -> tuple[float, pd.Timestamp, str]:
+def _simulate_exit(
+    df: pd.DataFrame, entry_idx: int, hold_days: int, stop_pct: float
+) -> tuple[float, pd.Timestamp, str]:
     entry_price = float(df["close"].iloc[entry_idx])
     highest_close = entry_price
     last_idx = min(entry_idx + hold_days, len(df) - 1)
@@ -465,12 +552,14 @@ def _simulate_portfolio_equity(
             continue
         if xd < ed:
             ed, xd = xd, ed
-        parsed.append({
-            "entry_date": ed,
-            "exit_date": xd,
-            "net_return": float(t.get("net_return", 0.0) or 0.0),
-            "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
-        })
+        parsed.append(
+            {
+                "entry_date": ed,
+                "exit_date": xd,
+                "net_return": float(t.get("net_return", 0.0) or 0.0),
+                "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
+            }
+        )
     if not parsed:
         return {
             "equity_curve": [],
@@ -530,11 +619,13 @@ def _simulate_portfolio_equity(
         if allocated <= 0 or equity <= 0:
             capacity_filtered += 1
             continue
-        open_positions.append({
-            "exit_date": t["exit_date"],
-            "net_return": t["net_return"],
-            "allocated": allocated,
-        })
+        open_positions.append(
+            {
+                "exit_date": t["exit_date"],
+                "net_return": t["net_return"],
+                "allocated": allocated,
+            }
+        )
         concurrent_samples.append(len(open_positions))
         if len(open_positions) > peak_concurrent:
             peak_concurrent = len(open_positions)
@@ -544,9 +635,7 @@ def _simulate_portfolio_equity(
         _close_due(last + pd.Timedelta(days=1))
 
     total_return = (equity / starting_equity) - 1.0 if starting_equity > 0 else 0.0
-    avg_concurrent = (
-        sum(concurrent_samples) / len(concurrent_samples) if concurrent_samples else 0.0
-    )
+    avg_concurrent = sum(concurrent_samples) / len(concurrent_samples) if concurrent_samples else 0.0
     return {
         "equity_curve": curve,
         "total_return_net_pct": round(100.0 * total_return, 4),
@@ -641,7 +730,14 @@ def _run_backtest_core(
     elif intelligence_overlay is not None:
         overlay_cfg = BacktestIntelligenceConfig.from_mapping(intelligence_overlay)
     else:
-        overlay_cfg = BacktestIntelligenceConfig.all_off()
+        # Default to env-driven config so backtests match the live code path
+        # (production has EVENT_RISK_MODE=live and EXEC_QUALITY_MODE=live by
+        # default — see config.py). The historical default ``all_off()`` caused
+        # silent production/backtest divergence; see
+        # ``wiki/backtest-intelligence-overlay.md`` for the 2026-04-18 incident.
+        # Callers that need overlays-off must pass
+        # ``BacktestIntelligenceConfig.all_off()`` explicitly.
+        overlay_cfg = BacktestIntelligenceConfig.from_env(sd)
 
     requested = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
     context = _prepare_context(start, end, watchlist=requested if requested else None, skill_dir=sd)
@@ -938,6 +1034,12 @@ def _run_backtest_core(
                 fee_per_share=fee_per_share,
                 min_fee_per_order=min_fee_per_order,
             )
+            try:
+                exit_idx = int(df.index.get_indexer([pd.Timestamp(exit_date)], method="pad")[0])
+            except Exception:
+                exit_idx = i
+            mfe, mae = _compute_mfe_mae(df, i, exit_idx, entry_price)
+            ohlc_path = _build_ohlc_path(df, i, exit_idx) if _is_ohlc_path_logging_enabled() else []
 
             all_trades.append(
                 {
@@ -948,6 +1050,9 @@ def _run_backtest_core(
                     "exit_price": round(exit_price, 4),
                     "return": float(ret),
                     "net_return": float(net_ret),
+                    "mfe": mfe,
+                    "mae": mae,
+                    "ohlc_path": ohlc_path,
                     "exit_reason": exit_reason,
                     "signal_score": signal["signal_score"],
                     "mirofish_conviction": miro.get("conviction_score") if miro else None,
@@ -1003,6 +1108,7 @@ def _run_backtest_core(
             "prediction_market_provider": prediction_market_provider,
             "intelligence_overlay": overlay_cfg.as_dict(),
             "excluded_tickers": context.excluded_tickers[:50],
+            "excluded_count": len(context.excluded_tickers),
             "universe_size": len(context.watchlist),
             "data_integrity": context.data_integrity,
             "findings": "No trades generated over the requested window.",
