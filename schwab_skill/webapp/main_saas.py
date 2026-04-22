@@ -998,7 +998,7 @@ def run_scan(
     ok_scan, reason = user_can_materialize_for_scan(db, user.id)
     if not ok_scan:
         raise HTTPException(status_code=409, detail=reason)
-    runtime_errors = scan_runtime_prerequisite_errors()
+    runtime_errors = scan_runtime_prerequisite_errors(require_llm_key=False)
     if runtime_errors:
         raise HTTPException(status_code=503, detail="; ".join(runtime_errors))
     try:
