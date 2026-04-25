@@ -14,7 +14,7 @@ import stripe
 from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -51,6 +51,7 @@ from .route_helpers import (
 from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping
 from .scan_payload import parse_scan_run_body
 from .schemas import (
+    AnalyticsEventPayload,
     ApiResponse,
     BillingCheckoutPayload,
     EnableLiveTradingRequest,
@@ -157,6 +158,31 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(tenant_dashboard_router)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        msg = str(detail.get("message") or detail.get("error") or detail)
+    elif isinstance(detail, list):
+        msg = "; ".join(str(item) for item in detail)
+    else:
+        msg = str(detail or "Request failed.")
+    payload = _err(msg).model_dump()
+    payload["detail"] = msg
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse | PlainTextResponse:
+    if request.url.path.startswith("/api/"):
+        LOG.exception("Unhandled API error on %s: %s", request.url.path, exc)
+        payload = _err("Internal server error.").model_dump()
+        payload["detail"] = "Internal server error."
+        return JSONResponse(status_code=500, content=payload)
+    LOG.exception("Unhandled non-API error on %s: %s", request.url.path, exc)
+    return PlainTextResponse("Internal server error.", status_code=500)
 
 
 @app.middleware("http")
@@ -523,8 +549,7 @@ def public_config() -> ApiResponse:
         (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip() and (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
     )
     schwab_market_oauth = bool(
-        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        and (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
+        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip() and (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
     )
     plat_kill = (os.getenv("LIVE_TRADING_KILL_SWITCH") or "").strip().lower() in (
         "1",
@@ -539,6 +564,8 @@ def public_config() -> ApiResponse:
         "schwab_oauth": schwab_oauth,
         "schwab_market_oauth": schwab_market_oauth,
         "saas_mode": True,
+        "runtime_mode": "saas",
+        "ui_contract_version": "2026-04-webapp-stabilization",
         "scan_transport": "celery",
         "sse_enabled": False,
         "manual_jwt_entry_enabled": _shared_manual_jwt(default=False),
@@ -559,6 +586,19 @@ def public_config() -> ApiResponse:
         # Built-in end-user steps when the host does not set WEB_IMPLEMENTATION_GUIDE_URL
         data["implementation_guide_url"] = "/static/connect-schwab-guide.html"
     return _ok(data)
+
+
+@app.get("/api/runtime-contract", response_model=ApiResponse)
+def runtime_contract() -> ApiResponse:
+    return _ok(
+        {
+            "runtime_mode": "saas",
+            "scan_transport": "celery",
+            "sse_enabled": False,
+            "api_envelope": "ApiResponse",
+            "ui_contract_version": "2026-04-webapp-stabilization",
+        }
+    )
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
@@ -708,6 +748,32 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> Ap
             "next_steps": next_steps,
         }
     )
+
+
+@app.post("/api/analytics/event", response_model=ApiResponse)
+def analytics_event(
+    request: Request,
+    payload: AnalyticsEventPayload,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    event_name = str(payload.event or "").strip().lower().replace(" ", "_")
+    if not event_name:
+        raise HTTPException(status_code=400, detail="event is required.")
+    props = payload.properties if isinstance(payload.properties, dict) else {}
+    log_audit(
+        db,
+        action="product_analytics_event",
+        user_id=user.id,
+        detail={
+            "event": event_name[:64],
+            "properties": props,
+            "occurred_at": utcnow_iso(),
+            "source": "webapp_dashboard",
+        },
+        request_id=_request_id(request),
+    )
+    return _ok({"recorded": True, "event": event_name[:64]})
 
 
 @app.post("/api/settings/enable-live-trading", response_model=ApiResponse)
@@ -1115,7 +1181,11 @@ def scan_task_status(
             payload["result"] = result
     except Exception as exc:
         # Keep this endpoint JSON-stable even when broker/backend is flaky.
-        LOG.warning("scan_task_status unavailable task_id=%s: %s", task_id, safe_exception_message(exc, fallback="scan_task_status_error"))
+        LOG.warning(
+            "scan_task_status unavailable task_id=%s: %s",
+            task_id,
+            safe_exception_message(exc, fallback="scan_task_status_error"),
+        )
         return _ok(
             {
                 "task_id": task_id,
@@ -1170,7 +1240,11 @@ def scan_lifecycle(
                 )
             )
         except Exception as exc:
-            LOG.warning("scan_lifecycle unavailable task_id=%s: %s", tid, safe_exception_message(exc, fallback="scan_lifecycle_error"))
+            LOG.warning(
+                "scan_lifecycle unavailable task_id=%s: %s",
+                tid,
+                safe_exception_message(exc, fallback="scan_lifecycle_error"),
+            )
             # Return a degradable payload instead of bubbling non-JSON gateway errors.
             return _ok(
                 _scan_lifecycle_payload(
@@ -1392,7 +1466,9 @@ def queue_backtest_run(
             user.id,
             safe_exception_message(exc, fallback="backtest_queue_error"),
         )
-        raise HTTPException(status_code=400, detail="Unable to queue backtest from the supplied strategy spec.") from exc
+        raise HTTPException(
+            status_code=400, detail="Unable to queue backtest from the supplied strategy spec."
+        ) from exc
     log_audit(
         db,
         action="backtest_queued",

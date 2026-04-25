@@ -20,10 +20,12 @@ export const state = {
   publicConfig: {
     supabase: null,
     saas_mode: false,
+    runtime_mode: "local",
     schwab_oauth: false,
     schwab_market_oauth: false,
     platform_live_trading_kill_switch: false,
   },
+  runtimeContract: null,
   accountMe: null,
   twoFaStatus: null,
   reportRawView: false,
@@ -35,6 +37,8 @@ export const state = {
   presetCatalog: null,
   savedUiSettings: null,
   performance: null,
+  lastPortfolioData: null,
+  lastPortfolioRiskData: null,
   calibration: null,
   strategyChatMessages: [],
   strategyChatBusy: false,
@@ -44,6 +48,8 @@ export const state = {
   /** Optional scan body: strategy_overrides, universe_mode, tickers (see /api/scan). */
   scanRunOptions: null,
   sseEnabled: false,
+  funnelMilestonesSent: {},
+  retainedSessionSent: false,
 };
 
 /** localStorage keys used across modules. Centralised here to keep namespacing

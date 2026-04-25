@@ -36,6 +36,9 @@ from sector_strength import get_sector_heatmap
 from signal_scanner import scan_for_signals_detailed
 
 from ._shared import (
+    build_portfolio_risk_analytics as _build_portfolio_risk_analytics,
+)
+from ._shared import (
     build_portfolio_summary as _build_portfolio_summary,  # noqa: F401  (re-export)
 )
 from ._shared import (
@@ -70,6 +73,7 @@ from .oauth_schwab import (
 from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
 from .recovery_map import map_failure
 from .redaction import safe_exception_message
+from .report_v2 import build_report_v2
 from .route_helpers import (
     apply_profile_to_runtime as _shared_apply_profile_to_runtime,
 )
@@ -713,6 +717,21 @@ def tenant_portfolio(user: User = Depends(get_current_user), db: OrmSession = De
         return _saas_error_response(exc, source="portfolio", fallback="Unable to load portfolio right now.")
 
 
+@router.get("/api/portfolio/risk", response_model=ApiResponse)
+def tenant_portfolio_risk(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading risk analytics.")
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            status_data = get_account_status(skill_dir=skill_dir)
+            if isinstance(status_data, str):
+                return _err(status_data)
+            summary = _build_portfolio_summary(status_data)
+            return _ok(_build_portfolio_risk_analytics(summary, skill_dir=skill_dir))
+    except Exception as exc:
+        return _saas_error_response(exc, source="portfolio_risk", fallback="Unable to load portfolio risk right now.")
+
+
 @router.get("/api/sectors", response_model=ApiResponse)
 def tenant_sectors(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
     if not user_has_account_session(db, user.id):
@@ -798,6 +817,20 @@ def tenant_clear_all_pending(
         row.status = "rejected"
     db.commit()
     return _ok({"cleared": len(rows)})
+
+
+@router.post("/api/pending-trades/delete-all", response_model=ApiResponse)
+def tenant_delete_all_pending(
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    rows = db.query(PendingTrade).filter(PendingTrade.user_id == user.id).all()
+    status_breakdown: dict[str, int] = {}
+    for row in rows:
+        status_breakdown[row.status] = status_breakdown.get(row.status, 0) + 1
+        db.delete(row)
+    db.commit()
+    return _ok({"deleted": len(rows), "by_status": status_breakdown})
 
 
 @router.get("/api/calibration/summary", response_model=ApiResponse)
@@ -1065,7 +1098,15 @@ def tenant_report_ticker(
                     auth=auth,
                     skill_dir=skill_dir,
                 )
+                portfolio_summary: dict[str, Any] | None = None
+                try:
+                    status_data = get_account_status(skill_dir=skill_dir)
+                    if isinstance(status_data, dict):
+                        portfolio_summary = _build_portfolio_summary(status_data)
+                except Exception:
+                    portfolio_summary = None
             data = json.loads(report_to_json(report))
+            data["report_v2"] = build_report_v2(data, portfolio_summary=portfolio_summary)
             section_verdicts = _build_report_verdicts(data)
             if section_key:
                 section_data = data.get(section_key)
@@ -1075,6 +1116,7 @@ def tenant_report_ticker(
                         "generated_at": data.get("generated_at"),
                         "section": section_key,
                         "data": section_data,
+                        "report_v2": data.get("report_v2"),
                         "section_verdicts": section_verdicts,
                         "section_quick_verdict": section_verdicts.get(section_key, {}),
                     }
@@ -1400,6 +1442,20 @@ def tenant_reject_trade(
     db.commit()
     db.refresh(row)
     return _ok(_trade_to_dict(row))
+
+
+@router.post("/api/trades/{trade_id}/delete", response_model=ApiResponse)
+def tenant_delete_trade(
+    trade_id: str,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    row = db.query(PendingTrade).filter(PendingTrade.id == trade_id, PendingTrade.user_id == user.id).first()
+    if not row:
+        return ApiResponse(ok=False, error="Trade not found.")
+    db.delete(row)
+    db.commit()
+    return _ok({"deleted": trade_id})
 
 
 @router.get("/api/trades/{trade_id}/preflight", response_model=ApiResponse)

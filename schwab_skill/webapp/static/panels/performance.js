@@ -19,7 +19,103 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, prettyJson, formatPercentPoints } from "../modules/format.js";
+import { safeText, prettyJson, formatPercentPoints, formatDecimal } from "../modules/format.js";
+
+function normalizeRows(input) {
+  if (Array.isArray(input)) return input.filter((row) => row && typeof row === "object");
+  if (input && typeof input === "object") {
+    return Object.entries(input).map(([label, value]) => ({ label, value }));
+  }
+  return [];
+}
+
+function renderAttributionTable({ title, rows, valueFormatter = (value) => safeText(value), valueLabel = "Value" }) {
+  if (!rows.length) return "";
+  const bodyRows = rows.slice(0, 8).map((row) => {
+    const label = safeText(row.setup_type ?? row.bucket ?? row.strategy_tag ?? row.label ?? row.name ?? "—");
+    const value = valueFormatter(row.hit_rate ?? row.expectancy ?? row.drawdown_pct ?? row.value ?? row.realized_return ?? "—");
+    return `<tr><td>${label}</td><td>${value}</td></tr>`;
+  }).join("");
+  return `
+    <div class="perf-attribution-card">
+      <h3>${safeText(title)}</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Bucket</th><th>${safeText(valueLabel)}</th></tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderThesisQuality(rows) {
+  if (!rows.length) return "";
+  const body = rows.slice(0, 8).map((row) => `
+    <tr>
+      <td>${safeText(row.thesis_quality ?? row.bucket ?? row.label ?? "—")}</td>
+      <td>${safeText(row.outcome ?? row.realized_outcome ?? "—")}</td>
+      <td>${row.realized_return != null ? formatPercentPoints(row.realized_return, 2) : "—"}</td>
+    </tr>
+  `).join("");
+  return `
+    <div class="perf-attribution-card">
+      <h3>Thesis Quality vs Realized Outcome</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Thesis quality</th><th>Outcome</th><th>Realized return</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAttributionAccountability(data) {
+  const attribution = (data.attribution && typeof data.attribution === "object")
+    ? data.attribution
+    : (data.live?.attribution && typeof data.live.attribution === "object")
+      ? data.live.attribution
+      : {};
+  const hitRateRows = normalizeRows(attribution.hit_rate_by_setup_type || attribution.setup_hit_rate);
+  const expectancyRows = normalizeRows(attribution.expectancy_by_conviction_bucket || attribution.conviction_expectancy);
+  const drawdownRows = normalizeRows(attribution.drawdown_by_strategy_tag || attribution.strategy_drawdown);
+  const thesisRows = normalizeRows(attribution.thesis_quality_vs_realized_outcome || attribution.thesis_quality_vs_realized);
+
+  const cards = [
+    renderAttributionTable({
+      title: "Hit Rate by Setup Type",
+      rows: hitRateRows,
+      valueFormatter: (value) => formatPercentPoints(value, 2),
+      valueLabel: "Hit rate",
+    }),
+    renderAttributionTable({
+      title: "Expectancy by Conviction Bucket",
+      rows: expectancyRows,
+      valueFormatter: (value) => formatPercentPoints(value, 2),
+      valueLabel: "Expectancy",
+    }),
+    renderAttributionTable({
+      title: "Drawdown by Strategy Tag",
+      rows: drawdownRows,
+      valueFormatter: (value) => formatPercentPoints(value, 2),
+      valueLabel: "Drawdown",
+    }),
+    renderThesisQuality(thesisRows),
+  ].filter(Boolean);
+
+  if (!cards.length) {
+    return `<p class="muted perf-attribution-placeholder">Attribution view unavailable until thesis-outcome data is captured.</p>`;
+  }
+
+  return `
+    <div class="perf-attribution-wrap">
+      <h3>Thesis Accountability</h3>
+      <div class="subtle">Post-trade attribution by setup, conviction, drawdown profile, and realized thesis quality.</div>
+      <div class="perf-attribution-grid">${cards.join("")}</div>
+    </div>
+  `;
+}
 
 export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = () => "balanced" } = {}) {
   const rawDetails = document.getElementById("performanceRawDetails");
@@ -77,9 +173,9 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
           <td>${safeText(o.ticker)}</td>
           <td>${safeText(o.side)}</td>
           <td>${safeText(o.qty)}</td>
-          <td>${o.fill_price != null && o.fill_price !== "" ? safeText(o.fill_price) : "—"}</td>
+          <td>${o.fill_price != null && o.fill_price !== "" ? formatDecimal(o.fill_price, 2) : "—"}</td>
           <td>${safeText(o.date)}</td>
-          <td>${o.mirofish_conviction != null ? safeText(o.mirofish_conviction) : "—"}</td>
+          <td>${o.mirofish_conviction != null ? formatDecimal(o.mirofish_conviction, 1) : "—"}</td>
           <td>${safeText(o.sector_etf)}</td>
         </tr>`;
       })
@@ -143,6 +239,7 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     </div>
     ${callout}
     ${outcomesTable || `<p class="muted perf-outcomes-empty">No recent outcome rows yet.</p>`}
+    ${renderAttributionAccountability(data)}
   `;
   if (rawDetails && data && !error && getDisplayMode() === "pro") rawDetails.open = true;
 
@@ -271,13 +368,17 @@ export function renderEvolvePanel(rootEl, data) {
 }
 
 export async function refreshPerformance({ getDisplayMode = () => "balanced" } = {}) {
-  const out = await api.get("/api/performance");
   const panel = document.getElementById("performancePanel");
   const evolveBtn = document.getElementById("evolveBtn");
   const challengerBtn = document.getElementById("challengerBtn");
   if (!panel) return;
+  panel.innerHTML = `<div class="report-empty">Loading performance snapshot...</div>`;
+  const out = await api.get("/api/performance");
   if (!out.ok) {
-    renderPerformancePanel(panel, null, { error: `Performance load failed: ${out.error}`, getDisplayMode });
+    renderPerformancePanel(panel, null, {
+      error: `Performance load failed: ${safeText(out.user_message || out.error)}`,
+      getDisplayMode,
+    });
     if (evolveBtn) {
       evolveBtn.disabled = true;
       evolveBtn.title = "Performance data unavailable.";

@@ -97,3 +97,8 @@ class StrategyChatRequest(BaseModel):
                 raise ValueError(f"message {i}: content is required")
         return v
 
+
+class AnalyticsEventPayload(BaseModel):
+    event: str = Field(min_length=1, max_length=64)
+    properties: dict[str, Any] = Field(default_factory=dict)
+

@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
@@ -26,6 +26,9 @@ from schwab_auth import DualSchwabAuth, write_encrypted_token_file
 from sector_strength import get_sector_heatmap
 from signal_scanner import scan_for_signals_detailed
 
+from ._shared import (
+    build_portfolio_risk_analytics as _shared_build_portfolio_risk_analytics,
+)
 from ._shared import (
     build_portfolio_summary as _shared_build_portfolio_summary,
 )
@@ -137,6 +140,7 @@ def _validate_startup_configuration() -> None:
 Base.metadata.create_all(bind=engine)
 try:
     from feature_store import ensure_table as _ensure_feature_store_table
+
     _ensure_feature_store_table()
 except Exception:
     pass
@@ -166,6 +170,32 @@ app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(research_router)
 app.include_router(learning_router)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        msg = str(detail.get("message") or detail.get("error") or detail)
+    elif isinstance(detail, list):
+        msg = "; ".join(str(item) for item in detail)
+    else:
+        msg = str(detail or "Request failed.")
+    payload = api_err(msg).model_dump()
+    payload["detail"] = msg
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse | PlainTextResponse:
+    if request.url.path.startswith("/api/"):
+        LOG.exception("Unhandled API error on %s: %s", request.url.path, exc)
+        payload = api_err("Internal server error.").model_dump()
+        payload["detail"] = "Internal server error."
+        return JSONResponse(status_code=500, content=payload)
+    LOG.exception("Unhandled non-API error on %s: %s", request.url.path, exc)
+    return PlainTextResponse("Internal server error.", status_code=500)
+
 
 _metrics_lock = threading.Lock()
 _request_metrics: dict[str, Any] = {
@@ -245,9 +275,7 @@ def _record_request(path: str, method: str, status_code: int, latency_ms: float)
         elif status_code >= 400:
             bucket["client_errors"] = int(bucket.get("client_errors", 0) or 0) + 1
             bucket["errors"] = int(bucket.get("errors", 0) or 0) + 1
-            _request_metrics["client_errors_total"] = int(
-                _request_metrics.get("client_errors_total", 0) or 0
-            ) + 1
+            _request_metrics["client_errors_total"] = int(_request_metrics.get("client_errors_total", 0) or 0) + 1
 
 
 @app.middleware("http")
@@ -366,13 +394,20 @@ def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> di
     max_trades = int(os.getenv("MAX_TRADES_PER_DAY", "20") or 20)
     max_total_account = float(os.getenv("MAX_TOTAL_ACCOUNT_VALUE", "500000") or 500000)
     est_value = float((trade.price or 0) * (trade.qty or 0))
-    est_risk_pct = round((est_value / max_total_account) * 100.0, 2) if max_total_account > 0 and est_value > 0 else None
+    est_risk_pct = (
+        round((est_value / max_total_account) * 100.0, 2) if max_total_account > 0 and est_value > 0 else None
+    )
     event_risk = signal.get("event_risk") if isinstance(signal, dict) else {}
     regime = signal.get("regime_v2") if isinstance(signal, dict) else {}
     blocked = []
     if live_trades_today >= max_trades:
         blocked.append("max_daily_trades_reached")
-    if isinstance(event_risk, dict) and event_risk.get("mode") == "live" and event_risk.get("flagged") and event_risk.get("action") == "block":
+    if (
+        isinstance(event_risk, dict)
+        and event_risk.get("mode") == "live"
+        and event_risk.get("flagged")
+        and event_risk.get("action") == "block"
+    ):
         blocked.append("event_risk_block")
     if isinstance(regime, dict) and str(regime.get("mode", "off")) == "live":
         score = float(regime.get("score", 100) or 100)
@@ -397,6 +432,10 @@ def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> di
 
 def _build_portfolio_summary(account_status: dict[str, Any]) -> dict[str, Any]:
     return _shared_build_portfolio_summary(account_status)
+
+
+def _build_portfolio_risk_analytics(summary: dict[str, Any], *, skill_dir: Path) -> dict[str, Any]:
+    return _shared_build_portfolio_risk_analytics(summary, skill_dir=skill_dir)
 
 
 def _scan_snapshot() -> dict[str, Any]:
@@ -626,7 +665,9 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "technical": {
             "verdict": bucket(signal_score, 65.0, 45.0),
-            "takeaway": "Trend setup aligned." if technical.get("stage_2") and technical.get("vcp") else "Setup quality is mixed.",
+            "takeaway": "Trend setup aligned."
+            if technical.get("stage_2") and technical.get("vcp")
+            else "Setup quality is mixed.",
         },
         "dcf": {
             "verdict": bucket(mos, 10.0, -10.0),
@@ -634,7 +675,9 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
         },
         "health": {
             "verdict": "bullish" if len(health_flags) == 0 else ("bearish" if len(health_flags) >= 3 else "neutral"),
-            "takeaway": "Balance sheet and margins are stable." if len(health_flags) == 0 else "Review flagged financial risks.",
+            "takeaway": "Balance sheet and margins are stable."
+            if len(health_flags) == 0
+            else "Review flagged financial risks.",
         },
         "mirofish": {
             "verdict": bucket(conviction, 30.0, -30.0),
@@ -701,12 +744,15 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                         "error": None,
                     }
                 )
-        _sse_publish("scan_completed", {
-            "job_id": job_id,
-            "signals_found": len(signals),
-            "diagnostics_summary": diagnostics_summary,
-            "strategy_summary": strategy_summary,
-        })
+        _sse_publish(
+            "scan_completed",
+            {
+                "job_id": job_id,
+                "signals_found": len(signals),
+                "diagnostics_summary": diagnostics_summary,
+                "strategy_summary": strategy_summary,
+            },
+        )
     except Exception as e:
         with _scan_lock:
             if _scan_job.get("job_id") == job_id:
@@ -722,11 +768,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
 
 
 def _load_state(db: Session, key: str, default: dict[str, Any]) -> dict[str, Any]:
-    row = (
-        db.query(AppState)
-        .filter(AppState.user_id == LOCAL_DASHBOARD_USER_ID, AppState.key == key)
-        .first()
-    )
+    row = db.query(AppState).filter(AppState.user_id == LOCAL_DASHBOARD_USER_ID, AppState.key == key).first()
     if not row:
         return default
     try:
@@ -737,11 +779,7 @@ def _load_state(db: Session, key: str, default: dict[str, Any]) -> dict[str, Any
 
 
 def _save_state(db: Session, key: str, value: dict[str, Any]) -> None:
-    row = (
-        db.query(AppState)
-        .filter(AppState.user_id == LOCAL_DASHBOARD_USER_ID, AppState.key == key)
-        .first()
-    )
+    row = db.query(AppState).filter(AppState.user_id == LOCAL_DASHBOARD_USER_ID, AppState.key == key).first()
     if not row:
         row = AppState(
             user_id=LOCAL_DASHBOARD_USER_ID,
@@ -812,6 +850,21 @@ def require_api_key_if_set(
     return require_trade_api_key(x_api_key=x_api_key, x_user=x_user)
 
 
+def require_api_key_if_set_or_query(
+    api_key: str | None = None,
+    x_api_key: str | None = Header(default=None),
+    x_user: str | None = Header(default=None),
+) -> dict[str, str]:
+    """SSE-compatible auth: allow API key in query string when headers are unavailable."""
+    configured = os.getenv("WEB_API_KEY", "").strip()
+    if not configured:
+        return {"actor": (x_user or "web-user").strip() or "web-user"}
+    provided = (x_api_key or api_key or "").strip()
+    if not provided or provided != configured:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+    return {"actor": (x_user or "web-user").strip() or "web-user"}
+
+
 @app.get("/")
 def index() -> HTMLResponse:
     return render_versioned_html(STATIC_DIR / "index.html")
@@ -836,12 +889,14 @@ _STARTUP_TIME = datetime.now(timezone.utc)
 def health() -> ApiResponse:
     now = datetime.now(timezone.utc)
     uptime_seconds = int((now - _STARTUP_TIME).total_seconds())
-    return _ok({
-        "status": "ok",
-        "time": now.isoformat(),
-        "uptime_seconds": uptime_seconds,
-        "version": app.version,
-    })
+    return _ok(
+        {
+            "status": "ok",
+            "time": now.isoformat(),
+            "uptime_seconds": uptime_seconds,
+            "version": app.version,
+        }
+    )
 
 
 @app.get("/healthz", response_class=PlainTextResponse, include_in_schema=False)
@@ -855,7 +910,7 @@ def healthz_plaintext() -> PlainTextResponse:
 
 @app.get("/api/events")
 async def sse_events(
-    _auth: dict[str, str] = Depends(require_api_key_if_set),
+    _auth: dict[str, str] = Depends(require_api_key_if_set_or_query),
 ) -> StreamingResponse:
     """Server-Sent Events stream for real-time dashboard updates."""
     q: queue.Queue = queue.Queue(maxsize=256)
@@ -903,16 +958,16 @@ def public_config() -> ApiResponse:
         "on",
     )
     schwab_oauth = bool(
-        (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-        and (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+        (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip() and (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
     )
     schwab_market_oauth = bool(
-        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        and (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
+        (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip() and (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
     )
     data: dict[str, Any] = {
         "supabase": supabase,
         "saas_mode": False,
+        "runtime_mode": "local",
+        "ui_contract_version": "2026-04-webapp-stabilization",
         "scan_transport": "local_thread",
         "sse_enabled": True,
         "schwab_oauth": schwab_oauth,
@@ -925,6 +980,19 @@ def public_config() -> ApiResponse:
     if impl.startswith(("http://", "https://")):
         data["implementation_guide_url"] = impl
     return _ok(data)
+
+
+@app.get("/api/runtime-contract", response_model=ApiResponse)
+def runtime_contract() -> ApiResponse:
+    return _ok(
+        {
+            "runtime_mode": "local",
+            "scan_transport": "local_thread",
+            "sse_enabled": True,
+            "api_envelope": "ApiResponse",
+            "ui_contract_version": "2026-04-webapp-stabilization",
+        }
+    )
 
 
 @app.get("/api/oauth/schwab/authorize-url", response_model=ApiResponse)
@@ -997,19 +1065,13 @@ def local_schwab_market_oauth_callback(
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")
     kind = _consume_local_oauth_state(state)
     if kind != "market" or not code.strip():
-        return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("invalid_or_expired_state")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
     redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
     if not client_id or not client_secret:
-        return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("server_market_oauth_not_configured")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("server_market_oauth_not_configured"))
     try:
         tok = exchange_schwab_code_for_tokens(client_id, client_secret, code, redirect_uri)
     except Exception as e:
@@ -1017,10 +1079,7 @@ def local_schwab_market_oauth_callback(
     access = str(tok.get("access_token") or "").strip()
     refresh = str(tok.get("refresh_token") or "").strip()
     if not access or not refresh:
-        return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("token_response_missing_tokens")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
     write_encrypted_token_file(TOKENS_MARKET_PATH, tok, client_secret)
     _audit_event("oauth_schwab_market_callback", "local-dashboard", {"saved": "tokens_market.enc"})
     return red("schwab_market_oauth=ok")
@@ -1236,8 +1295,6 @@ def scan_lifecycle(db: Session = Depends(get_db)) -> ApiResponse:
     return _ok(_scan_lifecycle_payload(snapshot, last_scan=last_scan))
 
 
-
-
 @app.get("/api/portfolio", response_model=ApiResponse)
 def portfolio() -> ApiResponse:
     try:
@@ -1255,103 +1312,13 @@ def portfolio() -> ApiResponse:
 def portfolio_risk() -> ApiResponse:
     """Portfolio risk analytics: sector allocation, concentration, and exposure metrics."""
     try:
-        from sector_strength import SECTOR_TO_ETF, get_ticker_sector_etf
-
         auth = DualSchwabAuth(skill_dir=SKILL_DIR)
         status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(status_data, str):
             _record_endpoint_error("portfolio_risk")
             return ApiResponse(ok=False, error=status_data)
-
         summary = _build_portfolio_summary(status_data)
-        positions = summary.get("positions", [])
-        total_value = summary.get("total_market_value", 0.0)
-
-        if not positions or total_value <= 0:
-            return _ok({
-                "total_value": 0,
-                "position_count": 0,
-                "sector_allocation": [],
-                "concentration": {},
-                "positions_weighted": [],
-                "day_pl_total": 0,
-                "day_pl_breakdown": [],
-            })
-
-        sector_buckets: dict[str, float] = {}
-        etf_reverse: dict[str, str] = {}
-        for name, etf in SECTOR_TO_ETF.items():
-            etf_reverse.setdefault(etf, name.title())
-
-        weighted_positions: list[dict[str, Any]] = []
-        day_pl_total = 0.0
-        day_pl_breakdown: list[dict[str, Any]] = []
-
-        for pos in positions:
-            sym = pos["symbol"]
-            mkt = float(pos.get("market_value", 0))
-            weight = round((mkt / total_value) * 100, 2) if total_value > 0 else 0
-            day_pl = float(pos.get("day_pl", 0))
-            day_pl_total += day_pl
-
-            sector_etf = get_ticker_sector_etf(sym, skill_dir=SKILL_DIR)
-            sector_name = etf_reverse.get(sector_etf, "Unknown") if sector_etf else "Unknown"
-            sector_buckets[sector_name] = sector_buckets.get(sector_name, 0) + mkt
-
-            weighted_positions.append({
-                "symbol": sym,
-                "weight_pct": weight,
-                "market_value": mkt,
-                "sector": sector_name,
-                "sector_etf": sector_etf,
-                "pl_pct": pos.get("pl_pct", 0),
-                "day_pl": day_pl,
-            })
-            day_pl_breakdown.append({
-                "symbol": sym,
-                "day_pl": round(day_pl, 2),
-                "contribution_pct": round((day_pl / total_value) * 100, 4) if total_value > 0 else 0,
-            })
-
-        sector_allocation = sorted(
-            [
-                {
-                    "sector": name,
-                    "value": round(val, 2),
-                    "weight_pct": round((val / total_value) * 100, 2),
-                }
-                for name, val in sector_buckets.items()
-            ],
-            key=lambda x: x["weight_pct"],
-            reverse=True,
-        )
-
-        weights = [p["weight_pct"] for p in weighted_positions]
-        hhi = round(sum(w ** 2 for w in weights), 2)
-        top1 = max(weights) if weights else 0
-        top5_weight = round(sum(sorted(weights, reverse=True)[:5]), 2)
-        sector_count = len([s for s in sector_allocation if s["weight_pct"] > 0])
-
-        concentration = {
-            "hhi": hhi,
-            "hhi_label": "Concentrated" if hhi > 2500 else ("Moderate" if hhi > 1500 else "Diversified"),
-            "top_position_pct": top1,
-            "top_5_pct": top5_weight,
-            "sector_count": sector_count,
-            "position_count": len(positions),
-        }
-
-        day_pl_breakdown.sort(key=lambda x: abs(x["day_pl"]), reverse=True)
-
-        return _ok({
-            "total_value": round(total_value, 2),
-            "position_count": len(positions),
-            "sector_allocation": sector_allocation,
-            "concentration": concentration,
-            "positions_weighted": weighted_positions,
-            "day_pl_total": round(day_pl_total, 2),
-            "day_pl_breakdown": day_pl_breakdown[:10],
-        })
+        return _ok(_build_portfolio_risk_analytics(summary, skill_dir=SKILL_DIR))
     except Exception as e:
         return _err("portfolio_risk", e)
 
@@ -1463,11 +1430,7 @@ def delete_all_pending_trades(
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     """Permanently remove all trades (executed/rejected/failed/pending) from the history."""
-    rows = (
-        db.query(PendingTrade)
-        .filter(PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
-        .all()
-    )
+    rows = db.query(PendingTrade).filter(PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID).all()
     deleted_ids = [r.id for r in rows]
     status_breakdown: dict[str, int] = {}
     for row in rows:
@@ -1475,11 +1438,15 @@ def delete_all_pending_trades(
         db.delete(row)
     db.commit()
     if deleted_ids:
-        _audit_event("pending_trades_deleted_all", "web-user", {
-            "deleted": len(deleted_ids),
-            "trade_ids": deleted_ids,
-            "by_status": status_breakdown,
-        })
+        _audit_event(
+            "pending_trades_deleted_all",
+            "web-user",
+            {
+                "deleted": len(deleted_ids),
+                "trade_ids": deleted_ids,
+                "by_status": status_breakdown,
+            },
+        )
     return _ok({"deleted": len(deleted_ids), "by_status": status_breakdown})
 
 
@@ -1680,7 +1647,11 @@ def set_profile(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_state(db, "ui_settings", settings)
-    _audit_event("settings_profile_applied", "web-user", {"profile": p, "mode": mode_n, "automation_opt_in": bool(automation_opt_in)})
+    _audit_event(
+        "settings_profile_applied",
+        "web-user",
+        {"profile": p, "mode": mode_n, "automation_opt_in": bool(automation_opt_in)},
+    )
     return _ok({"settings": settings, "runtime_overrides": runtime})
 
 
@@ -1854,7 +1825,9 @@ def onboarding_status(db: Session = Depends(get_db)) -> ApiResponse:
             **current,
             "elapsed_minutes": elapsed_minutes,
             "target_minutes": current.get("target_minutes", ONBOARDING_TARGET_MINUTES),
-            "completed_under_target": bool(completion and elapsed_minutes is not None and elapsed_minutes <= ONBOARDING_TARGET_MINUTES),
+            "completed_under_target": bool(
+                completion and elapsed_minutes is not None and elapsed_minutes <= ONBOARDING_TARGET_MINUTES
+            ),
         }
     )
 
@@ -1877,9 +1850,7 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
     stop_pct = max(0.03, min(0.15, 0.07))
     stop_level = round(price * (1.0 - stop_pct), 2) if price > 0 else None
     entry_zone = (
-        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)}
-        if price > 0
-        else {"low": None, "high": None}
+        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)} if price > 0 else {"low": None, "high": None}
     )
     confidence_bucket = str(((signal.get("advisory") or {}).get("confidence_bucket") or "unknown")).lower()
     score = float(signal.get("signal_score", 0) or 0)
@@ -1894,7 +1865,9 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
     if signal.get("event_risk", {}).get("flagged"):
         reasons.append(f"event_risk={','.join(signal.get('event_risk', {}).get('reasons', []))}")
 
-    mock_trade = PendingTrade(id="preview", ticker=symbol, qty=qty, price=price, status="pending", signal_json=json.dumps(signal), note=None)
+    mock_trade = PendingTrade(
+        id="preview", ticker=symbol, qty=qty, price=price, status="pending", signal_json=json.dumps(signal), note=None
+    )
     checklist = _build_pretrade_checklist(mock_trade, signal)
 
     return _ok(
@@ -1913,6 +1886,3 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
             "checklist": checklist,
         }
     )
-
-
-

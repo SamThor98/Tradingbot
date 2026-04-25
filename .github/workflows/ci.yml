@@ -28,6 +28,10 @@ jobs:
       - name: Ruff
         run: python -m ruff check .
 
+      - name: Ruff format check
+        continue-on-error: true
+        run: python -m ruff format --check .
+
       - name: Pytest
         run: python -m pytest -q --cov=webapp --cov-report=term-missing --cov-fail-under=48
 

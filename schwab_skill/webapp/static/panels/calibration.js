@@ -72,9 +72,14 @@ export function renderCalibrationPanel(panel, data, error) {
 export async function refreshCalibration() {
   const panel = document.getElementById("calibrationPanel");
   if (!panel) return;
+  renderCalibrationPanel(panel, null, "Loading calibration snapshot...");
   const out = await api.get("/api/calibration/summary");
   if (!out.ok) {
-    renderCalibrationPanel(panel, null, `Calibration load failed: ${out.error}`);
+    renderCalibrationPanel(
+      panel,
+      null,
+      `Calibration load failed: ${out.user_message || out.error}`,
+    );
     return;
   }
   state.calibration = out.data;

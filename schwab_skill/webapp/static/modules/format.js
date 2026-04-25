@@ -36,7 +36,14 @@ export function prettyJson(value) {
 }
 
 export function formatMoney(value) {
-  return `$${safeNum(value, 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `$${safeNum(value, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Format a decimal with fixed precision (e.g. 12.3, 45.67). */
+export function formatDecimal(value, digits = 1, fallback = "—") {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return n.toFixed(digits);
 }
 
 /** Format a fraction (0.42) as "42.0%". */

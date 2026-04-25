@@ -29,20 +29,11 @@
     <main id="mainContent" class="container">
       <header class="hero card hero-shell">
         <div class="hero-main">
-          <p class="eyebrow">Schwab + Strategy Control Center</p>
-          <h1>TradingBot Web Dashboard</h1>
+          <p class="eyebrow">Daily Trading Workflow</p>
+          <h1>TradingBot</h1>
           <p class="muted hero-lead">
-            See what needs attention first—health, blockers, and pending approvals—then run a scan or open a tool when you need it.
-            <a href="/simple">Simple scan page</a> (focused zero-signal diagnostics).
-            Open directly on <a href="/?section=backtest">backtests</a> or <a href="/?section=pending">pending approvals</a> via the URL.
-          </p>
-          <p class="muted hero-quick-links">
-            Jump to:
-            <a href="#workflowPrimary">Scan</a> ·
-            <a href="#pendingSection">Pending trades</a> ·
-            <a href="#onboardingSection">Setup</a> ·
-            <a href="#backtestSection">Backtest</a> ·
-            <a href="/login">Sign in</a>
+            Run <strong>Scan</strong>, review <strong>Pending</strong>, then resolve blockers in <strong>Setup</strong> only when needed.
+            Need scan-only? <a href="/simple">Open Simple scan page</a>.
           </p>
           <div class="hero-actions">
             <button id="refreshBtn" class="btn secondary">Refresh All</button>
@@ -61,11 +52,11 @@
               <li class="muted">No notifications yet.</li>
             </ul>
           </div>
-          <div class="hero-toolbar" role="group" aria-label="Dashboard layout">
-            <label class="field-label" for="displayModeSelect">View</label>
+          <div class="hero-toolbar" role="group" aria-label="Dashboard detail level">
+            <label class="field-label" for="displayModeSelect">Detail level</label>
             <select id="displayModeSelect" title="Simple shows only today’s workflow; Standard balances depth; Pro surfaces diagnostics faster.">
-              <option value="simple">Simple</option>
-              <option value="standard" selected>Standard</option>
+              <option value="simple" selected>Simple</option>
+              <option value="standard">Standard</option>
               <option value="pro">Pro</option>
             </select>
           </div>
@@ -199,30 +190,38 @@
       <section id="actionCenter" class="card action-center" aria-live="polite">
         <div class="action-center-icon" aria-hidden="true"></div>
         <div class="action-center-body">
-          <strong id="actionCenterTitle">System Messages</strong>
-          <p id="actionCenterText" class="muted">Ready. Use Run Scan or Refresh All to begin.</p>
+          <strong id="actionCenterTitle">Next Action</strong>
+          <p id="actionCenterText" class="muted">Ready. Run Scan to load candidates.</p>
         </div>
       </section>
       </div>
 
-      <nav class="section-nav card" aria-label="Jump to tasks">
-        <a href="#dashboardToday">Today</a>
-        <a href="#workflowPrimary">Scan &amp; queue</a>
-        <a href="#quickCheckSection">Ticker check</a>
-        <a href="#onboardingSection">Setup</a>
-        <a href="#toolsSection" class="nav-advanced">Tools</a>
-        <a href="#statusDetailsPanel" class="nav-advanced">Detailed status</a>
-        <a href="#settingsSection" class="nav-advanced">Presets</a>
-        <a href="#decisionSection" class="nav-advanced">Decision card</a>
-        <a href="#portfolioSection" class="nav-advanced">Portfolio</a>
-        <a href="#performanceSection" class="nav-advanced">Performance</a>
-        <a href="#calibrationSection" class="nav-advanced">Calibration</a>
-        <a href="#backtestSection" class="nav-advanced">Backtests</a>
-        <a href="#recoverySection" class="nav-advanced">Recovery</a>
-        <a href="#reportSectionCard" class="nav-advanced">Report</a>
-        <a href="#secCompareSection" class="nav-advanced">SEC compare</a>
-        <a href="#activitySection" class="nav-advanced">Activity</a>
+      <nav class="section-nav card" aria-label="Screen and section navigation">
+        <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
+          <button type="button" class="screen-switch-btn" data-screen-mode="daily" aria-selected="true">Daily</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="setup" aria-selected="false">Setup</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="portfolio" aria-selected="false">Portfolio</button>
+        </div>
+        <a href="#dashboardToday" data-nav-screens="daily">Today</a>
+        <a href="#workflowPrimary" data-nav-screens="daily">Scan &amp; queue</a>
+        <a href="#pendingSection" data-nav-screens="daily">Pending</a>
+        <a href="#onboardingSection" data-nav-screens="setup">Setup</a>
+        <a href="#toolsSection" class="nav-advanced" data-nav-screens="research">Research tools</a>
+        <a href="#portfolioSection" data-nav-screens="portfolio">Portfolio</a>
       </nav>
+
+      <section id="screenContextCard" class="card screen-context" aria-live="polite">
+        <div class="screen-context-copy">
+          <strong id="screenContextTitle">Daily workflow</strong>
+          <p id="screenContextText" class="muted">Run a scan, review pending approvals, and only open setup if blocked.</p>
+          <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
+        </div>
+        <div class="screen-context-actions">
+          <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Go to pending</a>
+          <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Go to workflow</a>
+        </div>
+      </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan &amp; pending decisions</h2>
@@ -241,8 +240,8 @@
           </div>
           <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced">
             <summary class="panel-disclosure-summary">
-              Diagnostics, funnel &amp; breakdown
-              <span class="disclosure-hint muted">why counts look the way they do</span>
+              Diagnostics and funnel
+              <span class="disclosure-hint muted">why symbols were filtered out</span>
             </summary>
             <div class="scan-insights">
               <div class="scan-block">
@@ -258,13 +257,12 @@
           </details>
           <details id="scanAdvancedOptionsPanel" class="panel-disclosure panel-disclosure--advanced nav-advanced">
             <summary class="panel-disclosure-summary">
-              Advanced: scan options (backtest parity)
-              <span class="disclosure-hint muted">optional JSON with Run Scan</span>
+              Advanced scan options
+              <span class="disclosure-hint muted">optional JSON overrides</span>
             </summary>
             <p class="muted small" style="margin: 0.5rem 0">
-              <code>strategy_overrides</code> (same fields as backtest), <code>universe_mode</code>:
-              <code>watchlist</code> or <code>tickers</code>, and <code>tickers</code> when mode is
-              <code>tickers</code>.
+              Optional keys: <code>strategy_overrides</code>, <code>universe_mode</code>
+              (<code>watchlist</code> or <code>tickers</code>), and <code>tickers</code>.
             </p>
             <textarea
               id="scanOptionsJson"
@@ -308,7 +306,7 @@
           <div class="section-title section-title--with-action">
             <div>
               <h2>Pending approvals</h2>
-              <small class="muted">Approve, reject, or quick-view before sending live orders.</small>
+              <small class="muted">Review and decide queued orders.</small>
             </div>
             <button
               type="button"
@@ -364,17 +362,17 @@
             </div>
           </details>
           <div id="pendingBoard" class="task-board">
-            <div class="task-empty muted">No trades yet.</div>
+            <div class="task-empty muted">No trades yet. Stage trades from Scan results.</div>
           </div>
         </article>
         </div>
       </section>
 
       <div class="layout-2 layout-quick-tools">
-        <article id="quickCheckSection" class="card card--primary-task">
+        <article id="quickCheckSection" class="card card--primary-task section-advanced">
           <div class="section-title">
             <h2>Quick ticker check</h2>
-            <small class="muted">Fast health read—no full report unless you need it.</small>
+            <small class="muted">Fast symbol health check.</small>
           </div>
           <div class="inline-form">
             <label class="field-label" for="tickerInput">Ticker</label>
@@ -394,25 +392,10 @@
 
         <section id="toolsSection" class="card tools-hub section-advanced" aria-labelledby="toolsHeading">
           <div class="section-title">
-            <h2 id="toolsHeading">Tools</h2>
-            <small class="muted">One jump per job—same APIs underneath.</small>
+            <h2 id="toolsHeading">Research tools</h2>
+            <small class="muted">Power-user workflows and diagnostics.</small>
           </div>
           <div class="tools-grid" role="list">
-            <a class="tool-card" role="listitem" href="#scanSection">
-              <h3 class="tool-card-title">Run / focus scan</h3>
-              <p class="tool-card-desc muted">Screen candidates and queue from the table.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#pendingSection">
-              <h3 class="tool-card-title">Pending trades</h3>
-              <p class="tool-card-desc muted">Approve or reject staged orders.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#onboardingSection">
-              <h3 class="tool-card-title">Schwab setup</h3>
-              <p class="tool-card-desc muted">Two Schwab logins (account + market), then optional checks.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
             <a class="tool-card" role="listitem" href="#decisionSection">
               <h3 class="tool-card-title">Decision card</h3>
               <p class="tool-card-desc muted">Structured take/pass for one symbol.</p>
@@ -446,7 +429,7 @@
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
             <h2>Connect Schwab &amp; setup</h2>
-            <small id="onboardingMeta" class="muted">Target completion: under 20 minutes</small>
+            <small id="onboardingMeta" class="muted">Complete setup once, then return to Scan and Pending.</small>
           </div>
 
           <ol id="onboardingStepper" class="onboarding-stepper" aria-label="Schwab setup progress">
@@ -469,29 +452,28 @@
           </div>
 
           <details class="onboarding-help" id="onboardingHelp">
-            <summary>Help &amp; FAQ</summary>
+            <summary>Need setup help?</summary>
             <div class="onboarding-help-body">
-              <h3>Why two “Connect” buttons?</h3>
+              <h3>Why two connect steps?</h3>
               <p class="muted">
-                Schwab splits API access between <strong>market data</strong> (quotes, history) and your
-                <strong>brokerage account</strong> (balances, positions, orders). This app needs both — that’s why
-                steps 1 and 2 each require a separate Schwab approval.
+                Schwab separates <strong>market data</strong> and <strong>brokerage account</strong> permissions, so this app
+                needs both approvals.
               </p>
-              <h3>Before you start</h3>
+              <h3>Before you connect</h3>
               <ul class="onboarding-help-list muted">
-                <li>Sign in to <strong>this</strong> site first.</li>
-                <li>Allow pop-ups / redirects — you’ll briefly leave to approve on Schwab.</li>
-                <li>Use the same Schwab login you use for brokerage (or paper trading).</li>
+                <li>Sign in to this dashboard first.</li>
+                <li>Allow pop-ups/redirects for Schwab approval.</li>
+                <li>Use the Schwab login tied to this account.</li>
               </ul>
-              <h3>If something fails</h3>
+              <h3>If a step fails</h3>
               <ul class="onboarding-help-list muted">
-                <li>Try the failing step again after a full page refresh.</li>
-                <li>Confirm both <em>account</em> and <em>market</em> approvals completed.</li>
-                <li>Check for an error banner after returning from Schwab; copy the message if you contact support.</li>
+                <li>Refresh the page, then retry only that step.</li>
+                <li>Confirm both account and market approvals completed.</li>
+                <li>Copy the error banner text if you need support.</li>
               </ul>
               <p class="muted small">
-                Need the public-facing setup write-up?
-                <a href="/static/connect-schwab-guide.html" target="_blank" rel="noopener noreferrer">Open setup guide ↗</a>
+                Need the public guide?
+                <a href="/static/connect-schwab-guide.html" target="_blank" rel="noopener noreferrer">Open setup guide</a>
                 ·
                 <a id="implementationGuideLink" class="hidden" href="#" target="_blank" rel="noopener noreferrer">Hosting-provider guide</a>
               </p>
@@ -520,7 +502,7 @@
 
           <div id="onboardingOutputHost" class="tool-output-host tool-output-padded">
             <div id="onboardingCards" aria-live="polite">
-              <p class="muted">Run the wizard or click individual steps above.</p>
+              <p class="muted">Click Next step to continue setup.</p>
             </div>
             <details id="onboardingJsonDetails" class="tool-json-details hidden">
               <summary>Raw data</summary>
@@ -573,6 +555,14 @@
             </div>
             <div id="twoFaPanel" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
               <p class="muted small">2FA controls loading...</p>
+            </div>
+            <div id="billingSaasBlock" class="hidden" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
+              <h3 class="field-label">Billing</h3>
+              <p id="billingStatusLine" class="muted small">Loading billing status...</p>
+              <div class="inline-form compact">
+                <button id="billingCheckoutBtn" type="button" class="btn secondary small">Start subscription checkout</button>
+                <button id="billingPortalBtn" type="button" class="btn secondary small">Manage billing portal</button>
+              </div>
             </div>
           </div>
           <div id="profilePanel" class="preset-panel" aria-live="polite">
@@ -671,7 +661,7 @@
         <article id="portfolioSection" class="card" data-lazy-api="portfolio">
           <div class="section-title">
             <h2>Portfolio</h2>
-            <small id="portfolioMeta" class="muted">Loading...</small>
+              <small id="portfolioMeta" class="muted">Open the Portfolio screen to load positions.</small>
           </div>
           <div class="table-wrap">
             <table>
@@ -686,7 +676,7 @@
                 </tr>
               </thead>
               <tbody id="portfolioBody">
-                <tr><td colspan="5" class="muted">Loading...</td></tr>
+                <tr><td colspan="5" class="muted">Open Portfolio screen or click Refresh.</td></tr>
               </tbody>
             </table>
           </div>
@@ -721,7 +711,7 @@
             <button id="performanceRefreshBtn" class="btn secondary">Refresh Performance</button>
           </div>
           <div id="performancePanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">No performance snapshot loaded yet.</div>
+            <div class="report-empty">No performance snapshot loaded yet. Click Refresh Performance.</div>
           </div>
           <details id="performanceRawDetails" class="details-raw hidden">
             <summary>Raw JSON</summary>
@@ -960,7 +950,7 @@
           </div>
           <div id="reportTabs" class="report-tabs"></div>
           <div id="reportVisual" class="report-visual">
-            <div class="report-empty">No report run yet.</div>
+            <div class="report-empty">No report run yet. Enter a ticker and run report.</div>
           </div>
           <pre id="reportOutput" class="code-block">No report run yet.</pre>
         </article>
@@ -998,7 +988,7 @@
             <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="AMZN" data-b="WMT">AMZN vs WMT</button>
             <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
           </div>
-          <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet.</div>
+          <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
           <div id="secCompareHeadline" class="compare-headline">
             <div class="report-empty">Run SEC compare to generate a headline verdict.</div>
           </div>
@@ -1152,6 +1142,10 @@
         <div class="cmd-palette-header">
           <svg class="cmd-palette-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="cmdPaletteInput" type="text" class="cmd-palette-input" placeholder="Type a command or section name..." autocomplete="off" spellcheck="false" />
+          <span class="cmd-palette-hints" aria-hidden="true">
+            <kbd class="cmd-palette-hint">Ctrl/Cmd+1..4</kbd>
+            <kbd class="cmd-palette-hint">Ctrl/Cmd+K</kbd>
+          </span>
           <kbd class="cmd-palette-esc">Esc</kbd>
         </div>
         <div id="cmdPaletteList" class="cmd-palette-list" role="listbox"></div>

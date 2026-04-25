@@ -100,13 +100,21 @@ def test_app_js_uses_router_module(app_source: str) -> None:
     # Boot sequence should invoke installRouter — either directly or via
     # a wrapper like safeInit("installRouter", installRouter). Accept both
     # so the contract is about behaviour, not literal call syntax.
-    boot_invokes_router = (
-        "installRouter()" in app_source
-        or 'safeInit("installRouter", installRouter' in app_source
+    boot_invokes_router = "installRouter()" in app_source or 'safeInit("installRouter", installRouter' in app_source
+    assert boot_invokes_router, "app.js boot sequence should call installRouter() from router.js"
+
+
+def test_app_js_checks_runtime_contract(app_source: str) -> None:
+    assert "/api/runtime-contract" in app_source, (
+        "app.js should query /api/runtime-contract during boot so mode/transport "
+        "mismatches are surfaced before users run scans."
     )
-    assert boot_invokes_router, (
-        "app.js boot sequence should call installRouter() from router.js"
-    )
+    assert "validateRuntimeContract(" in app_source
+
+
+def test_app_js_sse_uses_builder_for_api_key_compat(app_source: str) -> None:
+    assert "function buildSseUrl()" in app_source
+    assert "new EventSource(buildSseUrl())" in app_source
 
 
 def test_app_js_does_not_redefine_router_helpers(app_source: str) -> None:
@@ -119,10 +127,7 @@ def test_app_js_does_not_redefine_router_helpers(app_source: str) -> None:
         "function openAncestorDetails(",
     ]
     for needle in forbidden:
-        assert needle not in app_source, (
-            f"{needle!r} reappeared in app.js — should live in "
-            "modules/router.js instead."
-        )
+        assert needle not in app_source, f"{needle!r} reappeared in app.js — should live in modules/router.js instead."
 
 
 def test_app_js_no_longer_inlines_oauth_query_cleanup(app_source: str) -> None:
@@ -132,7 +137,6 @@ def test_app_js_no_longer_inlines_oauth_query_cleanup(app_source: str) -> None:
     assert "clearOAuthQueryParams(" in app_source
     # The old multi-line replaceState block had this exact tail; a
     # regression would re-introduce it.
-    assert (
-        'window.history.replaceState({}, "", u.pathname + (u.search ? u.search : ""))'
-        not in app_source
-    ), "old inline OAuth replaceState block re-introduced in app.js"
+    assert 'window.history.replaceState({}, "", u.pathname + (u.search ? u.search : ""))' not in app_source, (
+        "old inline OAuth replaceState block re-introduced in app.js"
+    )

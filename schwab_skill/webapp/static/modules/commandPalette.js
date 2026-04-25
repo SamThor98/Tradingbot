@@ -1,11 +1,11 @@
 /**
  * Cmd-K command palette.
  *
- * Action callbacks (`runLazyApi`, `applyDisplayMode`, `openTradeDrawer`)
+ * Action callbacks (`runLazyApi`, `applyDisplayMode`, `applyScreenMode`, `openTradeDrawer`)
  * are injected by the caller so this module stays decoupled from the
  * larger `app.js` graph.
  *
- * `setupCommandPalette({ runLazyApi, applyDisplayMode, openTradeDrawer })`
+ * `setupCommandPalette({ runLazyApi, applyDisplayMode, applyScreenMode, openTradeDrawer })`
  * must be called once at bootstrap. Without the deps it falls back to
  * no-ops, which keeps the palette navigable but disables the lazy-loaded
  * section jumps and drawer entry points.
@@ -15,7 +15,7 @@ import { safeText } from "./format.js";
 
 let _actions = [];
 
-function buildActions({ runLazyApi, applyDisplayMode, openTradeDrawer }) {
+function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTradeDrawer }) {
   const lazyJump = (key, sectionId) => () => {
     if (typeof runLazyApi === "function") runLazyApi(key);
     document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
@@ -24,6 +24,9 @@ function buildActions({ runLazyApi, applyDisplayMode, openTradeDrawer }) {
     if (typeof applyDisplayMode === "function") applyDisplayMode(mode);
     const sel = document.getElementById("displayModeSelect");
     if (sel) sel.value = mode;
+  };
+  const setScreenMode = (mode) => () => {
+    if (typeof applyScreenMode === "function") applyScreenMode(mode, { updateUrl: true });
   };
   return [
     { id: "scan", label: "Run Scan", shortcut: "S", icon: "search", action: () => document.getElementById("scanBtn")?.click() },
@@ -34,13 +37,17 @@ function buildActions({ runLazyApi, applyDisplayMode, openTradeDrawer }) {
     { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection") },
     { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection") },
     { id: "performance", label: "Go to Performance", icon: "trending", action: lazyJump("performance", "performanceSection") },
-    { id: "onboarding", label: "Go to Setup / Onboarding", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
+    { id: "onboarding", label: "Go to Setup", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
     { id: "calibration", label: "Go to Calibration", icon: "tune", action: lazyJump("calibration", "calibrationSection") },
     { id: "sec", label: "SEC Filing Compare", icon: "file", action: () => document.getElementById("secCompareSection")?.scrollIntoView({ behavior: "smooth" }) },
-    { id: "report", label: "Full Report", icon: "doc", action: () => document.getElementById("fullReportSection")?.scrollIntoView({ behavior: "smooth" }) },
+    { id: "report", label: "Full Report", icon: "doc", action: () => document.getElementById("reportSectionCard")?.scrollIntoView({ behavior: "smooth" }) },
     { id: "decision", label: "Decision Card (drawer)", icon: "card", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "decision" }) : document.getElementById("decisionSection")?.scrollIntoView({ behavior: "smooth" })) },
     { id: "recovery", label: "Failure Recovery (drawer)", icon: "first-aid", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "recovery" }) : document.getElementById("recoverySection")?.scrollIntoView({ behavior: "smooth" })) },
-    { id: "profiles", label: "Strategy Presets", icon: "sliders", action: lazyJump("profiles", "presetsSection") },
+    { id: "profiles", label: "Strategy Presets", icon: "sliders", action: lazyJump("profiles", "settingsSection") },
+    { id: "screen-daily", label: "Switch Screen: Daily", shortcut: "Ctrl+1", icon: "home", action: setScreenMode("daily") },
+    { id: "screen-setup", label: "Switch Screen: Setup", shortcut: "Ctrl+2", icon: "settings", action: setScreenMode("setup") },
+    { id: "screen-research", label: "Switch Screen: Research", shortcut: "Ctrl+3", icon: "flask", action: setScreenMode("research") },
+    { id: "screen-portfolio", label: "Switch Screen: Portfolio", shortcut: "Ctrl+4", icon: "wallet", action: setScreenMode("portfolio") },
     { id: "simple-view", label: "Switch to Simple view", icon: "eye", action: setDisplayMode("simple") },
     { id: "standard-view", label: "Switch to Standard view", icon: "eye", action: setDisplayMode("standard") },
     { id: "pro-view", label: "Switch to Pro view", icon: "eye", action: setDisplayMode("pro") },

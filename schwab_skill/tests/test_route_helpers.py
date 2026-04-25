@@ -19,10 +19,14 @@ from webapp import main_saas, tenant_dashboard
 from webapp import route_helpers as rh
 
 
-def _make_request(*, scheme: str = "http", netloc: str = "localhost:8000",
-                  forwarded_proto: str | None = None,
-                  forwarded_host: str | None = None,
-                  request_id: str | None = None) -> MagicMock:
+def _make_request(
+    *,
+    scheme: str = "http",
+    netloc: str = "localhost:8000",
+    forwarded_proto: str | None = None,
+    forwarded_host: str | None = None,
+    request_id: str | None = None,
+) -> MagicMock:
     request = MagicMock()
     request.url.scheme = scheme
     request.url.netloc = netloc
@@ -65,9 +69,7 @@ def test_saas_error_response_includes_recovery_envelope() -> None:
     assert out["error"] == "Status failed"
     assert "recovery" in (out.get("data") or {})
     # tenant_dashboard's wrapper must produce the same envelope.
-    out_tenant = tenant_dashboard._saas_error_response(
-        exc, source="status", fallback="Status failed"
-    ).model_dump()
+    out_tenant = tenant_dashboard._saas_error_response(exc, source="status", fallback="Status failed").model_dump()
     assert out_tenant == out
 
 
@@ -101,8 +103,10 @@ def test_apply_profile_to_runtime_falls_back_to_default_for_unknown_profile() ->
 
 def test_request_origin_uses_forwarded_headers_when_present() -> None:
     req = _make_request(
-        scheme="http", netloc="localhost:8000",
-        forwarded_proto="https", forwarded_host="dash.example.com",
+        scheme="http",
+        netloc="localhost:8000",
+        forwarded_proto="https",
+        forwarded_host="dash.example.com",
     )
     assert rh.request_origin(req) == "https://dash.example.com"
     # Local + tenant wrappers must be byte-identical.
@@ -118,38 +122,35 @@ def test_request_origin_falls_back_to_request_url() -> None:
 def test_is_loopback_host_recognises_standard_loopback_names() -> None:
     for host in ("127.0.0.1", "localhost", "::1", "LOCALHOST", "  127.0.0.1  "):
         assert rh.is_loopback_host(host)
-    for host in ("api.example.com", "192.168.1.10", "", None):
-        assert not rh.is_loopback_host(host)
+    for raw_host in ("api.example.com", "192.168.1.10", "", None):
+        assert not rh.is_loopback_host(raw_host)
 
 
 def test_resolve_schwab_redirect_uri_uses_inferred_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SCHWAB_CALLBACK_URL", raising=False)
     monkeypatch.delenv("SCHWAB_MARKET_CALLBACK_URL", raising=False)
     req = _make_request(
-        scheme="http", netloc="localhost:8000",
-        forwarded_proto="https", forwarded_host="dash.example.com",
+        scheme="http",
+        netloc="localhost:8000",
+        forwarded_proto="https",
+        forwarded_host="dash.example.com",
     )
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://dash.example.com/api/oauth/schwab/callback"
     assert (
-        rh.resolve_schwab_redirect_uri(req, market=False)
-        == "https://dash.example.com/api/oauth/schwab/callback"
-    )
-    assert (
-        rh.resolve_schwab_redirect_uri(req, market=True)
-        == "https://dash.example.com/api/oauth/schwab/market/callback"
+        rh.resolve_schwab_redirect_uri(req, market=True) == "https://dash.example.com/api/oauth/schwab/market/callback"
     )
 
 
 def test_resolve_schwab_redirect_uri_overrides_legacy_loopback_callback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
     req = _make_request(
-        scheme="https", netloc="dash.example.com",
-        forwarded_proto="https", forwarded_host="dash.example.com",
+        scheme="https",
+        netloc="dash.example.com",
+        forwarded_proto="https",
+        forwarded_host="dash.example.com",
     )
     # Legacy loopback callback with no matching path -> prefer inferred webapp callback.
-    assert (
-        rh.resolve_schwab_redirect_uri(req, market=False)
-        == "https://dash.example.com/api/oauth/schwab/callback"
-    )
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://dash.example.com/api/oauth/schwab/callback"
 
 
 def test_resolve_schwab_redirect_uri_prefers_configured_when_path_matches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,13 +159,12 @@ def test_resolve_schwab_redirect_uri_prefers_configured_when_path_matches(monkey
         "https://oauth.example.com/api/oauth/schwab/callback",
     )
     req = _make_request(
-        scheme="https", netloc="dash.example.com",
-        forwarded_proto="https", forwarded_host="dash.example.com",
+        scheme="https",
+        netloc="dash.example.com",
+        forwarded_proto="https",
+        forwarded_host="dash.example.com",
     )
-    assert (
-        rh.resolve_schwab_redirect_uri(req, market=False)
-        == "https://oauth.example.com/api/oauth/schwab/callback"
-    )
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://oauth.example.com/api/oauth/schwab/callback"
 
 
 def test_resolve_schwab_redirect_uri_swaps_loopback_when_serving_remote(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,13 +176,12 @@ def test_resolve_schwab_redirect_uri_swaps_loopback_when_serving_remote(monkeypa
         "https://127.0.0.1/api/oauth/schwab/callback",
     )
     req = _make_request(
-        scheme="https", netloc="dash.example.com",
-        forwarded_proto="https", forwarded_host="dash.example.com",
+        scheme="https",
+        netloc="dash.example.com",
+        forwarded_proto="https",
+        forwarded_host="dash.example.com",
     )
-    assert (
-        rh.resolve_schwab_redirect_uri(req, market=False)
-        == "https://dash.example.com/api/oauth/schwab/callback"
-    )
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://dash.example.com/api/oauth/schwab/callback"
 
 
 # ---------------------------------------------------------------------------

@@ -265,8 +265,9 @@ export async function triggerSchwabMarketOAuth() {
 }
 
 export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
-  const out = await api.get("/api/onboarding/status");
   const meta = document.getElementById("onboardingMeta");
+  if (meta) meta.textContent = "Loading onboarding status...";
+  const out = await api.get("/api/onboarding/status");
   const section = document.getElementById("onboardingSection");
   if (!meta) return;
   if (!out.ok) {
@@ -278,7 +279,7 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
       oauthAccount: triggerSchwabAccountOAuth,
       oauthMarket: triggerSchwabMarketOAuth,
     });
-    meta.textContent = `Onboarding status failed: ${out.error}`;
+    meta.textContent = `Onboarding status failed: ${out.user_message || out.error}`;
     return;
   }
   state.onboarding = out.data;

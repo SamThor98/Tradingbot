@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from webapp import main_saas, tenant_dashboard
 from webapp.db import Base
-from webapp.models import PendingTrade, ScanResult, User, UserCredential
+from webapp.models import AuditLog, PendingTrade, ScanResult, User, UserCredential
 from webapp.oauth_schwab import (
     SCHWAB_OAUTH_KIND_ACCOUNT,
     SCHWAB_OAUTH_KIND_MARKET,
@@ -315,6 +315,116 @@ def test_patch_trading_halt(saas_client: TestClient, test_db: sessionmaker) -> N
         db.close()
 
 
+def test_portfolio_risk_route_available_in_saas(saas_client: TestClient, test_db: sessionmaker) -> None:
+    db = test_db()
+    try:
+        _seed_user_with_schwab(db)
+    finally:
+        db.close()
+
+    fake_status = {
+        "accounts": [
+            {
+                "securitiesAccount": {
+                    "positions": [
+                        {
+                            "instrument": {"symbol": "AAPL"},
+                            "longQuantity": 10,
+                            "marketValue": 2000,
+                            "currentDayProfitLoss": 25,
+                            "averagePrice": 190,
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+    with (
+        patch("webapp.tenant_dashboard.get_account_status", return_value=fake_status),
+        patch("sector_strength.get_ticker_sector_etf", return_value="XLK"),
+    ):
+        r = saas_client.get("/api/portfolio/risk", headers=_auth_header())
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("ok") is True
+    data = body.get("data") or {}
+    assert data.get("position_count") == 1
+    assert isinstance(data.get("sector_allocation"), list)
+
+
+def test_pending_trade_delete_endpoints_in_saas(saas_client: TestClient, test_db: sessionmaker) -> None:
+    db = test_db()
+    try:
+        _seed_user_with_schwab(db)
+        db.add(
+            PendingTrade(
+                id="del1",
+                user_id="user_1",
+                ticker="AAPL",
+                qty=1,
+                price=100.0,
+                status="pending",
+                signal_json="{}",
+            )
+        )
+        db.add(
+            PendingTrade(
+                id="del2",
+                user_id="user_1",
+                ticker="MSFT",
+                qty=2,
+                price=250.0,
+                status="executed",
+                signal_json="{}",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    one = saas_client.post("/api/trades/del1/delete", headers=_auth_header())
+    assert one.status_code == 200
+    assert one.json().get("ok") is True
+    assert (one.json().get("data") or {}).get("deleted") == "del1"
+
+    all_rows = saas_client.post("/api/pending-trades/delete-all", headers=_auth_header())
+    assert all_rows.status_code == 200
+    payload = all_rows.json()
+    assert payload.get("ok") is True
+    data = payload.get("data") or {}
+    assert data.get("deleted") == 1
+    assert (data.get("by_status") or {}).get("executed") == 1
+
+
+def test_analytics_event_endpoint_records_audit_row(saas_client: TestClient, test_db: sessionmaker) -> None:
+    db = test_db()
+    try:
+        _seed_user_with_schwab(db)
+    finally:
+        db.close()
+
+    r = saas_client.post(
+        "/api/analytics/event",
+        json={"event": "first_scan", "properties": {"signals_found": 7}},
+        headers=_auth_header(),
+    )
+    assert r.status_code == 200
+    assert r.json().get("ok") is True
+
+    db = test_db()
+    try:
+        rows = (
+            db.query(AuditLog).filter(AuditLog.user_id == "user_1", AuditLog.action == "product_analytics_event").all()
+        )
+        assert rows
+        latest = rows[-1]
+        detail = json.loads(latest.detail_json or "{}")
+        assert detail.get("event") == "first_scan"
+        assert (detail.get("properties") or {}).get("signals_found") == 7
+    finally:
+        db.close()
+
+
 def test_scan_task_status_excludes_recent_by_default(saas_client: TestClient, test_db: sessionmaker) -> None:
     db = test_db()
     try:
@@ -553,6 +663,27 @@ def test_health_ready_reports_worker_not_ready(saas_client: TestClient) -> None:
     assert payload["queues_ok"] is False
 
 
+def test_public_config_and_runtime_contract_in_saas(saas_client: TestClient) -> None:
+    cfg = saas_client.get("/api/public-config")
+    assert cfg.status_code == 200
+    body = cfg.json()
+    assert body.get("ok") is True
+    data = body.get("data") or {}
+    assert data.get("saas_mode") is True
+    assert data.get("runtime_mode") == "saas"
+    assert data.get("scan_transport") == "celery"
+    assert data.get("sse_enabled") is False
+    assert data.get("ui_contract_version") == "2026-04-webapp-stabilization"
+
+    runtime = saas_client.get("/api/runtime-contract")
+    assert runtime.status_code == 200
+    runtime_data = runtime.json().get("data") or {}
+    assert runtime_data.get("runtime_mode") == "saas"
+    assert runtime_data.get("scan_transport") == "celery"
+    assert runtime_data.get("sse_enabled") is False
+    assert runtime_data.get("api_envelope") == "ApiResponse"
+
+
 def test_validate_startup_configuration_requires_prod_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENV", "production")
     for key in (
@@ -680,9 +811,7 @@ def test_market_oauth_callback_stores_payload(
         db.close()
 
 
-def test_market_oauth_callback_rejects_account_state(
-    saas_client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_market_oauth_callback_rejects_account_state(saas_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWAB_MARKET_CALLBACK_URL", "https://cb.example/m")
     monkeypatch.setenv("SAAS_FRONTEND_URL", "http://front.test")
     state = sign_schwab_oauth_state("user_1", SCHWAB_OAUTH_KIND_ACCOUNT)
@@ -695,9 +824,7 @@ def test_market_oauth_callback_rejects_account_state(
     assert "schwab_market_oauth=error" in (r.headers.get("location") or "")
 
 
-def test_account_oauth_callback_rejects_market_state(
-    saas_client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_account_oauth_callback_rejects_market_state(saas_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://cb.example/a")
     monkeypatch.setenv("SAAS_FRONTEND_URL", "http://front.test")
     state = sign_schwab_oauth_state("user_1", SCHWAB_OAUTH_KIND_MARKET)

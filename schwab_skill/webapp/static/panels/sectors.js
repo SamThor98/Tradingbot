@@ -8,11 +8,16 @@ import { safeText, safeNum } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
 
 export async function refreshSectors() {
-  const out = await api.get("/api/sectors");
   const grid = document.getElementById("sectorGrid");
+  if (!grid) return;
+  grid.innerHTML = `<div class="muted">Loading sectors...</div>`;
+  const out = await api.get("/api/sectors");
   grid.innerHTML = "";
   if (!out.ok) {
-    grid.innerHTML = `<div class="muted">Sectors unavailable: ${safeText(out.error)}</div>`;
+    const msg = out.user_message || out.error;
+    const hint = out.hint ? `<div class="muted small">${safeText(out.hint)}</div>` : "";
+    grid.innerHTML = `<div class="muted">Sectors unavailable: ${safeText(msg)}</div>${hint}<button id="sectorsRetryBtn" class="btn small secondary" type="button">Retry</button>`;
+    document.getElementById("sectorsRetryBtn")?.addEventListener("click", () => void refreshSectors());
     logEvent({ kind: "system", severity: "warn", message: `Sector load failed: ${out.error}` });
     return;
   }

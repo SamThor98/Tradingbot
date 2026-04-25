@@ -18,6 +18,7 @@ import {
   safeNum,
   prettyJson,
   formatMoney,
+  formatDecimal,
   pct,
   formatPercentPoints,
   clampPct,
@@ -198,6 +199,115 @@ const lazyLoaded = {
   calibration: false,
 };
 
+const SCREEN_MODES = Object.freeze(["daily", "setup", "research", "portfolio"]);
+const SCREEN_CONTEXT = Object.freeze({
+  daily: {
+    title: "Daily workflow",
+    text: "Run scan, review pending approvals, and act on top blockers.",
+    ctaLabel: "Go to workflow",
+    ctaHref: "#workflowPrimary",
+    altCtaLabel: "Go to pending",
+    altCtaHref: "#pendingSection",
+  },
+  setup: {
+    title: "Setup and account",
+    text: "Connect services, verify tokens, and tune account controls.",
+    ctaLabel: "Go to setup",
+    ctaHref: "#onboardingSection",
+    altCtaLabel: "Go to presets",
+    altCtaHref: "#settingsSection",
+  },
+  research: {
+    title: "Research and diagnostics",
+    text: "Run deeper analysis, validate ideas, and inspect edge cases.",
+    ctaLabel: "Go to research tools",
+    ctaHref: "#toolsSection",
+    altCtaLabel: "Go to backtest",
+    altCtaHref: "#backtestSection",
+  },
+  portfolio: {
+    title: "Portfolio intelligence",
+    text: "Monitor positions, sector exposure, and performance trends.",
+    ctaLabel: "Go to portfolio",
+    ctaHref: "#portfolioSection",
+    altCtaLabel: "Go to performance",
+    altCtaHref: "#performanceSection",
+  },
+});
+const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
+const SCREEN_SECTIONS = Object.freeze({
+  daily: ["dashboardToday", "workflowPrimary"],
+  setup: ["onboardingSection", "settingsSection"],
+  research: [
+    "quickCheckSection",
+    "toolsSection",
+    "decisionSection",
+    "recoverySection",
+    "statusDetailsPanel",
+    "learningSection",
+    "backtestSection",
+    "calibrationSection",
+    "reportSectionCard",
+    "secCompareSection",
+    "activitySection",
+  ],
+  portfolio: ["portfolioSection", "sectorsSection", "performanceSection"],
+});
+const SECTION_TO_SCREEN = Object.freeze(
+  Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
+    ids.forEach((id) => {
+      acc[id] = screen;
+    });
+    return acc;
+  }, {}),
+);
+let currentScreenMode = "daily";
+let screenSwitchTimer = null;
+
+const FUNNEL_EVENTS = Object.freeze({
+  SIGNUP: "signup",
+  AUTH_LINKED: "auth_linked",
+  FIRST_SCAN: "first_scan",
+  FIRST_PENDING_TRADE: "first_pending_trade",
+  FIRST_APPROVED_TRADE: "first_approved_trade",
+  RETAINED_SESSION: "retained_session",
+});
+
+let retainedSessionTimer = null;
+
+function canTrackProductAnalytics() {
+  return Boolean(state.publicConfig?.saas_mode && state.accountMe?.id);
+}
+
+async function trackProductEvent(eventName, properties = {}) {
+  if (!canTrackProductAnalytics()) return false;
+  const out = await api.post("/api/analytics/event", {
+    event: safeText(eventName).toLowerCase(),
+    properties: properties && typeof properties === "object" ? properties : {},
+  });
+  return Boolean(out?.ok);
+}
+
+async function trackFunnelMilestoneOnce(eventName, properties = {}) {
+  const key = safeText(eventName).toLowerCase();
+  if (!key || state.funnelMilestonesSent[key]) return false;
+  const sent = await trackProductEvent(key, properties);
+  if (sent) state.funnelMilestonesSent[key] = true;
+  return sent;
+}
+
+function scheduleRetainedSessionTracking() {
+  if (retainedSessionTimer) return;
+  if (!state.publicConfig?.saas_mode) return;
+  retainedSessionTimer = window.setTimeout(() => {
+    retainedSessionTimer = null;
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.RETAINED_SESSION, {
+      seconds_since_load: 60,
+      had_signals_loaded: Array.isArray(state.latestSignals) && state.latestSignals.length > 0,
+    });
+  }, 60_000);
+}
+
 function resetLazyLoaded() {
   Object.keys(lazyLoaded).forEach((k) => {
     lazyLoaded[k] = false;
@@ -205,8 +315,132 @@ function resetLazyLoaded() {
 }
 
 function getDisplayMode() {
-  const m = localStorage.getItem(UI_VIEW_MODE_KEY) || "standard";
-  return ["simple", "standard", "pro"].includes(m) ? m : "standard";
+  const m = localStorage.getItem(UI_VIEW_MODE_KEY) || "simple";
+  return ["simple", "standard", "pro"].includes(m) ? m : "simple";
+}
+
+function normalizeScreenMode(raw) {
+  const mode = safeText(raw).toLowerCase();
+  return SCREEN_MODES.includes(mode) ? mode : "daily";
+}
+
+function inferScreenFromHash() {
+  const id = safeText(window.location.hash || "").replace(/^#/, "");
+  if (!id) return "";
+  return SECTION_TO_SCREEN[id] || "";
+}
+
+function getScreenModeFromUrl() {
+  try {
+    const u = new URL(window.location.href);
+    const fromQuery = normalizeScreenMode(u.searchParams.get("screen"));
+    if (u.searchParams.get("screen")) return fromQuery;
+  } catch {
+    /* ignore */
+  }
+  return normalizeScreenMode(inferScreenFromHash() || "daily");
+}
+
+function writeScreenModeToUrl(mode) {
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set("screen", mode);
+    const q = u.searchParams.toString();
+    window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}${u.hash || ""}`);
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshScreenSwitchUi(mode) {
+  document.querySelectorAll(".screen-switch-btn[data-screen-mode]").forEach((btn) => {
+    const active = btn.getAttribute("data-screen-mode") === mode;
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+    btn.classList.toggle("active", active);
+  });
+}
+
+function refreshSectionNavForScreen(mode) {
+  document.querySelectorAll(".section-nav a[data-nav-screens]").forEach((link) => {
+    const scopes = safeText(link.getAttribute("data-nav-screens"))
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const visible = scopes.length === 0 || scopes.includes(mode);
+    link.classList.toggle("hidden", !visible);
+  });
+}
+
+function renderScreenContext(mode) {
+  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.daily;
+  const titleEl = document.getElementById("screenContextTitle");
+  const textEl = document.getElementById("screenContextText");
+  const hintEl = document.getElementById("screenContextHint");
+  const ctaEl = document.getElementById("screenContextCta");
+  const altCtaEl = document.getElementById("screenContextAltCta");
+  if (titleEl) titleEl.textContent = cfg.title;
+  if (textEl) textEl.textContent = cfg.text;
+  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1..4 switches screens.";
+  if (ctaEl) {
+    ctaEl.textContent = cfg.ctaLabel;
+    ctaEl.setAttribute("href", cfg.ctaHref);
+  }
+  if (altCtaEl) {
+    altCtaEl.textContent = cfg.altCtaLabel;
+    altCtaEl.setAttribute("href", cfg.altCtaHref);
+  }
+}
+
+function maybePrimeScreenData(mode) {
+  if (mode === "setup") {
+    void runLazyApi("onboarding");
+    void runLazyApi("profiles");
+  } else if (mode === "research") {
+    void runLazyApi("backtest");
+    void runLazyApi("calibration");
+  } else if (mode === "portfolio") {
+    void runLazyApi("portfolio");
+    void runLazyApi("sectors");
+    void runLazyApi("performance");
+  }
+}
+
+function maybeShowScreenNudge(mode) {
+  if (!mode || mode === "daily") return;
+  const key = `${SCREEN_NUDGE_KEY_PREFIX}${mode}`;
+  try {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
+  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.daily;
+  const nudgeMap = {
+    setup: "Start with setup steps, then apply presets.",
+    research: "Use backtest and reports to validate decisions.",
+    portfolio: "Review positions first, then check performance trends.",
+  };
+  const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";
+  showToast(`${cfg.title}: ${hint}`, "info", 2800);
+}
+
+function applyScreenMode(mode, { updateUrl = false } = {}) {
+  const m = normalizeScreenMode(mode);
+  currentScreenMode = m;
+  document.body.classList.add("ui-screen-switching");
+  if (screenSwitchTimer) clearTimeout(screenSwitchTimer);
+  screenSwitchTimer = window.setTimeout(() => {
+    document.body.classList.remove("ui-screen-switching");
+    screenSwitchTimer = null;
+  }, 170);
+  document.body.classList.remove("ui-screen-daily", "ui-screen-setup", "ui-screen-research", "ui-screen-portfolio");
+  document.body.classList.add(`ui-screen-${m}`);
+  refreshScreenSwitchUi(m);
+  refreshSectionNavForScreen(m);
+  renderScreenContext(m);
+  maybePrimeScreenData(m);
+  maybeShowScreenNudge(m);
+  if (updateUrl) writeScreenModeToUrl(m);
 }
 
 function applyDisplayMode(mode) {
@@ -223,6 +457,8 @@ function applyDisplayMode(mode) {
   if (scanDiag) scanDiag.open = pro;
   if (statusDet) statusDet.open = pro;
   if (secDeep) secDeep.open = pro;
+  const blockerAlert = document.getElementById("blockersAlertSection");
+  if (blockerAlert && !pro) blockerAlert.classList.add("hidden");
   const perfRaw = document.getElementById("performanceRawDetails");
   if (perfRaw && !pro) perfRaw.open = false;
 }
@@ -305,21 +541,100 @@ function renderLiveTradingSaasPanel() {
   }
 }
 
+function billingCallbackUrls() {
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return {
+    success_url: `${base}?billing=checkout_success`,
+    cancel_url: `${base}?billing=checkout_cancel`,
+  };
+}
+
+function renderBillingPanel() {
+  const card = document.getElementById("billingSaasBlock");
+  const line = document.getElementById("billingStatusLine");
+  const checkoutBtn = document.getElementById("billingCheckoutBtn");
+  const portalBtn = document.getElementById("billingPortalBtn");
+  if (!card || !line || !checkoutBtn || !portalBtn) return;
+  if (!state.publicConfig?.saas_mode || !state.accountMe) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  const billingEnforced = Boolean(state.accountMe.billing_enforced);
+  const active = Boolean(state.accountMe.subscription_active);
+  const status = safeText(state.accountMe.subscription_status || "none").toLowerCase();
+  const hasStripeCustomer = Boolean(state.accountMe.has_stripe_customer);
+  line.textContent = billingEnforced
+    ? (active
+      ? `Subscription active (${status}). Premium routes are unlocked.`
+      : "No active subscription. Start checkout to unlock protected scan and trade flows.")
+    : `Billing enforcement is off (status: ${status}). You can still open checkout/portal for production readiness.`;
+  checkoutBtn.disabled = false;
+  portalBtn.disabled = !hasStripeCustomer;
+}
+
+async function beginBillingCheckout() {
+  const btn = document.getElementById("billingCheckoutBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const out = await api.post("/api/billing/checkout-session", billingCallbackUrls());
+    if (!out.ok) {
+      updateActionCenter({ title: "Billing checkout failed", message: out.error, severity: "error" });
+      logEvent({ kind: "system", severity: "error", message: `Billing checkout failed: ${out.error}` });
+      return;
+    }
+    const url = safeText(out.data?.url || "");
+    if (!url) {
+      updateActionCenter({ title: "Billing checkout failed", message: "Missing checkout URL.", severity: "error" });
+      return;
+    }
+    await trackProductEvent("billing_checkout_started", { source: "settings_panel" });
+    window.location.href = url;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function openBillingPortal() {
+  const btn = document.getElementById("billingPortalBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const out = await api.post("/api/billing/portal-session", {});
+    if (!out.ok) {
+      updateActionCenter({ title: "Billing portal failed", message: out.error, severity: "error" });
+      logEvent({ kind: "system", severity: "error", message: `Billing portal failed: ${out.error}` });
+      return;
+    }
+    const url = safeText(out.data?.url || "");
+    if (!url) {
+      updateActionCenter({ title: "Billing portal failed", message: "Missing portal URL.", severity: "error" });
+      return;
+    }
+    await trackProductEvent("billing_portal_opened", { source: "settings_panel" });
+    window.location.href = url;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function refreshAccountMe() {
   if (!state.publicConfig.saas_mode) {
     state.accountMe = null;
     renderLiveTradingSaasPanel();
+    renderBillingPanel();
     return;
   }
   const token = await getApiAccessToken();
   if (!token) {
     state.accountMe = null;
     renderLiveTradingSaasPanel();
+    renderBillingPanel();
     return;
   }
   const out = await api.get("/api/me");
   state.accountMe = out.ok ? out.data : null;
   renderLiveTradingSaasPanel();
+  renderBillingPanel();
 }
 
 async function refreshCritical() {
@@ -372,6 +687,7 @@ async function initSupabaseAuth(url, anonKey) {
   sb.auth.onAuthStateChange((_event, nextSession) => {
     persistApiJwtFromSession(nextSession);
     updateSupabaseAuthUI(nextSession);
+    if (nextSession?.access_token) scheduleRetainedSessionTracking();
     void refreshAccountMe();
   });
 
@@ -401,6 +717,9 @@ async function initSupabaseAuth(url, anonKey) {
         kind: "system",
         severity: "info",
         message: "Sign-up sent. Check email if confirmation is required, then sign in.",
+      });
+      void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
+        source: "supabase_password_signup",
       });
     }
   });
@@ -656,6 +975,25 @@ function setLoading(textMap = {}) {
   if (textMap.portfolio) document.getElementById("portfolioMeta").textContent = textMap.portfolio;
 }
 
+function validateRuntimeContract(publicCfg, runtimeContract) {
+  const cfgMode = safeText(publicCfg?.runtime_mode || (publicCfg?.saas_mode ? "saas" : "local")).toLowerCase();
+  const contractMode = safeText(runtimeContract?.runtime_mode || "").toLowerCase();
+  const cfgTransport = safeText(publicCfg?.scan_transport || "").toLowerCase();
+  const contractTransport = safeText(runtimeContract?.scan_transport || "").toLowerCase();
+  if (!contractMode || !contractTransport) return;
+  if (cfgMode !== contractMode || cfgTransport !== contractTransport) {
+    const message =
+      `Frontend/runtime contract mismatch (${cfgMode}/${cfgTransport} vs ${contractMode}/${contractTransport}). ` +
+      "Deploy matching frontend+API revisions before continuing.";
+    logEvent({ kind: "system", severity: "error", message });
+    updateActionCenter({
+      title: "Runtime Contract Mismatch",
+      message,
+      severity: "error",
+    });
+  }
+}
+
 function buildDiagnosticsSummary(diag = {}) {
   const blockers = Object.entries(diag)
     .filter(([k, v]) => safeNum(v, 0) > 0 && !["watchlist_size"].includes(k))
@@ -707,6 +1045,7 @@ function renderDiagnostics(diag = {}) {
   }
 
   const summary = buildDiagnosticsSummary(diag);
+  const showBlockerAlert = getDisplayMode() === "pro";
   if (!summary.blockers.length) {
     blockersEl.innerHTML = `<li>No major blockers detected.</li>`;
     if (alertWrap) alertWrap.classList.add("hidden");
@@ -715,13 +1054,13 @@ function renderDiagnostics(diag = {}) {
       const li = document.createElement("li");
       li.innerHTML = `${b.label}: <strong>${b.value}</strong> <span class="${statusClass(b.severity)}">${b.severity}</span>`;
       blockersEl.appendChild(li);
-      if (alertList) {
+      if (showBlockerAlert && alertList) {
         const alertLi = document.createElement("li");
         alertLi.innerHTML = `${b.label}: <strong>${b.value}</strong>`;
         alertList.appendChild(alertLi);
       }
     });
-    if (alertWrap) alertWrap.classList.remove("hidden");
+    if (alertWrap) alertWrap.classList.toggle("hidden", !showBlockerAlert);
   }
 
   const funnelPairs = [
@@ -800,7 +1139,7 @@ function renderScanRows(signals = []) {
     const conviction = optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
     const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up);
     const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
-    const convictionText = conviction === null ? "—" : (Number.isInteger(conviction) ? `${conviction}` : conviction.toFixed(1));
+    const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
     if (pUp !== null) pupCount += 1;
     if (conf !== "—") confCount += 1;
     if (conviction !== null) convictionCount += 1;
@@ -978,16 +1317,23 @@ async function loadConfig() {
   let publicCfg = {
     supabase: null,
     saas_mode: false,
+    runtime_mode: "local",
     schwab_oauth: false,
     schwab_market_oauth: false,
     auth_setup: null,
   };
-  try {
-    const res = await fetch("/api/public-config", { headers: { Accept: "application/json" } });
-    const body = res.ok ? await res.json() : {};
-    if (body?.ok && body?.data) publicCfg = { ...publicCfg, ...body.data };
-  } catch {
-    /* offline or boot — fall back to manual JWT only */
+  const cfgOut = await api.get("/api/public-config", { timeoutMs: 20000 });
+  if (cfgOut?.ok && cfgOut?.data) {
+    publicCfg = { ...publicCfg, ...cfgOut.data };
+  } else if (cfgOut?.error) {
+    logEvent({ kind: "system", severity: "warn", message: `Public config unavailable: ${cfgOut.error}` });
+  }
+  const runtimeOut = await api.get("/api/runtime-contract", { timeoutMs: 20000 });
+  if (runtimeOut?.ok && runtimeOut?.data) {
+    state.runtimeContract = runtimeOut.data;
+    validateRuntimeContract(publicCfg, runtimeOut.data);
+  } else {
+    state.runtimeContract = null;
   }
   state.publicConfig = publicCfg;
   state.sseEnabled = publicCfg?.sse_enabled === true;
@@ -1115,6 +1461,7 @@ async function loadConfig() {
   const params = new URLSearchParams(window.location.search);
   const oauthSt = params.get("schwab_oauth");
   const marketOauthSt = params.get("schwab_market_oauth");
+  const billingSt = params.get("billing");
   if (oauthSt || marketOauthSt) {
     const msg = params.get("message") || "";
     clearOAuthQueryParams(["schwab_oauth", "schwab_market_oauth", "message"]);
@@ -1129,6 +1476,9 @@ async function loadConfig() {
           severity: "success",
         });
         try { showToast("Schwab account linked.", "success", 4000); } catch { /* ignore */ }
+        void trackFunnelMilestoneOnce(FUNNEL_EVENTS.AUTH_LINKED, {
+          source: "oauth_callback_account",
+        });
       } else {
         logEvent({ kind: "system", severity: "error", message: `Schwab OAuth: ${msg || "failed"}` });
         updateActionCenter({ title: "Schwab OAuth", message: msg || "Connection failed.", severity: "error" });
@@ -1144,6 +1494,9 @@ async function loadConfig() {
           severity: "success",
         });
         try { showToast("Schwab market data linked.", "success", 4000); } catch { /* ignore */ }
+        void trackFunnelMilestoneOnce(FUNNEL_EVENTS.AUTH_LINKED, {
+          source: "oauth_callback_market",
+        });
       } else {
         logEvent({ kind: "system", severity: "error", message: `Schwab market OAuth: ${msg || "failed"}` });
         updateActionCenter({
@@ -1166,6 +1519,25 @@ async function loadConfig() {
         severity: "warn",
         message: `Could not refresh onboarding after OAuth: ${err?.message || err}`,
       });
+    }
+  }
+  if (billingSt) {
+    clearOAuthQueryParams(["billing"]);
+    if (billingSt === "checkout_success") {
+      updateActionCenter({
+        title: "Billing updated",
+        message: "Checkout completed. Refreshing account subscription state.",
+        severity: "success",
+      });
+      void trackProductEvent("billing_checkout_success", { source: "redirect_query" });
+      void refreshAccountMe();
+    } else if (billingSt === "checkout_cancel") {
+      updateActionCenter({
+        title: "Checkout canceled",
+        message: "No charge was made. You can restart checkout anytime.",
+        severity: "warn",
+      });
+      void trackProductEvent("billing_checkout_canceled", { source: "redirect_query" });
     }
   }
 }
@@ -1263,6 +1635,18 @@ async function refreshStatus() {
   }
   if (!statusRes.ok) {
     logEvent({ kind: "system", severity: "error", message: `Status failed: ${statusRes.error}` });
+    const quoteEl = document.getElementById("quoteHealth");
+    const errEl = document.getElementById("apiErrorRate");
+    const validationEl = document.getElementById("validationHealth");
+    setStatusPill(document.getElementById("marketToken"), "Unknown");
+    setStatusPill(document.getElementById("accountToken"), "Unknown");
+    setStatusPill(quoteEl, "Unknown");
+    setStatusPill(validationEl, "Unknown");
+    if (errEl) {
+      errEl.className = "pill neutral";
+      errEl.textContent = "--";
+    }
+    updateActionCenter({ title: "Status unavailable", message: statusRes.error, severity: "error" });
     return;
   }
 
@@ -1401,6 +1785,11 @@ async function refreshStatus() {
     topBlocker,
     quoteHealth: deepRes?.data?.quote_health || null,
   });
+  if (authOk) {
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.AUTH_LINKED, {
+      source: "status_health_check",
+    });
+  }
   updateHeroInfographic();
 }
 
@@ -1635,6 +2024,10 @@ async function waitForSaaScanCompletion(taskId) {
         severity: "info",
         message: `Scan complete (SaaS): ${n} signal(s), task ${safeText(taskId).slice(0, 12)}…`,
       });
+      void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_SCAN, {
+        transport: "saas_celery",
+        signals_found: n,
+      });
       updateActionCenter({
         title: "Scan Complete",
         message: `Found ${n} signal(s). Review queue candidates in Scan Results.`,
@@ -1725,6 +2118,10 @@ async function runScan() {
       renderDiagnostics(d.diagnostics || d.diagnostics_summary || {});
       renderScanRows(state.latestSignals);
       logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${d.signals_found} signal(s).` });
+      void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_SCAN, {
+        transport: state.publicConfig?.saas_mode ? "saas_inline" : "local",
+        signals_found: safeNum(d.signals_found, state.latestSignals.length),
+      });
       updateActionCenter({
         title: "Scan Complete",
         message: `Found ${d.signals_found} signal(s). Review queue candidates in Scan Results.`,
@@ -1794,6 +2191,10 @@ async function waitForScanCompletion() {
       renderDiagnostics(data.diagnostics_summary || data.diagnostics || {});
       renderScanRows(state.latestSignals);
       logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${data.signals_found ?? state.latestSignals.length} signal(s).` });
+      void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_SCAN, {
+        transport: "local_polling",
+        signals_found: safeNum(data.signals_found, state.latestSignals.length),
+      });
       updateActionCenter({
         title: "Scan Complete",
         message: `Found ${data.signals_found ?? state.latestSignals.length} signal(s).`,
@@ -1836,6 +2237,10 @@ async function refreshPending() {
   const sort = document.getElementById("pendingSort")?.value || state.pendingSort;
   state.pendingFilter = filter;
   state.pendingSort = sort;
+  const board = document.getElementById("pendingBoard");
+  if (board) {
+    board.innerHTML = `<div class="task-empty muted">Loading pending trades...</div>`;
+  }
   const query = new URLSearchParams({ status: filter, sort });
   const pendingOnlyQuery = new URLSearchParams({ status: "pending", sort });
   const [out, pendingOnlyOut] = await Promise.all([
@@ -1843,7 +2248,13 @@ async function refreshPending() {
     api.get(`/api/pending-trades?${pendingOnlyQuery.toString()}`),
   ]);
   if (!out.ok) {
+    const msg = out.user_message || out.error;
     logEvent({ kind: "trade", severity: "error", message: `Pending trades load failed: ${out.error}` });
+    if (board) {
+      board.innerHTML = `<div class="task-empty muted">Pending trades unavailable: ${safeText(msg)} <button id="pendingRetryBtn" class="btn small secondary" type="button">Retry</button></div>`;
+      document.getElementById("pendingRetryBtn")?.addEventListener("click", () => void refreshPending());
+    }
+    updateActionCenter({ title: "Pending queue unavailable", message: msg, severity: "error" });
     return;
   }
   const rows = out.data || [];
@@ -1852,11 +2263,16 @@ async function refreshPending() {
       ? pendingOnlyOut.data.length
       : rows.filter((r) => r.status === "pending").length;
   document.getElementById("pendingCount").textContent = String(pendingN);
+  if (pendingN > 0) {
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
+      source: "pending_queue_refresh",
+      pending_count: pendingN,
+    });
+  }
   const clearBtn = document.getElementById("clearPendingBtn");
   if (clearBtn) clearBtn.disabled = pendingN === 0;
   updateHeroInfographic();
 
-  const board = document.getElementById("pendingBoard");
   board.innerHTML = "";
   if (!rows.length) {
     board.innerHTML = `<div class="task-empty muted">No trades match current filter.</div>`;
@@ -1994,6 +2410,10 @@ async function approveTradeById(id) {
     updateActionCenter({ title: "Approval Failed", message: out.error, severity: "error" });
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Approved ${id}: order submitted.` });
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_APPROVED_TRADE, {
+      source: "approve_dialog",
+      trade_id: id,
+    });
     updateActionCenter({ title: "Trade Approved", message: `Trade ${id} approved and submitted.`, severity: "success" });
   }
   await refreshPending();
@@ -2054,6 +2474,10 @@ async function confirmQueueScanDialog() {
     updateActionCenter({ title: "Queue failed", message: out.error, severity: "error" });
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Queued ${payload.ticker} (${out.data.id})` });
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
+      source: "queue_scan_dialog",
+      ticker: safeText(payload.ticker),
+    });
     updateActionCenter({ title: "Staged for approval", message: `${payload.ticker} added to pending.`, severity: "success" });
     await refreshPending();
     closeQueueScanDialog();
@@ -2091,6 +2515,10 @@ async function submitManualPendingTrade() {
     updateActionCenter({ title: "Could not stage trade", message: out.error, severity: "error" });
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Queued ${ticker} (${out.data.id})` });
+    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
+      source: "manual_pending_trade",
+      ticker: safeText(ticker),
+    });
     updateActionCenter({ title: "Staged for approval", message: `${ticker} added to pending.`, severity: "success" });
     if (tEl) tEl.value = "";
     if (qEl) qEl.value = "";
@@ -2103,18 +2531,25 @@ async function submitManualPendingTrade() {
 async function refreshAll() {
   resetLazyLoaded();
   setLoading({ portfolio: "Loading portfolio..." });
-  await Promise.all([
-    refreshStatus(),
-    refreshAccountMe(),
-    refreshPending(),
-    refreshPortfolio(),
-    refreshSectors(),
-    refreshOnboarding(),
-    loadProfiles(),
-    refreshPerformance(),
-    refreshCalibration(),
-    refreshBacktestRuns(),
-  ]);
+  const jobs = [
+    ["status", refreshStatus()],
+    ["account", refreshAccountMe()],
+    ["pending", refreshPending()],
+    ["portfolio", refreshPortfolio()],
+    ["sectors", refreshSectors()],
+    ["onboarding", refreshOnboarding()],
+    ["profiles", loadProfiles()],
+    ["performance", refreshPerformance()],
+    ["calibration", refreshCalibration()],
+    ["backtest", refreshBacktestRuns()],
+  ];
+  const results = await Promise.allSettled(jobs.map(([, promise]) => promise));
+  results.forEach((result, idx) => {
+    if (result.status === "rejected") {
+      const [name] = jobs[idx];
+      logEvent({ kind: "system", severity: "error", message: `Refresh segment failed (${name}): ${safeText(result.reason)}` });
+    }
+  });
   Object.keys(lazyLoaded).forEach((k) => {
     lazyLoaded[k] = true;
   });
@@ -2204,6 +2639,8 @@ function wireEvents() {
   bindEvent("applyProfileBtn", "click", applyProfile);
   document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
   document.getElementById("saveTradingHaltBtn")?.addEventListener("click", () => void submitTradingHaltSave());
+  document.getElementById("billingCheckoutBtn")?.addEventListener("click", () => void beginBillingCheckout());
+  document.getElementById("billingPortalBtn")?.addEventListener("click", () => void openBillingPortal());
   document.getElementById("calibrationRefreshBtn")?.addEventListener("click", () => void refreshCalibration());
   document.getElementById("portfolioRiskPanel")?.addEventListener("toggle", (e) => {
     if (e.target.open) void loadPortfolioRisk();
@@ -2252,10 +2689,28 @@ function wireEvents() {
   bindEvent("activityDrawerToggle", "click", () => {
     const body = document.getElementById("activityDrawerBody");
     const toggle = document.getElementById("activityDrawerToggle");
-    if (!body || !toggle) return;
+    const drawer = document.getElementById("activityDrawer");
+    if (!body || !toggle || !drawer) return;
+    const setActivityDrawerOpen = (open) => {
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      body.classList.toggle("open", open);
+      drawer.classList.toggle("open", open);
+      document.body.classList.toggle("activity-drawer-open", open);
+    };
     const expanded = toggle.getAttribute("aria-expanded") === "true";
-    toggle.setAttribute("aria-expanded", expanded ? "false" : "true");
-    body.classList.toggle("open", !expanded);
+    setActivityDrawerOpen(!expanded);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const body = document.getElementById("activityDrawerBody");
+    const toggle = document.getElementById("activityDrawerToggle");
+    const drawer = document.getElementById("activityDrawer");
+    if (!body || !toggle || !drawer) return;
+    if (!body.classList.contains("open")) return;
+    toggle.setAttribute("aria-expanded", "false");
+    body.classList.remove("open");
+    drawer.classList.remove("open");
+    document.body.classList.remove("activity-drawer-open");
   });
   bindEvent("checkBtn", "click", quickCheck);
   bindEvent("reportBtn", "click", runReport);
@@ -2349,7 +2804,8 @@ function wireEvents() {
     dialog?.close();
   });
 
-  const navLinks = [...document.querySelectorAll(".section-nav a")];
+  const navLinks = [...document.querySelectorAll(".section-nav a")]
+    .filter((a) => String(a.getAttribute("href") || "").startsWith("#"));
   const sections = navLinks
     .map((a) => document.querySelector(a.getAttribute("href")))
     .filter(Boolean);
@@ -2361,6 +2817,18 @@ function wireEvents() {
     });
   }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
   sections.forEach((section) => observer.observe(section));
+
+  document.querySelectorAll(".screen-switch-btn[data-screen-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-screen-mode") || "daily";
+      applyScreenMode(mode, { updateUrl: true });
+    });
+  });
+
+  window.addEventListener("hashchange", () => {
+    const inferred = inferScreenFromHash();
+    if (inferred) applyScreenMode(inferred, { updateUrl: true });
+  });
 
   document.getElementById("displayModeSelect")?.addEventListener("change", (e) => {
     const v = e.target.value;
@@ -2375,10 +2843,18 @@ function wireEvents() {
 /* ── Scroll-to-top button ─────────────────────── */
 /* ── Server-Sent Events ───────────────────────── */
 let _sseSource = null;
+function buildSseUrl() {
+  const u = new URL("/api/events", window.location.origin);
+  if (state.publicConfig?.api_key_required) {
+    const key = (localStorage.getItem("tradingbot.api_key") || "").trim();
+    if (key) u.searchParams.set("api_key", key);
+  }
+  return `${u.pathname}${u.search}`;
+}
 function connectSSE() {
   if (!state.sseEnabled) return;
   if (_sseSource) return;
-  _sseSource = new EventSource("/api/events");
+  _sseSource = new EventSource(buildSseUrl());
   _sseSource.addEventListener("connected", () => {
     logEvent({ kind: "system", severity: "info", message: "Live connection established." });
   });
@@ -2455,7 +2931,7 @@ function connectSSE() {
   safeInit("wireEvents", wireEvents);
   safeInit("setupScrollToTop", setupScrollToTop);
   safeInit("setupCommandPalette", () =>
-    setupCommandPalette({ runLazyApi, applyDisplayMode, openTradeDrawer }),
+    setupCommandPalette({ runLazyApi, applyDisplayMode, applyScreenMode, openTradeDrawer }),
   );
   safeInit("setupKeyboardShortcuts", () =>
     setupKeyboardShortcuts({
@@ -2463,10 +2939,12 @@ function connectSSE() {
       closeCommandPalette,
       showToast,
       applyDisplayMode,
+      applyScreenMode,
     }),
   );
   safeInit("setupNotifications", setupNotifications);
   safeInit("applyDisplayMode", () => applyDisplayMode(getDisplayMode()));
+  safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
   safeInit("applyReportViewMode", applyReportViewMode);
   safeInit("applySecCompareMode", applySecCompareMode);
   await safeInit("loadConfig", loadConfig);
@@ -2474,6 +2952,7 @@ function connectSSE() {
   await authSessionReady;
   const token = await getApiAccessToken();
   if (token) {
+    scheduleRetainedSessionTracking();
     await safeInit("refreshCritical", refreshCritical);
     safeInit("markDeferredDataPlaceholders", markDeferredDataPlaceholders);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);

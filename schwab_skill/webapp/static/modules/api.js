@@ -16,6 +16,71 @@
 import { state } from "./state.js";
 import { getApiAccessToken } from "./auth.js";
 
+function classifyApiError(status, rawError) {
+  const msg = String(rawError || "").trim();
+  if (status === 401) {
+    return {
+      userMessage: "Authentication required. Sign in again and retry.",
+      hint: "Session may be missing or expired.",
+      retryable: true,
+    };
+  }
+  if (status === 403) {
+    return {
+      userMessage: "This action is blocked by policy or account permissions.",
+      hint: msg || "Check account controls and feature flags.",
+      retryable: false,
+    };
+  }
+  if (status === 404) {
+    return {
+      userMessage: "Requested resource was not found.",
+      hint: msg || "Endpoint or record may no longer exist.",
+      retryable: false,
+    };
+  }
+  if (status === 409) {
+    return {
+      userMessage: "Request conflicts with current account/runtime state.",
+      hint: msg || "Complete required setup steps and retry.",
+      retryable: true,
+    };
+  }
+  if (status === 422) {
+    return {
+      userMessage: "Request payload is invalid.",
+      hint: msg || "Check required fields and value formats.",
+      retryable: false,
+    };
+  }
+  if (status === 429) {
+    return {
+      userMessage: "Rate limit hit. Wait briefly before retrying.",
+      hint: msg || "Too many requests in a short window.",
+      retryable: true,
+    };
+  }
+  if (status >= 500) {
+    return {
+      userMessage: "Server error. Retry in a moment.",
+      hint: msg || "Backend is temporarily unavailable.",
+      retryable: true,
+    };
+  }
+  if (msg) {
+    return {
+      userMessage: msg,
+      hint: "",
+      retryable: true,
+    };
+  }
+  return {
+    userMessage: "Request failed.",
+    hint: "",
+    retryable: true,
+  };
+}
+
 export const api = {
   async request(path, options = {}) {
     const timeoutMs = Number(options.timeoutMs || 90000);
@@ -52,17 +117,39 @@ export const api = {
         data = { ok: false, error: `Invalid JSON response (${res.status})` };
       }
       if (!res.ok) {
+        const mapped = classifyApiError(
+          res.status,
+          data?.error || data?.detail || `HTTP ${res.status}`,
+        );
         return {
           ok: false,
           error: data?.error || data?.detail || `HTTP ${res.status}`,
+          user_message: mapped.userMessage,
+          hint: mapped.hint,
+          retryable: mapped.retryable,
           status: res.status,
           data: data?.data ?? null,
         };
       }
       return data;
     } catch (err) {
-      if (err?.name === "AbortError") return { ok: false, error: "Request timed out. Please retry." };
-      return { ok: false, error: err?.message || "Request failed." };
+      if (err?.name === "AbortError") {
+        return {
+          ok: false,
+          error: "Request timed out. Please retry.",
+          user_message: "Request timed out. Please retry.",
+          hint: "The server took too long to respond.",
+          retryable: true,
+        };
+      }
+      const msg = err?.message || "Request failed.";
+      return {
+        ok: false,
+        error: msg,
+        user_message: msg,
+        hint: "",
+        retryable: true,
+      };
     } finally {
       clearTimeout(timeout);
     }

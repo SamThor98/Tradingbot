@@ -10,8 +10,9 @@
  */
 
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatMoney } from "../modules/format.js";
+import { safeText, safeNum, formatMoney, formatDecimal } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { state } from "../modules/state.js";
 
 export async function refreshPortfolio({ runScan = () => {} } = {}) {
   const out = await api.get("/api/portfolio");
@@ -19,12 +20,14 @@ export async function refreshPortfolio({ runScan = () => {} } = {}) {
   const meta = document.getElementById("portfolioMeta");
   body.innerHTML = "";
   if (!out.ok) {
+    state.lastPortfolioData = null;
     meta.textContent = "Portfolio unavailable.";
     body.innerHTML = `<tr><td colspan="5" class="muted">${safeText(out.error)}</td></tr>`;
     logEvent({ kind: "system", severity: "warn", message: `Portfolio load failed: ${out.error}` });
     return;
   }
   const data = out.data;
+  state.lastPortfolioData = data;
   meta.textContent = `${data.positions_count} position(s) • ${formatMoney(data.total_market_value)}`;
   if (!data.positions.length) {
     body.innerHTML = `
@@ -52,7 +55,7 @@ export async function refreshPortfolio({ runScan = () => {} } = {}) {
       <td>${safeText(p.qty)}</td>
       <td>${formatMoney(p.last)}</td>
       <td>${formatMoney(p.market_value)}</td>
-      <td>${safeNum(p.pl_pct) >= 0 ? "+" : ""}${safeText(p.pl_pct)}%</td>
+      <td>${safeNum(p.pl_pct) >= 0 ? "+" : ""}${formatDecimal(p.pl_pct, 2, "0.00")}%</td>
     `;
     body.appendChild(tr);
   });
@@ -64,10 +67,19 @@ export async function loadPortfolioRisk() {
   panel.innerHTML = `<div class="muted">Loading risk analytics...</div>`;
   const out = await api.get("/api/portfolio/risk");
   if (!out.ok) {
-    panel.innerHTML = `<div class="muted">Risk analytics unavailable: ${safeText(out.error)}</div>`;
+    state.lastPortfolioRiskData = null;
+    const hint =
+      out.status === 409
+        ? "Link Schwab account + market data in Setup, then retry."
+        : out.status === 401
+          ? "Sign in first to load tenant-scoped portfolio analytics."
+          : "Retry in a moment. If this persists, check backend logs.";
+    panel.innerHTML = `<div class="muted">Risk analytics unavailable: ${safeText(out.error)}</div><div class="muted small">${safeText(hint)}</div><button id="portfolioRiskRetryBtn" class="btn small secondary" type="button" style="margin-top:0.5rem">Retry</button>`;
+    document.getElementById("portfolioRiskRetryBtn")?.addEventListener("click", () => void loadPortfolioRisk());
     return;
   }
   const d = out.data;
+  state.lastPortfolioRiskData = d;
   if (!d.position_count) {
     panel.innerHTML = `<div class="muted">No positions to analyze.</div>`;
     return;
@@ -116,7 +128,7 @@ export async function loadPortfolioRisk() {
           <div class="risk-sector-bar-track">
             <div class="risk-sector-bar-fill" style="width:${barW}%"></div>
           </div>
-          <span class="risk-sector-pct mono-nums">${safeText(s.weight_pct)}%</span>
+          <span class="risk-sector-pct mono-nums">${formatDecimal(s.weight_pct, 2)}%</span>
           <span class="risk-sector-val muted mono-nums">${formatMoney(s.value)}</span>
         </div>`;
     });
@@ -135,8 +147,8 @@ export async function loadPortfolioRisk() {
           <div class="risk-sector-bar-track">
             <div class="risk-weight-bar-fill" style="width:${barW}%"></div>
           </div>
-          <span class="risk-sector-pct mono-nums">${safeText(p.weight_pct)}%</span>
-          <span class="mono-nums" style="color:${plColor};min-width:52px;text-align:right">${p.pl_pct >= 0 ? "+" : ""}${safeText(p.pl_pct)}%</span>
+          <span class="risk-sector-pct mono-nums">${formatDecimal(p.weight_pct, 2)}%</span>
+          <span class="mono-nums" style="color:${plColor};min-width:52px;text-align:right">${p.pl_pct >= 0 ? "+" : ""}${formatDecimal(p.pl_pct, 2)}%</span>
         </div>`;
     });
     html += `</div>`;

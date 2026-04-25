@@ -20,7 +20,7 @@
 
 import { safeText } from "./format.js";
 
-export function updateActionCenter({ title = "System Messages", message = "", severity = "info" } = {}) {
+export function updateActionCenter({ title = "Next Action", message = "", severity = "info" } = {}) {
   const wrap = document.getElementById("actionCenter");
   const titleEl = document.getElementById("actionCenterTitle");
   const textEl = document.getElementById("actionCenterText");

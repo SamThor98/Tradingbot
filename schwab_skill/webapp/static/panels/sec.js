@@ -29,6 +29,18 @@ export function applySecCompareMode() {
   }
 }
 
+function confidenceBand(confidence) {
+  if (!Number.isFinite(Number(confidence))) return "Unavailable";
+  const value = Number(confidence);
+  if (value >= 70) return "High";
+  if (value >= 45) return "Medium";
+  return "Low";
+}
+
+function analysisModeLabel(mode) {
+  return mode === "metadata_fallback" ? "metadata_fallback" : "full_text";
+}
+
 export function renderSecAnalysisCard(label, analysis) {
   if (!analysis) return "";
   const themes = (analysis.key_themes || []).slice(0, 3).map((t) => `<li>${safeText(t)}</li>`).join("");
@@ -44,17 +56,31 @@ export function renderSecAnalysisCard(label, analysis) {
   const warning = analysisMode !== "full_text" || limits.length
     ? `<div class="report-callout warn">Mode: ${analysisMode}. ${limits.length ? `Limits: ${safeText(limits.join("; "))}` : "Reduced confidence mode."}</div>`
     : "";
+  const confidenceBandLabel = confidenceBand(confidence);
+  const whatChanged = (analysis.what_changed || analysis.delta_highlights || []).slice(0, 2);
+  const whyMatters = (analysis.why_it_matters || analysis.impact_notes || []).slice(0, 2);
+  const falsifier = safeText(analysis.falsifier || analysis.what_would_falsify || limits[0] || "Falsifier signal unavailable.");
   return `
     <div class="compare-card">
       <h4>${safeText(label)}</h4>
-      <div class="subtle">Verdict: <span class="${statusClass(verdict === "bullish" ? "good" : verdict === "bearish" ? "bad" : "neutral")}">${verdict}</span>${confidence !== null ? ` | Confidence: ${safeText(confidence)}/100` : ""}</div>
+      <div class="subtle">Variant view: <span class="${statusClass(verdict === "bullish" ? "good" : verdict === "bearish" ? "bad" : "neutral")}">${verdict}</span>${confidence !== null ? ` | Confidence: ${safeText(confidence)}/100 (${confidenceBandLabel})` : ""}</div>
       ${warning}
       <ul class="report-bullets">
         <li>Form: ${safeText(analysis.form)} | Filed: ${safeText(analysis.filing_date)}</li>
+        <li>Evidence quality: ${safeText(analysisModeLabel(analysisMode))}</li>
         <li>Guidance: <span class="${statusClass(guidance === "negative" ? "bad" : guidance === "positive" ? "good" : "neutral")}">${guidance}</span></li>
         <li>Risk terms: ${safeText(risks)}</li>
         <li>Takeaway: ${takeaway}</li>
       </ul>
+      <div class="subtle">Decision discipline</div>
+      <ul class="report-bullets">
+        <li>Claim: ${takeaway}</li>
+        <li>Evidence: ${safeText((evidence[0]?.quote || evidence[0]?.claim || "Unavailable"))}</li>
+        <li>Confidence: ${confidence !== null ? `${safeText(confidence)}/100 (${confidenceBandLabel})` : "Unavailable"}</li>
+        <li>Falsifier: ${falsifier}</li>
+      </ul>
+      ${whatChanged.length ? `<div class="subtle">What changed</div><ul class="report-bullets">${whatChanged.map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>` : ""}
+      ${whyMatters.length ? `<div class="subtle">Why it matters</div><ul class="report-bullets">${whyMatters.map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>` : ""}
       ${why.length ? `<div class="subtle">Why this verdict</div><ul class="report-bullets">${why.map((w) => `<li>${safeText(w)}</li>`).join("")}</ul>` : ""}
       ${evidence.length ? `<div class="subtle">Top evidence</div><ul class="report-bullets">${evidence.map((ev) => `<li>${safeText(ev.claim || "Evidence")}: ${safeText(ev.quote || "")}</li>`).join("")}</ul>` : ""}
       <div class="subtle">Top themes</div>
@@ -137,35 +163,54 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
   const tldrVerdict = safeText(forensic.tldr_verdict || compare.investor_takeaway || "No clear divergence verdict generated.");
   const compareConfidence = Number.isFinite(Number(compare.compare_confidence)) ? Number(compare.compare_confidence) : null;
   const analysisMode = safeText(compare.analysis_mode || data.analysis_mode || "full_text");
+  const evidenceMode = analysisModeLabel(analysisMode);
+  const confidenceBandLabel = confidenceBand(compareConfidence);
   const compareLimits = (compare.limits || []).slice(0, 3);
   const rationale = (compare.change_summary?.plain_english_rationale || []).slice(0, 3);
   const evidenceRanked = (compare.evidence || compare.change_summary?.evidence_ranked || []).slice(0, 4);
   const warning = analysisMode !== "full_text" || compareLimits.length;
+  const whatChanged = materialRaw.length ? materialRaw.slice(0, 3) : differencesRaw.slice(0, 3);
+  const whyItMatters = rationale.length ? rationale : [safeText(compare.investor_takeaway || "Impact statement unavailable.")];
+  const falsifierLines = (compare.what_would_falsify || compare.falsifier || compareLimits || []).slice(0, 2);
 
   headlineRoot.innerHTML = `
     <div class="report-section compare-headline-card">
-      <h4>SEC Compare Verdict</h4>
+      <h4>Variant vs Consensus</h4>
       <div><span class="${sentimentTagClass(sentimentTag)}">${sentimentTag}</span></div>
       <div class="compare-lead">${headline}</div>
-      <div class="subtle">Mode: ${safeText(data.mode || compare.mode || "N/A")} | Form: ${safeText(data.form_type || "N/A")} | Analysis: ${analysisMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100` : ""}</div>
+      <div class="subtle">Mode: ${safeText(data.mode || compare.mode || "N/A")} | Form: ${safeText(data.form_type || "N/A")} | Evidence quality: ${evidenceMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : " | Confidence: Unavailable"}</div>
       ${warning ? `<div class="report-callout warn">Reduced confidence context. ${compareLimits.length ? `Limits: ${safeText(compareLimits.join("; "))}` : "Metadata fallback or partial evidence mode."}</div>` : ""}
+      <ul class="report-bullets">
+        <li>Claim: ${safeText(compare.investor_takeaway || headline)}</li>
+        <li>Evidence: ${safeText(evidenceRanked[0]?.quote || evidenceRanked[0]?.claim || "Unavailable")}</li>
+        <li>Confidence: ${compareConfidence !== null ? `${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : "Unavailable"}</li>
+        <li>Falsifier: ${safeText(falsifierLines[0] || compareLimits[0] || "Falsifier unavailable")}</li>
+      </ul>
     </div>
   `;
 
   narrativeRoot.innerHTML = `
     <div class="report-section compare-narrative-card">
-      <h4>The "Red Flag" Ledger</h4>
+      <h4>Decision Narrative</h4>
+      <div class="subtle">What changed</div>
       <ul class="report-bullets">
-        ${(redFlags.length ? redFlags : differencesRaw.slice(0, 4)).map((x) => `<li>${safeText(x)}</li>`).join("") || "<li>No newly introduced legal-risk language flagged.</li>"}
+        ${(whatChanged.length ? whatChanged : differencesRaw.slice(0, 4)).map((x) => `<li>${safeText(x)}</li>`).join("") || "<li>No newly introduced legal-risk language flagged.</li>"}
       </ul>
-      ${rationale.length ? `<div class="subtle">Why this verdict</div><ul class="report-bullets">${rationale.map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>` : ""}
-      <div class="subtle">Focus: new legal/risk language in recent filing that did not appear in comparator.</div>
+      <div class="subtle">Why it matters</div>
+      <ul class="report-bullets">${whyItMatters.map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>
+      <div class="subtle">What would falsify</div>
+      <ul class="report-bullets">${(falsifierLines.length ? falsifierLines : ["No explicit falsifier was provided by the payload."]).map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>
     </div>
   `;
 
   changesRoot.innerHTML = `
     <div class="report-section compare-changes-card">
-      <h4>Margin &amp; Moat Check</h4>
+      <h4>PM Support Context</h4>
+      <div class="subtle">Red flag ledger</div>
+      <ul class="report-bullets">
+        ${(redFlags.length ? redFlags : differencesRaw.slice(0, 4)).map((x) => `<li>${safeText(x)}</li>`).join("") || "<li>No newly introduced legal-risk language flagged.</li>"}
+      </ul>
+      <div class="subtle">Margin &amp; Moat Check</div>
       <ul class="report-bullets">
         ${(moatBullets.length ? moatBullets : [narrative]).map((x) => `<li>${safeText(x)}</li>`).join("")}
       </ul>

@@ -80,6 +80,102 @@ def build_portfolio_summary(account_status: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_portfolio_risk_analytics(summary: dict[str, Any], *, skill_dir: str | os.PathLike[str]) -> dict[str, Any]:
+    """Compute concentration + sector/day-PnL analytics from portfolio summary."""
+    from sector_strength import SECTOR_TO_ETF, get_ticker_sector_etf
+
+    positions = summary.get("positions", []) if isinstance(summary, dict) else []
+    total_value = float(summary.get("total_market_value", 0) or 0) if isinstance(summary, dict) else 0.0
+    if not positions or total_value <= 0:
+        return {
+            "total_value": 0,
+            "position_count": 0,
+            "sector_allocation": [],
+            "concentration": {},
+            "positions_weighted": [],
+            "day_pl_total": 0,
+            "day_pl_breakdown": [],
+        }
+
+    sector_buckets: dict[str, float] = {}
+    etf_reverse: dict[str, str] = {}
+    for name, etf in SECTOR_TO_ETF.items():
+        etf_reverse.setdefault(etf, name.title())
+
+    weighted_positions: list[dict[str, Any]] = []
+    day_pl_total = 0.0
+    day_pl_breakdown: list[dict[str, Any]] = []
+
+    for pos in positions:
+        sym = str(pos.get("symbol") or "")
+        mkt = float(pos.get("market_value", 0) or 0)
+        weight = round((mkt / total_value) * 100, 2) if total_value > 0 else 0
+        day_pl = float(pos.get("day_pl", 0) or 0)
+        day_pl_total += day_pl
+
+        sector_etf = get_ticker_sector_etf(sym, skill_dir=skill_dir)
+        sector_name = etf_reverse.get(sector_etf, "Unknown") if sector_etf else "Unknown"
+        sector_buckets[sector_name] = sector_buckets.get(sector_name, 0) + mkt
+
+        weighted_positions.append(
+            {
+                "symbol": sym,
+                "weight_pct": weight,
+                "market_value": mkt,
+                "sector": sector_name,
+                "sector_etf": sector_etf,
+                "pl_pct": pos.get("pl_pct", 0),
+                "day_pl": day_pl,
+            }
+        )
+        day_pl_breakdown.append(
+            {
+                "symbol": sym,
+                "day_pl": round(day_pl, 2),
+                "contribution_pct": round((day_pl / total_value) * 100, 4) if total_value > 0 else 0,
+            }
+        )
+
+    sector_allocation = sorted(
+        [
+            {
+                "sector": name,
+                "value": round(val, 2),
+                "weight_pct": round((val / total_value) * 100, 2),
+            }
+            for name, val in sector_buckets.items()
+        ],
+        key=lambda x: x["weight_pct"],
+        reverse=True,
+    )
+
+    weights = [float(p.get("weight_pct", 0) or 0) for p in weighted_positions]
+    hhi = round(sum(w**2 for w in weights), 2)
+    top1 = max(weights) if weights else 0
+    top5_weight = round(sum(sorted(weights, reverse=True)[:5]), 2)
+    sector_count = len([s for s in sector_allocation if float(s.get("weight_pct", 0) or 0) > 0])
+
+    concentration = {
+        "hhi": hhi,
+        "hhi_label": "Concentrated" if hhi > 2500 else ("Moderate" if hhi > 1500 else "Diversified"),
+        "top_position_pct": top1,
+        "top_5_pct": top5_weight,
+        "sector_count": sector_count,
+        "position_count": len(positions),
+    }
+
+    day_pl_breakdown.sort(key=lambda x: abs(float(x.get("day_pl", 0) or 0)), reverse=True)
+    return {
+        "total_value": round(total_value, 2),
+        "position_count": len(positions),
+        "sector_allocation": sector_allocation,
+        "concentration": concentration,
+        "positions_weighted": weighted_positions,
+        "day_pl_total": round(day_pl_total, 2),
+        "day_pl_breakdown": day_pl_breakdown[:10],
+    }
+
+
 def quote_health_hint(meta: dict[str, Any], quote_ok: bool) -> str | None:
     """Translate a `get_current_quote_with_status` meta dict into a UX hint."""
     if quote_ok:

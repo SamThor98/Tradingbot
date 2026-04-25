@@ -22,6 +22,13 @@ exclude = "(artifacts|validation_artifacts|mirofish_sims|__pycache__)"
 explicit_package_bases = true
 namespace_packages = true
 # Staged expansion beyond tests; ratchet this list over time.
-files = ["tests", "webapp/security.py", "webapp/cors_config.py", "webapp/saas_redis.py"]
+files = [
+  "tests",
+  "webapp/security.py",
+  "webapp/cors_config.py",
+  "webapp/saas_redis.py",
+  "webapp/route_helpers.py",
+  "webapp/response_helpers.py",
+]
 follow_imports = "skip"
 disable_error_code = ["import-untyped"]

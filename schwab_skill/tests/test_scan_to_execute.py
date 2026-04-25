@@ -167,9 +167,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_create_pending_trade(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_create_pending_trade(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -194,9 +192,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_list_pending_trades(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_list_pending_trades(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -212,9 +208,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_preflight_trade(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_preflight_trade(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         create_resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -233,9 +227,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_reject_trade(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_reject_trade(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         create_resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -254,9 +246,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_reject_already_rejected_fails(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_reject_already_rejected_fails(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         create_resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -274,9 +264,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_approve_trade_success(
-        self, mock_auth, mock_size, mock_price, mock_quote, mock_place, client: TestClient
-    ):
+    def test_approve_trade_success(self, mock_auth, mock_size, mock_price, mock_quote, mock_place, client: TestClient):
         mock_place.return_value = {"order_id": "ORD123", "status": "FILLED"}
         create_resp = client.post(
             "/api/pending-trades",
@@ -298,9 +286,7 @@ class TestPendingTradeFlow:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_approve_wrong_ticker_fails(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_approve_wrong_ticker_fails(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         create_resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -403,9 +389,7 @@ class TestDeleteOperations:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_delete_single_trade(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_delete_single_trade(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         create_resp = client.post(
             "/api/pending-trades",
             json={"ticker": "AAPL", "signal": FAKE_SIGNALS[0]},
@@ -428,9 +412,7 @@ class TestDeleteOperations:
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)
     @patch("webapp.main.get_position_size_usd", return_value=5000.0)
     @patch("webapp.main.DualSchwabAuth")
-    def test_delete_all_trades(
-        self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient
-    ):
+    def test_delete_all_trades(self, mock_auth, mock_size, mock_price, mock_quote, client: TestClient):
         for sig in FAKE_SIGNALS:
             client.post(
                 "/api/pending-trades",
@@ -460,9 +442,21 @@ class TestHealthAndStatus:
         data = resp.json()
         assert data["ok"] is True
         assert data["data"]["saas_mode"] is False
+        assert data["data"]["runtime_mode"] == "local"
         assert data["data"]["api_key_required"] is True
         assert data["data"]["sse_enabled"] is True
         assert data["data"]["scan_transport"] == "local_thread"
+        assert data["data"]["ui_contract_version"] == "2026-04-webapp-stabilization"
+
+    def test_runtime_contract(self, client: TestClient):
+        resp = client.get("/api/runtime-contract")
+        data = resp.json()
+        assert data["ok"] is True
+        contract = data["data"]
+        assert contract["runtime_mode"] == "local"
+        assert contract["scan_transport"] == "local_thread"
+        assert contract["sse_enabled"] is True
+        assert contract["api_envelope"] == "ApiResponse"
 
     def test_static_pages(self, client: TestClient):
         for path in ["/", "/simple", "/login"]:

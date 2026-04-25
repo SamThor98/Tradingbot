@@ -308,10 +308,11 @@ export function switchBacktestHubTab(which) {
 
 export async function refreshBacktestRuns() {
   const list = document.getElementById("btRunList");
-  const out = await api.get("/api/backtest-runs?limit=15");
   if (!list) return;
+  list.innerHTML = `<li class="muted">Loading backtest runs...</li>`;
+  const out = await api.get("/api/backtest-runs?limit=15");
   if (!out.ok) {
-    list.innerHTML = `<li class="muted">List failed: ${safeText(out.error)}</li>`;
+    list.innerHTML = `<li class="muted">List failed: ${safeText(out.user_message || out.error)}</li>`;
     return;
   }
   const rows = Array.isArray(out.data) ? out.data : [];

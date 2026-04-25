@@ -7,6 +7,7 @@
  *     closeCommandPalette,
  *     showToast,
  *     applyDisplayMode,
+ *     applyScreenMode,
  *   })
  *
  * Shortcuts are no-op when the focus is in a form element (`INPUT`,
@@ -18,6 +19,7 @@ export function setupKeyboardShortcuts({
   closeCommandPalette,
   showToast,
   applyDisplayMode,
+  applyScreenMode,
 } = {}) {
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "k") {
@@ -25,6 +27,17 @@ export function setupKeyboardShortcuts({
       const dialog = document.getElementById("cmdPaletteDialog");
       if (dialog?.classList.contains("open")) closeCommandPalette?.();
       else openCommandPalette?.();
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4"].includes(e.key)) {
+      e.preventDefault();
+      const screenMap = { "1": "daily", "2": "setup", "3": "research", "4": "portfolio" };
+      const mode = screenMap[e.key];
+      if (mode) {
+        applyScreenMode?.(mode, { updateUrl: true });
+        showToast?.(`Switched to ${mode} screen`, "info", 1800);
+      }
       return;
     }
 
@@ -51,7 +64,7 @@ export function setupKeyboardShortcuts({
         break;
       case "?":
         e.preventDefault();
-        showToast?.("Shortcuts: Ctrl+K = Command palette, R = Refresh, S = Scan, T = Ticker, 1-3 = View", "info", 5000);
+        showToast?.("Shortcuts: Ctrl+K palette, Ctrl/Cmd+1..4 screens, R refresh, S scan, T ticker, 1-3 detail", "info", 5500);
         break;
       case "1":
         e.preventDefault();

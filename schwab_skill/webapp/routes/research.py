@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from execution import get_account_status
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
 from schwab_auth import DualSchwabAuth
 from sec_filing_compare import (
@@ -16,6 +17,8 @@ from sec_filing_compare import (
     compare_ticker_vs_ticker,
 )
 
+from .._shared import build_portfolio_summary
+from ..report_v2 import build_report_v2
 from ..schemas import ApiResponse
 
 router = APIRouter(tags=["research"])
@@ -242,6 +245,15 @@ def report_ticker(
             skip_edgar=skip_edgar,
         )
         data = json.loads(report_to_json(report))
+        portfolio_summary: dict[str, Any] | None = None
+        try:
+            auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+            status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+            if isinstance(status_data, dict):
+                portfolio_summary = build_portfolio_summary(status_data)
+        except Exception:
+            portfolio_summary = None
+        data["report_v2"] = build_report_v2(data, portfolio_summary=portfolio_summary)
         section_verdicts = _build_report_verdicts(data)
         if section_key:
             section_data = data.get(section_key)
@@ -250,6 +262,7 @@ def report_ticker(
                 "generated_at": data.get("generated_at"),
                 "section": section_key,
                 "data": section_data,
+                "report_v2": data.get("report_v2"),
                 "section_verdicts": section_verdicts,
                 "section_quick_verdict": section_verdicts.get(section_key, {}),
             })
