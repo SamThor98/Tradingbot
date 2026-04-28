@@ -45,6 +45,9 @@ _celery_conf: dict[str, Any] = {
     "accept_content": ["json"],
     "result_serializer": "json",
     "timezone": "UTC",
+    # Without this, AsyncResult can remain PENDING until completion and the UI
+    # incorrectly reports "waiting for worker" even after execution starts.
+    "task_track_started": True,
     # Keep broker pressure lower on small/free Redis footprints.
     "worker_prefetch_multiplier": 1,
     "broker_pool_limit": int(os.getenv("CELERY_BROKER_POOL_LIMIT", "5")),

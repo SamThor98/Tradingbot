@@ -100,7 +100,7 @@ def _load_watchlist(skill_dir: Path) -> list[str]:
     Load watchlist:
     - If SIGNAL_WATCHLIST is set in .env (non-empty), it overrides everything else (custom list).
     - Else if USE_STATIC_WATCHLIST is true: DEFAULT_WATCHLIST (~sector basket).
-    - Else: watchlist_loader.load_full_watchlist() (S&P 500 + 400 + 600 + Russell 2000 + IWM),
+    - Else: watchlist_loader.load_full_watchlist() (S&P 1500 = S&P 500 + 400 + 600),
       refreshed from source at least once per UTC day. When SIGNAL_SCAN_FULL_UNIVERSE is true
       (default), that dynamic list is not shortened by quality prefilter or focused universe.
     """
@@ -133,7 +133,7 @@ def _load_watchlist(skill_dir: Path) -> list[str]:
     wl = load_full_watchlist()
     if get_signal_scan_full_universe(skill_dir):
         LOG.info(
-            "Watchlist mode=full (watchlist_loader: S&P500+400+600+Russell2000+IWM) tickers=%d "
+            "Watchlist mode=full (watchlist_loader: SP1500=S&P500+400+600) tickers=%d "
             "(SIGNAL_SCAN_FULL_UNIVERSE: no prefilter/focus)",
             len(wl),
         )
@@ -141,7 +141,7 @@ def _load_watchlist(skill_dir: Path) -> list[str]:
     wl = _maybe_prefilter_watchlist(skill_dir, wl)
     wl = _apply_universe_focus(skill_dir, wl)
     LOG.info(
-        "Watchlist mode=full (watchlist_loader: S&P500+400+600+Russell2000+IWM) tickers=%d",
+        "Watchlist mode=full (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
         len(wl),
     )
     return wl

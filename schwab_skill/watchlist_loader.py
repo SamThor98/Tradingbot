@@ -1,5 +1,5 @@
 """
-Dynamic watchlist loader: S&P 500 + S&P 400 + S&P 600 + Russell 2000 from Wikipedia/GitHub.
+Dynamic watchlist loader: S&P 1500 (S&P 500 + S&P 400 + S&P 600) from Wikipedia.
 All sectors: large cap, mid cap (~$1–5B), small cap (~$400M–$2B). Cached 24h.
 """
 
@@ -72,25 +72,6 @@ def _fetch_sp600() -> list[str]:
     return []
 
 
-def _fetch_russell2000() -> list[str]:
-    """Fetch Russell 2000 tickers from GitHub CSV (small-cap index)."""
-    import csv
-
-    import requests
-
-    url = "https://raw.githubusercontent.com/ikoniaris/Russell2000/master/russell_2000_components.csv"
-    headers = {"User-Agent": "TradingBot/1.0 (https://github.com/)"}
-    resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    reader = csv.DictReader(resp.text.strip().splitlines())
-    tickers = []
-    for row in reader:
-        sym = (row.get("Ticker") or row.get("ticker") or "").strip().upper()
-        if sym and len(sym) <= 6:
-            tickers.append(sym)
-    return tickers
-
-
 def _load_cached() -> tuple[list[str], float, str | None] | None:
     """Load cached watchlist. Returns (tickers, timestamp, as_of_utc_date or None) or None."""
     if not CACHE_FILE.exists():
@@ -128,7 +109,7 @@ def _save_cache(tickers: list[str]) -> None:
 
 def load_full_watchlist(force_refresh: bool = False) -> list[str]:
     """
-    Load S&P 500 + S&P 400 + S&P 600 + Russell 2000 watchlist.
+    Load S&P 1500 watchlist (S&P 500 + S&P 400 + S&P 600).
     Uses cache for the same UTC calendar day (daily refresh), or if the cache file
     predates as_of_utc_date, falls back to the prior <24h timestamp rule.
     Returns deduplicated list of tickers, all sectors.
@@ -144,10 +125,10 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
                 LOG.debug("Using cached watchlist (%d tickers)", len(tickers))
                 return tickers
 
-    LOG.info("Fetching S&P 500 + S&P 400 + S&P 600 + Russell 2000...")
+    LOG.info("Fetching S&P 500 + S&P 400 + S&P 600 (S&P 1500)...")
     # Fetch each index independently. A single failure (e.g. lxml missing,
-    # Russell 2000 GitHub URL 404, transient Wikipedia outage) used to wipe
-    # the entire universe down to the 18-ticker fallback because all four
+    # transient Wikipedia outage) used to wipe the entire universe down to the
+    # 18-ticker fallback because all fetches
     # fetches lived in one try block. Now any combination of successful
     # fetches contributes; only when every fetch fails do we fall back.
     fetched: list[list[str]] = []
@@ -155,7 +136,6 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
         ("S&P 500", _fetch_sp500),
         ("S&P 400", _fetch_sp400),
         ("S&P 600", _fetch_sp600),
-        ("Russell 2000", _fetch_russell2000),
     ):
         try:
             tickers = fn()
@@ -171,11 +151,9 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
         LOG.warning("All watchlist fetches failed. Using fallback.")
         return _fallback_watchlist()
 
-    extra = ["IWM"]  # Russell 2000 ETF - small cap basket
     merged: list[str] = []
     for lst in fetched:
         merged.extend(lst)
-    merged.extend(extra)
     combined = list(dict.fromkeys(merged))
     if combined:
         _save_cache(combined)
