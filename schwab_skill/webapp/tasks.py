@@ -343,12 +343,15 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
             signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir, **skw)
             inserted = 0
             for sig in signals:
+                # Persist canonical JSON objects (not pre-encoded JSON strings)
+                # so API readers can consume payloads without extra decoding.
+                payload_obj = json.loads(json.dumps(sig, default=_json_default))
                 row = ScanResult(
                     user_id=user_id,
                     job_id=job_id,
                     ticker=str(sig.get("ticker") or sig.get("symbol") or "").upper(),
                     signal_score=_optional_float(sig.get("signal_score")),
-                    payload_json=json.dumps(sig, default=_json_default),
+                    payload_json=payload_obj,
                 )
                 db.add(row)
                 inserted += 1

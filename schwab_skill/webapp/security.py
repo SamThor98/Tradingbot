@@ -351,7 +351,13 @@ def parse_json(raw: Any, fallback: dict[str, Any] | list[Any]) -> dict[str, Any]
     if not raw:
         return fallback
     try:
-        out = json.loads(raw)
+        out: Any = raw
+        # Some rows are double-encoded (JSON string persisted inside JSONB);
+        # decode once or twice until we reach a concrete object/array.
+        for _ in range(2):
+            if not isinstance(out, str):
+                break
+            out = json.loads(out)
         if isinstance(fallback, list):
             return out if isinstance(out, list) else fallback
         return out if isinstance(out, dict) else fallback

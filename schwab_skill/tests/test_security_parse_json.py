@@ -20,6 +20,14 @@ def test_parse_json_parses_string_json() -> None:
     assert out["ticker"] == "NVDA"
 
 
+def test_parse_json_parses_double_encoded_json_string() -> None:
+    raw = '"{\\"ticker\\":\\"INSW\\",\\"sector_etf\\":\\"XLE\\"}"'
+    out = parse_json(raw, {})
+    assert isinstance(out, dict)
+    assert out["ticker"] == "INSW"
+    assert out["sector_etf"] == "XLE"
+
+
 def test_parse_json_returns_fallback_on_type_mismatch() -> None:
     assert parse_json({"k": "v"}, []) == []
     assert parse_json([1, 2], {}) == {}
