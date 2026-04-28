@@ -465,8 +465,8 @@ async function hydrateSimpleScanFromStatus(s) {
       return;
     }
     const url = jobId
-      ? `/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`
-      : `/api/scan-results?limit=500`;
+      ? `/api/scan-results?limit=5000&job_id=${encodeURIComponent(jobId)}`
+      : `/api/scan-results?limit=5000`;
     const listOut = await api.get(url);
     if (!listOut.ok) return;
     const rows = Array.isArray(listOut.data) ? listOut.data : [];
@@ -555,7 +555,7 @@ async function waitSaaS(taskId) {
       }
       const jobId = result.job_id;
       let listOut;
-      if (jobId) listOut = await api.get(`/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`);
+      if (jobId) listOut = await api.get(`/api/scan-results?limit=5000&job_id=${encodeURIComponent(jobId)}`);
       else listOut = { ok: false, error: "Missing job_id" };
       if (!listOut.ok) {
         headline.textContent = "Could not load results.";

@@ -502,6 +502,10 @@ def _compute_stage_a_shortlist_limit(
 ) -> int:
     if total_candidates <= 0:
         return 0
+    # When top_n <= 0 we are in "return all ranked signals" mode; do not cap
+    # Stage A shortlist because it would silently drop valid candidates.
+    if top_n <= 0:
+        return int(total_candidates)
     base = top_n if top_n > 0 else total_candidates
     widened = max(base, int(round(float(base) * max(1.0, float(multiplier)))))
     if cap > 0:

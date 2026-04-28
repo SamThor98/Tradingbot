@@ -857,6 +857,7 @@ function signalFromScanResultRow(row) {
   if (!signal.symbol && rec.ticker) signal.symbol = rec.ticker;
   if (signal.signal_score == null && rec.signal_score != null) signal.signal_score = rec.signal_score;
   if (!signal.job_id && rec.job_id) signal.job_id = rec.job_id;
+  if (signal.flagged_days == null && rec.flagged_days != null) signal.flagged_days = rec.flagged_days;
   return signal;
 }
 
@@ -1120,7 +1121,7 @@ function renderScanRows(signals = []) {
   if (!signals.length) {
     body.innerHTML = `
       <tr>
-        <td colspan="9" class="muted">
+        <td colspan="10" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M4 8h16M6 12h12M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -1144,6 +1145,7 @@ function renderScanRows(signals = []) {
   signals.forEach((sig, idx) => {
     const row = normalizeScanSignal(sig);
     const ticker = row.ticker || row.symbol || "?";
+    const flaggedDays = Math.max(0, safeNum(row.flagged_days ?? row.days_flagged, 0));
     const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
     const score = safeNum(row.signal_score ?? row.score, null);
     const advisory = row.advisory;
@@ -1157,6 +1159,7 @@ function renderScanRows(signals = []) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${safeText(ticker)}</strong></td>
+      <td>${flaggedDays || "—"}</td>
       <td><span class="pill info strategy-badge">${topLive}</span></td>
       <td>${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
       <td>${score !== null ? `${score.toFixed(1)}` : "—"}</td>
@@ -1581,8 +1584,8 @@ async function hydrateScanTableFromStatus(status) {
     }
 
     const url = jobId
-      ? `/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`
-      : `/api/scan-results?limit=500`;
+      ? `/api/scan-results?limit=5000&job_id=${encodeURIComponent(jobId)}`
+      : `/api/scan-results?limit=5000`;
     const listOut = await api.get(url);
     if (!listOut.ok) return;
     const rows = Array.isArray(listOut.data) ? listOut.data : [];
@@ -2018,7 +2021,7 @@ async function waitForSaaScanCompletion(taskId) {
       const jobId = result.job_id;
       let listOut;
       if (jobId) {
-        listOut = await api.get(`/api/scan-results?limit=500&job_id=${encodeURIComponent(jobId)}`);
+        listOut = await api.get(`/api/scan-results?limit=5000&job_id=${encodeURIComponent(jobId)}`);
       } else {
         listOut = { ok: false, error: "Missing job_id in scan result." };
       }

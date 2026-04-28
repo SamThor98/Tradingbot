@@ -1247,6 +1247,9 @@ def scan(
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
         skw = scan_runtime_kwargs(parsed_scan)
+        env_overrides = dict(skw.get("env_overrides") or {})
+        env_overrides.setdefault("SIGNAL_TOP_N", "0")
+        skw["env_overrides"] = env_overrides
 
         if async_mode:
             started = False

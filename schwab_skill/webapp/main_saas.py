@@ -15,7 +15,7 @@ from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from execution import get_account_status
@@ -1134,6 +1134,7 @@ def run_scan(
     # process (important when services drift in Render env settings).
     env_overrides = scan_opts.get("env_overrides") if isinstance(scan_opts, dict) else {}
     env_overrides = dict(env_overrides) if isinstance(env_overrides, dict) else {}
+    env_overrides.setdefault("SIGNAL_TOP_N", "0")
     for key in (
         "MIROFISH_API_KEY",
         "OPENAI_API_KEY",
@@ -1307,7 +1308,7 @@ def scan_lifecycle(
 
 @app.get("/api/scan-results", response_model=ApiResponse)
 def list_scan_results(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=5000, ge=1, le=5000),
     job_id: str | None = Query(default=None, max_length=64),
     user: User = Depends(get_current_user),
     db: Session = Depends(_db),
@@ -1316,13 +1317,31 @@ def list_scan_results(
     jid = (job_id or "").strip()
     if jid:
         q = q.filter(ScanResult.job_id == jid)
-    rows = q.order_by(ScanResult.created_at.desc()).limit(limit).all()
+    rows = q.order_by(ScanResult.signal_score.desc(), ScanResult.created_at.desc()).limit(limit).all()
+    tickers = sorted({str(row.ticker or "").upper() for row in rows if str(row.ticker or "").strip()})
+    flagged_days_map: dict[str, int] = {}
+    if tickers:
+        day_counts = (
+            db.query(
+                ScanResult.ticker,
+                func.count(func.distinct(func.date(ScanResult.created_at))),
+            )
+            .filter(ScanResult.user_id == user.id, ScanResult.ticker.in_(tickers))
+            .group_by(ScanResult.ticker)
+            .all()
+        )
+        flagged_days_map = {
+            str(ticker or "").upper(): int(days or 0)
+            for ticker, days in day_counts
+            if str(ticker or "").strip()
+        }
     return _ok(
         [
             {
                 "id": row.id,
                 "job_id": row.job_id,
                 "ticker": row.ticker,
+                "flagged_days": int(flagged_days_map.get(str(row.ticker or "").upper(), 0)),
                 "signal_score": row.signal_score,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "payload": parse_json(row.payload_json, {}),
