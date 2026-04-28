@@ -125,6 +125,7 @@ Point Stripe’s webhook endpoint at **`POST /api/billing/webhook/stripe`** on y
 | `STRIPE_CHECKOUT_CANCEL_URL` | Redirect if user cancels checkout |
 | `STRIPE_PORTAL_RETURN_URL` | Return URL after Customer Portal (`POST /api/billing/portal-session`) |
 | `SAAS_BILLING_ENFORCE` | Set to `1` / `true` to require **`trialing`** or **`active`** subscription for scans, order execution, and position sync (API + Celery workers). Default off for backward compatibility. |
+| `SAAS_ENABLE_STRIPE_WEBHOOK` | Set to `0` / `false` to temporarily acknowledge webhook calls without mutating billing state (safe maintenance/deprecation mode). Default `1`. |
 
 **JWT-authenticated billing routes:** `POST /api/billing/checkout-session` (optional JSON body `success_url`, `cancel_url`), `POST /api/billing/portal-session` (requires existing Stripe customer). **`GET /api/me`** includes `subscription_status`, `subscription_current_period_end`, `has_stripe_customer`, `billing_enforced`, and `subscription_active`.
 
@@ -147,8 +148,18 @@ The following are compatibility paths and should be treated as advanced operatio
 
 - Uploading raw `access_token` / `refresh_token` instead of full OAuth payloads.
 - Using `SAAS_PLATFORM_MARKET_SKILL_DIR` as market-token fallback instead of per-user market OAuth.
+- Relying on `SUPABASE_JWT_SECRET_LEGACY` for active token verification after secret rotation.
 
 These paths remain supported for migration safety, but new tenants should use full per-user market + account OAuth.
+
+### Legacy-deprecation guardrails
+
+- `SAAS_DISABLE_PLATFORM_MARKET_FALLBACK=1` enforces per-user `market_oauth_json` and disables `SAAS_PLATFORM_MARKET_SKILL_DIR` fallback.
+- API logs now emit telemetry when:
+  - `POST /api/orders/execute` (deprecated route) is called.
+  - JWT validation succeeds via `SUPABASE_JWT_SECRET_LEGACY`.
+  - Tenant runtime uses legacy platform market token fallback.
+- Recommended removal window before hard-delete: **14 days** with zero legacy telemetry events.
 
 ## Common misconfigurations
 

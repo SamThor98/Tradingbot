@@ -1,0 +1,224 @@
+{
+  "run_count": 9,
+  "runs": [
+    {
+      "run_id": "705aca8a958844fd830f8be9faa60cf9",
+      "start_date": "2023-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 0,
+      "total_trades": 0,
+      "total_return_net_pct": 0.0,
+      "profit_factor_net": 0.0,
+      "max_drawdown_net_pct": 0.0,
+      "portfolio_summary": {
+        "capacity_filtered": 0,
+        "avg_concurrent": 0.0,
+        "peak_concurrent": 0,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 0,
+        "starting_equity": 100000.0,
+        "ending_equity": 100000.0
+      }
+    },
+    {
+      "run_id": "cf6ca2138542495d83bfbd5d556fe702",
+      "start_date": "2024-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 1556,
+      "total_trades": 0,
+      "total_return_net_pct": 0.0,
+      "profit_factor_net": 0.0,
+      "max_drawdown_net_pct": 0.0,
+      "portfolio_summary": {
+        "capacity_filtered": 0,
+        "avg_concurrent": 0.0,
+        "peak_concurrent": 0,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 0,
+        "starting_equity": 100000.0,
+        "ending_equity": 100000.0
+      }
+    },
+    {
+      "run_id": "b5890f05bf1a4a079f7b8ed7a2d93e11",
+      "start_date": "2025-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 0,
+      "total_trades": 0,
+      "total_return_net_pct": 0.0,
+      "profit_factor_net": 0.0,
+      "max_drawdown_net_pct": 0.0,
+      "portfolio_summary": {
+        "capacity_filtered": 0,
+        "avg_concurrent": 0.0,
+        "peak_concurrent": 0,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 0,
+        "starting_equity": 100000.0,
+        "ending_equity": 100000.0
+      }
+    },
+    {
+      "run_id": "2e69c3c61ae34c22a6db27bc215dd30a",
+      "start_date": "2025-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 2,
+      "total_trades": 0,
+      "total_return_net_pct": 0.0,
+      "profit_factor_net": 0.0,
+      "max_drawdown_net_pct": 0.0,
+      "portfolio_summary": {
+        "capacity_filtered": 0,
+        "avg_concurrent": 0.0,
+        "peak_concurrent": 0,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 0,
+        "starting_equity": 100000.0,
+        "ending_equity": 100000.0
+      }
+    },
+    {
+      "run_id": "f378528db3a94586b68c8d73b3cb36e6",
+      "start_date": "2024-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 434,
+      "total_trades": 0,
+      "total_return_net_pct": 0.0,
+      "profit_factor_net": 0.0,
+      "max_drawdown_net_pct": 0.0,
+      "portfolio_summary": {
+        "capacity_filtered": 0,
+        "avg_concurrent": 0.0,
+        "peak_concurrent": 0,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 0,
+        "starting_equity": 100000.0,
+        "ending_equity": 100000.0
+      }
+    },
+    {
+      "run_id": "4a4c42b6e9b1450f959c895bdbe9edc2",
+      "start_date": "2024-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 1962,
+      "total_trades": 609,
+      "total_return_net_pct": 3.18,
+      "profit_factor_net": 1.025,
+      "max_drawdown_net_pct": -14.73,
+      "portfolio_summary": {
+        "capacity_filtered": 4664,
+        "avg_concurrent": 7.892,
+        "peak_concurrent": 10,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 609,
+        "starting_equity": 100000.0,
+        "ending_equity": 103177.81347353899
+      }
+    },
+    {
+      "run_id": "6ec93c9463e14c00a278ed50c7fd91e6",
+      "start_date": "2024-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 1497,
+      "total_trades": 618,
+      "total_return_net_pct": 5.27,
+      "profit_factor_net": 1.076,
+      "max_drawdown_net_pct": -13.95,
+      "portfolio_summary": {
+        "capacity_filtered": 3722,
+        "avg_concurrent": 7.742,
+        "peak_concurrent": 10,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 618,
+        "starting_equity": 100000.0,
+        "ending_equity": 105266.42199184174
+      }
+    },
+    {
+      "run_id": "52dedfde8b704f4fbf0ad59b7cc6c95e",
+      "start_date": "2024-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 500,
+      "total_trades": 563,
+      "total_return_net_pct": 7.91,
+      "profit_factor_net": 1.117,
+      "max_drawdown_net_pct": -9.1,
+      "portfolio_summary": {
+        "capacity_filtered": 983,
+        "avg_concurrent": 6.516,
+        "peak_concurrent": 10,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 563,
+        "starting_equity": 100000.0,
+        "ending_equity": 107912.15949782653
+      }
+    },
+    {
+      "run_id": "a4a0087d720e480f859e348eb4aab8e2",
+      "start_date": "2025-01-01",
+      "end_date": "2026-04-25",
+      "universe_size": 499,
+      "total_trades": 208,
+      "total_return_net_pct": 7.71,
+      "profit_factor_net": 1.284,
+      "max_drawdown_net_pct": -7.21,
+      "portfolio_summary": {
+        "capacity_filtered": 463,
+        "avg_concurrent": 7.234,
+        "peak_concurrent": 10,
+        "risk_sized_count": 0,
+        "fixed_sized_count": 208,
+        "starting_equity": 100000.0,
+        "ending_equity": 107705.33794228267
+      }
+    }
+  ],
+  "all_trades_analysis_count": 1,
+  "top_decile_signal_score_stats": [
+    {
+      "bucket": "50-59.99",
+      "count": 2,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 13.021
+    },
+    {
+      "bucket": "60-69.99",
+      "count": 5,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 7.602
+    },
+    {
+      "bucket": "70+",
+      "count": 2,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 7.358
+    }
+  ],
+  "top_decile_vcp_ratio_stats": [
+    {
+      "bucket": "0.70-0.79",
+      "count": 1,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 19.081
+    },
+    {
+      "bucket": "<0.70",
+      "count": 5,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 8.71
+    },
+    {
+      "bucket": "0.90+",
+      "count": 2,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 5.74
+    },
+    {
+      "bucket": "0.80-0.89",
+      "count": 1,
+      "win_rate_pct": 100.0,
+      "avg_net_return_pct": 4.659
+    }
+  ],
+  "recommended_policy_path": "backtest_guardrail_policy.json"
+}

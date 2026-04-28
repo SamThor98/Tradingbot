@@ -32,9 +32,12 @@ from backtest_intelligence import (
     evaluate_event_risk_for_backtest,
     simulate_exit_with_manager,
 )
+from backtest_guardrails import AdaptiveGuardrailPolicy, load_adaptive_guardrail_policy
 from config import (
     get_adaptive_stop_base_pct,
     get_adaptive_stop_enabled,
+    get_backtest_adaptive_guardrail_policy_path,
+    get_backtest_adaptive_guardrails_enabled,
     get_backtest_portfolio_enabled,
     get_backtest_portfolio_max_positions,
     get_backtest_portfolio_starting_equity,
@@ -80,6 +83,13 @@ def _temporary_env(overrides: dict[str, str] | None) -> Iterator[None]:
     return temporary_env(overrides)
 
 
+def _load_adaptive_guardrail_policy(skill_dir: Path) -> AdaptiveGuardrailPolicy | None:
+    if not get_backtest_adaptive_guardrails_enabled(skill_dir):
+        return None
+    policy_path = get_backtest_adaptive_guardrail_policy_path(skill_dir)
+    return load_adaptive_guardrail_policy(skill_dir, policy_path)
+
+
 HOLD_DAYS = 20
 MIN_BARS = 260
 SECTOR_LOOKBACK_DAYS = 21
@@ -97,6 +107,53 @@ class BacktestContext:
     sector_perf: dict[str, pd.DataFrame]
     excluded_tickers: list[dict[str, Any]]
     data_integrity: dict[str, Any]
+
+
+@dataclass
+class CandidateSignal:
+    ticker: str
+    idx: int
+    signal: dict[str, Any]
+    reasons: list[str]
+    comps: dict[str, Any]
+    sector_reason: str
+    entry_price: float
+    day_volume: float
+    qty_hint: int
+    stop_pct: float
+    pm_mult: float
+    meta_size_mult: float
+    event_size_mult: float
+    event_policy: dict[str, Any] | None
+    meta_payload: dict[str, Any] | None
+    adaptive_size_mult: float
+    effective_slippage_bps: float
+    exec_info: dict[str, Any]
+    telemetry: dict[str, Any]
+
+
+@dataclass
+class ActivePosition:
+    ticker: str
+    entry_idx: int
+    entry_date: pd.Timestamp
+    entry_price: float
+    qty: int
+    day_volume: float
+    signal: dict[str, Any]
+    reasons: list[str]
+    comps: dict[str, Any]
+    sector_reason: str
+    stop_pct: float
+    pm_mult: float
+    meta_size_mult: float
+    event_size_mult: float
+    event_policy: dict[str, Any] | None
+    meta_payload: dict[str, Any] | None
+    effective_slippage_bps: float
+    exec_info: dict[str, Any]
+    telemetry: dict[str, Any]
+    highest_close: float
 
 
 def _normalize_history(df: pd.DataFrame) -> pd.DataFrame:
@@ -195,7 +252,12 @@ def _build_ohlc_path(df: pd.DataFrame, entry_idx: int, exit_idx: int) -> list[di
     return out
 
 
-def _fetch_history_with_meta(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+def _fetch_history_with_meta(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    schwab_auth: DualSchwabAuth | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     meta: dict[str, Any] = {
         "provider": "unknown",
         "used_fallback": False,
@@ -203,16 +265,22 @@ def _fetch_history_with_meta(symbol: str, start_date: str, end_date: str) -> tup
         "rows": 0,
     }
     if (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower() in {"1", "true", "yes", "on"}:
-        out = _fetch_history_schwab(symbol, start_date, end_date)
+        out = _fetch_history_schwab(symbol, start_date, end_date, auth=schwab_auth)
         meta["provider"] = "schwab"
         meta["used_fallback"] = False
         meta["rows"] = int(len(out))
         meta["reason"] = "schwab_only"
         return out, meta
+    fast_rate_limit = (os.getenv("BACKTEST_FAST_RATE_LIMIT") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     for attempt in range(3):
         try:
             t = yf.Ticker(symbol)
-            raw = t.history(start=start_date, end=end_date, auto_adjust=True)
+            raw = t.history(start=start_date, end=end_date, auto_adjust=True, timeout=20)
             if raw is None:
                 meta["provider"] = "yfinance"
                 meta["used_fallback"] = True
@@ -227,13 +295,16 @@ def _fetch_history_with_meta(symbol: str, start_date: str, end_date: str) -> tup
             return out, meta
         except Exception as e:
             msg = str(e)
-            if "Too Many Requests" in msg and attempt < 2:
+            if "Too Many Requests" in msg and attempt < 2 and not fast_rate_limit:
                 time.sleep(2.0 * (attempt + 1))
                 continue
             LOG.warning("History fetch failed for %s: %s", symbol, e)
             meta["provider"] = "yfinance"
             meta["used_fallback"] = True
-            meta["reason"] = f"yfinance_exception:{type(e).__name__}"
+            if "Too Many Requests" in msg and fast_rate_limit:
+                meta["reason"] = "yfinance_rate_limited_fastfail"
+            else:
+                meta["reason"] = f"yfinance_exception:{type(e).__name__}"
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date"), meta
     meta["provider"] = "yfinance"
     meta["used_fallback"] = True
@@ -241,7 +312,12 @@ def _fetch_history_with_meta(symbol: str, start_date: str, end_date: str) -> tup
     return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date"), meta
 
 
-def _fetch_history_schwab(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+def _fetch_history_schwab(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    auth: DualSchwabAuth | None = None,
+) -> pd.DataFrame:
     url = "https://api.schwabapi.com/marketdata/v1/pricehistory"
     params = {
         "symbol": str(symbol).upper().strip(),
@@ -251,12 +327,12 @@ def _fetch_history_schwab(symbol: str, start_date: str, end_date: str) -> pd.Dat
         "endDate": int(datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).timestamp() * 1000),
     }
     try:
-        auth = DualSchwabAuth(skill_dir=_runtime_skill_dir())
-        token = auth.get_market_token()
+        session_auth = auth or DualSchwabAuth(skill_dir=_runtime_skill_dir(), auto_refresh=False)
+        token = session_auth.get_market_token()
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         resp = requests.get(url, params=params, headers=headers, timeout=30)
-        if resp.status_code == 401 and auth.market_session.force_refresh():
-            token = auth.get_market_token()
+        if resp.status_code == 401 and session_auth.market_session.force_refresh():
+            token = session_auth.get_market_token()
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
             resp = requests.get(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
@@ -289,6 +365,12 @@ def _prepare_context(
     from sector_strength import SECTOR_ETFS, get_ticker_sector_etf
 
     sd = skill_dir or SKILL_DIR
+    schwab_only = (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower() in {"1", "true", "yes", "on"}
+    schwab_auth: DualSchwabAuth | None = None
+    if schwab_only:
+        # Reuse one tenant-scoped auth object across the full run to avoid token
+        # refresh races and accidental fallback to repository-root token files.
+        schwab_auth = DualSchwabAuth(skill_dir=sd, auto_refresh=False)
     universe = watchlist if watchlist is not None else _load_watchlist(sd)
     cleaned = [str(t).strip().upper() for t in universe if str(t).strip()]
     universe = list(dict.fromkeys(cleaned))
@@ -307,7 +389,7 @@ def _prepare_context(
     }
 
     for ticker in universe:
-        df, history_meta = _fetch_history_with_meta(ticker, start_date, end_date)
+        df, history_meta = _fetch_history_with_meta(ticker, start_date, end_date, schwab_auth=schwab_auth)
         data_integrity["history_fetch_total"] = int(data_integrity.get("history_fetch_total", 0) or 0) + 1
         provider = str(history_meta.get("provider") or "unknown")
         reason = str(history_meta.get("reason") or "unknown")
@@ -341,7 +423,7 @@ def _prepare_context(
 
     sector_perf: dict[str, pd.DataFrame] = {}
     for sym in sorted(set(SECTOR_ETFS + ["SPY"])):
-        sdf, _meta = _fetch_history_with_meta(sym, start_date, end_date)
+        sdf, _meta = _fetch_history_with_meta(sym, start_date, end_date, schwab_auth=schwab_auth)
         if not sdf.empty and len(sdf) >= MIN_BARS:
             sector_perf[sym] = sdf
 
@@ -415,6 +497,35 @@ def _run_mirofish_for_entry(
     except Exception as e:
         LOG.warning("MiroFish sim failed for %s: %s", ticker, e)
         return None
+
+
+def _safe_telemetry_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return float(out)
+
+
+def _safe_telemetry_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> dict[str, Any]:
+    advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
+    meta_policy = signal.get("meta_policy") if isinstance(signal.get("meta_policy"), dict) else {}
+    return {
+        "mirofish_conviction": _safe_telemetry_float(signal.get("mirofish_conviction")),
+        "advisory_prob": _safe_telemetry_float(advisory.get("p_up_10d")),
+        "agent_uncertainty": _safe_telemetry_float(meta_policy.get("uncertainty_score")),
+        "vcp_volume_ratio": _safe_telemetry_float(comps.get("avg_vcp_volume_ratio")),
+        "sector_rs_rank": _safe_telemetry_int(
+            signal.get("sector_rs_rank", signal.get("sector_relative_strength_rank"))
+        ),
+    }
 
 
 def _simulate_exit(
@@ -730,20 +841,13 @@ def _run_backtest_core(
     elif intelligence_overlay is not None:
         overlay_cfg = BacktestIntelligenceConfig.from_mapping(intelligence_overlay)
     else:
-        # Default to env-driven config so backtests match the live code path
-        # (production has EVENT_RISK_MODE=live and EXEC_QUALITY_MODE=live by
-        # default — see config.py). The historical default ``all_off()`` caused
-        # silent production/backtest divergence; see
-        # ``wiki/backtest-intelligence-overlay.md`` for the 2026-04-18 incident.
-        # Callers that need overlays-off must pass
-        # ``BacktestIntelligenceConfig.all_off()`` explicitly.
         overlay_cfg = BacktestIntelligenceConfig.from_env(sd)
 
     requested = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
     context = _prepare_context(start, end, watchlist=requested if requested else None, skill_dir=sd)
 
     all_trades: list[dict[str, Any]] = []
-    diagnostics: dict[str, int] = {
+    diagnostics: dict[str, int | float] = {
         "stage2_fail": 0,
         "vcp_fail": 0,
         "breakout_not_confirmed": 0,
@@ -752,7 +856,12 @@ def _run_backtest_core(
         "forensic_filtered": 0,
         "regime_blocked": 0,
         "entries": 0,
+        "capital_filtered": 0,
+        "position_limit_filtered": 0,
         "liquidity_filtered": 0,
+        "adaptive_guardrail_filtered": 0,
+        "adaptive_guardrail_downsized": 0,
+        "adaptive_guardrail_extra_slot_entries": 0,
         "prediction_market_processed": 0,
         "prediction_market_applied": 0,
         "prediction_market_skipped": 0,
@@ -767,6 +876,11 @@ def _run_backtest_core(
         "event_risk_shadow_would_block": 0,
         "event_risk_shadow_would_downsize": 0,
         "exit_manager_partial_done": 0,
+        "exits_trailing_stop": 0,
+        "exits_time_exit": 0,
+        "exits_sma50_break": 0,
+        "exits_vcp_invalidation": 0,
+        "exits_final_liquidation": 0,
     }
 
     breakout_enabled = get_breakout_confirm_enabled(sd)
@@ -781,6 +895,17 @@ def _run_backtest_core(
     forensic_altman_min = float(get_forensic_altman_min(sd))
     pead_enabled = get_pead_enabled(sd)
     pead_lookback_days = int(get_pead_lookback_days(sd))
+    adaptive_guardrail_policy = _load_adaptive_guardrail_policy(sd)
+
+    starting_equity = float(get_backtest_portfolio_starting_equity(sd))
+    max_concurrent_positions = max(1, int(get_backtest_portfolio_max_positions(sd)))
+    max_position_size_pct = 0.10
+    current_cash = float(starting_equity)
+    active_positions: dict[str, ActivePosition] = {}
+    equity_curve: list[tuple[str, float]] = []
+    concurrent_samples: list[int] = []
+    peak_concurrent = 0
+
     prediction_market_engine = None
     prediction_market_mode = "off"
     prediction_market_provider = "off"
@@ -810,281 +935,32 @@ def _run_backtest_core(
                     "Prediction-market backtest disabled: require historical snapshot file for strict PIT evaluation."
                 )
     except Exception as e:
-        diagnostics["prediction_market_errors"] += 1
+        diagnostics["prediction_market_errors"] = int(diagnostics["prediction_market_errors"]) + 1
         LOG.warning("Prediction-market backtest setup skipped: %s", e)
 
-    # Pre-compute SPY regime (above 200 SMA) for each date
     spy_df = context.sector_perf.get("SPY")
     spy_regime: pd.Series | None = None
     if spy_df is not None and len(spy_df) >= 200:
         spy_with_sma = add_indicators(spy_df)
         spy_regime = spy_with_sma["close"] > spy_with_sma["sma_200"]
 
+    forensic_cache: dict[str, dict[str, Any] | None] = {}
+    ticker_date_index: dict[str, dict[pd.Timestamp, int]] = {}
+    timeline_dates: set[pd.Timestamp] = set()
     for ticker in context.watchlist:
         df = context.price_data.get(ticker)
         if df is None or df.empty:
             continue
-        forensic_snapshot: dict[str, Any] | None = None
+        idx_map: dict[pd.Timestamp, int] = {}
+        for idx, ts in enumerate(df.index):
+            t = pd.Timestamp(ts)
+            idx_map[t] = idx
+            if idx >= 200:
+                timeline_dates.add(t)
+        ticker_date_index[ticker] = idx_map
 
-        i = 200
-        while i < len(df) - 1:
-            # Regime gate: skip entry if SPY is below its 200 SMA on this date
-            if spy_regime is not None:
-                entry_date = df.index[i]
-                try:
-                    spy_i = spy_regime.index.get_indexer([entry_date], method="pad")[0]
-                    if spy_i >= 0 and not spy_regime.iloc[spy_i]:
-                        diagnostics["regime_blocked"] += 1
-                        i += 1
-                        continue
-                except Exception:
-                    pass
-
-            window = df.iloc[: i + 1].copy()
-            if not is_stage_2(window, sd):
-                diagnostics["stage2_fail"] += 1
-                i += 1
-                continue
-            if not check_vcp_volume(window, sd):
-                diagnostics["vcp_fail"] += 1
-                i += 1
-                continue
-            if breakout_enabled and i >= 1 and float(df["close"].iloc[i]) < float(df["high"].iloc[i - 1]):
-                diagnostics["breakout_not_confirmed"] += 1
-                i += 1
-                continue
-
-            sector_ok, sector_reason = _sector_filter_pass(ticker, i, context)
-            if not sector_ok:
-                if sector_reason == "sector_not_winning":
-                    diagnostics["sector_not_winning"] += 1
-                i += 1
-                continue
-
-            if forensic_enabled and forensic_mode != "off":
-                try:
-                    if forensic_snapshot is None:
-                        from forensic_accounting import compute_forensic_snapshot
-
-                        forensic_snapshot = compute_forensic_snapshot(
-                            ticker,
-                            skill_dir=sd,
-                            cache_hours=forensic_cache_hours,
-                            sloan_max=forensic_sloan_max,
-                            beneish_max=forensic_beneish_max,
-                            altman_min=forensic_altman_min,
-                        )
-                    forensic_flags = list((forensic_snapshot or {}).get("forensic_flags", []) or [])
-                    if forensic_mode == "hard" and forensic_flags:
-                        diagnostics["forensic_filtered"] += 1
-                        i += 1
-                        continue
-                except Exception as e:
-                    LOG.debug("Backtest forensic check skipped for %s: %s", ticker, e)
-
-            miro = _run_mirofish_for_entry(ticker, window, skill_dir=sd)
-            comps = compute_signal_components(
-                window,
-                mirofish_conviction=miro.get("conviction_score") if miro else None,
-                mirofish_result=miro,
-            )
-            signal = {
-                "ticker": ticker,
-                "signal_score": float(comps.get("score", 0) or 0),
-                "latest_volume": float(window["volume"].iloc[-1]),
-                "avg_vol_50": float(window["avg_vol_50"].iloc[-1]),
-                "mirofish_result": miro,
-                "forensic_sloan": ((forensic_snapshot or {}).get("sloan") or {}).get("sloan_ratio"),
-                "forensic_beneish": ((forensic_snapshot or {}).get("beneish") or {}).get("m_score"),
-                "forensic_altman": ((forensic_snapshot or {}).get("altman") or {}).get("z_score"),
-                "forensic_flags": list((forensic_snapshot or {}).get("forensic_flags", []) or []),
-            }
-            pead_info = None
-            if pead_enabled:
-                try:
-                    from earnings_signal import check_earnings_at_date
-
-                    pead_info = check_earnings_at_date(
-                        ticker,
-                        df.index[i],
-                        df=window,
-                        lookback_days=pead_lookback_days,
-                    )
-                except Exception as e:
-                    LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
-            signal["pead_surprise_pct"] = (pead_info or {}).get("surprise_pct")
-            signal["pead_beat"] = (pead_info or {}).get("beat")
-            if prediction_market_engine is not None and prediction_market_mode == "live":
-                diagnostics["prediction_market_processed"] += 1
-                try:
-                    entry_dt = pd.Timestamp(df.index[i]).to_pydatetime()
-                    if entry_dt.tzinfo is None:
-                        entry_dt_utc = entry_dt.replace(tzinfo=timezone.utc)
-                    else:
-                        entry_dt_utc = entry_dt.astimezone(timezone.utc)
-                except Exception:
-                    entry_dt_utc = datetime.now(timezone.utc)
-                regime_for_entry = True
-                if spy_regime is not None:
-                    try:
-                        spy_i = spy_regime.index.get_indexer([df.index[i]], method="pad")[0]
-                        if spy_i >= 0:
-                            regime_for_entry = bool(spy_regime.iloc[spy_i])
-                    except Exception:
-                        pass
-                try:
-                    evaluation = prediction_market_engine.evaluate(
-                        ticker=ticker,
-                        as_of=entry_dt_utc,
-                        regime_is_bullish=regime_for_entry,
-                    )
-                    signal = apply_overlay_to_signal(signal=signal, evaluation=evaluation, advisory=None)
-                    if evaluation.status == "ok" and bool(evaluation.overlay.get("applied")):
-                        diagnostics["prediction_market_applied"] += 1
-                    elif evaluation.status == "error":
-                        diagnostics["prediction_market_errors"] += 1
-                    else:
-                        diagnostics["prediction_market_skipped"] += 1
-                except Exception as e:
-                    diagnostics["prediction_market_errors"] += 1
-                    LOG.warning("Backtest prediction-market overlay failed for %s: %s", ticker, e)
-            reasons = _evaluate_quality_gates(signal, sd)
-            if _quality_mode_should_filter(reasons, sd):
-                diagnostics["quality_gates_filtered"] += 1
-                i += 1
-                continue
-
-            # Intelligence overlays — meta-policy + event-risk gates run in
-            # parallel to (and after) the existing quality gates. They are
-            # opt-in via ``intelligence_overlay`` and behave as no-ops when
-            # the per-overlay mode is "off".
-            meta_size_mult = 1.0
-            event_size_mult = 1.0
-            event_policy = None
-            meta_payload: dict[str, Any] | None = None
-            if overlay_cfg.meta_policy != "off":
-                signal, meta_allow, meta_size_mult = apply_meta_policy_overlay(
-                    signal=signal,
-                    diagnostics=diagnostics,
-                    skill_dir=sd,
-                    mode=overlay_cfg.meta_policy,
-                )
-                meta_payload = signal.get("meta_policy")
-                if not meta_allow:
-                    i += 1
-                    continue
-            if overlay_cfg.event_risk != "off":
-                event_policy = evaluate_event_risk_for_backtest(
-                    ticker=ticker,
-                    entry_date=df.index[i],
-                    pead_info=pead_info,
-                    skill_dir=sd,
-                    mode=overlay_cfg.event_risk,
-                )
-                event_allow, event_size_mult = apply_event_risk_overlay(
-                    policy=event_policy,
-                    diagnostics=diagnostics,
-                    mode=overlay_cfg.event_risk,
-                )
-                signal["event_risk"] = event_policy
-                if not event_allow:
-                    i += 1
-                    continue
-
-            entry_price = float(df["close"].iloc[i])
-            entry_date = df.index[i]
-            day_volume = float(df["volume"].iloc[i]) if "volume" in df.columns else 0.0
-            qty = _estimate_order_qty(entry_price, day_volume, max_adv_participation=max_adv_participation)
-            pm_mult = 1.0
-            try:
-                pm_mult = float(signal.get("prediction_market_size_multiplier") or 1.0)
-            except (TypeError, ValueError):
-                pm_mult = 1.0
-            pm_mult = max(0.85, min(1.15, pm_mult))
-            combined_size_mult = pm_mult * float(meta_size_mult) * float(event_size_mult)
-            qty = max(1, int(round(float(qty) * combined_size_mult)))
-            if day_volume > 0 and qty > int(day_volume * max_adv_participation):
-                diagnostics["liquidity_filtered"] += 1
-                i += 1
-                continue
-            stop_pct_entry = _resolve_stop_pct_for_entry(df, i, skill_dir=sd)
-            exit_price, exit_date, exit_reason, exit_info = simulate_exit_with_manager(
-                df,
-                i,
-                HOLD_DAYS,
-                stop_pct_entry,
-                skill_dir=sd,
-                mode=overlay_cfg.exit_manager,
-            )
-            if (exit_info.get("managed") or {}).get("partial_done"):
-                diagnostics["exit_manager_partial_done"] += 1
-            effective_slippage_bps, exec_info = apply_exec_quality_overlay(
-                slippage_bps_per_side=slippage_bps_per_side,
-                day_volume=day_volume,
-                qty=qty,
-                skill_dir=sd,
-                mode=overlay_cfg.exec_quality,
-            )
-            ret = (exit_price - entry_price) / entry_price if entry_price > 0 else 0.0
-            net_ret, cost_ctx = _net_return_after_costs(
-                entry_price=entry_price,
-                exit_price=exit_price,
-                qty=qty,
-                slippage_bps_per_side=effective_slippage_bps,
-                fee_per_share=fee_per_share,
-                min_fee_per_order=min_fee_per_order,
-            )
-            try:
-                exit_idx = int(df.index.get_indexer([pd.Timestamp(exit_date)], method="pad")[0])
-            except Exception:
-                exit_idx = i
-            mfe, mae = _compute_mfe_mae(df, i, exit_idx, entry_price)
-            ohlc_path = _build_ohlc_path(df, i, exit_idx) if _is_ohlc_path_logging_enabled() else []
-
-            all_trades.append(
-                {
-                    "ticker": ticker,
-                    "entry_date": pd.Timestamp(entry_date).isoformat(),
-                    "exit_date": pd.Timestamp(exit_date).isoformat(),
-                    "entry_price": round(entry_price, 4),
-                    "exit_price": round(exit_price, 4),
-                    "return": float(ret),
-                    "net_return": float(net_ret),
-                    "mfe": mfe,
-                    "mae": mae,
-                    "ohlc_path": ohlc_path,
-                    "exit_reason": exit_reason,
-                    "signal_score": signal["signal_score"],
-                    "mirofish_conviction": miro.get("conviction_score") if miro else None,
-                    "sector_filter": sector_reason,
-                    "quality_reasons": reasons,
-                    "forensic_sloan": signal.get("forensic_sloan"),
-                    "forensic_beneish": signal.get("forensic_beneish"),
-                    "forensic_altman": signal.get("forensic_altman"),
-                    "forensic_flags": signal.get("forensic_flags"),
-                    "pead_beat": signal.get("pead_beat"),
-                    "pead_surprise_pct": signal.get("pead_surprise_pct"),
-                    "qty_estimate": int(qty),
-                    "day_volume": float(day_volume),
-                    "slippage_pct": float(cost_ctx["slippage_pct"]),
-                    "fees_pct": float(cost_ctx["fees_pct"]),
-                    "stop_pct": float(stop_pct_entry),
-                    "prediction_market_status": ((signal.get("prediction_market") or {}).get("status")),
-                    "prediction_market_reason": ((signal.get("prediction_market") or {}).get("reason")),
-                    "prediction_market_size_multiplier": pm_mult,
-                    "meta_policy_decision": (meta_payload or {}).get("decision") if meta_payload else None,
-                    "meta_policy_size_multiplier": float(meta_size_mult),
-                    "event_risk_action": (event_policy or {}).get("action") if event_policy else None,
-                    "event_risk_size_multiplier": float(event_size_mult),
-                    "exit_manager_partial_done": bool((exit_info.get("managed") or {}).get("partial_done")),
-                    "exec_quality_regime": exec_info.get("regime"),
-                    "exec_quality_effective_slippage_bps": exec_info.get("effective_slippage_bps"),
-                }
-            )
-            diagnostics["entries"] += 1
-            i += HOLD_DAYS
-
-    if not all_trades:
+    timeline = sorted(timeline_dates)
+    if not timeline:
         return {
             "start_date": start,
             "end_date": end,
@@ -1102,6 +978,550 @@ def _run_backtest_core(
             "profit_factor_net": 0.0,
             "max_drawdown_pct": 0.0,
             "max_drawdown_net_pct": 0.0,
+            "portfolio_enabled": True,
+            "portfolio_summary": {
+                "capacity_filtered": 0,
+                "avg_concurrent": 0.0,
+                "peak_concurrent": 0,
+                "risk_sized_count": 0,
+                "fixed_sized_count": 0,
+                "starting_equity": float(starting_equity),
+                "ending_equity": float(starting_equity),
+            },
+            "diagnostics": diagnostics,
+            "quality_gates_mode": quality_mode,
+            "prediction_market_mode": prediction_market_mode,
+            "prediction_market_provider": prediction_market_provider,
+            "intelligence_overlay": overlay_cfg.as_dict(),
+            "excluded_tickers": context.excluded_tickers[:50],
+            "excluded_count": len(context.excluded_tickers),
+            "universe_size": len(context.watchlist),
+            "data_integrity": context.data_integrity,
+            "findings": "No valid timeline generated over the requested window.",
+            "trades_sample": [],
+        }
+
+    def _price_at_or_before(ticker: str, ts: pd.Timestamp) -> float | None:
+        df = context.price_data.get(ticker)
+        if df is None or df.empty:
+            return None
+        try:
+            i = int(df.index.get_indexer([ts], method="pad")[0])
+        except Exception:
+            return None
+        if i < 0:
+            return None
+        return float(df["close"].iloc[i])
+
+    def _equity_at(ts: pd.Timestamp) -> float:
+        mark = float(current_cash)
+        for pos in active_positions.values():
+            px = _price_at_or_before(pos.ticker, ts)
+            if px is not None and px > 0:
+                mark += float(pos.qty) * float(px)
+            else:
+                mark += float(pos.qty) * float(pos.entry_price)
+        return mark
+
+    def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float]:
+        miro = candidate.signal.get("mirofish_conviction")
+        adv = ((candidate.signal.get("advisory") or {}).get("p_up_10d"))
+        primary = _safe_telemetry_float(miro, _safe_telemetry_float(adv))
+        return (
+            primary,
+            _safe_telemetry_float(adv),
+            _safe_telemetry_float(candidate.signal.get("signal_score")),
+        )
+
+    for day_ts in timeline:
+        # Exit pass first: capital from exits is available for same-day entries.
+        for ticker, pos in list(active_positions.items()):
+            df = context.price_data.get(ticker)
+            if df is None or df.empty:
+                continue
+            idx = ticker_date_index.get(ticker, {}).get(day_ts)
+            if idx is None or idx <= pos.entry_idx:
+                continue
+            px = float(df["close"].iloc[idx])
+            pos.highest_close = max(float(pos.highest_close), px)
+            trail_stop = float(pos.highest_close) * (1.0 - float(pos.stop_pct))
+
+            exit_reason: str | None = None
+            if px <= trail_stop:
+                exit_reason = "trailing_stop"
+                diagnostics["exits_trailing_stop"] = int(diagnostics["exits_trailing_stop"]) + 1
+            elif idx - pos.entry_idx >= HOLD_DAYS:
+                exit_reason = "time_exit"
+                diagnostics["exits_time_exit"] = int(diagnostics["exits_time_exit"]) + 1
+            else:
+                window = df.iloc[: idx + 1]
+                sma50 = float(window["sma_50"].iloc[-1]) if "sma_50" in window.columns else 0.0
+                if sma50 > 0 and px < sma50:
+                    exit_reason = "sma50_break"
+                    diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
+                else:
+                    try:
+                        if not check_vcp_volume(window, sd):
+                            exit_reason = "vcp_invalidation"
+                            diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
+                    except Exception:
+                        pass
+            if not exit_reason:
+                continue
+
+            net_ret, cost_ctx = _net_return_after_costs(
+                entry_price=float(pos.entry_price),
+                exit_price=float(px),
+                qty=int(pos.qty),
+                slippage_bps_per_side=float(pos.effective_slippage_bps),
+                fee_per_share=fee_per_share,
+                min_fee_per_order=min_fee_per_order,
+            )
+            gross_ret = (float(px) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+            current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
+            mfe, mae = _compute_mfe_mae(df, pos.entry_idx, idx, float(pos.entry_price))
+            ohlc_path = _build_ohlc_path(df, pos.entry_idx, idx) if _is_ohlc_path_logging_enabled() else []
+
+            all_trades.append(
+                {
+                    "ticker": pos.ticker,
+                    "entry_date": pd.Timestamp(pos.entry_date).isoformat(),
+                    "exit_date": pd.Timestamp(day_ts).isoformat(),
+                    "entry_price": round(float(pos.entry_price), 4),
+                    "exit_price": round(float(px), 4),
+                    "return": float(gross_ret),
+                    "net_return": float(net_ret),
+                    "mfe": mfe,
+                    "mae": mae,
+                    "ohlc_path": ohlc_path,
+                    "exit_reason": exit_reason,
+                    "signal_score": pos.signal.get("signal_score"),
+                    "mirofish_conviction": pos.signal.get("mirofish_conviction"),
+                    "sector_filter": pos.sector_reason,
+                    "quality_reasons": pos.reasons,
+                    "forensic_sloan": pos.signal.get("forensic_sloan"),
+                    "forensic_beneish": pos.signal.get("forensic_beneish"),
+                    "forensic_altman": pos.signal.get("forensic_altman"),
+                    "forensic_flags": pos.signal.get("forensic_flags"),
+                    "pead_beat": pos.signal.get("pead_beat"),
+                    "pead_surprise_pct": pos.signal.get("pead_surprise_pct"),
+                    "qty_estimate": int(pos.qty),
+                    "day_volume": float(pos.day_volume),
+                    "slippage_pct": float(cost_ctx["slippage_pct"]),
+                    "fees_pct": float(cost_ctx["fees_pct"]),
+                    "stop_pct": float(pos.stop_pct),
+                    "prediction_market_status": ((pos.signal.get("prediction_market") or {}).get("status")),
+                    "prediction_market_reason": ((pos.signal.get("prediction_market") or {}).get("reason")),
+                    "prediction_market_size_multiplier": float(pos.pm_mult),
+                    "meta_policy_decision": (pos.meta_payload or {}).get("decision") if pos.meta_payload else None,
+                    "meta_policy_size_multiplier": float(pos.meta_size_mult),
+                    "event_risk_action": (pos.event_policy or {}).get("action") if pos.event_policy else None,
+                    "event_risk_size_multiplier": float(pos.event_size_mult),
+                    "exit_manager_partial_done": False,
+                    "exec_quality_regime": pos.exec_info.get("regime"),
+                    "exec_quality_effective_slippage_bps": pos.exec_info.get("effective_slippage_bps"),
+                    "telemetry": pos.telemetry,
+                }
+            )
+            active_positions.pop(ticker, None)
+
+        # Entry pass: evaluate all tickers on the same date with point-in-time windows.
+        candidates: list[CandidateSignal] = []
+        for ticker in context.watchlist:
+            if ticker in active_positions:
+                continue
+            df = context.price_data.get(ticker)
+            if df is None or df.empty:
+                continue
+            idx = ticker_date_index.get(ticker, {}).get(day_ts)
+            if idx is None or idx < 200 or idx >= len(df) - 1:
+                continue
+            window = df.iloc[: idx + 1]
+
+            if spy_regime is not None:
+                try:
+                    spy_i = int(spy_regime.index.get_indexer([day_ts], method="pad")[0])
+                    if spy_i >= 0 and not bool(spy_regime.iloc[spy_i]):
+                        diagnostics["regime_blocked"] = int(diagnostics["regime_blocked"]) + 1
+                        continue
+                except Exception:
+                    pass
+
+            if not is_stage_2(window, sd):
+                diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
+                continue
+            if not check_vcp_volume(window, sd):
+                diagnostics["vcp_fail"] = int(diagnostics["vcp_fail"]) + 1
+                continue
+            if breakout_enabled and idx >= 1 and float(df["close"].iloc[idx]) < float(df["high"].iloc[idx - 1]):
+                diagnostics["breakout_not_confirmed"] = int(diagnostics["breakout_not_confirmed"]) + 1
+                continue
+
+            sector_ok, sector_reason = _sector_filter_pass(ticker, idx, context)
+            if not sector_ok:
+                if sector_reason == "sector_not_winning":
+                    diagnostics["sector_not_winning"] = int(diagnostics["sector_not_winning"]) + 1
+                continue
+
+            forensic_snapshot = forensic_cache.get(ticker)
+            if forensic_enabled and forensic_mode != "off":
+                try:
+                    if forensic_snapshot is None:
+                        from forensic_accounting import compute_forensic_snapshot
+
+                        forensic_snapshot = compute_forensic_snapshot(
+                            ticker,
+                            skill_dir=sd,
+                            cache_hours=forensic_cache_hours,
+                            sloan_max=forensic_sloan_max,
+                            beneish_max=forensic_beneish_max,
+                            altman_min=forensic_altman_min,
+                        )
+                        forensic_cache[ticker] = forensic_snapshot
+                    forensic_flags = list((forensic_snapshot or {}).get("forensic_flags", []) or [])
+                    if forensic_mode == "hard" and forensic_flags:
+                        diagnostics["forensic_filtered"] = int(diagnostics["forensic_filtered"]) + 1
+                        continue
+                except Exception as e:
+                    LOG.debug("Backtest forensic check skipped for %s: %s", ticker, e)
+
+            miro = _run_mirofish_for_entry(ticker, window, skill_dir=sd)
+            comps = compute_signal_components(
+                window,
+                mirofish_conviction=miro.get("conviction_score") if miro else None,
+                mirofish_result=miro,
+            )
+            signal: dict[str, Any] = {
+                "ticker": ticker,
+                "signal_score": float(comps.get("score", 0) or 0),
+                "latest_volume": float(window["volume"].iloc[-1]),
+                "avg_vol_50": float(window["avg_vol_50"].iloc[-1]),
+                "mirofish_result": miro,
+                "mirofish_conviction": miro.get("conviction_score") if miro else None,
+                "forensic_sloan": ((forensic_snapshot or {}).get("sloan") or {}).get("sloan_ratio"),
+                "forensic_beneish": ((forensic_snapshot or {}).get("beneish") or {}).get("m_score"),
+                "forensic_altman": ((forensic_snapshot or {}).get("altman") or {}).get("z_score"),
+                "forensic_flags": list((forensic_snapshot or {}).get("forensic_flags", []) or []),
+            }
+
+            pead_info = None
+            if pead_enabled:
+                try:
+                    from earnings_signal import check_earnings_at_date
+
+                    pead_info = check_earnings_at_date(
+                        ticker,
+                        day_ts,
+                        df=window,
+                        lookback_days=pead_lookback_days,
+                    )
+                except Exception as e:
+                    LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
+            signal["pead_surprise_pct"] = (pead_info or {}).get("surprise_pct")
+            signal["pead_beat"] = (pead_info or {}).get("beat")
+
+            if prediction_market_engine is not None and prediction_market_mode == "live":
+                diagnostics["prediction_market_processed"] = int(diagnostics["prediction_market_processed"]) + 1
+                try:
+                    entry_dt = pd.Timestamp(day_ts).to_pydatetime()
+                    entry_dt_utc = (
+                        entry_dt.replace(tzinfo=timezone.utc)
+                        if entry_dt.tzinfo is None
+                        else entry_dt.astimezone(timezone.utc)
+                    )
+                    regime_for_entry = True
+                    if spy_regime is not None:
+                        try:
+                            spy_i = int(spy_regime.index.get_indexer([day_ts], method="pad")[0])
+                            if spy_i >= 0:
+                                regime_for_entry = bool(spy_regime.iloc[spy_i])
+                        except Exception:
+                            pass
+                    evaluation = prediction_market_engine.evaluate(
+                        ticker=ticker,
+                        as_of=entry_dt_utc,
+                        regime_is_bullish=regime_for_entry,
+                    )
+                    signal = apply_overlay_to_signal(signal=signal, evaluation=evaluation, advisory=None)
+                    if evaluation.status == "ok" and bool(evaluation.overlay.get("applied")):
+                        diagnostics["prediction_market_applied"] = int(diagnostics["prediction_market_applied"]) + 1
+                    elif evaluation.status == "error":
+                        diagnostics["prediction_market_errors"] = int(diagnostics["prediction_market_errors"]) + 1
+                    else:
+                        diagnostics["prediction_market_skipped"] = int(diagnostics["prediction_market_skipped"]) + 1
+                except Exception as e:
+                    diagnostics["prediction_market_errors"] = int(diagnostics["prediction_market_errors"]) + 1
+                    LOG.warning("Backtest prediction-market overlay failed for %s: %s", ticker, e)
+
+            reasons = _evaluate_quality_gates(signal, sd)
+            if _quality_mode_should_filter(reasons, sd):
+                diagnostics["quality_gates_filtered"] = int(diagnostics["quality_gates_filtered"]) + 1
+                continue
+
+            meta_size_mult = 1.0
+            event_size_mult = 1.0
+            adaptive_size_mult = 1.0
+            event_policy = None
+            meta_payload: dict[str, Any] | None = None
+            if overlay_cfg.meta_policy != "off":
+                signal, meta_allow, meta_size_mult = apply_meta_policy_overlay(
+                    signal=signal,
+                    diagnostics=diagnostics,
+                    skill_dir=sd,
+                    mode=overlay_cfg.meta_policy,
+                )
+                meta_payload = signal.get("meta_policy")
+                if not meta_allow:
+                    continue
+            if overlay_cfg.event_risk != "off":
+                event_policy = evaluate_event_risk_for_backtest(
+                    ticker=ticker,
+                    entry_date=day_ts,
+                    pead_info=pead_info,
+                    skill_dir=sd,
+                    mode=overlay_cfg.event_risk,
+                )
+                event_allow, event_size_mult = apply_event_risk_overlay(
+                    policy=event_policy,
+                    diagnostics=diagnostics,
+                    mode=overlay_cfg.event_risk,
+                )
+                signal["event_risk"] = event_policy
+                if not event_allow:
+                    continue
+
+            signal_score = _safe_telemetry_float(signal.get("signal_score"), 0.0)
+            vcp_volume_ratio = _safe_telemetry_float(comps.get("avg_vcp_volume_ratio"), 0.0)
+            if adaptive_guardrail_policy is not None:
+                if not adaptive_guardrail_policy.allows_entry(signal_score):
+                    diagnostics["adaptive_guardrail_filtered"] = int(diagnostics["adaptive_guardrail_filtered"]) + 1
+                    continue
+                adaptive_size_mult = adaptive_guardrail_policy.size_multiplier(signal_score, vcp_volume_ratio)
+                if adaptive_size_mult < 0.999:
+                    diagnostics["adaptive_guardrail_downsized"] = int(diagnostics["adaptive_guardrail_downsized"]) + 1
+
+            entry_price = float(df["close"].iloc[idx])
+            day_volume = float(df["volume"].iloc[idx]) if "volume" in df.columns else 0.0
+            qty_hint = _estimate_order_qty(entry_price, day_volume, max_adv_participation=max_adv_participation)
+            pm_mult = _safe_telemetry_float(signal.get("prediction_market_size_multiplier"), 1.0)
+            pm_mult = max(0.85, min(1.15, pm_mult))
+            combined_size_mult = pm_mult * float(meta_size_mult) * float(event_size_mult) * float(adaptive_size_mult)
+            qty_hint = max(1, int(round(float(qty_hint) * combined_size_mult)))
+            liq_cap = int(day_volume * max_adv_participation) if day_volume > 0 else 1
+            if qty_hint > liq_cap:
+                diagnostics["liquidity_filtered"] = int(diagnostics["liquidity_filtered"]) + 1
+                qty_hint = liq_cap
+            if qty_hint <= 0:
+                diagnostics["liquidity_filtered"] = int(diagnostics["liquidity_filtered"]) + 1
+                continue
+
+            stop_pct_entry = _resolve_stop_pct_for_entry(df, idx, skill_dir=sd)
+            effective_slippage_bps, exec_info = apply_exec_quality_overlay(
+                slippage_bps_per_side=slippage_bps_per_side,
+                day_volume=day_volume,
+                qty=qty_hint,
+                skill_dir=sd,
+                mode=overlay_cfg.exec_quality,
+            )
+            telemetry = _build_telemetry_payload(signal, comps)
+            candidates.append(
+                CandidateSignal(
+                    ticker=ticker,
+                    idx=idx,
+                    signal=signal,
+                    reasons=reasons,
+                    comps=comps,
+                    sector_reason=sector_reason,
+                    entry_price=entry_price,
+                    day_volume=day_volume,
+                    qty_hint=qty_hint,
+                    stop_pct=stop_pct_entry,
+                    pm_mult=pm_mult,
+                    meta_size_mult=float(meta_size_mult),
+                    event_size_mult=float(event_size_mult),
+                    event_policy=event_policy,
+                    meta_payload=meta_payload,
+                    adaptive_size_mult=float(adaptive_size_mult),
+                    effective_slippage_bps=float(effective_slippage_bps),
+                    exec_info=exec_info,
+                    telemetry=telemetry,
+                )
+            )
+
+        day_equity = _equity_at(day_ts)
+        max_position_notional = max(0.0, float(day_equity) * max_position_size_pct)
+        for candidate in sorted(candidates, key=_candidate_rank_key, reverse=True):
+            max_positions_for_candidate = max_concurrent_positions
+            if adaptive_guardrail_policy is not None:
+                cand_score = _safe_telemetry_float(candidate.signal.get("signal_score"), 0.0)
+                max_positions_for_candidate = adaptive_guardrail_policy.max_positions_for_candidate(
+                    max_concurrent_positions,
+                    cand_score,
+                )
+            if len(active_positions) >= max_positions_for_candidate:
+                diagnostics["capital_filtered"] = int(diagnostics["capital_filtered"]) + 1
+                continue
+            if candidate.entry_price <= 0:
+                continue
+            qty_by_cash = int(max(0.0, min(max_position_notional, current_cash)) / candidate.entry_price)
+            qty_by_liq = int(candidate.day_volume * max_adv_participation) if candidate.day_volume > 0 else 1
+            qty = min(int(candidate.qty_hint), int(qty_by_cash), int(qty_by_liq))
+            if qty <= 0:
+                if qty_by_cash <= 0:
+                    diagnostics["capital_filtered"] = int(diagnostics["capital_filtered"]) + 1
+                else:
+                    diagnostics["position_limit_filtered"] = int(diagnostics["position_limit_filtered"]) + 1
+                continue
+            notional = float(qty) * float(candidate.entry_price)
+            if notional > current_cash:
+                diagnostics["capital_filtered"] = int(diagnostics["capital_filtered"]) + 1
+                continue
+
+            current_cash -= notional
+            if max_positions_for_candidate > max_concurrent_positions and len(active_positions) >= max_concurrent_positions:
+                diagnostics["adaptive_guardrail_extra_slot_entries"] = (
+                    int(diagnostics["adaptive_guardrail_extra_slot_entries"]) + 1
+                )
+            active_positions[candidate.ticker] = ActivePosition(
+                ticker=candidate.ticker,
+                entry_idx=candidate.idx,
+                entry_date=day_ts,
+                entry_price=float(candidate.entry_price),
+                qty=int(qty),
+                day_volume=float(candidate.day_volume),
+                signal=candidate.signal,
+                reasons=candidate.reasons,
+                comps=candidate.comps,
+                sector_reason=candidate.sector_reason,
+                stop_pct=float(candidate.stop_pct),
+                pm_mult=float(candidate.pm_mult),
+                meta_size_mult=float(candidate.meta_size_mult),
+                event_size_mult=float(candidate.event_size_mult),
+                event_policy=candidate.event_policy,
+                meta_payload=candidate.meta_payload,
+                effective_slippage_bps=float(candidate.effective_slippage_bps),
+                exec_info=candidate.exec_info,
+                telemetry=candidate.telemetry,
+                highest_close=float(candidate.entry_price),
+            )
+            diagnostics["entries"] = int(diagnostics["entries"]) + 1
+
+        concurrent_samples.append(len(active_positions))
+        peak_concurrent = max(peak_concurrent, len(active_positions))
+        equity_curve.append((pd.Timestamp(day_ts).isoformat(), float(_equity_at(day_ts))))
+
+    # Final liquidation of remaining positions at end date.
+    final_ts = pd.Timestamp(timeline[-1])
+    for ticker, pos in list(active_positions.items()):
+        df = context.price_data.get(ticker)
+        if df is None or df.empty:
+            continue
+        try:
+            exit_idx = int(df.index.get_indexer([final_ts], method="pad")[0])
+        except Exception:
+            exit_idx = len(df) - 1
+        if exit_idx <= pos.entry_idx:
+            exit_idx = min(len(df) - 1, pos.entry_idx + 1)
+        exit_price = float(df["close"].iloc[exit_idx])
+        exit_date = pd.Timestamp(df.index[exit_idx])
+        diagnostics["exits_final_liquidation"] = int(diagnostics["exits_final_liquidation"]) + 1
+        net_ret, cost_ctx = _net_return_after_costs(
+            entry_price=float(pos.entry_price),
+            exit_price=float(exit_price),
+            qty=int(pos.qty),
+            slippage_bps_per_side=float(pos.effective_slippage_bps),
+            fee_per_share=fee_per_share,
+            min_fee_per_order=min_fee_per_order,
+        )
+        gross_ret = (float(exit_price) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+        current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
+        mfe, mae = _compute_mfe_mae(df, pos.entry_idx, exit_idx, float(pos.entry_price))
+        ohlc_path = _build_ohlc_path(df, pos.entry_idx, exit_idx) if _is_ohlc_path_logging_enabled() else []
+        all_trades.append(
+            {
+                "ticker": pos.ticker,
+                "entry_date": pd.Timestamp(pos.entry_date).isoformat(),
+                "exit_date": pd.Timestamp(exit_date).isoformat(),
+                "entry_price": round(float(pos.entry_price), 4),
+                "exit_price": round(float(exit_price), 4),
+                "return": float(gross_ret),
+                "net_return": float(net_ret),
+                "mfe": mfe,
+                "mae": mae,
+                "ohlc_path": ohlc_path,
+                "exit_reason": "final_liquidation",
+                "signal_score": pos.signal.get("signal_score"),
+                "mirofish_conviction": pos.signal.get("mirofish_conviction"),
+                "sector_filter": pos.sector_reason,
+                "quality_reasons": pos.reasons,
+                "forensic_sloan": pos.signal.get("forensic_sloan"),
+                "forensic_beneish": pos.signal.get("forensic_beneish"),
+                "forensic_altman": pos.signal.get("forensic_altman"),
+                "forensic_flags": pos.signal.get("forensic_flags"),
+                "pead_beat": pos.signal.get("pead_beat"),
+                "pead_surprise_pct": pos.signal.get("pead_surprise_pct"),
+                "qty_estimate": int(pos.qty),
+                "day_volume": float(pos.day_volume),
+                "slippage_pct": float(cost_ctx["slippage_pct"]),
+                "fees_pct": float(cost_ctx["fees_pct"]),
+                "stop_pct": float(pos.stop_pct),
+                "prediction_market_status": ((pos.signal.get("prediction_market") or {}).get("status")),
+                "prediction_market_reason": ((pos.signal.get("prediction_market") or {}).get("reason")),
+                "prediction_market_size_multiplier": float(pos.pm_mult),
+                "meta_policy_decision": (pos.meta_payload or {}).get("decision") if pos.meta_payload else None,
+                "meta_policy_size_multiplier": float(pos.meta_size_mult),
+                "event_risk_action": (pos.event_policy or {}).get("action") if pos.event_policy else None,
+                "event_risk_size_multiplier": float(pos.event_size_mult),
+                "exit_manager_partial_done": False,
+                "exec_quality_regime": pos.exec_info.get("regime"),
+                "exec_quality_effective_slippage_bps": pos.exec_info.get("effective_slippage_bps"),
+                "telemetry": pos.telemetry,
+            }
+        )
+        active_positions.pop(ticker, None)
+
+    ending_equity = float(current_cash)
+    equity_curve.append((pd.Timestamp(final_ts).isoformat(), ending_equity))
+
+    if not all_trades:
+        return {
+            "start_date": start,
+            "end_date": end,
+            "total_trades": 0,
+            "win_rate": 0.0,
+            "total_return_pct": round(100.0 * ((ending_equity / starting_equity) - 1.0), 2),
+            "total_return_net_pct": round(100.0 * ((ending_equity / starting_equity) - 1.0), 2),
+            "cagr_pct": 0.0,
+            "cagr_net_pct": 0.0,
+            "avg_return_pct": 0.0,
+            "avg_return_net_pct": 0.0,
+            "avg_gain_pct": 0.0,
+            "avg_loss_pct": 0.0,
+            "profit_factor": 0.0,
+            "profit_factor_net": 0.0,
+            "max_drawdown_pct": 0.0,
+            "max_drawdown_net_pct": 0.0,
+            "portfolio_enabled": True,
+            "portfolio_summary": {
+                "capacity_filtered": int(diagnostics.get("capital_filtered", 0)),
+                "avg_concurrent": round(
+                    (sum(concurrent_samples) / len(concurrent_samples)) if concurrent_samples else 0.0,
+                    3,
+                ),
+                "peak_concurrent": int(peak_concurrent),
+                "risk_sized_count": 0,
+                "fixed_sized_count": int(diagnostics.get("entries", 0)),
+                "starting_equity": float(starting_equity),
+                "ending_equity": float(ending_equity),
+            },
+            "avg_holding_days": HOLD_DAYS,
+            "trailing_stop_pct": round(100.0 * stop_pct_base, 2),
+            "adaptive_stop_enabled": bool(adaptive_stop_enabled),
+            "adaptive_guardrails_enabled": bool(adaptive_guardrail_policy is not None),
+            "slippage_bps_per_side": float(slippage_bps_per_side),
+            "fee_per_share": float(fee_per_share),
+            "min_fee_per_order": float(min_fee_per_order),
+            "max_adv_participation": float(max_adv_participation),
             "diagnostics": diagnostics,
             "quality_gates_mode": quality_mode,
             "prediction_market_mode": prediction_market_mode,
@@ -1134,49 +1554,25 @@ def _run_backtest_core(
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
     profit_factor_net = (gross_profit_net / gross_loss_net) if gross_loss_net > 0 else float("inf")
 
-    portfolio_enabled = get_backtest_portfolio_enabled(sd)
-    if portfolio_enabled:
-        portfolio = _simulate_portfolio_equity(
-            all_trades,
-            starting_equity=get_backtest_portfolio_starting_equity(sd),
-            max_concurrent_positions=get_backtest_portfolio_max_positions(sd),
-            position_size_pct=get_backtest_position_size_pct(sd),
-            risk_per_trade_pct=get_backtest_risk_per_trade_pct(sd),
-        )
-        portfolio_gross = _simulate_portfolio_equity(
-            [{**t, "net_return": t.get("return", 0.0)} for t in all_trades],
-            starting_equity=get_backtest_portfolio_starting_equity(sd),
-            max_concurrent_positions=get_backtest_portfolio_max_positions(sd),
-            position_size_pct=get_backtest_position_size_pct(sd),
-            risk_per_trade_pct=get_backtest_risk_per_trade_pct(sd),
-        )
-        total_ret_net = float(portfolio["total_return_net_pct"]) / 100.0
-        total_ret = float(portfolio_gross["total_return_net_pct"]) / 100.0
-        max_dd_net = float(portfolio["max_drawdown_net_pct"]) / 100.0
-        max_dd = float(portfolio_gross["max_drawdown_net_pct"]) / 100.0
-        diagnostics["portfolio_capacity_filtered"] = int(portfolio.get("capacity_filtered", 0))
-        diagnostics["portfolio_avg_concurrent"] = float(portfolio.get("avg_concurrent", 0.0))
-        diagnostics["portfolio_peak_concurrent"] = int(portfolio.get("peak_concurrent", 0))
-        diagnostics["portfolio_risk_sized_count"] = int(portfolio.get("risk_sized_count", 0))
-        diagnostics["portfolio_fixed_sized_count"] = int(portfolio.get("fixed_sized_count", 0))
-    else:
-        portfolio = None
-        total_ret = float((1.0 + ret).prod() - 1.0)
-        total_ret_net = float((1.0 + ret_net).prod() - 1.0)
-        max_dd = _max_drawdown(ret)
-        max_dd_net = _max_drawdown(ret_net)
+    total_ret = (ending_equity / starting_equity) - 1.0 if starting_equity > 0 else 0.0
+    total_ret_net = total_ret
     years = max(1e-9, (pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25)
     cagr = float((1.0 + total_ret) ** (1.0 / years) - 1.0) if total_ret > -1.0 else -1.0
-    cagr_net = float((1.0 + total_ret_net) ** (1.0 / years) - 1.0) if total_ret_net > -1.0 else -1.0
+    cagr_net = cagr
+
+    eq_series = pd.Series([float(v) for _d, v in equity_curve]) if equity_curve else pd.Series([starting_equity])
+    peak = eq_series.cummax()
+    dd = (eq_series / peak) - 1.0
+    max_dd = float(dd.min()) if not dd.empty else 0.0
 
     findings = (
-        f"Live-parity backtest generated {total} trades across {len(context.watchlist)} symbols. "
+        f"Event-driven portfolio backtest generated {total} trades across {len(context.watchlist)} symbols. "
         f"Gross win rate {100.0 * wins / total:.1f}%, net win rate {100.0 * wins_net / total:.1f}%, "
-        f"portfolio net return {100.0 * total_ret_net:.2f}% with max DD {100.0 * max_dd_net:.2f}%, "
+        f"portfolio net return {100.0 * total_ret_net:.2f}% with max DD {100.0 * max_dd:.2f}%, "
         f"net PF {profit_factor_net if profit_factor_net == float('inf') else round(float(profit_factor_net), 3)}."
     )
 
-    out = {
+    out: dict[str, Any] = {
         "start_date": start,
         "end_date": end,
         "total_trades": total,
@@ -1195,27 +1591,24 @@ def _run_backtest_core(
         "profit_factor": round(float(profit_factor), 3) if profit_factor != float("inf") else "inf",
         "profit_factor_net": round(float(profit_factor_net), 3) if profit_factor_net != float("inf") else "inf",
         "max_drawdown_pct": round(100.0 * max_dd, 2),
-        "max_drawdown_net_pct": round(100.0 * max_dd_net, 2),
-        "portfolio_enabled": bool(portfolio_enabled),
-        "portfolio_summary": (
-            {
-                k: portfolio[k]
-                for k in (
-                    "capacity_filtered",
-                    "avg_concurrent",
-                    "peak_concurrent",
-                    "risk_sized_count",
-                    "fixed_sized_count",
-                    "starting_equity",
-                    "ending_equity",
-                )
-            }
-            if portfolio
-            else None
-        ),
+        "max_drawdown_net_pct": round(100.0 * max_dd, 2),
+        "portfolio_enabled": True,
+        "portfolio_summary": {
+            "capacity_filtered": int(diagnostics.get("capital_filtered", 0)),
+            "avg_concurrent": round(
+                (sum(concurrent_samples) / len(concurrent_samples)) if concurrent_samples else 0.0,
+                3,
+            ),
+            "peak_concurrent": int(peak_concurrent),
+            "risk_sized_count": 0,
+            "fixed_sized_count": int(diagnostics.get("entries", 0)),
+            "starting_equity": float(starting_equity),
+            "ending_equity": float(ending_equity),
+        },
         "avg_holding_days": HOLD_DAYS,
         "trailing_stop_pct": round(100.0 * stop_pct_base, 2),
         "adaptive_stop_enabled": bool(adaptive_stop_enabled),
+        "adaptive_guardrails_enabled": bool(adaptive_guardrail_policy is not None),
         "slippage_bps_per_side": float(slippage_bps_per_side),
         "fee_per_share": float(fee_per_share),
         "min_fee_per_order": float(min_fee_per_order),

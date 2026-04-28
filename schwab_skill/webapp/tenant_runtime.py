@@ -125,6 +125,11 @@ def user_can_materialize_for_scan(db: Session, user_id: str) -> tuple[bool, str]
     assert row is not None
     if _market_token_dict(row):
         return True, ""
+    if _platform_market_fallback_disabled():
+        return (
+            False,
+            "Per-user market OAuth required: SAAS_DISABLE_PLATFORM_MARKET_FALLBACK is enabled.",
+        )
     if _platform_market_token_file() is not None:
         return True, ""
     return (
@@ -137,6 +142,15 @@ def user_can_materialize_for_scan(db: Session, user_id: str) -> tuple[bool, str]
 def _platform_market_skill_dir() -> Path | None:
     raw = (os.getenv("SAAS_PLATFORM_MARKET_SKILL_DIR") or "").strip()
     return Path(raw) if raw else None
+
+
+def _platform_market_fallback_disabled() -> bool:
+    return (os.getenv("SAAS_DISABLE_PLATFORM_MARKET_FALLBACK", "0") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _platform_market_token_file() -> Path | None:
@@ -285,6 +299,10 @@ def materialize_tenant_skill_dir(db: Session, user_id: str, skill_dir: Path) -> 
     if market:
         write_encrypted_token_file(skill_dir / "tokens_market.enc", market, market_secret)
     elif _platform_market_skill_dir() is not None:
+        if _platform_market_fallback_disabled():
+            raise RuntimeError(
+                "Per-user market OAuth required: SAAS_DISABLE_PLATFORM_MARKET_FALLBACK is enabled."
+            )
         src = _platform_market_token_file()
         if src is None:
             base = _platform_market_skill_dir()
@@ -292,6 +310,10 @@ def materialize_tenant_skill_dir(db: Session, user_id: str, skill_dir: Path) -> 
             raise RuntimeError(
                 f"SAAS_PLATFORM_MARKET_SKILL_DIR set but tokens_market.enc missing: {base / 'tokens_market.enc'}"
             )
+        LOG.warning(
+            "Using legacy platform market token fallback for user_id=%s; migrate to per-user market_oauth_json.",
+            user_id,
+        )
         shutil.copy(src, skill_dir / "tokens_market.enc")
     else:
         raise RuntimeError(

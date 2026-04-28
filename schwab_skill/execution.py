@@ -1042,6 +1042,38 @@ def _safe_float(value: Any) -> float | None:
     return out
 
 
+def _safe_telemetry_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return float(out)
+
+
+def _safe_telemetry_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _build_standard_telemetry(
+    *,
+    mirofish_conviction: Any,
+    advisory_prob: Any,
+    agent_uncertainty: Any,
+    vcp_volume_ratio: Any,
+    sector_rs_rank: Any,
+) -> dict[str, Any]:
+    return {
+        "mirofish_conviction": _safe_telemetry_float(mirofish_conviction),
+        "advisory_prob": _safe_telemetry_float(advisory_prob),
+        "agent_uncertainty": _safe_telemetry_float(agent_uncertainty),
+        "vcp_volume_ratio": _safe_telemetry_float(vcp_volume_ratio),
+        "sector_rs_rank": _safe_telemetry_int(sector_rs_rank),
+    }
+
+
 def _extract_quote_number(quote: dict[str, Any], keys: list[str]) -> float | None:
     layers: list[dict[str, Any]] = []
     if isinstance(quote, dict):
@@ -1363,6 +1395,10 @@ def place_order(
     skill_dir: Path | str | None = None,
     price_hint: float | None = None,
     mirofish_conviction: int | float | None = None,
+    advisory_prob: int | float | None = None,
+    agent_uncertainty: int | float | None = None,
+    vcp_volume_ratio: int | float | None = None,
+    sector_rs_rank: int | None = None,
     sector_etf: str | None = None,
 ) -> str | dict:
     """
@@ -1377,6 +1413,13 @@ def place_order(
     side_n = side.strip().upper()
     order_type_n = order_type.strip().upper()
     ticker_n = ticker.upper().strip()
+    telemetry = _build_standard_telemetry(
+        mirofish_conviction=mirofish_conviction,
+        advisory_prob=advisory_prob,
+        agent_uncertainty=agent_uncertainty,
+        vcp_volume_ratio=vcp_volume_ratio,
+        sector_rs_rank=sector_rs_rank,
+    )
 
     data_quality_payload: dict[str, Any] | None = None
     try:
@@ -1767,6 +1810,7 @@ def place_order(
             "execution_quality": exec_quality_diag,
             "event_risk": event_risk_diag,
             "regime_v2": regime_v2_diag,
+            "telemetry": telemetry,
             "data_quality": (data_quality_payload or {}).get("data_quality"),
             "data_quality_reasons": (data_quality_payload or {}).get("data_quality_reasons"),
         }
@@ -1821,6 +1865,7 @@ def place_order(
             result["_regime_v2"] = regime_v2_diag
         if data_quality_payload:
             result["_data_quality"] = data_quality_payload
+        result["telemetry"] = telemetry
 
         # Self-study: record trade outcome for learning
         if order_id:

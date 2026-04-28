@@ -1911,6 +1911,7 @@ async function waitForSaaScanCompletion(taskId) {
   let firstPendingAt = null;
   let workerHintShown = false;
   let transientGatewayFailures = 0;
+  let unknownStatusStreak = 0;
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.05, "Queued…");
   for (let i = 0; i < maxPolls; i++) {
     const status = await pollScanStatus();
@@ -1962,6 +1963,7 @@ async function waitForSaaScanCompletion(taskId) {
     }
     firstPendingAt = null;
     if (celeryStatus === "started" || celeryStatus === "retry") {
+      unknownStatusStreak = 0;
       metaEl.textContent = "Scan running…";
       setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.55, "Running scan…");
       updateActionCenter({
@@ -1973,6 +1975,7 @@ async function waitForSaaScanCompletion(taskId) {
       continue;
     }
     if (celeryStatus === "success") {
+      unknownStatusStreak = 0;
       const result = data.result;
       if (!result || typeof result !== "object") {
         metaEl.textContent = "Scan failed.";
@@ -2037,6 +2040,7 @@ async function waitForSaaScanCompletion(taskId) {
       return;
     }
     if (celeryStatus === "failure" || celeryStatus === "revoked") {
+      unknownStatusStreak = 0;
       metaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
       const res = data.result;
@@ -2049,6 +2053,36 @@ async function waitForSaaScanCompletion(taskId) {
       setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
       return;
     }
+    if (celeryStatus === "unknown" || !celeryStatus) {
+      unknownStatusStreak += 1;
+      if (unknownStatusStreak >= 6) {
+        const inspectError = safeText((data.worker_queue || {}).inspect_error || "");
+        const statusError = safeText(data.status_error || "");
+        const details = [statusError, inspectError].filter(Boolean).join(" | ");
+        const msg =
+          details ||
+          "Task status remained unknown. Verify Redis/Celery backend connectivity and refresh once workers are healthy.";
+        metaEl.textContent = "Scan status is unavailable.";
+        updateTopStrategyChip(null);
+        logEvent({ kind: "scan", severity: "error", message: `Scan polling stopped: ${msg}` });
+        updateActionCenter({
+          title: "Scan Status Unavailable",
+          message: msg,
+          severity: "error",
+        });
+        setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
+        return;
+      }
+      metaEl.textContent = "Scan status unavailable… retrying.";
+      updateActionCenter({
+        title: "Scan Status Pending",
+        message: "Status backend is not ready yet. Retrying automatically.",
+        severity: "warn",
+      });
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    unknownStatusStreak = 0;
     await new Promise((r) => setTimeout(r, 5000));
   }
   metaEl.textContent = "Scan still running. Use Refresh to check progress.";
@@ -2154,6 +2188,7 @@ async function runScan() {
 async function waitForScanCompletion() {
   const maxPolls = 360;
   const metaEl = document.getElementById("scanMeta");
+  let unknownStatusStreak = 0;
   for (let i = 0; i < maxPolls; i++) {
     const status = await api.get("/api/scan-lifecycle");
     if (!status.ok) {
@@ -2165,6 +2200,7 @@ async function waitForScanCompletion() {
     }
     const data = status.data || {};
     if (data.status === "running") {
+      unknownStatusStreak = 0;
       updateTopStrategyChip(null);
       const elapsed = data.elapsed_seconds ?? (
         data.started_at ? Math.max(0, Math.floor((Date.now() - Date.parse(data.started_at)) / 1000)) : null
@@ -2182,6 +2218,7 @@ async function waitForScanCompletion() {
       continue;
     }
     if (data.status === "completed") {
+      unknownStatusStreak = 0;
       state.latestSignals = data.signals || [];
       const headline = diagnosticsHeadline(data.diagnostics_summary || data.diagnostics || {});
       metaEl.textContent =
@@ -2203,6 +2240,7 @@ async function waitForScanCompletion() {
       return;
     }
     if (data.status === "failed") {
+      unknownStatusStreak = 0;
       metaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
       const errMsg = data.error || "unknown error";
@@ -2211,6 +2249,7 @@ async function waitForScanCompletion() {
       return;
     }
     if (data.status === "idle" && data.last_scan) {
+      unknownStatusStreak = 0;
       metaEl.textContent = `Last scan: ${data.last_scan.signals_found ?? 0} signal(s).`;
       updateTopStrategyChip(data.last_scan.strategy_summary || null);
       updateActionCenter({
@@ -2220,6 +2259,26 @@ async function waitForScanCompletion() {
       });
       return;
     }
+    if (data.status === "unknown" || !safeText(data.status)) {
+      unknownStatusStreak += 1;
+      if (unknownStatusStreak >= 6) {
+        const errMsg = safeText(data.error || data.status_error || "Local scan status remained unknown.");
+        metaEl.textContent = "Scan status is unavailable.";
+        updateTopStrategyChip(null);
+        logEvent({ kind: "scan", severity: "error", message: errMsg });
+        updateActionCenter({ title: "Scan Status Unavailable", message: errMsg, severity: "error" });
+        return;
+      }
+      metaEl.textContent = "Scan status unavailable… retrying.";
+      updateActionCenter({
+        title: "Scan Status Pending",
+        message: "Waiting for scan lifecycle status to stabilize.",
+        severity: "warn",
+      });
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    unknownStatusStreak = 0;
     await new Promise((r) => setTimeout(r, 2000));
   }
   metaEl.textContent = "Scan still running. Use Refresh to check progress.";

@@ -189,3 +189,59 @@ def test_materialize_errors_when_platform_fallback_missing_market_token_file(
     with pytest.raises(RuntimeError) as exc:
         materialize_tenant_skill_dir(db, "u6", tmp_path / "tenant-u6")
     assert "tokens_market.enc missing" in str(exc.value)
+
+
+def test_user_can_materialize_rejects_platform_fallback_when_disabled(
+    tmp_path: Path,
+    db_session: Session,
+    cred_key: None,
+    schwab_platform_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    platform = tmp_path / "platform"
+    platform.mkdir()
+    write_encrypted_token_file(
+        platform / "tokens_market.enc",
+        {"access_token": "pm", "refresh_token": "pr"},
+        "msecret",
+    )
+    monkeypatch.setenv("SAAS_PLATFORM_MARKET_SKILL_DIR", str(platform))
+    monkeypatch.setenv("SAAS_DISABLE_PLATFORM_MARKET_FALLBACK", "1")
+
+    db = db_session
+    db.add(User(id="u7", email="strict@example.com", auth_provider="supabase"))
+    account_json = json.dumps({"access_token": "a7", "refresh_token": "ar7"})
+    db.add(UserCredential(user_id="u7", account_token_payload_enc=encrypt_secret(account_json)))
+    db.commit()
+
+    ok, reason = user_can_materialize_for_scan(db, "u7")
+    assert ok is False
+    assert "Per-user market OAuth required" in reason
+
+
+def test_materialize_rejects_platform_fallback_when_disabled(
+    tmp_path: Path,
+    db_session: Session,
+    cred_key: None,
+    schwab_platform_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    platform = tmp_path / "platform"
+    platform.mkdir()
+    write_encrypted_token_file(
+        platform / "tokens_market.enc",
+        {"access_token": "pm", "refresh_token": "pr"},
+        "msecret",
+    )
+    monkeypatch.setenv("SAAS_PLATFORM_MARKET_SKILL_DIR", str(platform))
+    monkeypatch.setenv("SAAS_DISABLE_PLATFORM_MARKET_FALLBACK", "1")
+
+    db = db_session
+    db.add(User(id="u8", email="strict2@example.com", auth_provider="supabase"))
+    account_json = json.dumps({"access_token": "a8", "refresh_token": "ar8"})
+    db.add(UserCredential(user_id="u8", account_token_payload_enc=encrypt_secret(account_json)))
+    db.commit()
+
+    with pytest.raises(RuntimeError) as exc:
+        materialize_tenant_skill_dir(db, "u8", tmp_path / "tenant-u8")
+    assert "Per-user market OAuth required" in str(exc.value)

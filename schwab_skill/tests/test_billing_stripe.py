@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from webapp.billing_stripe import (
+    stripe_event_type_supported,
     try_claim_stripe_webhook_event,
     user_has_paid_entitlement,
 )
@@ -51,3 +52,12 @@ def test_try_claim_stripe_webhook_idempotent(db_session: Session) -> None:
     assert try_claim_stripe_webhook_event(db, "evt_test_1") is True
     db.commit()
     assert try_claim_stripe_webhook_event(db, "evt_test_1") is False
+
+
+def test_stripe_event_type_supported_for_known_events() -> None:
+    assert stripe_event_type_supported("checkout.session.completed") is True
+    assert stripe_event_type_supported("customer.subscription.updated") is True
+
+
+def test_stripe_event_type_supported_for_unknown_event() -> None:
+    assert stripe_event_type_supported("invoice.payment_succeeded") is False

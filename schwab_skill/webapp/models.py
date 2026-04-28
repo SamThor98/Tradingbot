@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -10,6 +12,9 @@ from .db import Base
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+JSON_VARIANT = JSON().with_variant(JSONB, "postgresql")
 
 
 class User(Base):
@@ -82,7 +87,7 @@ class Order(Base):
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, index=True, default="pending")
     broker_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    result_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
@@ -119,7 +124,7 @@ class ScanResult(Base):
     job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     signal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -134,7 +139,7 @@ class AppState(Base):
         index=True,
     )
     key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    value_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
@@ -151,8 +156,8 @@ class BacktestRun(Base):
     )
     celery_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", index=True)
-    spec_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON_VARIANT, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

@@ -30,6 +30,7 @@ from .billing_stripe import (
     handle_stripe_event,
     stripe_event_id,
     stripe_event_type,
+    stripe_event_type_supported,
     try_claim_stripe_webhook_event,
     user_has_paid_entitlement,
 )
@@ -362,6 +363,15 @@ def _require_metrics_access(
 
 def _is_schwab_linked(db: Session, user_id: str) -> bool:
     return user_has_account_session(db, user_id)
+
+
+def _stripe_webhook_enabled() -> bool:
+    return (os.getenv("SAAS_ENABLE_STRIPE_WEBHOOK", "1") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _scan_lifecycle_payload(
@@ -926,10 +936,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(_db)) -> Respon
     if not eid:
         raise HTTPException(status_code=400, detail="Event missing id.")
 
+    etype = stripe_event_type(event)
+    supported = stripe_event_type_supported(etype)
+    if not _stripe_webhook_enabled():
+        LOG.warning(
+            "Stripe webhook processing disabled; acknowledged event_id=%s type=%s supported=%s",
+            eid,
+            etype,
+            supported,
+        )
+        return Response(status_code=200, content="disabled")
+
     if not try_claim_stripe_webhook_event(db, eid):
         return Response(status_code=200, content="duplicate")
 
-    etype = stripe_event_type(event)
+    LOG.info("Stripe webhook received event_id=%s type=%s supported=%s", eid, etype, supported)
     try:
         handle_stripe_event(db, event)
         db.commit()
@@ -1308,8 +1329,13 @@ def list_scan_results(
 
 
 @app.post("/api/orders/execute")
-def execute_order() -> None:
+def execute_order(request: Request) -> None:
     """Removed: live orders must be staged (pending) then confirmed in-app with typed ticker."""
+    LOG.warning(
+        "Deprecated route called: /api/orders/execute request_id=%s client=%s",
+        _request_id(request),
+        request.client.host if request.client else "unknown",
+    )
     raise HTTPException(
         status_code=410,
         detail={

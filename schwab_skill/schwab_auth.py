@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import threading
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -94,36 +95,58 @@ def extract_code_from_redirect(redirect_url: str) -> str | None:
 
 def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
     creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    resp = requests.post(
-        TOKEN_URL,
-        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
-        data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
-        timeout=60,
-    )
-    if not resp.ok:
-        detail = ""
+    last_exc: Exception | None = None
+    for attempt in range(3):
         try:
-            payload = resp.json()
-            detail = str(payload)
-        except Exception:
-            detail = (resp.text or "").strip()
-        raise RuntimeError(
-            "OAuth code exchange failed "
-            f"(status={resp.status_code}, redirect_uri={redirect_uri}, detail={detail[:300]})"
-        )
-    return resp.json()
+            resp = requests.post(
+                TOKEN_URL,
+                headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri},
+                timeout=60,
+            )
+            if not resp.ok:
+                detail = ""
+                try:
+                    payload = resp.json()
+                    detail = str(payload)
+                except Exception:
+                    detail = (resp.text or "").strip()
+                raise RuntimeError(
+                    "OAuth code exchange failed "
+                    f"(status={resp.status_code}, redirect_uri={redirect_uri}, detail={detail[:300]})"
+                )
+            return resp.json()
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"OAuth code exchange request failed after retries: {exc}") from exc
+    assert last_exc is not None
+    raise RuntimeError(f"OAuth code exchange request failed: {last_exc}")
 
 
 def refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> dict:
     creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    resp = requests.post(
-        TOKEN_URL,
-        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
-        data={"grant_type": "refresh_token", "refresh_token": refresh_token},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                TOKEN_URL,
+                headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+                data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"OAuth refresh request failed after retries: {exc}") from exc
+    assert last_exc is not None
+    raise RuntimeError(f"OAuth refresh request failed: {last_exc}")
 
 
 class SchwabSession:
@@ -290,13 +313,13 @@ class DualSchwabAuth:
         self.skill_dir = Path(skill_dir or Path(__file__).resolve().parent)
         env = _load_env(self.skill_dir / ".env")
 
-        account_callback = env.get("SCHWAB_CALLBACK_URL", "https://127.0.0.1").strip()
-        market_callback = env.get("SCHWAB_MARKET_CALLBACK_URL", account_callback).strip()
+        account_callback = (os.getenv("SCHWAB_CALLBACK_URL") or env.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1").strip()
+        market_callback = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or env.get("SCHWAB_MARKET_CALLBACK_URL") or account_callback).strip()
 
-        market_key = env.get("SCHWAB_MARKET_APP_KEY", "")
-        market_secret = env.get("SCHWAB_MARKET_APP_SECRET", "")
-        account_key = env.get("SCHWAB_ACCOUNT_APP_KEY", "")
-        account_secret = env.get("SCHWAB_ACCOUNT_APP_SECRET", "")
+        market_key = (os.getenv("SCHWAB_MARKET_APP_KEY") or env.get("SCHWAB_MARKET_APP_KEY") or "").strip()
+        market_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or env.get("SCHWAB_MARKET_APP_SECRET") or "").strip()
+        account_key = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or env.get("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
+        account_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or env.get("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
 
         self.market_session = SchwabSession(
             session_name="market",

@@ -2,6 +2,11 @@
 
 This matrix defines minimum pass/fail gates for each runtime target.
 
+Guardrail-specific validation (test IDs `GR-001` to `GR-020`, severity policy,
+and promotion-blocking criteria) is defined in:
+
+- `docs/GUARDRAIL_VALIDATION_MATRIX.md`
+
 ## Profiles
 
 | Profile | Goal | Required Command |
@@ -32,6 +37,8 @@ Promotion-grade mode:
 
 ### 1) Static and contract checks
 - `scripts/validate_signal_quality.py`
+- `scripts/validate_hold_duration_guardrail.py`
+- `scripts/validate_regime_counterfactual_guardrail.py`
 - `scripts/validate_scanner_parallelization.py`
 - `scripts/validate_ui_payloads.py`
 - `scripts/validate_shadow_mode.py`

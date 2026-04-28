@@ -74,6 +74,16 @@ def _steps_for_profile(
         ("validate_event_risk", [py, str(SCRIPTS_DIR / "validate_event_risk.py")], None),
         ("validate_regime_v2", [py, str(SCRIPTS_DIR / "validate_regime_v2.py")], None),
         ("validate_signal_quality", [py, str(SCRIPTS_DIR / "validate_signal_quality.py")], None),
+        (
+            "validate_hold_duration_guardrail",
+            [py, str(SCRIPTS_DIR / "validate_hold_duration_guardrail.py")],
+            None,
+        ),
+        (
+            "validate_regime_counterfactual_guardrail",
+            [py, str(SCRIPTS_DIR / "validate_regime_counterfactual_guardrail.py")],
+            None,
+        ),
         ("validate_agent_intelligence", [py, str(SCRIPTS_DIR / "validate_agent_intelligence.py")], None),
         ("validate_scanner_parallelization", [py, str(SCRIPTS_DIR / "validate_scanner_parallelization.py")], None),
         ("validate_ui_payloads", [py, str(SCRIPTS_DIR / "validate_ui_payloads.py")], None),

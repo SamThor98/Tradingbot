@@ -210,6 +210,7 @@ python scripts/validate_all.py --profile local --strict --skip-backtest
 
 Additional references:
 - `VALIDATION_MATRIX.md` (environment gates and pass/fail criteria)
+- `docs/GUARDRAIL_VALIDATION_MATRIX.md` (guardrail-specific test IDs, severities, and promotion-blocking criteria)
 - `VALIDATION_RUNBOOK.md` (how to run validations in local/server/container/CI)
 - `CANARY_RUNBOOK.md` (controlled live canary and rollback rules)
 - `docs/AGENT_INTELLIGENCE_IMPLEMENTATION_PLAN.md` (dynamic weighting, meta-policy, uncertainty, and promotion gates)

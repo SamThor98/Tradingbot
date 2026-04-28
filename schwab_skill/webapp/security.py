@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,9 @@ from sqlalchemy.orm import Session
 from .billing_stripe import user_has_paid_entitlement
 from .db import SessionLocal
 from .models import User
+
+LOG = logging.getLogger(__name__)
+_legacy_jwt_secret_usage_logged = False
 
 
 def _is_production_like() -> bool:
@@ -159,7 +163,7 @@ def _decode_supabase_jwt_symmetric(token: str) -> dict[str, Any]:
     leeway = _jwt_leeway_seconds()
     opts: dict[str, Any] = {"verify_aud": bool(aud)}
     last_exc: jwt.PyJWTError | None = None
-    for secret in secrets:
+    for idx, secret in enumerate(secrets):
         try:
             kwargs: dict[str, Any] = {
                 "algorithms": ["HS256"],
@@ -170,7 +174,16 @@ def _decode_supabase_jwt_symmetric(token: str) -> dict[str, Any]:
                 kwargs["audience"] = aud
             if iss:
                 kwargs["issuer"] = iss
-            return jwt.decode(token, secret, **kwargs)
+            out = jwt.decode(token, secret, **kwargs)
+            # Deprecation telemetry: successful auth using rotated legacy secret.
+            if idx > 0:
+                global _legacy_jwt_secret_usage_logged
+                if not _legacy_jwt_secret_usage_logged:
+                    LOG.warning(
+                        "JWT validated with SUPABASE_JWT_SECRET_LEGACY fallback; rotate clients to primary secret and remove legacy secret after usage window."
+                    )
+                    _legacy_jwt_secret_usage_logged = True
+            return out
         except jwt.PyJWTError as exc:
             last_exc = exc
             continue

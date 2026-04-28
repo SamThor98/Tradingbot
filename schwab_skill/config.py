@@ -404,6 +404,18 @@ def get_backtest_risk_per_trade_pct(skill_dir: Path | None = None) -> float:
     return max(0.0, _get_float("BACKTEST_RISK_PER_TRADE_PCT", 0.0075, skill_dir))
 
 
+def get_backtest_adaptive_guardrails_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable data-driven adaptive sizing/filtering guardrails in backtest."""
+    return _get_bool("BACKTEST_ADAPTIVE_GUARDRAILS_ENABLED", False, skill_dir)
+
+
+def get_backtest_adaptive_guardrail_policy_path(skill_dir: Path | None = None) -> str:
+    """Relative/absolute JSON policy file path used by adaptive guardrails."""
+    env = _load_env(skill_dir)
+    raw = _env_value("BACKTEST_ADAPTIVE_GUARDRAIL_POLICY_PATH", env).strip()
+    return raw or "backtest_guardrail_policy.json"
+
+
 def get_alert_min_conviction(skill_dir: Path | None = None) -> int:
     """Minimum conviction to send any alert (below = suppressed)."""
     return _get_int("ALERT_MIN_CONVICTION", 20, skill_dir)

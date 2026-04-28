@@ -1,0 +1,18 @@
+{
+  "min_signal_score": 50.0,
+  "strong_signal_score": 70.0,
+  "extra_position_slots": 2,
+  "min_size_multiplier": 0.5,
+  "max_size_multiplier": 1.5,
+  "score_buckets": [
+    { "min": 50.0, "max": 60.0, "multiplier": 0.9 },
+    { "min": 60.0, "max": 70.0, "multiplier": 1.0 },
+    { "min": 70.0, "max": null, "multiplier": 1.2 }
+  ],
+  "vcp_buckets": [
+    { "min": -1000000.0, "max": 0.7, "multiplier": 1.2 },
+    { "min": 0.7, "max": 0.8, "multiplier": 1.05 },
+    { "min": 0.8, "max": 0.9, "multiplier": 0.85 },
+    { "min": 0.9, "max": null, "multiplier": 0.75 }
+  ]
+}

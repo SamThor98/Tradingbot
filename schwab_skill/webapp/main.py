@@ -767,12 +767,56 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
         _record_endpoint_error("scan_worker")
 
 
+def _safe_telemetry_float(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return float(out)
+
+
+def _safe_telemetry_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _build_standard_telemetry(signal: dict[str, Any]) -> dict[str, Any]:
+    advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
+    meta_policy = signal.get("meta_policy") if isinstance(signal.get("meta_policy"), dict) else {}
+    score_components = signal.get("score_components") if isinstance(signal.get("score_components"), dict) else {}
+    return {
+        "mirofish_conviction": _safe_telemetry_float(signal.get("mirofish_conviction")),
+        "advisory_prob": _safe_telemetry_float(advisory.get("p_up_10d")),
+        "agent_uncertainty": _safe_telemetry_float(meta_policy.get("uncertainty_score")),
+        "vcp_volume_ratio": _safe_telemetry_float(score_components.get("avg_vcp_volume_ratio")),
+        "sector_rs_rank": _safe_telemetry_int(
+            signal.get("sector_rs_rank", signal.get("sector_relative_strength_rank"))
+        ),
+    }
+
+
+def _coerce_json_dict(raw: Any, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    fallback = default or {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw or "{}")
+            return parsed if isinstance(parsed, dict) else fallback
+        except Exception:
+            return fallback
+    return fallback
+
+
 def _load_state(db: Session, key: str, default: dict[str, Any]) -> dict[str, Any]:
     row = db.query(AppState).filter(AppState.user_id == LOCAL_DASHBOARD_USER_ID, AppState.key == key).first()
     if not row:
         return default
     try:
-        data = json.loads(row.value_json or "{}")
+        raw = row.value_json
+        data = _coerce_json_dict(raw, default=default)
         return data if isinstance(data, dict) else default
     except Exception:
         return default
@@ -784,11 +828,11 @@ def _save_state(db: Session, key: str, value: dict[str, Any]) -> None:
         row = AppState(
             user_id=LOCAL_DASHBOARD_USER_ID,
             key=key,
-            value_json=json.dumps(value, default=_json_default),
+            value_json=value,
         )
         db.add(row)
     else:
-        row.value_json = json.dumps(value, default=_json_default)
+        row.value_json = value
     db.commit()
 
 
@@ -1502,7 +1546,8 @@ def approve_trade(
             error="typed_ticker must exactly match the staged trade ticker (re-type to confirm the live order).",
         )
 
-    signal = json.loads(row.signal_json or "{}")
+    signal = _coerce_json_dict(row.signal_json)
+    telemetry = _build_standard_telemetry(signal if isinstance(signal, dict) else {})
     ui_settings = _load_ui_settings(db)
     automation_opt_in = bool(ui_settings.get("automation_opt_in", DEFAULT_AUTOMATION_OPT_IN))
     if not automation_opt_in and not confirm_live:
@@ -1520,6 +1565,10 @@ def approve_trade(
         order_type="MARKET",
         price_hint=row.price,
         mirofish_conviction=signal.get("mirofish_conviction"),
+        advisory_prob=(signal.get("advisory") or {}).get("p_up_10d"),
+        agent_uncertainty=(signal.get("meta_policy") or {}).get("uncertainty_score"),
+        vcp_volume_ratio=(signal.get("score_components") or {}).get("avg_vcp_volume_ratio"),
+        sector_rs_rank=signal.get("sector_rs_rank", signal.get("sector_relative_strength_rank")),
         sector_etf=signal.get("sector_etf"),
         skill_dir=SKILL_DIR,
     )
@@ -1537,6 +1586,18 @@ def approve_trade(
         )
         _record_endpoint_error("approve_trade")
         _sse_publish("trade_failed", {"trade_id": trade_id, "ticker": row.ticker, "error": result})
+        _save_state(
+            db,
+            "last_trade_approval",
+            {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "trade_id": trade_id,
+                "ticker": row.ticker,
+                "status": "failed",
+                "telemetry": telemetry,
+                "error": result,
+            },
+        )
         return ApiResponse(
             ok=False,
             error=result,
@@ -1547,6 +1608,18 @@ def approve_trade(
         )
 
     row.status = "executed"
+    _save_state(
+        db,
+        "last_trade_approval",
+        {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "trade_id": trade_id,
+            "ticker": row.ticker,
+            "status": "executed",
+            "telemetry": telemetry,
+            "result": result,
+        },
+    )
     db.commit()
     db.refresh(row)
     _audit_event(
@@ -1592,7 +1665,7 @@ def preflight_trade(trade_id: str, db: Session = Depends(get_db)) -> ApiResponse
     )
     if not row:
         return ApiResponse(ok=False, error="Trade not found.")
-    signal = json.loads(row.signal_json or "{}")
+    signal = _coerce_json_dict(row.signal_json)
     return _ok(
         {
             "trade": _trade_to_dict(row),

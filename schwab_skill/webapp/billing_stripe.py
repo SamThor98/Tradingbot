@@ -11,6 +11,15 @@ from sqlalchemy.orm import Session
 from .models import User
 
 _ACTIVE_STATUSES = frozenset({"trialing", "active"})
+_HANDLED_STRIPE_EVENT_TYPES = frozenset(
+    {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.paused",
+        "customer.subscription.deleted",
+    }
+)
 
 
 def billing_enforcement_enabled() -> bool:
@@ -161,6 +170,10 @@ def _event_type_and_object(event: Any) -> tuple[str, Any]:
 def stripe_event_type(event: Any) -> str:
     etype, _ = _event_type_and_object(event)
     return etype
+
+
+def stripe_event_type_supported(event_type: str) -> bool:
+    return str(event_type or "").strip() in _HANDLED_STRIPE_EVENT_TYPES
 
 
 def handle_stripe_event(db: Session, event: Any) -> None:
