@@ -849,6 +849,17 @@ function normalizeScanSignal(rawSignal) {
   return signal;
 }
 
+function signalFromScanResultRow(row) {
+  const rec = asObject(row) || {};
+  const payload = asObject(rec.payload) || {};
+  const signal = normalizeScanSignal(payload);
+  if (!signal.ticker && rec.ticker) signal.ticker = rec.ticker;
+  if (!signal.symbol && rec.ticker) signal.symbol = rec.ticker;
+  if (signal.signal_score == null && rec.signal_score != null) signal.signal_score = rec.signal_score;
+  if (!signal.job_id && rec.job_id) signal.job_id = rec.job_id;
+  return signal;
+}
+
 function formatStrategySummary(summary = null) {
   if (!summary || typeof summary !== "object") return "";
   const dominant = formatStrategyLabel(summary.dominant_live_strategy || "");
@@ -1575,7 +1586,7 @@ async function hydrateScanTableFromStatus(status) {
     const listOut = await api.get(url);
     if (!listOut.ok) return;
     const rows = Array.isArray(listOut.data) ? listOut.data : [];
-    const signals = rows.map((r) => r.payload).filter((p) => p && typeof p === "object");
+    const signals = rows.map((r) => signalFromScanResultRow(r)).filter((p) => p && typeof p === "object");
     state.latestSignals = signals;
     const headline = diagnosticsHeadline(diag);
     if (metaEl)
@@ -2019,7 +2030,7 @@ async function waitForSaaScanCompletion(taskId) {
         return;
       }
       const rows = Array.isArray(listOut.data) ? listOut.data : [];
-      const signals = rows.map((r) => r.payload).filter((p) => p && typeof p === "object");
+      const signals = rows.map((r) => signalFromScanResultRow(r)).filter((p) => p && typeof p === "object");
       state.latestSignals = signals;
       const diag = result.diagnostics || {};
       const headline = diagnosticsHeadline(diag);
