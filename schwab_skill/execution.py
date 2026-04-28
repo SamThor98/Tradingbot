@@ -1021,6 +1021,14 @@ def _parse_trader_error(resp: requests.Response) -> str:
         errors = data.get("errors", [])
         if errors:
             first = errors[0]
+            detail = str(first.get("detail") or "").strip()
+            title = str(first.get("title") or "").strip()
+            blob = f"{title} {detail}".lower()
+            if "client not authorized" in blob or "not authorized" in blob:
+                return (
+                    "Client not authorized for Schwab trading API. Reconnect Schwab in Setup and confirm "
+                    "your app has Accounts and Trading Production access with your brokerage account linked."
+                )
             if first.get("title") == "Internal Server Error":
                 return (
                     "Trader API unavailable. In Schwab Developer Portal: "
@@ -1028,7 +1036,7 @@ def _parse_trader_error(resp: requests.Response) -> str:
                     "2) Link your brokerage account to the app "
                     "3) Contact traderapi@schwab.com if approved but still failing."
                 )
-            return first.get("detail") or first.get("title") or resp.text[:200]
+            return detail or title or resp.text[:200]
     except Exception:
         pass
     return resp.text[:200] if resp.text else str(resp.status_code)
@@ -1369,6 +1377,9 @@ def get_account_status(
         token = auth.get_account_token()
         url = f"{SCHWAB_BASE}/trader/v1/accounts"
         resp = requests.get(url, headers=_get_headers(token, for_get=True), timeout=30)
+        if resp.status_code == 401 and auth.account_session.force_refresh():
+            token = auth.get_account_token()
+            resp = requests.get(url, headers=_get_headers(token, for_get=True), timeout=30)
         if not resp.ok:
             return _parse_trader_error(resp)
         data = resp.json()
