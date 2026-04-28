@@ -80,7 +80,12 @@ export async function renderTickerChart(ticker) {
 
   const out = await api.get(`/api/chart/${encodeURIComponent(ticker)}`);
   if (!out.ok || !out.data?.candles?.length) {
-    container.innerHTML = `<div class="muted" style="padding:12px">No chart data available for ${safeText(ticker)}.</div>`;
+    const reason = out?.error || out?.data?.recovery?.summary || "";
+    const reasonLine = reason ? `<div class="muted" style="padding:0 12px 12px; font-size:0.82rem;">${safeText(reason)}</div>` : "";
+    container.innerHTML = `
+      <div class="muted" style="padding:12px 12px 4px;">No chart data available for ${safeText(ticker)}.</div>
+      ${reasonLine}
+    `;
     return;
   }
 

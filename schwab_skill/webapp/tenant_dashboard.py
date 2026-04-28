@@ -29,7 +29,12 @@ from challenger_mode import ChallengerRunner
 from evolve_logic import LearningEngine
 from execution import get_account_status, get_position_size_usd, place_order
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
-from market_data import extract_schwab_last_price, get_current_quote, get_current_quote_with_status
+from market_data import (
+    extract_schwab_last_price,
+    get_current_quote,
+    get_current_quote_with_status,
+    get_daily_history_with_meta,
+)
 from schwab_auth import DualSchwabAuth
 from sec_filing_compare import compare_ticker_over_time, compare_ticker_vs_ticker
 from sector_strength import get_sector_heatmap
@@ -119,6 +124,8 @@ DEFAULT_AUTOMATION_OPT_IN = False
 DEFAULT_UI_MODE = "standard"
 DEFAULT_PROFILE = "balanced"
 _TWO_FA_STATE_KEY = "security_2fa"
+SKILL_DIR = Path(__file__).resolve().parent.parent
+VALIDATION_ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
 
 
 def _db() -> OrmSession:
@@ -165,6 +172,84 @@ def _load_state(db: OrmSession, user_id: str, key: str, default: dict[str, Any])
         return default
     parsed = parse_json(row.value_json, default)
     return parsed if isinstance(parsed, dict) else default
+
+
+def _latest_validation_status() -> dict[str, Any]:
+    status_file = VALIDATION_ARTIFACT_DIR / "continuous_validation_status.json"
+    if status_file.exists():
+        try:
+            data = json.loads(status_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                latest_artifacts = data.get("latest_artifacts") or {}
+                return {
+                    "source": "continuous_validation_status",
+                    "exists": True,
+                    "run_status": data.get("run_status"),
+                    "passed": bool(data.get("passed")) if data.get("passed") is not None else None,
+                    "started_at": data.get("started_at"),
+                    "finished_at": data.get("finished_at"),
+                    "generated_at": data.get("generated_at"),
+                    "current_step": data.get("current_step"),
+                    "current_step_index": data.get("current_step_index"),
+                    "completed_steps": data.get("completed_steps"),
+                    "total_steps": data.get("total_steps"),
+                    "progress_pct": data.get("progress_pct"),
+                    "failed_steps": list(data.get("failed_steps") or []),
+                    "latest_artifacts": latest_artifacts if isinstance(latest_artifacts, dict) else {},
+                }
+        except Exception:
+            pass
+
+    validate_runs = sorted(VALIDATION_ARTIFACT_DIR.glob("validate_all_*.json"))
+    if not validate_runs:
+        return {
+            "source": "none",
+            "exists": False,
+            "run_status": "idle",
+            "passed": None,
+            "started_at": None,
+            "finished_at": None,
+            "generated_at": None,
+            "current_step": None,
+            "current_step_index": 0,
+            "completed_steps": 0,
+            "total_steps": 0,
+            "progress_pct": 0,
+            "failed_steps": [],
+            "latest_artifacts": {},
+        }
+    latest = validate_runs[-1]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    failed_steps = list(payload.get("failed_steps") or [])
+    generated_at = payload.get("generated_at")
+    if not generated_at:
+        try:
+            generated_at = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            generated_at = None
+    try:
+        rel_path = str(latest.relative_to(SKILL_DIR))
+    except ValueError:
+        rel_path = str(latest)
+    return {
+        "source": "validate_all_summary",
+        "exists": True,
+        "run_status": "completed",
+        "passed": bool(payload.get("passed")) if "passed" in payload else None,
+        "started_at": None,
+        "finished_at": generated_at,
+        "generated_at": generated_at,
+        "current_step": None,
+        "current_step_index": 0,
+        "completed_steps": 0,
+        "total_steps": 0,
+        "progress_pct": 100,
+        "failed_steps": failed_steps,
+        "latest_artifacts": {"validate_all": rel_path},
+    }
 
 
 def _safe_float(value: Any) -> float | None:
@@ -661,7 +746,7 @@ def tenant_status(user: User = Depends(get_current_user), db: OrmSession = Depen
                 "account_state": "Connected" if account_token_ok else "Disconnected",
                 "checked_at": checked_at,
                 "last_scan": last_scan,
-                "validation_status": {"exists": False, "run_status": "idle", "source": "saas"},
+                "validation_status": _latest_validation_status(),
                 "connection_status": "connected" if snap.get("schwab_linked") else "disconnected",
                 "api_health": snap,
             }
@@ -1067,6 +1152,63 @@ def tenant_check_ticker(
         return _saas_error_response(exc, source="quick_check", fallback="Quick ticker check failed.")
 
 
+@router.get("/api/chart/{ticker}", response_model=ApiResponse)
+def tenant_chart_data(
+    ticker: str,
+    days: int = 120,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading chart data.")
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                df, meta = get_daily_history_with_meta(
+                    ticker.upper().strip(),
+                    days=min(365, max(30, days)),
+                    auth=auth,
+                    skill_dir=skill_dir,
+                )
+        if df is None or df.empty:
+            return ApiResponse(
+                ok=False,
+                error=f"No price data for {ticker}",
+                data={
+                    "ticker": ticker.upper().strip(),
+                    "provider": meta.get("provider"),
+                    "used_fallback": meta.get("used_fallback"),
+                    "fallback_reason": meta.get("fallback_reason"),
+                },
+            )
+        candles: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            ts = row.get("datetime") or row.get("date") or row.name
+            try:
+                if hasattr(ts, "timestamp"):
+                    epoch = int(ts.timestamp())
+                else:
+                    from datetime import datetime as _dt
+
+                    epoch = int(_dt.fromisoformat(str(ts)).timestamp())
+            except Exception:
+                continue
+            candles.append(
+                {
+                    "time": epoch,
+                    "open": round(float(row.get("open", 0)), 2),
+                    "high": round(float(row.get("high", 0)), 2),
+                    "low": round(float(row.get("low", 0)), 2),
+                    "close": round(float(row.get("close", 0)), 2),
+                    "volume": int(row.get("volume", 0) or 0),
+                }
+            )
+        candles.sort(key=lambda c: c["time"])
+        return _ok({"ticker": ticker.upper().strip(), "candles": candles})
+    except Exception as exc:
+        return _saas_error_response(exc, source="chart_data", fallback="Chart data lookup failed.")
+
+
 @router.get("/api/report/{ticker}", response_model=ApiResponse)
 def tenant_report_ticker(
     ticker: str,
@@ -1259,8 +1401,8 @@ def tenant_performance(user: User = Depends(get_current_user), db: OrmSession = 
                 "latest_outcomes": latest_outcomes,
             },
             "validation": {
-                "status": {"exists": False, "run_status": "idle", "source": "saas"},
-                "artifacts_present": False,
+                "status": _latest_validation_status(),
+                "artifacts_present": VALIDATION_ARTIFACT_DIR.exists(),
             },
             "separation_guard": {
                 "commingled_metric_allowed": False,

@@ -179,8 +179,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse | PlainTextResponse:
     if request.url.path.startswith("/api/"):
         LOG.exception("Unhandled API error on %s: %s", request.url.path, exc)
-        payload = _err("Internal server error.").model_dump()
-        payload["detail"] = "Internal server error."
+        if _is_production_like():
+            msg = "Internal server error."
+        else:
+            msg = f"Internal server error: {type(exc).__name__}: {str(exc)[:220]}"
+        payload = _err(msg).model_dump()
+        payload["detail"] = msg
         return JSONResponse(status_code=500, content=payload)
     LOG.exception("Unhandled non-API error on %s: %s", request.url.path, exc)
     return PlainTextResponse("Internal server error.", status_code=500)

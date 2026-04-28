@@ -179,17 +179,26 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
 def chart_data(ticker: str, days: int = 120) -> ApiResponse:
     """OHLCV candle data for Lightweight Charts."""
     try:
-        from market_data import get_price_history
+        from market_data import get_daily_history_with_meta
 
         auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-        df = get_price_history(
+        df, meta = get_daily_history_with_meta(
             ticker.upper().strip(),
-            period_days=min(365, max(30, days)),
+            days=min(365, max(30, days)),
             auth=auth,
             skill_dir=SKILL_DIR,
         )
         if df is None or df.empty:
-            return ApiResponse(ok=False, error=f"No price data for {ticker}")
+            return ApiResponse(
+                ok=False,
+                error=f"No price data for {ticker}",
+                data={
+                    "ticker": ticker.upper().strip(),
+                    "provider": meta.get("provider"),
+                    "used_fallback": meta.get("used_fallback"),
+                    "fallback_reason": meta.get("fallback_reason"),
+                },
+            )
 
         candles: list[dict[str, Any]] = []
         for _, row in df.iterrows():

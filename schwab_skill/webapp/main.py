@@ -137,6 +137,11 @@ def _validate_startup_configuration() -> None:
         raise RuntimeError("WEB_API_KEY is required in production-like environments.")
 
 
+def _is_production_like() -> bool:
+    env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+    return env in ("prod", "production", "staging") or bool((os.getenv("RENDER") or "").strip())
+
+
 Base.metadata.create_all(bind=engine)
 try:
     from feature_store import ensure_table as _ensure_feature_store_table
@@ -190,8 +195,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse | PlainTextResponse:
     if request.url.path.startswith("/api/"):
         LOG.exception("Unhandled API error on %s: %s", request.url.path, exc)
-        payload = api_err("Internal server error.").model_dump()
-        payload["detail"] = "Internal server error."
+        if _is_production_like():
+            msg = "Internal server error."
+        else:
+            msg = f"Internal server error: {type(exc).__name__}: {str(exc)[:220]}"
+        payload = api_err(msg).model_dump()
+        payload["detail"] = msg
         return JSONResponse(status_code=500, content=payload)
     LOG.exception("Unhandled non-API error on %s: %s", request.url.path, exc)
     return PlainTextResponse("Internal server error.", status_code=500)

@@ -1604,29 +1604,40 @@ async function refreshStatus() {
   // status.api_health (quote_ok + quote_health). Calling /api/health/deep on
   // top would trigger a SECOND probe per dashboard refresh, doubling Schwab
   // load and racing on the rotating refresh token. Synthesize deepRes from
-  // the status payload instead. (Local mode keeps the legacy split because
+  // the status payload when available. If api_health is missing (mixed-version
+  // deployments), fall back to /api/health/deep to avoid false "Degraded"
+  // state in the health ribbon. (Local mode keeps the legacy split because
   // /api/health/deep there also surfaces server-wide metrics counters.)
   const statusRes = await api.get("/api/status");
   let deepRes;
   if (saasMode) {
     if (statusRes.ok) {
       const ah = statusRes.data?.api_health || {};
-      deepRes = {
-        ok: true,
-        data: {
-          db_ok: true,
-          market_token_ok: !!ah.market_token_ok,
-          account_token_ok: !!ah.account_token_ok,
-          quote_ok: !!ah.quote_ok,
-          quote_health: ah.quote_health || {
-            symbol: "AAPL",
-            ok: !!ah.quote_ok,
-            reason: ah.quote_ok ? null : ah.error || "not_linked_or_probe_failed",
-            operator_hint: null,
+      const hasEmbeddedApiHealth =
+        Object.prototype.hasOwnProperty.call(ah, "quote_ok") ||
+        Object.prototype.hasOwnProperty.call(ah, "quote_health") ||
+        Object.prototype.hasOwnProperty.call(ah, "market_token_ok") ||
+        Object.prototype.hasOwnProperty.call(ah, "account_token_ok");
+      if (hasEmbeddedApiHealth) {
+        deepRes = {
+          ok: true,
+          data: {
+            db_ok: true,
+            market_token_ok: !!ah.market_token_ok,
+            account_token_ok: !!ah.account_token_ok,
+            quote_ok: !!ah.quote_ok,
+            quote_health: ah.quote_health || {
+              symbol: "AAPL",
+              ok: !!ah.quote_ok,
+              reason: ah.quote_ok ? null : ah.error || "not_linked_or_probe_failed",
+              operator_hint: null,
+            },
+            metrics: ah.metrics || { requests_total: 0, errors_total: 0, client_errors_total: 0 },
           },
-          metrics: ah.metrics || { requests_total: 0, errors_total: 0, client_errors_total: 0 },
-        },
-      };
+        };
+      } else {
+        deepRes = await api.get("/api/health/deep", { timeoutMs: 30000 });
+      }
     } else {
       deepRes = { ok: false, error: statusRes.error };
     }
