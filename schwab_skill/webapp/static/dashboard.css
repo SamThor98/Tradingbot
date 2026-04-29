@@ -1039,6 +1039,92 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* ============================================================
+   PORTFOLIO RISK CARD
+   ============================================================ */
+.risk-card {
+  position: relative;
+  border-left: 3px solid var(--text-faint);
+  padding-left: calc(1.4rem - 3px);
+  display: flex; flex-direction: column; gap: 0.7rem;
+}
+.risk-card[data-priority="high"]   { border-left-color: var(--rust); }
+.risk-card[data-priority="medium"] { border-left-color: var(--amber); }
+.risk-card[data-priority="low"]    { border-left-color: var(--green); }
+.risk-card[data-priority="info"]   { border-left-color: var(--gold); }
+
+.risk-card-head {
+  display: flex; align-items: center; gap: 0.85rem;
+  flex-wrap: wrap;
+}
+.risk-priority {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--paper-soft);
+  color: var(--text-muted);
+}
+.risk-card[data-priority="high"]   .risk-priority { color: var(--rust);  border-color: rgba(200,85,61,0.45);  background: var(--rust-soft); }
+.risk-card[data-priority="medium"] .risk-priority { color: var(--amber); border-color: rgba(224,163,80,0.45); background: rgba(224,163,80,0.10); }
+.risk-card[data-priority="low"]    .risk-priority { color: var(--green); border-color: rgba(95,165,121,0.45); background: var(--green-soft); }
+.risk-card[data-priority="info"]   .risk-priority { color: var(--gold);  border-color: var(--gold-line);      background: var(--gold-dim); }
+
+.risk-headline {
+  font-family: var(--font-display);
+  font-weight: 460;
+  font-size: 1.4rem;
+  margin: 0;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+}
+.risk-reason  { margin: 0; line-height: 1.55; color: var(--text); }
+.risk-action  { margin: 0; font-size: 13.5px; color: var(--gold); }
+.risk-action:empty { display: none; }
+.risk-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.risk-metric {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius);
+  background: var(--paper-soft);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.risk-metric span {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--text-faint);
+}
+.risk-metric strong {
+  font-family: var(--font-mono); font-size: 14px; color: var(--text-strong); font-weight: 500;
+}
+.risk-metric small { font-size: 11px; color: var(--text-muted); font-family: var(--font-ui); }
+
+/* allocation bar — same chassis as sector strength */
+.alloc-row { display: grid; grid-template-columns: 80px 1fr 60px; align-items: center; gap: 0.7rem; padding: 0.4rem 0; }
+.alloc-name { font-family: var(--font-mono); font-size: 12px; color: var(--text-strong); }
+.alloc-bar  { position: relative; height: 6px; background: var(--hairline-soft); border-radius: 4px; overflow: hidden; }
+.alloc-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--gold); border-radius: 4px; }
+.alloc-val  { font-family: var(--font-mono); font-size: 12px; text-align: right; color: var(--text); }
+
+/* day P/L movers list */
+.bullets li.mover {
+  display: grid; grid-template-columns: 80px 1fr 90px;
+  gap: 0.5rem; align-items: baseline; border-left: none; padding: 0.45rem 0;
+  border-bottom: 1px dashed var(--hairline-soft); font-size: 13px;
+}
+.bullets li.mover:last-child { border-bottom: none; }
+.bullets li.mover .ticker { font-family: var(--font-mono); color: var(--text-strong); font-weight: 500; }
+.bullets li.mover .pl     { font-family: var(--font-mono); text-align: right; }
+.bullets li.mover .pl.up   { color: var(--green); }
+.bullets li.mover .pl.down { color: var(--rust); }
+
+/* ============================================================
    KILL-SWITCH BANNER
    ============================================================ */
 .kill-banner {

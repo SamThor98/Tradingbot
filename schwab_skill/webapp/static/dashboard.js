@@ -862,13 +862,26 @@
   }
 
   async function loadPortfolio() {
-    const [posOut, sectOut] = await Promise.all([api.get("/api/portfolio"), api.get("/api/sectors")]);
+    const [posOut, sectOut, riskOut] = await Promise.all([
+      api.get("/api/portfolio"),
+      api.get("/api/sectors"),
+      api.get("/api/portfolio/risk"),
+    ]);
+
+    // ----- Positions table -----
     const tbody = $("#portfolioBody");
+    const positions = posOut.ok ? (posOut.data?.positions || posOut.data?.rows || []) : [];
+    if ($("#positionsTotal")) {
+      const total = posOut.ok ? (posOut.data?.total_market_value ?? null) : null;
+      $("#positionsTotal").textContent = total != null ? `· ${fmtMoney(total, 0)} market value` : "";
+    }
     if (tbody) {
       tbody.innerHTML = "";
-      const positions = posOut.ok ? (posOut.data?.positions || posOut.data?.rows || []) : [];
       if (!positions.length) {
-        tbody.innerHTML = `<tr><td colspan="5" class="muted center">${posOut.ok ? "No open positions." : `Could not load positions: ${posOut.error}`}</td></tr>`;
+        const msg = posOut.ok
+          ? "No open positions in this account yet. Connect Schwab on the Settings page."
+          : `Could not load positions: ${posOut.error}`;
+        tbody.innerHTML = `<tr><td colspan="6" class="muted center">${escapeHtml(msg)}</td></tr>`;
       } else {
         positions.forEach((p) => {
           const tr = make("tr");
@@ -876,11 +889,19 @@
           tr.appendChild(make("td", { class: "num" }, fmtNum(p.qty ?? p.quantity, 0)));
           tr.appendChild(make("td", { class: "num" }, p.last != null ? fmtMoney(p.last) : (p.price != null ? fmtMoney(p.price) : "—")));
           tr.appendChild(make("td", { class: "num" }, p.market_value != null ? fmtMoney(p.market_value, 0) : "—"));
-          const pl = p.pl_pct ?? p.pnl_pct ?? p.unrealized_pl_pct;
+          const dpl = p.day_pl;
+          const tdDpl = make("td", { class: "num" });
+          if (dpl != null && isFinite(dpl)) {
+            tdDpl.textContent = `${dpl >= 0 ? "+" : ""}${fmtMoney(dpl, 2)}`;
+            tdDpl.style.color = dpl >= 0 ? "var(--green)" : "var(--rust)";
+          } else tdDpl.textContent = "—";
+          tr.appendChild(tdDpl);
+          const plPct = p.pl_pct ?? p.pnl_pct ?? p.unrealized_pl_pct;
           const tdPl = make("td", { class: "num" });
-          if (pl != null) {
-            tdPl.textContent = `${pl >= 0 ? "+" : ""}${(pl * (Math.abs(pl) > 1 ? 1 : 100)).toFixed(2)}%`;
-            tdPl.style.color = pl >= 0 ? "var(--green)" : "var(--rust)";
+          if (plPct != null) {
+            const norm = Math.abs(plPct) > 1 ? plPct : plPct * 100;
+            tdPl.textContent = `${norm >= 0 ? "+" : ""}${norm.toFixed(2)}%`;
+            tdPl.style.color = norm >= 0 ? "var(--green)" : "var(--rust)";
           } else tdPl.textContent = "—";
           tr.appendChild(tdPl);
           tbody.appendChild(tr);
@@ -888,13 +909,14 @@
       }
     }
 
+    // ----- Sector strength -----
     const sectGrid = $("#sectorGrid");
     if (sectGrid) {
       sectGrid.innerHTML = "";
       const sects = sectOut.ok ? (sectOut.data?.sectors || sectOut.data || []) : [];
       const list = Array.isArray(sects) ? sects : Object.entries(sects || {}).map(([name, val]) => ({ name, value: val }));
       if (!list.length) {
-        sectGrid.innerHTML = `<div class="muted">${sectOut.ok ? "No sector data yet." : `Sector load failed: ${sectOut.error}`}</div>`;
+        sectGrid.innerHTML = `<div class="muted">${sectOut.ok ? "No sector data yet." : `Sector load failed: ${escapeHtml(sectOut.error || "")}`}</div>`;
       } else {
         const max = Math.max(...list.map((s) => Math.abs(s.relative_strength ?? s.rel ?? s.value ?? 0))) || 1;
         list.slice(0, 11).forEach((s) => {
@@ -912,6 +934,110 @@
           row.appendChild(bar);
           row.appendChild(make("span", { class: "sector-val" }, `${positive ? "+" : ""}${(v * (Math.abs(v) > 1 ? 1 : 100)).toFixed(1)}%`));
           sectGrid.appendChild(row);
+        });
+      }
+    }
+
+    // ----- Risk card + allocation + movers (upstream feature) -----
+    renderRiskCard(riskOut);
+  }
+
+  function renderRiskCard(riskOut) {
+    const card = $("#riskCard");
+    const headline = $("#riskHeadline");
+    const reason = $("#riskReason");
+    const action = $("#riskAction");
+    const priority = $("#riskPriority");
+    const metrics = $("#riskMetrics");
+    const allocHost = $("#allocationGrid");
+    const moverHost = $("#dayPlMovers");
+    if (!card) return;
+
+    // Auth-error / recovery shape
+    if (!riskOut.ok) {
+      const rec = riskOut.data?.recovery;
+      card.dataset.priority = "info";
+      priority.textContent = "Action needed";
+      headline.textContent = rec?.title || "Could not load risk analytics";
+      reason.textContent = rec?.summary || riskOut.error || "Connect Schwab in Settings, then refresh.";
+      action.textContent = rec?.fix_path || "";
+      metrics.innerHTML = "";
+      if (allocHost) allocHost.innerHTML = `<div class="muted">Allocation will load once positions are available.</div>`;
+      if (moverHost) moverHost.innerHTML = `<li class="muted">Day P/L movers will load once positions are available.</li>`;
+      return;
+    }
+
+    const d = riskOut.data || {};
+    const rec = d.recommendation || {};
+    const conc = d.concentration || {};
+
+    // Recommendation block
+    const prio = (rec.priority || "low").toLowerCase();
+    card.dataset.priority = ["high", "medium", "low"].includes(prio) ? prio : "info";
+    priority.textContent = prio === "high" ? "High priority" : prio === "medium" ? "Medium priority" : prio === "low" ? "Low priority" : "Info";
+    headline.textContent = rec.headline || (d.position_count ? "Portfolio looks balanced" : "No positions to analyze");
+    reason.textContent = rec.reason || (d.position_count ? "" : "Connect Schwab and add positions to see recommendations.");
+    action.textContent = rec.suggested_action || "";
+
+    // Metrics
+    metrics.innerHTML = "";
+    const addMetric = (label, value, hint) => {
+      if (value == null) return;
+      const m = make("div", { class: "risk-metric" });
+      m.appendChild(make("span", {}, label));
+      m.appendChild(make("strong", {}, value));
+      if (hint) m.appendChild(make("small", {}, hint));
+      metrics.appendChild(m);
+    };
+    if (d.position_count != null) addMetric("Positions", String(d.position_count));
+    if (conc.top_position_pct != null) addMetric("Top position", `${conc.top_position_pct.toFixed(1)}%`, conc.largest_position_symbol || "");
+    if (conc.top_5_pct != null) addMetric("Top 5", `${conc.top_5_pct.toFixed(1)}%`);
+    if (conc.sector_count != null) addMetric("Sectors held", String(conc.sector_count));
+    if (conc.hhi != null) addMetric("HHI", String(conc.hhi), conc.hhi_label || "");
+    if (d.day_pl_total != null) {
+      const sign = d.day_pl_total >= 0 ? "+" : "";
+      addMetric("Day P/L", `${sign}${fmtMoney(d.day_pl_total, 2)}`, "today");
+    }
+
+    // Allocation bars (sector_allocation by weight_pct)
+    if (allocHost) {
+      allocHost.innerHTML = "";
+      const sectors = Array.isArray(d.sector_allocation) ? d.sector_allocation : [];
+      if (!sectors.length) {
+        allocHost.innerHTML = `<div class="muted">No allocation data yet.</div>`;
+      } else {
+        const maxW = Math.max(1, ...sectors.map((s) => Number(s.weight_pct) || 0));
+        sectors.slice(0, 12).forEach((s) => {
+          const w = Number(s.weight_pct) || 0;
+          const row = make("div", { class: "alloc-row" });
+          row.appendChild(make("span", { class: "alloc-name" }, s.sector || s.name || "—"));
+          const bar = make("div", { class: "alloc-bar" });
+          const fill = make("div", { class: "alloc-fill" });
+          fill.style.width = `${(w / maxW) * 100}%`;
+          bar.appendChild(fill);
+          row.appendChild(bar);
+          row.appendChild(make("span", { class: "alloc-val" }, `${w.toFixed(1)}%`));
+          allocHost.appendChild(row);
+        });
+      }
+    }
+
+    // Day P/L movers
+    if (moverHost) {
+      moverHost.innerHTML = "";
+      const movers = Array.isArray(d.day_pl_breakdown) ? d.day_pl_breakdown : [];
+      if (!movers.length) {
+        moverHost.innerHTML = `<li class="muted">No day P/L movement to report.</li>`;
+      } else {
+        movers.slice(0, 8).forEach((m) => {
+          const dpl = Number(m.day_pl) || 0;
+          const li = make("li", { class: "mover" });
+          li.appendChild(make("span", { class: "ticker" }, m.symbol || "—"));
+          li.appendChild(make("span", { class: "muted small" }, m.contribution_pct != null ? `${m.contribution_pct.toFixed(2)}% of book` : ""));
+          const pl = make("span", { class: `pl ${dpl >= 0 ? "up" : "down"}` });
+          pl.textContent = `${dpl >= 0 ? "+" : ""}${fmtMoney(dpl, 2)}`;
+          li.appendChild(pl);
+          moverHost.appendChild(li);
         });
       }
     }

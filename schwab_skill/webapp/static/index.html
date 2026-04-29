@@ -493,16 +493,26 @@
         <header class="page-head">
           <div>
             <h2 class="display small">Portfolio</h2>
-            <p class="lede small">Live positions from your linked Schwab account.</p>
+            <p class="lede small">Live positions from your linked Schwab account, plus a single high-level recommendation.</p>
           </div>
           <div class="page-actions">
             <button id="portfolioRefreshBtn" class="btn ghost" type="button">Refresh</button>
           </div>
         </header>
 
+        <article id="riskCard" class="card risk-card" data-priority="low">
+          <div class="risk-card-head">
+            <span class="risk-priority" id="riskPriority">—</span>
+            <h3 class="risk-headline" id="riskHeadline">Loading recommendation…</h3>
+          </div>
+          <p id="riskReason" class="risk-reason muted small">Fetching portfolio risk analytics from your linked Schwab account.</p>
+          <p id="riskAction" class="risk-action"></p>
+          <div id="riskMetrics" class="risk-metrics"></div>
+        </article>
+
         <section class="portfolio-grid">
           <article class="card">
-            <h3 class="card-title">Positions</h3>
+            <h3 class="card-title">Positions <span class="muted" id="positionsTotal"></span></h3>
             <div class="table-wrap">
               <table class="table">
                 <thead>
@@ -511,20 +521,34 @@
                     <th class="num">Qty</th>
                     <th class="num">Last</th>
                     <th class="num">Market value</th>
-                    <th class="num">P/L</th>
+                    <th class="num">Day P/L</th>
+                    <th class="num">P/L %</th>
                   </tr>
                 </thead>
                 <tbody id="portfolioBody">
-                  <tr><td colspan="5" class="muted center">Loading positions…</td></tr>
+                  <tr><td colspan="6" class="muted center">Loading positions…</td></tr>
                 </tbody>
               </table>
             </div>
           </article>
           <article class="card">
+            <h3 class="card-title">Sector allocation <span class="muted">portfolio weight</span></h3>
+            <div id="allocationGrid" class="sector-grid">
+              <div class="muted">Loading allocation…</div>
+            </div>
+          </article>
+        </section>
+
+        <section class="portfolio-grid">
+          <article class="card">
             <h3 class="card-title">Sector strength <span class="muted">21d vs SPY</span></h3>
             <div id="sectorGrid" class="sector-grid">
               <div class="muted">Loading sectors…</div>
             </div>
+          </article>
+          <article class="card">
+            <h3 class="card-title">Day P/L movers</h3>
+            <ul id="dayPlMovers" class="bullets"><li class="muted">Loading…</li></ul>
           </article>
         </section>
       </section>
