@@ -254,7 +254,7 @@ def _write_tenant_env(skill_dir: Path) -> None:
         if val is not None and str(val).strip() != "":
             lines.append(f"{key}={val}")
     if not any(line.startswith("SCHWAB_CALLBACK_URL=") for line in lines):
-        lines.append("SCHWAB_CALLBACK_URL=https://127.0.0.1:8182")
+        lines.append("SCHWAB_CALLBACK_URL=https://127.0.0.1:8182/")
     (skill_dir / ".env").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

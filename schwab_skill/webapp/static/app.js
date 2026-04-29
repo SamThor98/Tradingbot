@@ -1125,6 +1125,19 @@ function renderScanDetailChartMessage(message) {
   container.innerHTML = `<p class="muted">${safeText(message || "Chart unavailable.")}</p>`;
 }
 
+function getScanDetailChartWidth(container) {
+  if (!container) return 320;
+  const measured = Math.round(container.getBoundingClientRect().width || container.clientWidth || 0);
+  const panel = container.closest(".scan-detail-panel");
+  const panelWidth = panel ? Math.round(panel.getBoundingClientRect().width || panel.clientWidth || 0) : 0;
+  const viewportCap = Math.max(220, Math.round((window.innerWidth || 0) - 96));
+  const panelCap = panelWidth > 0 ? Math.max(220, panelWidth - 24) : viewportCap;
+  const fallback = Math.min(panelCap, viewportCap);
+  const safeMeasured = measured > 0 ? measured : fallback;
+  // Clamp against parent panel and viewport so canvas sizing cannot blow out layout.
+  return Math.max(220, Math.min(safeMeasured, panelCap, viewportCap));
+}
+
 async function renderScanDetailChart(ticker) {
   const container = document.getElementById("scanDetailChartContainer");
   if (!container) return;
@@ -1157,7 +1170,7 @@ async function renderScanDetailChart(ticker) {
   }
 
   const chart = LightweightCharts.createChart(container, {
-    width: container.clientWidth,
+    width: getScanDetailChartWidth(container),
     height: 240,
     layout: { background: { type: "solid", color: "transparent" }, textColor: "#9ca3b8" },
     grid: {
@@ -1179,7 +1192,7 @@ async function renderScanDetailChart(ticker) {
   chart.timeScale().fitContent();
   _scanDetailChart = chart;
   _scanDetailResizeObserver = new ResizeObserver(() => {
-    if (_scanDetailChart) _scanDetailChart.applyOptions({ width: container.clientWidth });
+    if (_scanDetailChart) _scanDetailChart.applyOptions({ width: getScanDetailChartWidth(container) });
   });
   _scanDetailResizeObserver.observe(container);
 }

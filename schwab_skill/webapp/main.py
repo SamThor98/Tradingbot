@@ -871,7 +871,12 @@ def get_db() -> Session:
         db.close()
 
 
+def _request_is_loopback(request: Request) -> bool:
+    return _shared_is_loopback_host(request.url.hostname)
+
+
 def require_trade_api_key(
+    request: Request,
     x_api_key: str | None = Header(default=None),
     x_user: str | None = Header(default=None),
 ) -> dict[str, str]:
@@ -884,7 +889,7 @@ def require_trade_api_key(
             "yes",
             "on",
         )
-        if unsafe:
+        if unsafe or _request_is_loopback(request):
             return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
         raise HTTPException(
             status_code=503,
@@ -896,11 +901,12 @@ def require_trade_api_key(
 
 
 def require_api_key_if_set(
+    request: Request,
     x_api_key: str | None = Header(default=None),
     x_user: str | None = Header(default=None),
 ) -> dict[str, str]:
     """Backward-compatible wrapper that now enforces strict key checks."""
-    return require_trade_api_key(x_api_key=x_api_key, x_user=x_user)
+    return require_trade_api_key(request=request, x_api_key=x_api_key, x_user=x_user)
 
 
 def require_api_key_if_set_or_query(

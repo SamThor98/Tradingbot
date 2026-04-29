@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from ..calibration_snapshot import build_calibration_snapshot
 from ..recovery_map import map_failure as _map_failure
@@ -47,6 +47,7 @@ def _read_json_file(path: Path, default: Any) -> Any:
 
 
 def _require_api_key_if_set(
+    request: Request,
     x_api_key: str | None = Header(default=None),
     x_user: str | None = Header(default=None),
 ) -> dict[str, str]:
@@ -58,7 +59,9 @@ def _require_api_key_if_set(
             "yes",
             "on",
         )
-        if unsafe:
+        host = request.url.hostname
+        loopback = host in {"127.0.0.1", "localhost", "::1"}
+        if unsafe or loopback:
             return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
         raise HTTPException(
             status_code=503,

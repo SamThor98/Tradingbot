@@ -19,7 +19,7 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = SKILL_DIR / ".env"
-DEFAULT_CALLBACK = "https://127.0.0.1:8182"
+DEFAULT_CALLBACK = "https://127.0.0.1:8182/"
 REQUIRED_KEYS = (
     "SCHWAB_MARKET_APP_KEY",
     "SCHWAB_MARKET_APP_SECRET",

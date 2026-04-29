@@ -2541,6 +2541,9 @@ body.trade-drawer-open .trade-drawer-backdrop {
   gap: 12px;
   align-items: start;
 }
+.scan-results-layout > * {
+  min-width: 0;
+}
 .scan-actions-cell {
   display: flex;
   gap: 6px;
@@ -2553,6 +2556,10 @@ body.trade-drawer-open .trade-drawer-backdrop {
   padding: 12px;
   display: grid;
   gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 .scan-detail-header h3 {
   margin: 0;
@@ -2562,6 +2569,9 @@ body.trade-drawer-open .trade-drawer-backdrop {
   margin: 4px 0 0;
 }
 .scan-detail-chart {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 250px;
   border-radius: 12px;
   border: 1px solid rgba(100, 116, 139, 0.35);
@@ -2570,6 +2580,10 @@ body.trade-drawer-open .trade-drawer-backdrop {
   align-items: center;
   justify-content: center;
   padding: 8px;
+  overflow: hidden;
+}
+.scan-detail-chart > * {
+  max-width: 100%;
 }
 .scan-detail-grid {
   display: grid;

@@ -9,8 +9,8 @@ Use this page when you want the fastest reliable setup with minimal guesswork.
    - `SCHWAB_MARKET_APP_SECRET`
    - `SCHWAB_ACCOUNT_APP_KEY`
    - `SCHWAB_ACCOUNT_APP_SECRET`
-   - `SCHWAB_CALLBACK_URL=https://127.0.0.1:8182`
-   - `SCHWAB_MARKET_CALLBACK_URL=https://127.0.0.1:8182`
+   - `SCHWAB_CALLBACK_URL=https://127.0.0.1:8182/`
+   - `SCHWAB_MARKET_CALLBACK_URL=https://127.0.0.1:8182/`
 2. Run:
 
 ```bash

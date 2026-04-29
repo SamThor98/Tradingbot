@@ -22,7 +22,7 @@ Dual-API OAuth2, guardrails, Stage 2 logic, and Discord notifications.
    - `DISCORD_WEBHOOK_URL`, `DISCORD_USER_ID`
    - `SCHWAB_MARKET_APP_KEY`, `SCHWAB_MARKET_APP_SECRET`
    - `SCHWAB_ACCOUNT_APP_KEY`, `SCHWAB_ACCOUNT_APP_SECRET`
-   - `SCHWAB_CALLBACK_URL=https://127.0.0.1:8182` (must match app registration; browser auth uses port 8182)
+   - `SCHWAB_CALLBACK_URL=https://127.0.0.1:8182/` (must match app registration; browser auth uses port 8182)
 
 2. Run dual OAuth: `python run_dual_auth.py` (complete both sessions)
 
