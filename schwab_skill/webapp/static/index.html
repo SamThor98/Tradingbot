@@ -3,1158 +3,764 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="TradingBot Dashboard — scan, approve, and manage your automated trading pipeline." />
-    <meta name="theme-color" content="#07080d" />
-    <title>TradingBot Dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230c0e14'/><path d='M20 65 L35 45 L50 55 L65 30 L80 40' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='80' cy='40' r='5' fill='%23818cf8'/></svg>" />
+    <meta name="description" content="Aperture — a trading terminal for Charles Schwab account holders. Scan, review, and execute." />
+    <meta name="theme-color" content="#0E1117" />
+    <title>Aperture — Schwab Trading Terminal</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='14' fill='%230E1117'/><circle cx='50' cy='50' r='28' fill='none' stroke='%23D4A867' stroke-width='3'/><circle cx='50' cy='50' r='6' fill='%23D4A867'/></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Inter+Tight:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
+    <link rel="stylesheet" href="/static/dashboard.css?v=__APP_VERSION__" />
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"
             integrity="sha384-JZigAjwiaZtkUbA44CWkPaT3iBb/mU5pO6QOANp+OqHd4q+1+7MG1kzp2OOP9ZfP"
             crossorigin="anonymous"
             referrerpolicy="no-referrer"></script>
   </head>
   <body>
-    <a class="skip-link" href="#mainContent">Skip to main content</a>
-    <div class="bg-blur bg1"></div>
-    <div class="bg-blur bg2"></div>
-    <div class="bg-blur bg3"></div>
-    <div class="bg-grid" aria-hidden="true"></div>
+    <a class="skip-link" href="#viewRoot">Skip to main content</a>
 
-    <main id="mainContent" class="container">
-      <header class="hero card hero-shell">
-        <div class="hero-main">
-          <p class="eyebrow">Daily Trading Workflow</p>
-          <h1>TradingBot</h1>
-          <p class="muted hero-lead">
-            Run <strong>Scan</strong>, review <strong>Pending</strong>, then resolve blockers in <strong>Setup</strong> only when needed.
-            Need scan-only? <a href="/simple">Open Simple scan page</a>.
-          </p>
-          <div class="hero-actions">
-            <button id="refreshBtn" class="btn secondary">Refresh All</button>
-            <button id="scanBtn" class="btn primary">Run Scan</button>
-            <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <span id="notifBadge" class="notif-badge hidden">0</span>
-            </button>
-          </div>
-          <div id="notifPanel" class="notif-panel hidden">
-            <div class="notif-panel-header">
-              <strong>Notifications</strong>
-              <button id="notifClearBtn" class="btn small secondary" type="button">Clear all</button>
-            </div>
-            <ul id="notifList" class="notif-list">
-              <li class="muted">No notifications yet.</li>
-            </ul>
-          </div>
-          <div class="hero-toolbar" role="group" aria-label="Dashboard detail level">
-            <label class="field-label" for="displayModeSelect">Detail level</label>
-            <select id="displayModeSelect" title="Simple shows only today’s workflow; Standard balances depth; Pro surfaces diagnostics faster.">
-              <option value="simple" selected>Simple</option>
-              <option value="standard">Standard</option>
-              <option value="pro">Pro</option>
-            </select>
-          </div>
-          <div id="supabaseAuthBlock" class="auth-supabase-block hidden" aria-label="Supabase sign-in">
-            <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
-              <label class="field-label" for="supabaseEmail">Email</label>
-              <input id="supabaseEmail" type="email" autocomplete="username" placeholder="you@example.com" />
-              <label class="field-label" for="supabasePassword">Password</label>
-              <input id="supabasePassword" type="password" autocomplete="current-password" placeholder="••••••••" />
-              <button id="supabaseSignInBtn" class="btn small secondary" type="button">Sign in</button>
-              <button id="supabaseSignUpBtn" class="btn small secondary" type="button">Sign up</button>
-            </div>
-            <div id="supabaseSignedIn" class="inline-form compact auth-supabase-row hidden">
-              <span id="supabaseUserLabel" class="muted"></span>
-              <button id="supabaseSignOutBtn" class="btn small secondary" type="button">Sign out</button>
-            </div>
-          </div>
-          <details id="manualJwtDetails" class="auth-manual-jwt">
-            <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
-            <div class="inline-form compact">
-              <label class="field-label" for="jwtInput">JWT</label>
-              <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
-              <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
-              <button id="copyJwtBtn" class="btn small secondary" type="button">Copy Token</button>
-            </div>
-          </details>
-        </div>
-        <aside class="hero-aside" aria-label="Session snapshot">
-          <div class="hero-chart" aria-hidden="true">
-            <svg viewBox="0 0 320 120" class="hero-chart-svg" preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <linearGradient id="heroLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stop-color="#38bdf8" />
-                  <stop offset="50%" stop-color="#818cf8" />
-                  <stop offset="100%" stop-color="#c084fc" />
-                </linearGradient>
-                <linearGradient id="heroAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stop-color="rgba(56, 189, 248, 0.35)" />
-                  <stop offset="100%" stop-color="rgba(56, 189, 248, 0)" />
-                </linearGradient>
-              </defs>
-              <path
-                class="hero-chart-area"
-                d="M0,95 L40,88 L80,72 L120,78 L160,52 L200,58 L240,38 L280,48 L320,32 L320,120 L0,120 Z"
-                fill="url(#heroAreaGrad)"
-              />
-              <path
-                class="hero-chart-line"
-                d="M0,95 L40,88 L80,72 L120,78 L160,52 L200,58 L240,38 L280,48 L320,32"
-                fill="none"
-                stroke="url(#heroLineGrad)"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <circle class="hero-chart-dot" cx="320" cy="32" r="4" fill="#e0e7ff" />
-            </svg>
-            <span class="hero-chart-caption">Scan pipeline flow</span>
-          </div>
-          <div class="hero-kpi-strip">
-            <div class="hero-kpi" data-kpi="signals">
-              <span class="hero-kpi-label">Open signals</span>
-              <strong id="heroKpiSignals" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">from last scan</span>
-            </div>
-            <div class="hero-kpi" data-kpi="pending">
-              <span class="hero-kpi-label">Pending</span>
-              <strong id="heroKpiPending" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">awaiting you</span>
-            </div>
-            <div class="hero-kpi" data-kpi="watchlist">
-              <span class="hero-kpi-label">Universe</span>
-              <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">watchlist size</span>
-            </div>
-          </div>
-        </aside>
-      </header>
-
-      <div id="dashboardToday" class="dashboard-today-stack">
-      <section id="healthRibbon" class="card health-ribbon" aria-label="System health ribbon">
-        <div class="health-tile" id="healthTileAuth" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Auth</span>
-            <strong id="ribbonAuth" class="health-badge bg-red-900">Disconnected</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileQuotes" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Quotes</span>
-            <strong id="ribbonQuotes" class="health-badge bg-red-900">Degraded</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileApi" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">API errors</span>
-            <strong id="ribbonApiErrorRate" class="health-badge bg-green-900">0.0%</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileValidation" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Validation</span>
-            <strong id="ribbonValidation" class="health-badge bg-red-900">Unknown</strong>
-          </div>
-        </div>
-      </section>
-
-      <section id="blockersAlertSection" class="card blockers-alert hidden" aria-live="polite">
-        <strong>Top Blockers</strong>
-        <ul id="blockersAlertList" class="report-bullets"></ul>
-      </section>
-
-      <section id="platformKillSwitchBanner" class="card blockers-alert hidden" aria-live="polite" style="border-color: rgba(180, 83, 9, 0.65)">
-        <strong>Operator trading halt</strong>
-        <p id="platformKillSwitchBannerText" class="muted" style="margin: 0.35rem 0 0">
-          The host has enabled a global kill switch. New risk-increasing orders are blocked until it is cleared.
-        </p>
-      </section>
-
-      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden" aria-live="polite">
-        <div class="pending-summary-inner">
-          <span id="pendingSummaryText" class="pending-summary-text"></span>
-          <a class="btn small secondary pending-summary-link" href="#pendingSection">Review pending</a>
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 36" width="28" height="28" fill="none">
+            <circle cx="18" cy="18" r="13" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="18" cy="18" r="3.2" fill="currentColor"/>
+            <path d="M18 5 L18 12 M31 18 L24 18 M18 31 L18 24 M5 18 L12 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div class="brand-words">
+          <span class="brand-name">Aperture</span>
+          <span class="brand-sub">Schwab terminal</span>
         </div>
       </div>
 
-      <section id="actionCenter" class="card action-center" aria-live="polite">
-        <div class="action-center-icon" aria-hidden="true"></div>
-        <div class="action-center-body">
-          <strong id="actionCenterTitle">Next Action</strong>
-          <p id="actionCenterText" class="muted">Ready. Run Scan to load candidates.</p>
-        </div>
-      </section>
-      </div>
-
-      <nav class="section-nav card" aria-label="Screen and section navigation">
-        <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
-          <button type="button" class="screen-switch-btn" data-screen-mode="daily" aria-selected="true">Daily</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="setup" aria-selected="false">Setup</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="portfolio" aria-selected="false">Portfolio</button>
-        </div>
-        <a href="#dashboardToday" data-nav-screens="daily">Today</a>
-        <a href="#workflowPrimary" data-nav-screens="daily">Scan &amp; queue</a>
-        <a href="#pendingSection" data-nav-screens="daily">Pending</a>
-        <a href="#onboardingSection" data-nav-screens="setup">Setup</a>
-        <a href="#toolsSection" class="nav-advanced" data-nav-screens="research">Research tools</a>
-        <a href="#portfolioSection" data-nav-screens="portfolio">Portfolio</a>
+      <nav class="nav-primary" aria-label="Workflow">
+        <span class="nav-eyebrow">Workflow</span>
+        <a href="#/scans" class="nav-link" data-route="scans">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>
+          <span>Scans</span>
+        </a>
+        <a href="#/queue" class="nav-link" data-route="queue">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          <span>Trade queue</span>
+          <span class="nav-badge" id="queueBadge" hidden>0</span>
+        </a>
+        <a href="#/portfolio" class="nav-link" data-route="portfolio">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/></svg>
+          <span>Portfolio</span>
+        </a>
+        <a href="#/research" class="nav-link" data-route="research">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 4v8H5l7 8 7-8h-4V4z" transform="rotate(180 12 12)"/><circle cx="12" cy="9" r="3"/><path d="M14.5 11.5L18 15"/></svg>
+          <span>Research</span>
+        </a>
       </nav>
 
-      <section id="screenContextCard" class="card screen-context" aria-live="polite">
-        <div class="screen-context-copy">
-          <strong id="screenContextTitle">Daily workflow</strong>
-          <p id="screenContextText" class="muted">Run a scan, review pending approvals, and only open setup if blocked.</p>
-          <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
+      <nav class="nav-secondary" aria-label="System">
+        <span class="nav-eyebrow">System</span>
+        <a href="#/diagnostics" class="nav-link" data-route="diagnostics">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+          <span>Diagnostics</span>
+        </a>
+        <a href="#/settings" class="nav-link" data-route="settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="status-pill" id="statusPillSchwab" data-state="neutral">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text">Schwab — checking</span>
         </div>
-        <div class="screen-context-actions">
-          <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Go to pending</a>
-          <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Go to workflow</a>
+        <div class="status-pill" id="statusPillTrading" data-state="neutral">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text">Trading — paper</span>
         </div>
-      </section>
-
-      <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
-        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan &amp; pending decisions</h2>
-        <div class="layout-2 layout-workflow">
-        <article id="scanSection" class="card card--primary-task">
-          <div class="section-title">
-            <h2>Scan results</h2>
-            <div class="scan-title-meta">
-              <small id="scanMeta" class="muted">No scan run yet.</small>
-              <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
-            </div>
-          </div>
-          <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
-            <progress id="scanJobProgress" max="100" value="0"></progress>
-            <span id="scanJobProgressLabel" class="muted"></span>
-          </div>
-          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced">
-            <summary class="panel-disclosure-summary">
-              Diagnostics and funnel
-              <span class="disclosure-hint muted">why symbols were filtered out</span>
-            </summary>
-            <div class="scan-insights">
-              <div class="scan-block">
-                <h3>Top Blockers</h3>
-                <ul id="scanBlockers" class="report-bullets"></ul>
-              </div>
-              <div class="scan-block">
-                <h3>Pass Funnel</h3>
-                <div id="scanFunnel" class="funnel-grid"></div>
-              </div>
-            </div>
-            <div id="scanDiagnostics" class="chip-row"></div>
-          </details>
-          <details id="scanAdvancedOptionsPanel" class="panel-disclosure panel-disclosure--advanced nav-advanced">
-            <summary class="panel-disclosure-summary">
-              Advanced scan options
-              <span class="disclosure-hint muted">optional JSON overrides</span>
-            </summary>
-            <p class="muted small" style="margin: 0.5rem 0">
-              Optional keys: <code>strategy_overrides</code>, <code>universe_mode</code>
-              (<code>watchlist</code> or <code>tickers</code>), and <code>tickers</code>.
-            </p>
-            <textarea
-              id="scanOptionsJson"
-              class="input-like"
-              rows="5"
-              style="width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem"
-              placeholder="{}"
-              spellcheck="false"
-            ></textarea>
-            <div class="inline-form compact" style="margin-top: 0.5rem">
-              <button type="button" id="scanApplyBacktestSpecBtn" class="btn small secondary">
-                Fill from latest backtest
-              </button>
-              <button type="button" id="scanClearOptionsBtn" class="btn small secondary">Clear</button>
-            </div>
-          </details>
-          <div class="table-wrap">
-            <table>
-              <caption class="visually-hidden">Signal candidates table</caption>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Days Flagged</th>
-                  <th>Strategy</th>
-                  <th>Price</th>
-                  <th>Score</th>
-                  <th>P(up 10d)</th>
-                  <th>Confidence</th>
-                  <th>Conviction</th>
-                  <th>Sector</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="scanTableBody">
-                <tr><td colspan="10" class="muted">Run a scan to load candidates.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article id="pendingSection" class="card card--primary-task">
-          <div class="section-title section-title--with-action">
-            <div>
-              <h2>Pending approvals</h2>
-              <small class="muted">Review and decide queued orders.</small>
-            </div>
-            <button
-              type="button"
-              id="clearPendingBtn"
-              class="btn-clear-pending"
-              disabled
-              title="Reject all pending trades (clears the queue)"
-              aria-label="Clear all pending trades"
-            >
-              ×
-            </button>
-            <button
-              type="button"
-              id="deleteAllTradesBtn"
-              class="btn-clear-pending"
-              title="Permanently delete all trades from history"
-              aria-label="Delete all trades"
-              style="font-size: 0.7rem; width: auto; padding: 0 8px;"
-            >
-              Delete All
-            </button>
-          </div>
-          <div class="inline-form compact">
-            <label class="muted">Status
-              <select id="pendingFilter">
-                <option value="all">All</option>
-                <option value="pending" selected>Pending</option>
-                <option value="executed">Executed</option>
-                <option value="rejected">Rejected</option>
-                <option value="failed">Failed</option>
-              </select>
-            </label>
-            <label class="muted">Sort
-              <select id="pendingSort">
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-              </select>
-            </label>
-          </div>
-          <details class="panel-disclosure stage-trade-panel">
-            <summary class="panel-disclosure-summary">
-              Stage a trade manually
-              <span class="disclosure-hint muted">optional quantity; otherwise uses your position-size preset</span>
-            </summary>
-            <div class="inline-form compact stage-trade-form">
-              <label class="field-label" for="manualPendingTicker">Ticker</label>
-              <input id="manualPendingTicker" type="text" placeholder="AAPL" maxlength="16" autocomplete="off" />
-              <label class="field-label" for="manualPendingQty">Qty</label>
-              <input id="manualPendingQty" type="number" min="1" step="1" placeholder="Auto" title="Leave blank to size from strategy presets" />
-              <label class="field-label" for="manualPendingNote">Note</label>
-              <input id="manualPendingNote" type="text" placeholder="Why you are staging this" />
-              <button id="manualPendingBtn" class="btn secondary" type="button">Add to pending</button>
-            </div>
-          </details>
-          <div id="pendingBoard" class="task-board">
-            <div class="task-empty muted">No trades yet. Stage trades from Scan results.</div>
-          </div>
-        </article>
-        </div>
-      </section>
-
-      <div class="layout-2 layout-quick-tools">
-        <article id="quickCheckSection" class="card card--primary-task section-advanced">
-          <div class="section-title">
-            <h2>Quick ticker check</h2>
-            <small class="muted">Fast symbol health check.</small>
-          </div>
-          <div class="inline-form">
-            <label class="field-label" for="tickerInput">Ticker</label>
-            <input id="tickerInput" placeholder="AAPL" />
-            <button id="checkBtn" class="btn secondary">Check</button>
-          </div>
-          <div id="tickerChartContainer" class="ticker-chart-container hidden"></div>
-          <div id="checkOutputHost" class="tool-output-host tool-output-padded">
-            <p id="checkPlaceholder" class="muted tool-output-placeholder">Enter a ticker and click Check.</p>
-            <div id="checkSummary" class="tool-summary-card hidden" aria-live="polite"></div>
-            <details id="checkJsonDetails" class="tool-json-details hidden">
-              <summary>Raw data</summary>
-              <pre id="checkOutput" class="code-block"></pre>
-            </details>
-          </div>
-        </article>
-
-        <section id="toolsSection" class="card tools-hub section-advanced" aria-labelledby="toolsHeading">
-          <div class="section-title">
-            <h2 id="toolsHeading">Research tools</h2>
-            <small class="muted">Power-user workflows and diagnostics.</small>
-          </div>
-          <div class="tools-grid" role="list">
-            <a class="tool-card" role="listitem" href="#decisionSection">
-              <h3 class="tool-card-title">Decision card</h3>
-              <p class="tool-card-desc muted">Structured take/pass for one symbol.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#backtestSection">
-              <h3 class="tool-card-title">Backtest</h3>
-              <p class="tool-card-desc muted">Historical replay—no live orders.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#reportSectionCard">
-              <h3 class="tool-card-title">Full report</h3>
-              <p class="tool-card-desc muted">Deep dive with optional raw JSON.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#secCompareSection">
-              <h3 class="tool-card-title">SEC compare</h3>
-              <p class="tool-card-desc muted">Filings contrast and narrative.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#recoverySection">
-              <h3 class="tool-card-title">Recovery mapper</h3>
-              <p class="tool-card-desc muted">Turn errors into next steps.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-          </div>
-        </section>
-      </div>
-
-      <section class="layout-2 layout-onboarding-presets">
-        <article id="onboardingSection" class="card" data-lazy-api="onboarding">
-          <div class="section-title">
-            <h2>Connect Schwab &amp; setup</h2>
-            <small id="onboardingMeta" class="muted">Complete setup once, then return to Scan and Pending.</small>
-          </div>
-
-          <ol id="onboardingStepper" class="onboarding-stepper" aria-label="Schwab setup progress">
-            <li data-step="account"><span class="step-num">1</span><span class="step-label">Connect account</span><span class="step-state muted">pending</span></li>
-            <li data-step="market"><span class="step-num">2</span><span class="step-label">Connect market data</span><span class="step-state muted">pending</span></li>
-            <li data-step="verify_token_health"><span class="step-num">3</span><span class="step-label">Verify tokens</span><span class="step-state muted">pending</span></li>
-            <li data-step="test_scan"><span class="step-num">4</span><span class="step-label">Test scan</span><span class="step-state muted">pending</span></li>
-            <li data-step="test_paper_order"><span class="step-num">5</span><span class="step-label">Paper order</span><span class="step-state muted">pending</span></li>
-          </ol>
-
-          <div id="onboardingNextRow" class="onboarding-next-row">
-            <div class="onboarding-next-copy">
-              <p class="onboarding-next-title" id="onboardingNextTitle">Pick up where you left off</p>
-              <p class="onboarding-next-desc muted" id="onboardingNextDesc">Loading status…</p>
-            </div>
-            <div class="onboarding-next-actions">
-              <button id="onboardingNextBtn" class="btn primary" type="button" disabled>Next step</button>
-              <button id="onboardingStartBtn" class="btn secondary small" type="button" title="Start (or restart) the timed setup wizard">Restart wizard</button>
-            </div>
-          </div>
-
-          <details class="onboarding-help" id="onboardingHelp">
-            <summary>Need setup help?</summary>
-            <div class="onboarding-help-body">
-              <h3>Why two connect steps?</h3>
-              <p class="muted">
-                Schwab separates <strong>market data</strong> and <strong>brokerage account</strong> permissions, so this app
-                needs both approvals.
-              </p>
-              <h3>Before you connect</h3>
-              <ul class="onboarding-help-list muted">
-                <li>Sign in to this dashboard first.</li>
-                <li>Allow pop-ups/redirects for Schwab approval.</li>
-                <li>Use the Schwab login tied to this account.</li>
-              </ul>
-              <h3>If a step fails</h3>
-              <ul class="onboarding-help-list muted">
-                <li>Refresh the page, then retry only that step.</li>
-                <li>Confirm both account and market approvals completed.</li>
-                <li>Copy the error banner text if you need support.</li>
-              </ul>
-              <p class="muted small">
-                Need the public guide?
-                <a href="/static/connect-schwab-guide.html" target="_blank" rel="noopener noreferrer">Open setup guide</a>
-                ·
-                <a id="implementationGuideLink" class="hidden" href="#" target="_blank" rel="noopener noreferrer">Hosting-provider guide</a>
-              </p>
-            </div>
-          </details>
-
-          <details class="onboarding-advanced">
-            <summary>All steps (advanced)</summary>
-            <div class="inline-form onboarding-connect-row">
-              <button id="onboardingSchwabBtn" class="btn primary small" type="button">Connect Schwab (account)</button>
-              <button id="onboardingSchwabMarketBtn" class="btn primary small" type="button">Connect Schwab (market)</button>
-              <button id="onboardingConnectBtn" class="btn small secondary" title="Records that your Schwab account session is linked">
-                1) Confirm link
-              </button>
-              <button id="onboardingVerifyBtn" class="btn small secondary">2) Verify token health</button>
-              <button id="onboardingScanBtn" class="btn small secondary">3) Test scan</button>
-              <button id="onboardingPaperBtn" class="btn small secondary">4) Test paper order</button>
-            </div>
-            <p class="muted small">
-              Direct OAuth links:
-              <a id="onboardingSchwabLink" href="#">Account</a>
-              ·
-              <a id="onboardingSchwabMarketLink" href="#">Market</a>
-            </p>
-          </details>
-
-          <div id="onboardingOutputHost" class="tool-output-host tool-output-padded">
-            <div id="onboardingCards" aria-live="polite">
-              <p class="muted">Click Next step to continue setup.</p>
-            </div>
-            <details id="onboardingJsonDetails" class="tool-json-details hidden">
-              <summary>Raw data</summary>
-              <pre id="onboardingOutput" class="code-block"></pre>
-            </details>
-          </div>
-        </article>
-        <article id="settingsSection" class="card settings-advanced-only section-advanced" data-lazy-api="profiles">
-          <div class="section-title">
-            <h2>Strategy Presets</h2>
-            <small class="muted">Standard shows plain English. Expert adds raw env values under each row.</small>
-          </div>
-          <div class="inline-form">
-            <label class="field-label" for="profileSelect">Profile</label>
-            <select id="profileSelect">
-              <option value="conservative">Conservative</option>
-              <option value="balanced" selected>Balanced</option>
-              <option value="aggressive">Aggressive</option>
-            </select>
-            <label class="field-label" for="settingsModeSelect">Mode</label>
-            <select id="settingsModeSelect">
-              <option value="standard" selected>Standard</option>
-              <option value="expert">Expert</option>
-            </select>
-            <label class="muted"><input id="automationOptIn" type="checkbox" /> Allow live orders without the extra confirmation step</label>
-            <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
-          </div>
-          <div id="presetApplyPreview" class="preset-apply-preview" aria-live="polite"></div>
-          <div id="liveTradingSaasBlock" class="live-trading-saas hidden" style="margin-top: 1rem; padding: 0.75rem; border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 8px">
-            <h3 class="field-label">Live trading (SaaS)</h3>
-            <ul id="liveTradingBullets" class="live-trading-bullets muted small">
-              <li>Turns on broker orders from this app after you confirm below.</li>
-              <li>Each order still needs you to type the ticker in the approve dialog.</li>
-              <li>Nothing is sent until Schwab is linked and you enable here.</li>
-            </ul>
-            <p id="liveTradingStatus" class="muted small live-trading-status-line"></p>
-            <label class="muted"><input id="enableLiveRiskAck" type="checkbox" /> I understand live market orders are
-              risky and not personalized advice.</label>
-            <div class="inline-form compact" style="margin-top: 0.5rem">
-              <label class="field-label" for="enableLiveTypedPhrase">Type ENABLE to confirm</label>
-              <input id="enableLiveTypedPhrase" type="text" autocomplete="off" placeholder="ENABLE" />
-              <button id="enableLiveTradingBtn" type="button" class="btn secondary small">Enable live trading</button>
-            </div>
-            <div class="inline-form compact" style="margin-top: 0.75rem">
-              <label class="muted">
-                <input id="tradingHaltedCheckbox" type="checkbox" />
-                Pause new live orders for this account (approvals blocked until you uncheck and save)
-              </label>
-              <button id="saveTradingHaltBtn" type="button" class="btn secondary small">Save pause setting</button>
-            </div>
-            <div id="twoFaPanel" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
-              <p class="muted small">2FA controls loading...</p>
-            </div>
-            <div id="billingSaasBlock" class="hidden" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
-              <h3 class="field-label">Billing</h3>
-              <p id="billingStatusLine" class="muted small">Loading billing status...</p>
-              <div class="inline-form compact">
-                <button id="billingCheckoutBtn" type="button" class="btn secondary small">Start subscription checkout</button>
-                <button id="billingPortalBtn" type="button" class="btn secondary small">Manage billing portal</button>
-              </div>
-            </div>
-          </div>
-          <div id="profilePanel" class="preset-panel" aria-live="polite">
-            <div class="report-empty">Loading preset…</div>
-          </div>
-          <details id="profileRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="profileRaw" class="code-block"></pre>
-          </details>
-        </article>
-      </section>
-
-      <section class="layout-2 section-advanced">
-        <article id="decisionSection" class="card">
-          <div class="section-title">
-            <h2>Single Trade Decision Card</h2>
-            <small class="muted">Take/Pass support in under 30 seconds — opens the trade drawer.</small>
-          </div>
-          <div class="inline-form trade-drawer-launcher">
-            <label class="field-label" for="decisionTickerInput">Ticker</label>
-            <input id="decisionTickerInput" placeholder="AAPL" autocomplete="off" />
-            <button id="decisionBtn" class="btn primary" type="button">Open decision card →</button>
-          </div>
-          <p class="muted small">
-            The decision card now lives in the slide-in <strong>Trade Drawer</strong> alongside Recovery,
-            so any "look at this trade" entry point uses the same UI.
-          </p>
-        </article>
-        <article id="recoverySection" class="card">
-          <div class="section-title">
-            <h2>Failure Recovery</h2>
-            <small class="muted">Plain-language next steps for auth/data/order errors.</small>
-          </div>
-          <div class="inline-form trade-drawer-launcher">
-            <label class="field-label" for="recoverySource">Source</label>
-            <select id="recoverySource">
-              <option value="schwab_auth">schwab_auth</option>
-              <option value="market_data">market_data</option>
-              <option value="execution">execution</option>
-            </select>
-            <input id="recoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
-            <button id="recoveryBtn" class="btn primary" type="button">Open fix path →</button>
-          </div>
-          <p class="muted small">
-            Recovery mapping shares the slide-in <strong>Trade Drawer</strong> with the decision card.
-          </p>
-        </article>
-      </section>
-
-      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced status-details-wrap">
-        <summary class="panel-disclosure-summary">
-          Detailed system status
-          <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
-        </summary>
-        <section id="statusSection" class="stats stats-in-disclosure">
-        <article id="statusMarketToken" class="card stat">
-          <span class="stat-label">Market Token</span>
-          <strong id="marketToken" class="pill neutral">Checking...</strong>
-        </article>
-        <article id="statusAccountToken" class="card stat">
-          <span class="stat-label">Account Token</span>
-          <strong id="accountToken" class="pill neutral">Checking...</strong>
-        </article>
-        <article id="statusLastScan" class="card stat">
-          <span class="stat-label">Last Scan</span>
-          <strong id="lastScan" class="pill neutral">Never</strong>
-        </article>
-        <article id="statusPendingTrades" class="card stat">
-          <span class="stat-label">Pending Trades</span>
-          <strong id="pendingCount" class="pill neutral">0</strong>
-        </article>
-        <article id="statusQuoteHealth" class="card stat">
-          <span class="stat-label">Quote Health</span>
-          <strong id="quoteHealth" class="pill neutral">Checking...</strong>
-        </article>
-        <article id="statusApiErrors" class="card stat">
-          <span class="stat-label">API Error Rate</span>
-          <strong id="apiErrorRate" class="pill neutral">--</strong>
-        </article>
-        <article id="statusValidation" class="card stat">
-          <span class="stat-label">Validation Health</span>
-          <strong id="validationHealth" class="pill neutral">Unknown</strong>
-          <small id="validationAge" class="muted">No validation artifact yet.</small>
-          <small id="validationProgress" class="muted">Progress: --</small>
-          <details id="validationRecentWrap" class="validation-steps">
-            <summary>Recent validation steps</summary>
-            <ul id="validationRecentSteps" class="validation-steps-list">
-              <li class="muted">No validation steps yet.</li>
-            </ul>
-          </details>
-        </article>
-        </section>
-      </details>
-
-      <section class="layout-2 section-advanced">
-        <article id="portfolioSection" class="card" data-lazy-api="portfolio">
-          <div class="section-title">
-            <h2>Portfolio</h2>
-              <small id="portfolioMeta" class="muted">Open the Portfolio screen to load positions.</small>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <caption class="visually-hidden">Portfolio positions table</caption>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Qty</th>
-                  <th>Last</th>
-                  <th>Market Value</th>
-                  <th>P/L %</th>
-                </tr>
-              </thead>
-              <tbody id="portfolioBody">
-                <tr><td colspan="5" class="muted">Open Portfolio screen or click Refresh.</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <details id="portfolioRiskPanel" class="panel-disclosure">
-            <summary class="panel-disclosure-summary">
-              Risk Analysis
-              <span class="disclosure-hint muted">sector allocation, concentration, day P/L</span>
-            </summary>
-            <div id="portfolioRiskContent" class="risk-panel-content">
-              <div class="muted">Click to load risk analytics...</div>
-            </div>
-          </details>
-        </article>
-
-        <article id="sectorsSection" class="card" data-lazy-api="sectors">
-          <div class="section-title">
-            <h2>Sectors</h2>
-            <small class="muted">21-day relative performance vs SPY</small>
-          </div>
-          <div id="sectorGrid" class="sector-grid"></div>
-        </article>
-      </section>
-
-      <section class="layout-2 section-advanced">
-        <article id="performanceSection" class="card" data-lazy-api="performance">
-          <div class="section-title">
-            <h2>Performance</h2>
-            <small class="muted">Backtest vs Shadow/Paper vs Live are separated.</small>
-          </div>
-          <div class="inline-form">
-            <button id="performanceRefreshBtn" class="btn secondary">Refresh Performance</button>
-          </div>
-          <div id="performancePanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">No performance snapshot loaded yet. Click Refresh Performance.</div>
-          </div>
-          <details id="performanceRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="performanceRaw" class="code-block"></pre>
-          </details>
-        </article>
-
-        <article id="learningSection" class="card">
-          <div class="section-title">
-            <h2>Learning Engine</h2>
-            <small class="muted">Closed-loop analysis: features logged per scan, ML identifies what predicts failure, challenger tests suggested thresholds.</small>
-          </div>
-          <div class="inline-form">
-            <button id="evolveBtn" class="btn secondary" type="button">Run Post-Mortem Analysis</button>
-            <button id="challengerBtn" class="btn secondary" type="button">Run Challenger Scan</button>
-          </div>
-          <div id="learningPanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">No learning engine results yet. Click <em>Run Post-Mortem Analysis</em> to start.</div>
-          </div>
-          <div id="challengerPanel" class="performance-panel" aria-live="polite" style="margin-top:1rem;">
-          </div>
-          <details id="learningRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="learningRaw" class="code-block"></pre>
-          </details>
-        </article>
-
-        <article id="backtestSection" class="card backtest-hub" data-lazy-api="backtest">
-          <div class="section-title">
-            <h2>Run a historical backtest</h2>
-          </div>
-          <p class="backtest-intro muted">
-            This replays the <strong>Stage 2 + VCP</strong> rules on past prices. It does <strong>not</strong> place live trades.
-            Results use your account&rsquo;s saved scanner settings unless you change the advanced options below.
-            Use the <strong>form</strong> for precise control, or <strong>chat</strong> to describe what you want in plain language (server needs an OpenAI API key).
-          </p>
-          <div class="tab-bar" role="tablist" aria-label="Backtest entry mode">
-            <button type="button" id="btHubTabForm" class="tab-btn tab-btn-active" role="tab" aria-selected="true" aria-controls="btHubPanelForm">
-              Simple form
-            </button>
-            <button type="button" id="btHubTabChat" class="tab-btn" role="tab" aria-selected="false" aria-controls="strategyChatPanel">
-              Chat assistant
-            </button>
-          </div>
-
-          <div id="btHubPanelForm" class="tab-panel" role="tabpanel">
-            <div class="preset-row" aria-label="Date presets">
-              <span class="field-label">Presets</span>
-              <button type="button" class="btn small secondary bt-preset" data-years="2">Last 2 years</button>
-              <button type="button" class="btn small secondary bt-preset" data-years="5">Last 5 years</button>
-              <button type="button" class="btn small secondary bt-preset" data-years="8">Last 8 years</button>
-            </div>
-            <div class="backtest-form-grid">
-              <div class="form-row">
-                <label class="field-label" for="btUniverse">Universe</label>
-                <select id="btUniverse" aria-describedby="btUniverseHint">
-                  <option value="watchlist">Saved watchlist</option>
-                  <option value="tickers">Custom tickers</option>
-                </select>
-                <span id="btUniverseHint" class="muted form-hint">Watchlist uses symbols from your environment / tenant config.</span>
-              </div>
-              <div class="form-row" id="btTickersRow">
-                <label class="field-label" for="btTickers">Tickers</label>
-                <input id="btTickers" placeholder="AAPL, MSFT, GOOGL" autocomplete="off" />
-              </div>
-              <div class="form-row form-row-dates">
-                <div>
-                  <label class="field-label" for="btStart">Start</label>
-                  <input id="btStart" type="date" />
-                </div>
-                <div>
-                  <label class="field-label" for="btEnd">End</label>
-                  <input id="btEnd" type="date" />
-                </div>
-              </div>
-              <div class="form-row">
-                <label class="field-label" for="btTheory">Label (optional)</label>
-                <input id="btTheory" placeholder="e.g. Q1 experiment" />
-              </div>
-            </div>
-            <details class="advanced-details">
-              <summary>Advanced — costs &amp; rule overrides</summary>
-              <div class="backtest-form-grid advanced-grid">
-                <div class="form-row">
-                  <label class="field-label" for="btSlippage">Slippage (bps / side)</label>
-                  <input id="btSlippage" type="number" min="0" max="200" step="1" value="15" />
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btFeeShare">Fee / share ($)</label>
-                  <input id="btFeeShare" type="number" min="0" max="1" step="0.001" value="0.005" />
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btMinFee">Min fee / order ($)</label>
-                  <input id="btMinFee" type="number" min="0" max="50" step="0.5" value="1" />
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btMaxAdv">Max ADV participation</label>
-                  <input id="btMaxAdv" type="number" min="0.001" max="0.1" step="0.001" value="0.02" />
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btQualityGates">Quality gates</label>
-                  <select id="btQualityGates">
-                    <option value="">Account default</option>
-                    <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="soft">Soft</option>
-                    <option value="hard">Hard</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btBreakoutConfirm">Breakout confirmation</label>
-                  <select id="btBreakoutConfirm">
-                    <option value="">Account default</option>
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btForensicMode">Forensic filter</label>
-                  <select id="btForensicMode">
-                    <option value="">Account default</option>
-                    <option value="disabled">Disabled</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="soft">Soft</option>
-                    <option value="hard">Hard</option>
-                    <option value="off">On, mode off</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label class="field-label" for="btPead">PEAD</label>
-                  <select id="btPead">
-                    <option value="">Account default</option>
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
-                </div>
-                <div class="form-row form-row-check">
-                  <label class="field-check">
-                    <input id="btSkipMirofish" type="checkbox" />
-                    Skip MiroFish / LLM during backtest (faster)
-                  </label>
-                </div>
-              </div>
-            </details>
-            <div class="inline-form backtest-actions">
-              <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
-              <button id="btRefreshListBtn" class="btn secondary" type="button">Refresh list</button>
-              <button id="btResetFormBtn" class="btn secondary" type="button" title="Clear saved backtest preferences in this browser">
-                Reset form
-              </button>
-            </div>
-            <p class="muted form-hint" style="margin-top: 0.35rem">
-              Your last backtest choices are saved in this browser so you do not have to re-enter them.
-            </p>
-            <p id="btMeta" class="bt-meta muted"><span id="btMetaText">Choose dates, then queue a run.</span><span id="btMetaSpinner" class="bt-spinner hidden" aria-hidden="true"></span></p>
-            <div class="job-progress-wrap" aria-label="Backtest job progress">
-              <progress id="btJobProgress" max="100" value="0"></progress>
-              <span id="btJobProgressLabel" class="muted"></span>
-            </div>
-            <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
-            <details id="btResultRawDetails" class="details-raw">
-              <summary>Full result JSON</summary>
-              <pre id="btResult" class="code-block">No run yet.</pre>
-            </details>
-            <div class="section-title"><h3>Recent runs</h3></div>
-            <ul id="btRunList" class="report-bullets bt-run-list"></ul>
-          </div>
-
-          <div id="strategyChatPanel" class="tab-panel hidden" role="tabpanel">
-            <p class="muted chat-subhead">The assistant validates your settings and can queue the same backtest job as the form. Tool details stay collapsed unless you expand them.</p>
-            <div id="scMessages" class="chat-log-scroll" role="log" aria-live="polite"></div>
-            <div id="scEmptyChips" class="preset-row chat-chips" aria-label="Example prompts">
-              <span class="field-label">Try</span>
-              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 5 years, skip MiroFish for speed.">
-                Watchlist · 5y · fast
-              </button>
-              <button type="button" class="btn small secondary sc-chip" data-text="Tickers AAPL MSFT GOOGL, last 3 years, soft quality gates.">
-                Custom tickers · 3y
-              </button>
-              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 8 years, use account defaults for gates.">
-                Watchlist · 8y · defaults
-              </button>
-            </div>
-            <div id="scQueueCallout" class="callout callout-info hidden" aria-live="polite"></div>
-            <div class="inline-form chat-input-row">
-              <input
-                id="scInput"
-                type="text"
-                placeholder="Describe universe, date range, and any rule tweaks…"
-                autocomplete="off"
-              />
-              <button id="scSendBtn" class="btn secondary" type="button">Send</button>
-            </div>
-          </div>
-        </article>
-      </section>
-
-      <section class="section-advanced">
-        <article id="calibrationSection" class="card" data-lazy-api="calibration">
-          <div class="section-title">
-            <h2>Calibration and learning</h2>
-            <small class="muted">Self-study and hypothesis ledger summaries (when available)</small>
-          </div>
-          <div class="inline-form">
-            <button id="calibrationRefreshBtn" type="button" class="btn secondary">Refresh calibration</button>
-          </div>
-          <div id="calibrationPanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">Scroll here or refresh to load calibration data.</div>
-          </div>
-        </article>
-      </section>
-
-      <section class="layout-2 section-advanced">
-        <article id="reportSectionCard" class="card">
-          <div class="section-title">
-            <h2>Full Report</h2>
-            <small class="muted">/report equivalent for web</small>
-          </div>
-          <div class="inline-form">
-            <label class="field-label" for="reportTickerInput">Ticker</label>
-            <input id="reportTickerInput" placeholder="AAPL" />
-            <label class="field-label" for="reportSection">Section</label>
-            <select id="reportSection">
-              <option value="">All sections</option>
-              <option value="tech">tech</option>
-              <option value="dcf">dcf</option>
-              <option value="comps">comps</option>
-              <option value="health">health</option>
-              <option value="edgar">edgar</option>
-              <option value="mirofish">mirofish</option>
-            </select>
-            <label class="muted"><input id="skipMirofish" type="checkbox" /> skip_mirofish</label>
-            <label class="muted"><input id="skipEdgar" type="checkbox" /> skip_edgar</label>
-            <button id="reportBtn" class="btn secondary">Run Report</button>
-            <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
-          </div>
-          <div id="reportTabs" class="report-tabs"></div>
-          <div id="reportVisual" class="report-visual">
-            <div class="report-empty">No report run yet. Enter a ticker and run report.</div>
-          </div>
-          <pre id="reportOutput" class="code-block">No report run yet.</pre>
-        </article>
-
-        <article id="secCompareSection" class="card">
-          <div class="section-title">
-            <h3>SEC Filing Compare</h3>
-            <small class="muted">High-level compare and contrast from filings</small>
-          </div>
-          <div class="inline-form">
-            <label class="field-label" for="secCompareMode">Mode</label>
-            <select id="secCompareMode">
-              <option value="ticker_vs_ticker">ticker_vs_ticker</option>
-              <option value="ticker_over_time">ticker_over_time</option>
-            </select>
-            <label class="field-label" for="secCompareTickerA">Ticker A</label>
-            <input id="secCompareTickerA" placeholder="Ticker A (AAPL)" />
-            <label class="field-label" for="secCompareTickerB">Ticker B</label>
-            <input id="secCompareTickerB" placeholder="Ticker B (MSFT)" />
-            <label class="field-label" for="secCompareFormType">Form</label>
-            <select id="secCompareFormType">
-              <option value="10-K">10-K</option>
-              <option value="10-Q">10-Q</option>
-              <option value="8-K">8-K</option>
-            </select>
-            <label class="muted">
-              <input id="secCompareChangesOnly" type="checkbox" />
-              Highlight Changes Only
-            </label>
-            <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
-          </div>
-          <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="NVDA" data-b="AMD">NVDA vs AMD</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="AAPL" data-b="MSFT">AAPL vs MSFT</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="AMZN" data-b="WMT">AMZN vs WMT</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
-          </div>
-          <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
-          <div id="secCompareHeadline" class="compare-headline">
-            <div class="report-empty">Run SEC compare to generate a headline verdict.</div>
-          </div>
-          <details id="secCompareDeepPanel" class="panel-disclosure panel-disclosure--advanced">
-            <summary class="panel-disclosure-summary">
-              Narrative, material changes &amp; evidence
-              <span class="disclosure-hint muted">expand for full compare output</span>
-            </summary>
-            <div id="secCompareNarrative" class="compare-narrative">
-              <div class="report-empty">Narrative summary will appear here.</div>
-            </div>
-            <div id="secCompareChanges" class="compare-changes">
-              <div class="report-empty">Material changes and shared signals will appear here.</div>
-            </div>
-            <div id="secCompareVisual" class="report-visual">
-              <div class="report-empty">Side-by-side evidence cards will appear here.</div>
-            </div>
-          </details>
-        </article>
-        <article id="activitySection" class="card">
-          <div class="section-title">
-            <h2>Execution Notes</h2>
-            <small class="muted">Use the bottom drawer for real-time activity.</small>
-          </div>
-          <div class="report-empty">Activity has moved to the collapsible drawer at bottom.</div>
-        </article>
-      </section>
-
-      <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
-        <p>
-          <strong>Not investment advice.</strong> Scans, backtests, and reports are informational only. Past or hypothetical
-          performance does not guarantee future results. You are responsible for your trades and compliance with applicable law.
-          Charles Schwab and Schwab are trademarks of their respective owners; this software is not affiliated with or endorsed
-          by them.
-          <a href="/static/legal.html">Full legal &amp; risk disclosures</a>
-        </p>
-      </footer>
-    </main>
-
-    <div id="tradeDrawerBackdrop" class="trade-drawer-backdrop" hidden></div>
-    <aside id="tradeDrawer" class="trade-drawer" aria-label="Trade decision drawer" hidden>
-      <div class="trade-drawer-header">
-        <h3 id="tradeDrawerTitle">Trade Drawer</h3>
-        <button id="tradeDrawerCloseBtn" class="btn small secondary" type="button" aria-label="Close trade drawer">Close</button>
-      </div>
-      <div class="trade-drawer-tabs" role="tablist" aria-label="Trade drawer tabs">
-        <button id="tradeDrawerTabDecision" class="trade-drawer-tab active" role="tab" aria-selected="true" type="button">
-          Decision
-        </button>
-        <button id="tradeDrawerTabRecovery" class="trade-drawer-tab" role="tab" aria-selected="false" tabindex="-1" type="button">
-          Recovery
-        </button>
-      </div>
-      <div id="tradeDrawerPanelDecision" class="trade-drawer-panel" role="tabpanel" aria-labelledby="tradeDrawerTabDecision">
-        <div class="inline-form">
-          <label class="field-label" for="tradeDrawerDecisionTicker">Ticker</label>
-          <input id="tradeDrawerDecisionTicker" placeholder="AAPL" autocomplete="off" />
-          <button id="tradeDrawerDecisionBtn" class="btn primary small" type="button">Load</button>
-        </div>
-        <p id="tradeDrawerDecisionPlaceholder" class="muted tool-output-placeholder">
-          Pick a ticker (or click Quick View on a pending trade) to load a decision card.
-        </p>
-        <div id="tradeDrawerDecisionSummary" class="tool-summary-card hidden" aria-live="polite"></div>
-        <details id="tradeDrawerDecisionJsonDetails" class="tool-json-details hidden">
-          <summary>Raw data</summary>
-          <pre id="tradeDrawerDecisionOutput" class="code-block"></pre>
-        </details>
-      </div>
-      <div id="tradeDrawerPanelRecovery" class="trade-drawer-panel hidden" role="tabpanel" aria-labelledby="tradeDrawerTabRecovery">
-        <div class="inline-form">
-          <label class="field-label" for="tradeDrawerRecoverySource">Source</label>
-          <select id="tradeDrawerRecoverySource">
-            <option value="schwab_auth">schwab_auth</option>
-            <option value="market_data">market_data</option>
-            <option value="execution">execution</option>
-          </select>
-          <input id="tradeDrawerRecoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
-          <button id="tradeDrawerRecoveryBtn" class="btn primary small" type="button">Map fix</button>
-        </div>
-        <p id="tradeDrawerRecoveryPlaceholder" class="muted tool-output-placeholder">
-          Paste an auth, data, or execution error to get a guided fix path.
-        </p>
-        <div id="tradeDrawerRecoverySummary" class="tool-summary-card hidden" aria-live="polite"></div>
-        <details id="tradeDrawerRecoveryJsonDetails" class="tool-json-details hidden">
-          <summary>Raw data</summary>
-          <pre id="tradeDrawerRecoveryOutput" class="code-block"></pre>
-        </details>
+        <p class="legal-mini">Not investment advice.</p>
       </div>
     </aside>
 
-    <section id="activityDrawer" class="activity-drawer">
-      <button id="activityDrawerToggle" class="activity-drawer-toggle" type="button" aria-expanded="false">
-        Activity Drawer
-      </button>
-      <div id="activityDrawerBody" class="activity-drawer-body">
-        <ul id="logList" class="log-list"></ul>
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <h1 id="topbarTitle" class="topbar-title">Scans</h1>
+        <p id="topbarSubtitle" class="topbar-sub">Run a tier and surface today's candidates.</p>
       </div>
-    </section>
+      <div class="topbar-right">
+        <button id="cmdPaletteBtn" class="btn ghost cmd-trigger" type="button" aria-label="Command palette">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>
+          <span>Search</span>
+          <kbd class="kbd">⌘K</kbd>
+        </button>
+        <button id="notifBellBtn" class="btn ghost notif-trigger" type="button" aria-label="Notifications">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <span id="notifBadge" class="notif-badge" hidden>0</span>
+        </button>
+        <button id="globalRefreshBtn" class="btn ghost" type="button" aria-label="Refresh data">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a9 9 0 1 1-3.6-7.2"/><path d="M21 4v5h-5"/></svg>
+          <span>Refresh</span>
+        </button>
+        <button id="userMenuBtn" class="btn ghost user-chip" type="button">
+          <span class="user-mono" id="userMonogram">—</span>
+          <span class="user-mail" id="userEmailLabel">Not signed in</span>
+        </button>
+      </div>
+    </header>
+
+    <div id="killSwitchBanner" class="kill-banner" hidden role="alert">
+      <strong>Operator trading halt</strong>
+      <span>The host has paused live orders. Approvals are blocked until the kill switch is released.</span>
+    </div>
+
+    <aside id="notifPanel" class="notif-panel" hidden aria-label="Notifications">
+      <div class="notif-head">
+        <strong>Notifications</strong>
+        <button id="notifClearBtn" class="btn ghost small" type="button">Clear all</button>
+      </div>
+      <ul id="notifList" class="notif-list"><li class="muted">No notifications yet.</li></ul>
+    </aside>
+
+    <main id="viewRoot" class="view-root" tabindex="-1"></main>
+
+    <!-- ============== TEMPLATES ============== -->
+
+    <template id="tpl-scans">
+      <section class="view view-scans">
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="kicker">Today, <span id="heroDate">—</span></p>
+            <h2 class="display">Three lenses on the<br/><em>same market.</em></h2>
+            <p class="lede">
+              Pick a posture. Conservative narrows the funnel and trims position size. Balanced is the desk default.
+              Aggressive widens the gates and raises the cap. Each scan is read-only — nothing is sent to Schwab until
+              you stage and approve.
+            </p>
+          </div>
+          <aside class="hero-aside">
+            <div class="hero-stat">
+              <span class="hero-stat-label">Last scan</span>
+              <strong id="heroLastScan" class="hero-stat-value">Never</strong>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-stat-label">Open signals</span>
+              <strong id="heroSignals" class="hero-stat-value mono">—</strong>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-stat-label">In queue</span>
+              <strong id="heroQueue" class="hero-stat-value mono">—</strong>
+            </div>
+          </aside>
+        </header>
+
+        <section class="tiers" aria-label="Scan tiers">
+          <article class="tier" data-tier="conservative">
+            <header class="tier-head">
+              <span class="tier-num">01</span>
+              <div>
+                <h3 class="tier-name">Conservative</h3>
+                <p class="tier-tagline">Narrow funnel · smaller size · earnings blocked</p>
+              </div>
+            </header>
+            <p class="tier-desc">
+              Tightest filters. Earnings windows fully blocked. About <strong>$300</strong> per buy. Up to <strong>3</strong> trades a day.
+              Fewer names will pass — that's the point.
+            </p>
+            <ul class="tier-attrs">
+              <li><span>Position</span><strong>$300</strong></li>
+              <li><span>Daily cap</span><strong>3</strong></li>
+              <li><span>Quality gates</span><strong>Hard</strong></li>
+            </ul>
+            <button class="btn primary tier-run" data-tier="conservative" type="button">
+              <span>Run conservative scan</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+
+          <article class="tier tier--featured" data-tier="balanced">
+            <span class="tier-flag">Desk default</span>
+            <header class="tier-head">
+              <span class="tier-num">02</span>
+              <div>
+                <h3 class="tier-name">Balanced</h3>
+                <p class="tier-tagline">Calibrated funnel · downsize on risk</p>
+              </div>
+            </header>
+            <p class="tier-desc">
+              Softer filters surface more names while quality checks still block bad fills.
+              Earnings flags <strong>downsize</strong> instead of fully blocking. <strong>$500</strong> per buy. Up to <strong>5</strong> trades.
+            </p>
+            <ul class="tier-attrs">
+              <li><span>Position</span><strong>$500</strong></li>
+              <li><span>Daily cap</span><strong>5</strong></li>
+              <li><span>Quality gates</span><strong>Soft</strong></li>
+            </ul>
+            <button class="btn primary tier-run" data-tier="balanced" type="button">
+              <span>Run balanced scan</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+
+          <article class="tier" data-tier="aggressive">
+            <header class="tier-head">
+              <span class="tier-num">03</span>
+              <div>
+                <h3 class="tier-name">Aggressive</h3>
+                <p class="tier-tagline">Wider gates · bigger size · log-only checks</p>
+              </div>
+            </header>
+            <p class="tier-desc">
+              Spread/slippage and event checks run in <strong>shadow</strong> mode — they record but won't block. <strong>$900</strong> per buy.
+              Up to <strong>8</strong> trades a day. Use only when you're paying attention.
+            </p>
+            <ul class="tier-attrs">
+              <li><span>Position</span><strong>$900</strong></li>
+              <li><span>Daily cap</span><strong>8</strong></li>
+              <li><span>Quality gates</span><strong>Soft</strong></li>
+            </ul>
+            <button class="btn primary tier-run" data-tier="aggressive" type="button">
+              <span>Run aggressive scan</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </section>
+
+        <section id="scanProgress" class="scan-progress" hidden aria-live="polite">
+          <span class="scan-progress-spin" aria-hidden="true"></span>
+          <span id="scanProgressLabel">Scanning the universe…</span>
+          <button id="scanCancelBtn" class="btn ghost small" type="button" hidden>Cancel</button>
+        </section>
+
+        <section class="results" aria-label="Scan results">
+          <header class="results-head">
+            <div>
+              <h3 class="results-title">Candidates</h3>
+              <p id="resultsMeta" class="results-meta">No scan run yet — pick a tier above.</p>
+            </div>
+            <div class="results-tools">
+              <label class="select-wrap">
+                <span class="visually-hidden">Sort</span>
+                <select id="resultsSort">
+                  <option value="score">Sort: score</option>
+                  <option value="pup">Sort: P(up 10d)</option>
+                  <option value="conviction">Sort: conviction</option>
+                  <option value="ticker">Sort: ticker</option>
+                </select>
+              </label>
+            </div>
+          </header>
+
+          <div id="resultsGrid" class="results-grid">
+            <div class="results-empty">
+              <svg viewBox="0 0 64 64" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <circle cx="28" cy="28" r="16"/>
+                <path d="m40 40 14 14"/>
+                <path d="M22 28h12M28 22v12"/>
+              </svg>
+              <p>The grid fills in once a tier finishes scanning.</p>
+            </div>
+          </div>
+        </section>
+      </section>
+    </template>
+
+    <template id="tpl-queue">
+      <section class="view view-queue">
+        <header class="page-head">
+          <div>
+            <h2 class="display small">Trade queue</h2>
+            <p class="lede small">Staged candidates waiting on your approval. Approving sends a live order to Schwab.</p>
+          </div>
+          <div class="page-actions">
+            <button id="queueRefreshBtn" class="btn ghost" type="button">Refresh</button>
+            <button id="queueClearBtn" class="btn danger ghost" type="button">Reject all pending</button>
+          </div>
+        </header>
+
+        <article class="card manual-stage">
+          <div class="card-head-row">
+            <h3 class="card-title">Stage a trade manually</h3>
+            <p class="muted small">Skip the scan and queue any ticker. Quantity defaults to your active preset.</p>
+          </div>
+          <div class="manual-stage-form">
+            <label class="field-label" for="manualTicker">Ticker</label>
+            <input id="manualTicker" type="text" autocomplete="off" maxlength="16" placeholder="AAPL" />
+            <label class="field-label" for="manualQty">Qty</label>
+            <input id="manualQty" type="number" min="1" step="1" placeholder="Auto" />
+            <label class="field-label" for="manualNote">Note</label>
+            <input id="manualNote" type="text" placeholder="Why staging?" />
+            <button id="manualStageBtn" class="btn primary" type="button">Add to queue</button>
+          </div>
+        </article>
+
+        <div class="queue-summary" id="queueSummary"></div>
+
+        <div id="queueList" class="queue-list">
+          <div class="queue-empty">
+            <p>No staged trades yet. Stage candidates from <a href="#/scans">Scans</a>.</p>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <template id="tpl-research">
+      <section class="view view-research">
+        <header class="page-head">
+          <div>
+            <h2 class="display small">Research desk</h2>
+            <p class="lede small">Investigate a single ticker, replay a strategy, or contrast filings — all in one place.</p>
+          </div>
+        </header>
+
+        <nav class="tabbar" role="tablist" aria-label="Research tools">
+          <button class="tab" data-tab="check"   role="tab" aria-selected="true">Ticker check</button>
+          <button class="tab" data-tab="decision" role="tab" aria-selected="false">Decision card</button>
+          <button class="tab" data-tab="report"  role="tab" aria-selected="false">Full report</button>
+          <button class="tab" data-tab="sec"     role="tab" aria-selected="false">SEC compare</button>
+          <button class="tab" data-tab="backtest" role="tab" aria-selected="false">Backtest</button>
+          <button class="tab" data-tab="recovery" role="tab" aria-selected="false">Recovery</button>
+        </nav>
+
+        <!-- Ticker check -->
+        <section class="tabpanel" data-tab="check" role="tabpanel">
+          <article class="card">
+            <h3 class="card-title">Quick ticker check</h3>
+            <p class="muted small">Fast health probe: price, sector, conviction snapshot.</p>
+            <div class="form-row inline">
+              <label class="field-label" for="checkTicker">Ticker</label>
+              <input id="checkTicker" type="text" placeholder="AAPL" autocomplete="off" />
+              <button id="checkRunBtn" class="btn primary" type="button">Check</button>
+            </div>
+            <div id="checkOutput" class="research-output"><p class="muted">Enter a ticker and run a check.</p></div>
+          </article>
+        </section>
+
+        <!-- Decision card -->
+        <section class="tabpanel" data-tab="decision" role="tabpanel" hidden>
+          <article class="card">
+            <h3 class="card-title">Decision card</h3>
+            <p class="muted small">Take/Pass support — every gate, score, and event the system would consider.</p>
+            <div class="form-row inline">
+              <label class="field-label" for="decisionTicker">Ticker</label>
+              <input id="decisionTicker" type="text" placeholder="AAPL" autocomplete="off" />
+              <button id="decisionRunBtn" class="btn primary" type="button">Open card</button>
+            </div>
+            <div id="decisionOutput" class="research-output"><p class="muted">Pick a ticker to load a decision card.</p></div>
+          </article>
+        </section>
+
+        <!-- Full report -->
+        <section class="tabpanel" data-tab="report" role="tabpanel" hidden>
+          <article class="card">
+            <h3 class="card-title">Full report</h3>
+            <p class="muted small">Multi-section deep dive: technical, DCF, comps, health, EDGAR, MiroFish synthesis.</p>
+            <div class="form-row inline wrap">
+              <label class="field-label" for="reportTicker">Ticker</label>
+              <input id="reportTicker" type="text" placeholder="AAPL" autocomplete="off" />
+              <label class="field-label" for="reportSection">Section</label>
+              <select id="reportSection">
+                <option value="">All sections</option>
+                <option value="tech">Technical</option>
+                <option value="dcf">DCF</option>
+                <option value="comps">Comps</option>
+                <option value="health">Health</option>
+                <option value="edgar">EDGAR</option>
+                <option value="mirofish">MiroFish</option>
+              </select>
+              <label class="check inline"><input id="reportSkipMiro" type="checkbox" /><span>skip MiroFish</span></label>
+              <label class="check inline"><input id="reportSkipEdgar" type="checkbox" /><span>skip EDGAR</span></label>
+              <button id="reportRunBtn" class="btn primary" type="button">Run report</button>
+            </div>
+            <div id="reportOutput" class="research-output"><p class="muted">No report run yet.</p></div>
+          </article>
+        </section>
+
+        <!-- SEC compare -->
+        <section class="tabpanel" data-tab="sec" role="tabpanel" hidden>
+          <article class="card">
+            <h3 class="card-title">SEC filing compare</h3>
+            <p class="muted small">Contrast filings across two tickers, or watch one ticker change over time.</p>
+            <div class="form-row inline wrap">
+              <label class="field-label" for="secMode">Mode</label>
+              <select id="secMode">
+                <option value="ticker_vs_ticker">Ticker vs ticker</option>
+                <option value="ticker_over_time">Ticker over time</option>
+              </select>
+              <label class="field-label" for="secTickerA">Ticker A</label>
+              <input id="secTickerA" type="text" placeholder="NVDA" autocomplete="off" />
+              <label class="field-label" for="secTickerB">Ticker B</label>
+              <input id="secTickerB" type="text" placeholder="AMD" autocomplete="off" />
+              <label class="field-label" for="secForm">Form</label>
+              <select id="secForm">
+                <option value="10-K">10-K</option>
+                <option value="10-Q">10-Q</option>
+                <option value="8-K">8-K</option>
+              </select>
+              <label class="check inline"><input id="secChangesOnly" type="checkbox" /><span>changes only</span></label>
+              <button id="secRunBtn" class="btn primary" type="button">Compare</button>
+            </div>
+            <div class="preset-row">
+              <span class="muted small">Quick presets:</span>
+              <button class="btn ghost small sec-preset" type="button" data-a="NVDA" data-b="AMD">NVDA · AMD</button>
+              <button class="btn ghost small sec-preset" type="button" data-a="AAPL" data-b="MSFT">AAPL · MSFT</button>
+              <button class="btn ghost small sec-preset" type="button" data-a="AMZN" data-b="WMT">AMZN · WMT</button>
+            </div>
+            <div id="secOutput" class="research-output"><p class="muted">Pick a mode and tickers, then compare.</p></div>
+          </article>
+        </section>
+
+        <!-- Backtest -->
+        <section class="tabpanel" data-tab="backtest" role="tabpanel" hidden>
+          <article class="card">
+            <h3 class="card-title">Historical backtest</h3>
+            <p class="muted small">Replay Stage 2 + VCP on past prices. No live orders. Available in SaaS mode.</p>
+            <div class="preset-row">
+              <span class="muted small">Range presets:</span>
+              <button class="btn ghost small bt-preset" type="button" data-years="2">Last 2y</button>
+              <button class="btn ghost small bt-preset" type="button" data-years="5">Last 5y</button>
+              <button class="btn ghost small bt-preset" type="button" data-years="8">Last 8y</button>
+            </div>
+            <div class="form-row inline wrap">
+              <label class="field-label" for="btUniverse">Universe</label>
+              <select id="btUniverse">
+                <option value="watchlist">Saved watchlist</option>
+                <option value="tickers">Custom tickers</option>
+              </select>
+              <label class="field-label" for="btTickers">Tickers</label>
+              <input id="btTickers" type="text" placeholder="AAPL, MSFT, GOOGL" autocomplete="off" />
+              <label class="field-label" for="btStart">Start</label>
+              <input id="btStart" type="date" />
+              <label class="field-label" for="btEnd">End</label>
+              <input id="btEnd" type="date" />
+              <label class="field-label" for="btTheory">Label</label>
+              <input id="btTheory" type="text" placeholder="Q1 experiment" />
+            </div>
+            <details class="advanced-details">
+              <summary>Advanced — costs &amp; rule overrides</summary>
+              <div class="form-row inline wrap" style="margin-top: 0.5rem">
+                <label class="field-label" for="btSlippage">Slippage (bps/side)</label>
+                <input id="btSlippage" type="number" min="0" max="200" step="1" value="15" />
+                <label class="field-label" for="btFeeShare">Fee/share ($)</label>
+                <input id="btFeeShare" type="number" min="0" max="1" step="0.001" value="0.005" />
+                <label class="field-label" for="btMinFee">Min fee/order ($)</label>
+                <input id="btMinFee" type="number" min="0" max="50" step="0.5" value="1" />
+                <label class="field-label" for="btMaxAdv">Max ADV %</label>
+                <input id="btMaxAdv" type="number" min="0.001" max="0.1" step="0.001" value="0.02" />
+                <label class="field-label" for="btQualityGates">Quality gates</label>
+                <select id="btQualityGates">
+                  <option value="">Account default</option>
+                  <option value="off">Off</option>
+                  <option value="shadow">Shadow</option>
+                  <option value="soft">Soft</option>
+                  <option value="hard">Hard</option>
+                </select>
+                <label class="check inline"><input id="btSkipMiro" type="checkbox" /><span>Skip MiroFish</span></label>
+              </div>
+            </details>
+            <div class="form-row inline">
+              <button id="btQueueBtn" class="btn primary" type="button">Queue backtest</button>
+              <button id="btRefreshBtn" class="btn ghost" type="button">Refresh runs</button>
+            </div>
+            <div id="btOutput" class="research-output"><p class="muted">Pick a date range and queue a backtest. Recent runs appear below once available.</p></div>
+            <ul id="btRunList" class="bullets"></ul>
+          </article>
+        </section>
+
+        <!-- Recovery -->
+        <section class="tabpanel" data-tab="recovery" role="tabpanel" hidden>
+          <article class="card">
+            <h3 class="card-title">Failure recovery</h3>
+            <p class="muted small">Map an auth, data, or execution error message to a guided fix path.</p>
+            <div class="form-row inline wrap">
+              <label class="field-label" for="recSource">Source</label>
+              <select id="recSource">
+                <option value="schwab_auth">schwab_auth</option>
+                <option value="market_data">market_data</option>
+                <option value="execution">execution</option>
+              </select>
+              <input id="recMessage" type="text" placeholder="Paste an error message…" autocomplete="off" />
+              <button id="recRunBtn" class="btn primary" type="button">Map fix</button>
+            </div>
+            <div id="recOutput" class="research-output"><p class="muted">Paste an error to get a guided fix path.</p></div>
+          </article>
+        </section>
+      </section>
+    </template>
+
+    <template id="tpl-portfolio">
+      <section class="view view-portfolio">
+        <header class="page-head">
+          <div>
+            <h2 class="display small">Portfolio</h2>
+            <p class="lede small">Live positions from your linked Schwab account.</p>
+          </div>
+          <div class="page-actions">
+            <button id="portfolioRefreshBtn" class="btn ghost" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="portfolio-grid">
+          <article class="card">
+            <h3 class="card-title">Positions</h3>
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th class="num">Qty</th>
+                    <th class="num">Last</th>
+                    <th class="num">Market value</th>
+                    <th class="num">P/L</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioBody">
+                  <tr><td colspan="5" class="muted center">Loading positions…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card">
+            <h3 class="card-title">Sector strength <span class="muted">21d vs SPY</span></h3>
+            <div id="sectorGrid" class="sector-grid">
+              <div class="muted">Loading sectors…</div>
+            </div>
+          </article>
+        </section>
+      </section>
+    </template>
+
+    <template id="tpl-diagnostics">
+      <section class="view view-diag">
+        <header class="page-head">
+          <div>
+            <h2 class="display small">Diagnostics</h2>
+            <p class="lede small">System health, scan funnel, and recent activity. Move on if everything is green.</p>
+          </div>
+          <div class="page-actions">
+            <button id="diagRefreshBtn" class="btn ghost" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="health-tiles" id="healthTiles">
+          <div class="health-tile" data-key="auth"><span class="ht-label">Auth</span><strong class="ht-value">—</strong></div>
+          <div class="health-tile" data-key="quotes"><span class="ht-label">Quotes</span><strong class="ht-value">—</strong></div>
+          <div class="health-tile" data-key="api"><span class="ht-label">API errors</span><strong class="ht-value">—</strong></div>
+          <div class="health-tile" data-key="validation"><span class="ht-label">Validation</span><strong class="ht-value">—</strong></div>
+        </section>
+
+        <section class="diag-grid">
+          <article class="card">
+            <h3 class="card-title">Last scan funnel</h3>
+            <div id="diagFunnel" class="diag-funnel"><p class="muted">Run a scan to populate the funnel.</p></div>
+          </article>
+          <article class="card">
+            <h3 class="card-title">Top blockers</h3>
+            <ul id="diagBlockers" class="bullets"><li class="muted">No blockers recorded yet.</li></ul>
+          </article>
+
+          <article class="card">
+            <h3 class="card-title">Validation health</h3>
+            <div id="validationPanel" class="research-output"><p class="muted">Click refresh to load validation status.</p></div>
+          </article>
+          <article class="card">
+            <h3 class="card-title">Performance <span class="muted">live vs shadow vs backtest</span></h3>
+            <div class="card-actions"><button id="performanceRefreshBtn" class="btn ghost small" type="button">Load</button></div>
+            <div id="performancePanel" class="research-output"><p class="muted">Click Load to fetch the latest performance snapshot.</p></div>
+          </article>
+
+          <article class="card">
+            <h3 class="card-title">Learning engine</h3>
+            <p class="muted small">Closed-loop analysis: post-mortem of failed trades plus challenger threshold tests.</p>
+            <div class="card-actions">
+              <button id="evolveBtn" class="btn ghost small" type="button">Run post-mortem</button>
+              <button id="challengerBtn" class="btn ghost small" type="button">Run challenger scan</button>
+            </div>
+            <div id="learningPanel" class="research-output"><p class="muted">No learning engine results yet.</p></div>
+          </article>
+          <article class="card">
+            <h3 class="card-title">Calibration ledger</h3>
+            <div class="card-actions"><button id="calibrationRefreshBtn" class="btn ghost small" type="button">Load</button></div>
+            <div id="calibrationPanel" class="research-output"><p class="muted">Calibration and self-study summary will appear here.</p></div>
+          </article>
+
+          <article class="card span-2">
+            <h3 class="card-title">Activity log</h3>
+            <ul id="activityLog" class="activity-log"><li class="muted">Activity will appear here.</li></ul>
+          </article>
+        </section>
+      </section>
+    </template>
+
+    <template id="tpl-settings">
+      <section class="view view-settings">
+        <header class="page-head">
+          <div>
+            <h2 class="display small">Settings</h2>
+            <p class="lede small">One-time setup lives here so the workflow pages stay focused on trading.</p>
+          </div>
+        </header>
+
+        <section class="settings-grid">
+          <article class="card">
+            <h3 class="card-title">Schwab connection</h3>
+            <p class="muted small">Schwab keeps brokerage and market data behind separate approvals — both are required.</p>
+            <ol class="setup-steps" id="setupSteps">
+              <li data-step="account"><span class="step-num">1</span><div><strong>Account</strong><small class="muted">Place orders &amp; read positions.</small></div><span class="step-state">checking</span></li>
+              <li data-step="market"><span class="step-num">2</span><div><strong>Market data</strong><small class="muted">Quotes &amp; OHLCV history.</small></div><span class="step-state">checking</span></li>
+              <li data-step="verify_token_health"><span class="step-num">3</span><div><strong>Verify tokens</strong><small class="muted">Confirm both sessions are alive.</small></div><span class="step-state">checking</span></li>
+              <li data-step="test_scan"><span class="step-num">4</span><div><strong>Test scan</strong><small class="muted">Round-trip a scan against the universe.</small></div><span class="step-state">checking</span></li>
+              <li data-step="test_paper_order"><span class="step-num">5</span><div><strong>Paper order</strong><small class="muted">Dry-run an order to confirm execution path.</small></div><span class="step-state">checking</span></li>
+            </ol>
+            <div class="setup-actions">
+              <a id="oauthAccountLink" class="btn primary" href="#" target="_blank" rel="noopener">Connect Schwab — Account</a>
+              <a id="oauthMarketLink" class="btn primary outline" href="#" target="_blank" rel="noopener">Connect Schwab — Market</a>
+              <button id="onboardingNextBtn" class="btn ghost" type="button">Run next step</button>
+            </div>
+            <p id="onboardingHint" class="muted small">Loading status…</p>
+          </article>
+
+          <article class="card">
+            <h3 class="card-title">Strategy presets</h3>
+            <p class="muted small">Each preset configures position size, daily cap, and gate strictness.</p>
+            <div class="form-row">
+              <label class="field-label" for="presetSelect">Active preset</label>
+              <select id="presetSelect">
+                <option value="conservative">Conservative</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="aggressive">Aggressive</option>
+              </select>
+              <button id="presetApplyBtn" class="btn primary" type="button">Apply</button>
+            </div>
+            <ul id="presetSummary" class="preset-summary muted small"></ul>
+            <label class="check"><input id="automationOptIn" type="checkbox" /> <span>Allow approving live orders without the extra typed-ticker confirmation</span></label>
+          </article>
+
+          <article class="card">
+            <h3 class="card-title">API access</h3>
+            <p class="muted small">Used when this dashboard runs in API-key or SaaS mode. Stored only in this browser.</p>
+            <div class="form-row">
+              <label class="field-label" for="apiKeyInput">API key</label>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk_…" />
+              <button id="saveApiKeyBtn" class="btn primary outline" type="button">Save</button>
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="jwtInput">Supabase JWT</label>
+              <input id="jwtInput" type="password" autocomplete="off" placeholder="ey…" />
+              <button id="saveJwtBtn" class="btn primary outline" type="button">Save</button>
+            </div>
+            <p id="apiKeyHint" class="muted small">Tokens never leave your browser.</p>
+          </article>
+
+          <article id="liveTradingCard" class="card" hidden>
+            <h3 class="card-title">Live trading</h3>
+            <p class="muted small" id="liveTradingStatusLine">Loading account state…</p>
+            <p class="muted small">Turning on live trading allows the dashboard to send real orders through Schwab — every approval still requires you to type the ticker.</p>
+            <label class="check"><input id="enableLiveAck" type="checkbox" /><span>I understand live orders are risky and not personalized advice.</span></label>
+            <div class="form-row">
+              <label class="field-label" for="enableLivePhrase">Type ENABLE to confirm</label>
+              <input id="enableLivePhrase" type="text" autocomplete="off" placeholder="ENABLE" />
+              <button id="enableLiveBtn" class="btn primary" type="button">Enable live trading</button>
+            </div>
+            <hr class="hairline" />
+            <label class="check"><input id="haltCheckbox" type="checkbox" /><span>Pause new live orders for this account</span></label>
+            <div class="form-row">
+              <button id="saveHaltBtn" class="btn primary outline" type="button">Save pause setting</button>
+            </div>
+          </article>
+
+          <article id="twoFaCard" class="card" hidden>
+            <h3 class="card-title">Two-factor auth</h3>
+            <p id="twoFaStatusLine" class="muted small">Loading 2FA status…</p>
+            <div class="form-row">
+              <button id="twoFaSetupBtn" class="btn primary outline" type="button">Generate secret</button>
+            </div>
+            <pre id="twoFaSecret" class="code-block" hidden></pre>
+            <div class="form-row">
+              <label class="field-label" for="twoFaCode">TOTP code</label>
+              <input id="twoFaCode" type="text" inputmode="numeric" maxlength="8" placeholder="123456" autocomplete="one-time-code" />
+              <button id="twoFaEnableBtn" class="btn primary" type="button">Enable</button>
+            </div>
+            <div class="form-row">
+              <button id="twoFaDisableBtn" class="btn danger outline" type="button">Disable 2FA</button>
+            </div>
+          </article>
+
+          <article id="billingCard" class="card" hidden>
+            <h3 class="card-title">Billing</h3>
+            <p id="billingStatusLine" class="muted small">Loading billing status…</p>
+            <div class="form-row">
+              <button id="billingCheckoutBtn" class="btn primary" type="button">Start subscription</button>
+              <button id="billingPortalBtn" class="btn primary outline" type="button">Manage billing</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3 class="card-title">Danger zone</h3>
+            <p class="muted small">Resets data scoped to this dashboard only. Schwab orders are unaffected.</p>
+            <div class="setup-actions">
+              <button id="dangerClearPendingBtn" class="btn danger outline" type="button">Reject all pending trades</button>
+              <button id="dangerDeleteAllTradesBtn" class="btn danger" type="button">Delete trade history</button>
+            </div>
+          </article>
+        </section>
+      </section>
+    </template>
+
+    <!-- ============== MODALS ============== -->
 
     <dialog id="approveDialog" class="modal">
-      <form method="dialog">
-        <h3>Confirm Live Trade</h3>
-        <p id="approveSummary" class="muted"></p>
-        <label class="field-label" for="approveTickerInput">Type the ticker to confirm this live order</label>
-        <input id="approveTickerInput" type="text" autocomplete="off" placeholder="e.g. AAPL" />
-        <label class="field-label" for="approveOtpInput">2FA code (required for high-value approvals)</label>
-        <input id="approveOtpInput" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" />
-        <p class="warn-text">
-          This sends a live market order through Schwab. You alone decide whether the order is suitable; nothing here is
-          personalized investment advice.
-        </p>
+      <form method="dialog" class="modal-form">
+        <header class="modal-head">
+          <h3>Confirm live trade</h3>
+          <p id="approveSummary" class="muted small"></p>
+        </header>
+        <div class="modal-body">
+          <label class="field-label" for="approveTickerInput">Type the ticker to confirm</label>
+          <input id="approveTickerInput" type="text" autocomplete="off" inputmode="latin" autocapitalize="characters" placeholder="e.g. AAPL" />
+          <label class="field-label" for="approveOtpInput">2FA code (when required)</label>
+          <input id="approveOtpInput" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" />
+          <p class="warn">This sends a live market order through Schwab. Aperture is not personalized investment advice.</p>
+        </div>
         <div class="modal-actions">
-          <button id="cancelApproveBtn" class="btn secondary" value="cancel">Cancel</button>
-          <button id="confirmApproveBtn" class="btn good" value="default">Confirm Approve</button>
+          <button class="btn ghost" value="cancel" type="submit">Cancel</button>
+          <button id="confirmApproveBtn" class="btn primary" value="confirm" type="submit">Approve &amp; send</button>
         </div>
       </form>
     </dialog>
 
-    <dialog id="queueScanDialog" class="modal">
-      <div class="modal-stack">
-        <h3>Stage trade for approval</h3>
-        <p id="queueScanHeadline" class="muted"></p>
-        <div class="inline-form compact modal-form-grid">
-          <label class="field-label" for="queueScanQty">Quantity</label>
-          <input
-            id="queueScanQty"
-            type="number"
-            min="1"
-            step="1"
-            placeholder="Auto from presets"
-            title="Leave blank to use position size from your strategy preset"
-          />
-          <label class="field-label" for="queueScanNote">Note</label>
-          <input id="queueScanNote" type="text" placeholder="e.g. Trim size, earnings watch" />
+    <dialog id="stageDialog" class="modal">
+      <form method="dialog" class="modal-form">
+        <header class="modal-head">
+          <h3>Stage trade</h3>
+          <p id="stageSummary" class="muted small"></p>
+        </header>
+        <div class="modal-body">
+          <label class="field-label" for="stageQty">Quantity (blank = sized from preset)</label>
+          <input id="stageQty" type="number" min="1" step="1" placeholder="Auto" />
+          <label class="field-label" for="stageNote">Note</label>
+          <input id="stageNote" type="text" placeholder="Why are you staging this?" />
         </div>
-        <p class="muted form-hint">You can change quantity here before the trade appears in pending approvals.</p>
         <div class="modal-actions">
-          <button id="queueScanCancelBtn" class="btn secondary" type="button">Cancel</button>
-          <button id="queueScanConfirmBtn" class="btn primary" type="button">Add to pending</button>
+          <button class="btn ghost" value="cancel" type="submit">Cancel</button>
+          <button id="stageConfirmBtn" class="btn primary" value="confirm" type="submit">Add to queue</button>
         </div>
-      </div>
+      </form>
     </dialog>
 
-    <button id="scrollTopBtn" class="scroll-top-btn" type="button" aria-label="Scroll to top" data-tooltip="Back to top">
-      <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-    </button>
-    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
 
-    <div id="cmdPaletteDialog" class="cmd-palette-overlay" role="dialog" aria-label="Command palette">
-      <div class="cmd-palette">
-        <div class="cmd-palette-header">
-          <svg class="cmd-palette-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input id="cmdPaletteInput" type="text" class="cmd-palette-input" placeholder="Type a command or section name..." autocomplete="off" spellcheck="false" />
-          <span class="cmd-palette-hints" aria-hidden="true">
-            <kbd class="cmd-palette-hint">Ctrl/Cmd+1..4</kbd>
-            <kbd class="cmd-palette-hint">Ctrl/Cmd+K</kbd>
-          </span>
-          <kbd class="cmd-palette-esc">Esc</kbd>
+    <div id="cmdPalette" class="cmd-overlay" hidden role="dialog" aria-label="Command palette">
+      <div class="cmd-modal">
+        <div class="cmd-head">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>
+          <input id="cmdInput" type="text" placeholder="Search commands or routes…" autocomplete="off" spellcheck="false" />
+          <kbd class="kbd">esc</kbd>
         </div>
-        <div id="cmdPaletteList" class="cmd-palette-list" role="listbox"></div>
+        <ul id="cmdList" class="cmd-list" role="listbox"></ul>
       </div>
     </div>
 
-    <script src="/static/auth-jwt-utils.js?v=__APP_VERSION__"></script>
-    <script src="/static/app.js?v=__APP_VERSION__" type="module"></script>
+    <script src="/static/dashboard.js?v=__APP_VERSION__"></script>
   </body>
 </html>
-
