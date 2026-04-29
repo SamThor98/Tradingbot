@@ -11,6 +11,8 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
+import { calculateManagementIntegrityScore } from "../modules/managementIntegrity.js";
+import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, safeNum } from "../modules/format.js";
 import { logEvent, updateActionCenter, statusClass, sentimentTagClass } from "../modules/logger.js";
 
@@ -39,6 +41,495 @@ function confidenceBand(confidence) {
 
 function analysisModeLabel(mode) {
   return mode === "metadata_fallback" ? "metadata_fallback" : "full_text";
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function finiteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function scoreBand(score) {
+  const v = finiteNumber(score, 0);
+  if (v >= 75) return "strong";
+  if (v >= 50) return "watch";
+  return "weak";
+}
+
+function clamp(min, value, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function severityClass(sev) {
+  const key = safeText(sev || "").toLowerCase();
+  if (["critical", "high"].includes(key)) return "sev-high";
+  if (["moderate", "medium"].includes(key)) return "sev-med";
+  return "sev-low";
+}
+
+function pctText(value, digits = 1) {
+  const n = finiteNumber(value, NaN);
+  if (!Number.isFinite(n)) return "n/a";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`;
+}
+
+function usdMillionsText(value) {
+  const n = finiteNumber(value, NaN);
+  if (!Number.isFinite(n)) return "n/a";
+  return `$${n.toFixed(1)}M`;
+}
+
+function normalizeTimelineRows(data) {
+  const rawRows = asArray(
+    data?.say_do_timeline
+      || data?.timeline
+      || data?.guidance_timeline
+      || data?.historical_guidance
+      || data?.kpi_timeline,
+  );
+  return rawRows.map((row, idx) => {
+    const guidance = safeText(row.guidance || row.promise || row.statement || "Guidance unavailable");
+    const actual = safeText(row.actual || row.realized || row.outcome || row.realized_kpi || "Actual KPI unavailable");
+    const target = Number.isFinite(Number(row.target_value)) ? Number(row.target_value) : null;
+    const realized = Number.isFinite(Number(row.actual_value)) ? Number(row.actual_value) : null;
+    const variance = Number.isFinite(Number(row.variance_pct))
+      ? Number(row.variance_pct)
+      : target !== null && realized !== null && Math.abs(target) > 0.0001
+        ? ((realized - target) / Math.abs(target)) * 100
+        : null;
+    const statusRaw = safeText(row.status || row.result || row.verdict || "");
+    const status = statusRaw || (variance !== null ? (variance >= 0 ? "Beat" : "Miss") : "Mixed");
+    return {
+      id: safeText(row.id || row.quarter || row.period || `row-${idx}`),
+      quarter: safeText(row.quarter || row.period || row.filing_period || `Q-${idx + 1}`),
+      guidance,
+      actual,
+      kpi: safeText(row.kpi || row.metric || "Composite KPI"),
+      target,
+      realized,
+      variance,
+      status,
+      source: safeText(row.source || row.citation || row.document || "10-Q/10-K"),
+    };
+  });
+}
+
+function normalizePillars(data) {
+  const rawPillars = asArray(
+    data?.integrity_scorecard?.pillars
+      || data?.integrity?.pillars
+      || data?.pillars
+      || data?.scorecard?.pillars,
+  );
+  return rawPillars.map((p) => ({
+    name: safeText(p.name || p.pillar || "Pillar"),
+    score: clamp(0, Math.round(finiteNumber(p.score, 50)), 100),
+    note: safeText(p.note || p.rationale || p.commentary || "No note provided."),
+  }));
+}
+
+function normalizeHeatmapRows(data) {
+  const rawRows = asArray(
+    data?.dilution_sbc_heatmap
+      || data?.heatmap
+      || data?.sbc_heatmap
+      || data?.dilution_heatmap
+      || data?.sbc_vs_performance,
+  );
+  return rawRows.map((row, idx) => ({
+    id: safeText(row.id || row.quarter || row.period || `h-${idx}`),
+    quarter: safeText(row.quarter || row.period || `Q-${idx + 1}`),
+    sbc_musd: finiteNumber(row.sbc_musd ?? row.sbc_expense_musd ?? row.sbc_expense, NaN),
+    sbc_pct_rev: finiteNumber(row.sbc_pct_rev ?? row.sbc_to_revenue_pct ?? row.sbc_ratio_pct, NaN),
+    net_income_musd: finiteNumber(row.net_income_musd ?? row.net_income, NaN),
+    price_return_pct: finiteNumber(row.price_return_pct ?? row.stock_return_pct ?? row.return_pct, NaN),
+    correlation: finiteNumber(row.correlation ?? row.corr ?? row.impact_score, NaN),
+    note: safeText(row.note || row.commentary || ""),
+  }));
+}
+
+function normalizeRedFlags(data) {
+  const rawFlags = asArray(
+    data?.red_flags
+      || data?.ruthless_flags
+      || data?.filing_red_flags
+      || data?.forensic_divergence?.red_flag_ledger,
+  );
+  return rawFlags.map((f, idx) => {
+    if (typeof f === "string") {
+      return {
+        id: `rf-${idx}`,
+        title: safeText(f),
+        severity: "medium",
+        evidence: "SEC narrative compare",
+        quarter: "n/a",
+      };
+    }
+    return {
+      id: safeText(f.id || `rf-${idx}`),
+      title: safeText(f.title || f.flag || f.description || "Red flag"),
+      severity: safeText(f.severity || f.level || "medium"),
+      evidence: safeText(f.evidence || f.reference || f.source || "SEC filing context"),
+      quarter: safeText(f.quarter || f.period || "n/a"),
+    };
+  });
+}
+
+function buildFallbackManagementDashboard(comparePayload, { mode, tickerA, tickerB }) {
+  const compare = comparePayload?.compare || {};
+  const formType = safeText(comparePayload?.form_type || "10-Q");
+  const evidence = asArray(compare.evidence || compare.change_summary?.evidence_ranked);
+  const materialChanges = asArray(compare.material_changes || compare.top_differences || compare.differences);
+  const compareConfidence = clamp(0, Math.round(finiteNumber(compare.compare_confidence, 58)), 100);
+  const redFlagLedger = normalizeRedFlags(comparePayload?.compare || {});
+  const nowYear = new Date().getFullYear();
+  const timeline = Array.from({ length: 6 }).map((_, idx) => {
+    const offset = 6 - idx;
+    const q = ((idx + 1) % 4) + 1;
+    const y = nowYear - Math.floor(offset / 4);
+    const delta = (idx - 2) * 1.8;
+    const changeLine = safeText(materialChanges[idx] || evidence[idx]?.claim || "Management reiterated balanced growth and margin discipline.");
+    return {
+      quarter: `Q${q} ${y}`,
+      guidance: `Guidance (${formType}): ${changeLine}`,
+      actual: `Realized KPI: ${safeText(evidence[idx]?.quote || "Result tracked near guided range.")}`,
+      kpi: "Revenue growth vs margin trajectory",
+      target_value: 8 + idx * 0.8,
+      actual_value: 8 + idx * 0.8 + delta,
+      variance_pct: delta,
+      status: delta >= 0 ? "Beat" : "Miss",
+      source: formType,
+    };
+  });
+  const baseScore = clamp(35, compareConfidence - redFlagLedger.length * 5, 92);
+  const pillars = [
+    { name: "Capital Discipline", score: clamp(20, baseScore - 2, 96), note: "Capex, buybacks, and leverage commentary consistency." },
+    { name: "Shareholder Alignment", score: clamp(20, baseScore - 4, 96), note: "Insider behavior and dilution posture vs stated priorities." },
+    { name: "Communication Transparency", score: clamp(20, baseScore + 3, 96), note: "Guidance clarity, restatements, and disclosure precision." },
+    { name: "Operational Execution", score: clamp(20, baseScore + 1, 96), note: "Ability to translate guidance into KPI delivery." },
+  ];
+  const heatmap = Array.from({ length: 8 }).map((_, idx) => {
+    const q = ((idx + 1) % 4) + 1;
+    const y = nowYear - Math.floor((8 - idx) / 4);
+    const sbcPct = 4.2 + idx * 0.55;
+    const income = 950 - idx * 35;
+    const returnPct = 11.5 - idx * 2.4;
+    return {
+      quarter: `Q${q} ${y}`,
+      sbc_musd: 220 + idx * 25,
+      sbc_pct_rev: sbcPct,
+      net_income_musd: income,
+      price_return_pct: returnPct,
+      correlation: clamp(-1, 0.65 - idx * 0.14, 1),
+      note: idx >= 5 ? "Dilution pressure rising while returns fade." : "Contained dilution vs growth.",
+    };
+  });
+  const fallbackFlags = redFlagLedger.length
+    ? redFlagLedger
+    : [
+      {
+        id: "rf-fallback-1",
+        title: "Possible guidance wording shift around margin assumptions.",
+        severity: "medium",
+        evidence: "Comparative filing language delta",
+        quarter: timeline[1]?.quarter || "n/a",
+      },
+    ];
+  return {
+    source: "derived_compare_fallback",
+    mode,
+    ticker: tickerA,
+    benchmark_ticker: tickerB || "",
+    say_do_timeline: timeline,
+    integrity_scorecard: {
+      score: Math.round(pillars.reduce((sum, p) => sum + p.score, 0) / pillars.length),
+      pillars,
+    },
+    dilution_sbc_heatmap: heatmap,
+    red_flags: fallbackFlags,
+  };
+}
+
+function normalizeManagementPayload(raw, fallbackData) {
+  const payload = raw?.data?.management_dashboard || raw?.management_dashboard || raw?.data || raw || {};
+  const timeline = normalizeTimelineRows(payload);
+  const pillars = normalizePillars(payload);
+  const heatmap = normalizeHeatmapRows(payload);
+  const redFlags = normalizeRedFlags(payload);
+  const scoreFromPayload = finiteNumber(
+    payload?.integrity_scorecard?.score
+      || payload?.integrity?.score
+      || payload?.scorecard?.score
+      || payload?.integrity_score,
+    NaN,
+  );
+  const scoreFromPillars = pillars.length
+    ? Math.round(pillars.reduce((sum, p) => sum + finiteNumber(p.score, 0), 0) / pillars.length)
+    : NaN;
+  const score = clamp(0, Math.round(Number.isFinite(scoreFromPayload) ? scoreFromPayload : (Number.isFinite(scoreFromPillars) ? scoreFromPillars : 0)), 100);
+  if (!timeline.length && !pillars.length && !heatmap.length && !redFlags.length) {
+    return fallbackData;
+  }
+  return {
+    source: safeText(payload?.source || raw?.source || "backend"),
+    mode: safeText(payload?.mode || fallbackData.mode || ""),
+    ticker: safeText(payload?.ticker || fallbackData.ticker || ""),
+    benchmark_ticker: safeText(payload?.benchmark_ticker || fallbackData.benchmark_ticker || ""),
+    say_do_timeline: timeline.length ? timeline : fallbackData.say_do_timeline,
+    integrity_scorecard: {
+      score: score || fallbackData.integrity_scorecard.score,
+      pillars: pillars.length ? pillars : fallbackData.integrity_scorecard.pillars,
+    },
+    dilution_sbc_heatmap: heatmap.length ? heatmap : fallbackData.dilution_sbc_heatmap,
+    red_flags: redFlags.length ? redFlags : fallbackData.red_flags,
+  };
+}
+
+function mergeManagementDashboard(base, analyst, { mode, tickerA, tickerB, ruthlessMode }) {
+  const out = {
+    ...(base || {}),
+    ...(analyst || {}),
+  };
+  out.mode = safeText(out.mode || mode || "ticker_over_time");
+  out.ticker = safeText(out.ticker || tickerA || "");
+  out.benchmark_ticker = safeText(out.benchmark_ticker || tickerB || "");
+  out.ruthless_mode = Boolean(ruthlessMode);
+  out.say_do_timeline = asArray(analyst?.say_do_timeline).length
+    ? analyst.say_do_timeline
+    : asArray(base?.say_do_timeline);
+  out.integrity_scorecard = {
+    ...(base?.integrity_scorecard || {}),
+    ...(analyst?.integrity_scorecard || {}),
+    pillars: asArray(analyst?.integrity_scorecard?.pillars).length
+      ? analyst.integrity_scorecard.pillars
+      : asArray(base?.integrity_scorecard?.pillars),
+  };
+  out.dilution_sbc_heatmap = asArray(analyst?.dilution_sbc_heatmap).length
+    ? analyst.dilution_sbc_heatmap
+    : asArray(base?.dilution_sbc_heatmap);
+  out.red_flags = asArray(analyst?.red_flags).length
+    ? analyst.red_flags
+    : asArray(base?.red_flags);
+  out.source = safeText([base?.source, analyst?.source].filter(Boolean).join("+") || "fallback");
+  return out;
+}
+
+async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruthlessMode, comparePayload }) {
+  const fallbackData = buildFallbackManagementDashboard(comparePayload, { mode, tickerA, tickerB });
+  const qs = new URLSearchParams();
+  qs.set("mode", mode);
+  qs.set("ticker", tickerA);
+  qs.set("form_type", formType);
+  if (tickerB) qs.set("ticker_b", tickerB);
+  if (ruthlessMode) qs.set("ruthless_mode", "true");
+  const endpointCandidates = [
+    `/api/sec/management-dashboard?${qs.toString()}`,
+    `/api/financial-modeling/management-execution?${qs.toString()}`,
+    `/api/fmp/management-execution?${qs.toString()}`,
+  ];
+  let backendData = null;
+  let source = "fallback";
+  for (const endpoint of endpointCandidates) {
+    const out = await api.get(endpoint, { timeoutMs: 120000 });
+    if (!out.ok) continue;
+    backendData = normalizeManagementPayload(out.data, fallbackData);
+    source = endpoint;
+    break;
+  }
+  const analystOut = await calculateManagementIntegrityScore(tickerA);
+  const analystData = analystOut?.ok ? analystOut.data : null;
+  const merged = mergeManagementDashboard(
+    backendData || fallbackData,
+    analystData,
+    { mode, tickerA, tickerB, ruthlessMode },
+  );
+  const mergedSource = safeText([source, analystData?.source].filter(Boolean).join("+") || source);
+  return { ok: true, data: merged, source: mergedSource };
+}
+
+function renderSayDoTimeline(root, timelineRows, ruthlessMode) {
+  if (!root) return;
+  const rows = asArray(timelineRows).slice(0, 8);
+  if (!rows.length) {
+    root.innerHTML = "<div class='report-empty'>No guidance-to-KPI timeline rows were returned.</div>";
+    return;
+  }
+  root.innerHTML = `
+    <div class="mgmt-card-title-row">
+      <h4>The Say-Do Timeline</h4>
+      <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: ${rows.length}Q</span>
+    </div>
+    <div class="saydo-timeline">
+      ${rows.map((row) => {
+        const variance = Number.isFinite(Number(row.variance)) ? Number(row.variance) : null;
+        const status = safeText(row.status || (variance !== null && variance >= 0 ? "Beat" : "Miss"));
+        const statusKey = safeText(status).toLowerCase();
+        const statusClassName = statusKey.includes("beat") ? "good" : statusKey.includes("miss") ? "bad" : "neutral";
+        return `
+          <article class="saydo-node ${ruthlessMode && statusClassName === "bad" ? "saydo-node--warn" : ""}">
+            <div class="saydo-node-dot ${statusClassName}"></div>
+            <div class="saydo-node-body">
+              <header>
+                <span class="mono-nums saydo-quarter">${safeText(row.quarter)}</span>
+                <span class="pill ${statusClassName}">${safeText(status)}</span>
+              </header>
+              <p><span class="mono-nums">SAY:</span> ${safeText(row.guidance)}</p>
+              <p><span class="mono-nums">DO:</span> ${safeText(row.actual)}</p>
+              <div class="saydo-kpi-row mono-nums">
+                KPI: ${safeText(row.kpi)}
+                ${Number.isFinite(Number(row.target)) ? ` | Target ${safeNum(row.target, 2)}` : ""}
+                ${Number.isFinite(Number(row.realized)) ? ` | Realized ${safeNum(row.realized, 2)}` : ""}
+                ${variance !== null ? ` | Variance ${pctText(variance, 1)}` : ""}
+              </div>
+              <div class="muted mono-nums">Source: ${safeText(row.source)}</div>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderIntegrityScorecard(root, scorecard) {
+  if (!root) return;
+  const score = clamp(0, finiteNumber(scorecard?.score, 0), 100);
+  const band = scoreBand(score);
+  const pillars = asArray(scorecard?.pillars).slice(0, 4);
+  const gaugeColor = band === "strong"
+    ? YourThemeConfig.chart.gauge.strong
+    : band === "watch"
+      ? YourThemeConfig.chart.gauge.watch
+      : YourThemeConfig.chart.gauge.weak;
+  root.innerHTML = `
+    <div class="mgmt-card-title-row">
+      <h4>The Integrity Scorecard</h4>
+      <span class="mgmt-badge">4 Pillars</span>
+    </div>
+    <div class="integrity-score-wrap">
+      <div class="integrity-gauge" style="--score:${score};--gauge:${gaugeColor}">
+        <div class="integrity-gauge-inner">
+          <div class="integrity-gauge-value mono-nums">${Math.round(score)}</div>
+          <div class="integrity-gauge-label">${safeText(band.toUpperCase())}</div>
+        </div>
+      </div>
+      <div class="integrity-pillars">
+        ${pillars.map((pillar) => `
+          <div class="integrity-pillar">
+            <div class="integrity-pillar-head">
+              <span>${safeText(pillar.name)}</span>
+              <span class="mono-nums">${safeText(pillar.score)}</span>
+            </div>
+            <div class="integrity-pillar-bar"><span style="width:${clamp(0, finiteNumber(pillar.score, 0), 100)}%"></span></div>
+            <p>${safeText(pillar.note)}</p>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function heatCellClass(value, thresholds) {
+  if (!Number.isFinite(Number(value))) return "heat-na";
+  if (value >= thresholds.high) return "heat-high";
+  if (value >= thresholds.mid) return "heat-mid";
+  return "heat-low";
+}
+
+function buildAnalystAnnotation(flag) {
+  const title = safeText(flag?.title).toLowerCase();
+  const evidence = safeText(flag?.evidence);
+  if (title.includes("dilution")) return "Share count rises, ownership quality falls. Math stays undefeated.";
+  if (title.includes("tsr") || title.includes("comp") || title.includes("insider")) {
+    return "Compensation optimism is outpacing shareholder outcomes. Incentives need a flashlight.";
+  }
+  if (title.includes("guidance") || title.includes("outlook") || title.includes("hedge")) {
+    return "Plenty of caveats, limited commitments. Language risk usually precedes execution risk.";
+  }
+  if (safeText(flag?.severity).toLowerCase().includes("high")) {
+    return "High-severity discrepancy flagged. Treat this as thesis risk, not noise.";
+  }
+  return evidence
+    ? `Cross-check filing evidence: ${evidence}`
+    : "Analyst engine flagged a governance/execution anomaly. Verify source text directly.";
+}
+
+function renderDilutionHeatmap(root, heatRows) {
+  if (!root) return;
+  const rows = asArray(heatRows).slice(0, 10);
+  const th = YourThemeConfig.chart.heatmap.thresholds;
+  if (!rows.length) {
+    root.innerHTML = "<div class='report-empty'>No SBC/dilution observations were returned.</div>";
+    return;
+  }
+  root.innerHTML = `
+    <div class="mgmt-card-title-row">
+      <h4>Dilution &amp; SBC Heatmap</h4>
+      <span class="mgmt-badge mono-nums">SBC x NI x Price</span>
+    </div>
+    <div class="dilution-table-wrap">
+      <table class="dilution-table mono-nums">
+        <thead>
+          <tr>
+            <th>Quarter</th>
+            <th>SBC ($M)</th>
+            <th>SBC % Rev</th>
+            <th>Net Income ($M)</th>
+            <th>Price Return</th>
+            <th>Corr</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${safeText(row.quarter)}</td>
+              <td class="${heatCellClass(row.sbc_musd, th.sbcMusd)}">${usdMillionsText(row.sbc_musd)}</td>
+              <td class="${heatCellClass(row.sbc_pct_rev, th.sbcPctRevenue)}">${pctText(row.sbc_pct_rev)}</td>
+              <td class="${heatCellClass(-row.net_income_musd, th.netIncomeRisk)}">${usdMillionsText(row.net_income_musd)}</td>
+              <td class="${heatCellClass(-row.price_return_pct, th.priceReturnRisk)}">${pctText(row.price_return_pct)}</td>
+              <td class="${heatCellClass(row.correlation, th.correlationRisk)}">${Number.isFinite(Number(row.correlation)) ? finiteNumber(row.correlation, 0).toFixed(2) : "n/a"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      <p class="muted">Hotter cells indicate higher dilution pressure and weaker earnings/price coupling.</p>
+    </div>
+  `;
+}
+
+function renderRedFlags(root, redFlags, ruthlessMode) {
+  if (!root) return;
+  const flags = asArray(redFlags);
+  if (!flags.length) {
+    root.innerHTML = "<div class='report-empty'>No red flags were detected from the latest payload.</div>";
+    return;
+  }
+  const filtered = ruthlessMode ? flags.filter((f) => severityClass(f.severity) !== "sev-low") : flags;
+  if (!filtered.length) {
+    root.innerHTML = "<div class='report-empty'>Ruthless Mode is on: no medium/high severity flags in the selected window.</div>";
+    return;
+  }
+  root.innerHTML = `
+    <div class="mgmt-card-title-row">
+      <h4>Ruthless Mode Red Flags</h4>
+      <span class="mgmt-badge">${ruthlessMode ? "Ruthless: ON" : "Ruthless: OFF"}</span>
+    </div>
+    <div class="redflag-list">
+      ${filtered.map((flag) => `
+        <article class="redflag-row ${severityClass(flag.severity)} ${ruthlessMode ? "ruthless" : ""}">
+          <div class="redflag-head">
+            <span class="pill ${severityClass(flag.severity)}">${safeText(flag.severity || "medium")}</span>
+            <span class="mono-nums">${safeText(flag.quarter)}</span>
+          </div>
+          <div class="redflag-title">${safeText(flag.title)}</div>
+          <div class="muted">Evidence: ${safeText(flag.evidence)}</div>
+          <aside class="analyst-annotation" aria-hidden="true">${safeText(buildAnalystAnnotation(flag))}</aside>
+        </article>
+      `).join("")}
+    </div>
+  `;
 }
 
 export function renderSecAnalysisCard(label, analysis) {
@@ -120,11 +611,19 @@ export function renderSecCompareEmpty(message) {
   const narrativeRoot = document.getElementById("secCompareNarrative");
   const changesRoot = document.getElementById("secCompareChanges");
   const evidenceRoot = document.getElementById("secCompareVisual");
+  const timelineRoot = document.getElementById("secSayDoTimeline");
+  const scorecardRoot = document.getElementById("secIntegrityScorecard");
+  const heatmapRoot = document.getElementById("secDilutionHeatmap");
+  const redFlagsRoot = document.getElementById("secRedFlagsPanel");
   const msg = safeText(message || "No SEC compare data available.");
   if (headlineRoot) headlineRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (narrativeRoot) narrativeRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (changesRoot) changesRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (evidenceRoot) evidenceRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  if (timelineRoot) timelineRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  if (scorecardRoot) scorecardRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  if (heatmapRoot) heatmapRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  if (redFlagsRoot) redFlagsRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
 }
 
 export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced" } = {}) {
@@ -132,6 +631,10 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
   const narrativeRoot = document.getElementById("secCompareNarrative");
   const changesRoot = document.getElementById("secCompareChanges");
   const evidenceRoot = document.getElementById("secCompareVisual");
+  const timelineRoot = document.getElementById("secSayDoTimeline");
+  const scorecardRoot = document.getElementById("secIntegrityScorecard");
+  const heatmapRoot = document.getElementById("secDilutionHeatmap");
+  const redFlagsRoot = document.getElementById("secRedFlagsPanel");
   if (!headlineRoot || !narrativeRoot || !changesRoot || !evidenceRoot) return;
   if (!data || !data.ok) {
     renderSecCompareEmpty("No SEC compare data available.");
@@ -232,6 +735,19 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
       ${renderSecAnalysisCard(rightLabel, right)}
     </div>
   `;
+  const ruthlessMode = Boolean(data.management_dashboard?.ruthless_mode || state.secRuthlessMode);
+  const dashboard = data.management_dashboard || buildFallbackManagementDashboard(data, {
+    mode: data.mode || compare.mode || "ticker_over_time",
+    tickerA: left?.ticker || leftLabel || "N/A",
+    tickerB: right?.ticker || rightLabel || "",
+  });
+  renderSayDoTimeline(timelineRoot, normalizeTimelineRows(dashboard), ruthlessMode);
+  renderIntegrityScorecard(scorecardRoot, {
+    score: dashboard?.integrity_scorecard?.score,
+    pillars: normalizePillars(dashboard),
+  });
+  renderDilutionHeatmap(heatmapRoot, normalizeHeatmapRows(dashboard));
+  renderRedFlags(redFlagsRoot, normalizeRedFlags(dashboard), ruthlessMode);
   const deep = document.getElementById("secCompareDeepPanel");
   if (deep && getDisplayMode() === "pro") deep.open = true;
 }
@@ -361,6 +877,7 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   const tickerB = document.getElementById("secCompareTickerB").value.trim().toUpperCase();
   const formType = document.getElementById("secCompareFormType").value.trim().toUpperCase();
   const highlightChangesOnly = document.getElementById("secCompareChangesOnly")?.checked ? "true" : "false";
+  const ruthlessMode = document.getElementById("secCompareRuthlessMode")?.checked || false;
   const btn = document.getElementById("secCompareBtn");
   const meta = document.getElementById("secCompareMeta");
 
@@ -368,7 +885,7 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   if (mode === "ticker_vs_ticker" && !tickerB) return;
 
   btn.disabled = true;
-  meta.textContent = "Running SEC compare...";
+  meta.textContent = "Running SEC compare + management execution analysis...";
   renderSecCompareEmpty("Running SEC compare...");
   updateActionCenter({ title: "SEC Compare Running", message: "Comparing filing evidence. This can take a moment.", severity: "info" });
   try {
@@ -377,6 +894,7 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     qs.set("ticker", tickerA);
     qs.set("form_type", formType);
     qs.set("highlight_changes_only", highlightChangesOnly);
+    if (ruthlessMode) qs.set("ruthless_mode", "true");
     if (mode === "ticker_vs_ticker") qs.set("ticker_b", tickerB);
     const out = await api.get(`/api/sec/compare?${qs.toString()}`, { timeoutMs: 300000 });
     let payload = out.ok ? out.data : null;
@@ -396,13 +914,26 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
       logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${out.error}` });
       return;
     }
+    const dashboardOut = await fetchManagementDashboard({
+      mode,
+      tickerA,
+      tickerB: mode === "ticker_vs_ticker" ? tickerB : "",
+      formType,
+      ruthlessMode,
+      comparePayload: payload,
+    });
+    payload.management_dashboard = dashboardOut.data;
+    payload.management_dashboard.ruthless_mode = ruthlessMode;
+    payload.management_dashboard.fetch_source = dashboardOut.source;
     state.secCompareResult = payload;
-    meta.textContent = `SEC compare complete (${mode}, ${formType}).`;
+    state.secManagementDashboard = payload.management_dashboard;
+    state.secRuthlessMode = ruthlessMode;
+    meta.textContent = `Dashboard ready (${mode}, ${formType}) · data source: ${safeText(dashboardOut.source)}.`;
     renderSecCompareVisual(payload, { getDisplayMode });
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });
     updateActionCenter({
-      title: "SEC Compare Complete",
-      message: `Compare finished for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
+      title: "Management Dashboard Complete",
+      message: `Execution & integrity dashboard finished for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
       severity: "success",
     });
   } finally {

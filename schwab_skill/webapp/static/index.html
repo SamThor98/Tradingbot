@@ -13,6 +13,7 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"
             integrity="sha384-JZigAjwiaZtkUbA44CWkPaT3iBb/mU5pO6QOANp+OqHd4q+1+7MG1kzp2OOP9ZfP"
@@ -32,14 +33,14 @@
           <p class="eyebrow">Operations-first Trading Workflow</p>
           <h1>TradingBot</h1>
           <p class="muted hero-lead">
-            Run <strong>Scan</strong>, inspect each ticker, then stage and approve from <strong>Trade Queue</strong>.
-            Manage connectivity, account controls, and API access in <a href="#onboardingSection">Settings</a>.
+            Run <strong>Scan</strong>, inspect candidates with chart + score context, then stage and approve from
+            <strong>Trade Queue</strong>. Keep diagnostics and account controls reachable but out of the way.
           </p>
           <div class="hero-actions">
             <button id="refreshBtn" class="btn secondary">Refresh All</button>
             <button id="scanBtn" class="btn primary">Run Scan</button>
             <a class="btn secondary" href="#toolsSection">Open Research</a>
-            <a class="btn secondary" href="#onboardingSection">Open Settings</a>
+            <a class="btn secondary" href="#settingsWorkspaceIntro">Open Settings</a>
             <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
               <span id="notifBadge" class="notif-badge hidden">0</span>
@@ -198,37 +199,62 @@
       </section>
       </div>
 
-      <nav class="section-nav card" aria-label="Screen and section navigation">
-        <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
-          <button type="button" class="screen-switch-btn" data-screen-mode="operations" aria-selected="true">Operations</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="diagnostics" aria-selected="false">Diagnostics</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="settings" aria-selected="false">Settings</button>
-        </div>
-        <a href="#workflowPrimary" data-nav-screens="operations">Scan flow</a>
-        <a href="#pendingSection" data-nav-screens="operations">Trade queue</a>
-        <a href="#toolsSection" class="nav-advanced" data-nav-screens="research">Research tools</a>
-        <a href="#backtestSection" data-nav-screens="research">Backtests</a>
-        <a href="#statusDetailsPanel" data-nav-screens="diagnostics">System status</a>
-        <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
-        <a href="#onboardingSection" data-nav-screens="settings">Connections</a>
-        <a href="#settingsSection" data-nav-screens="settings">Settings</a>
-      </nav>
+      <section class="app-rail" aria-label="Workflow context and navigation">
+        <nav class="section-nav card" aria-label="Screen and section navigation">
+          <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
+            <button type="button" class="screen-switch-btn" data-screen-mode="operations" aria-selected="true">Operations</button>
+            <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
+            <button type="button" class="screen-switch-btn" data-screen-mode="diagnostics" aria-selected="false">Diagnostics</button>
+            <button type="button" class="screen-switch-btn" data-screen-mode="settings" aria-selected="false">Settings</button>
+          </div>
+          <a href="#workflowPrimary" data-nav-screens="operations">Run scans</a>
+          <a href="#scanSection" data-nav-screens="operations">Review candidates</a>
+          <a href="#pendingSection" data-nav-screens="operations">Approve/execute</a>
+          <a href="#researchWorkspaceIntro" class="nav-advanced" data-nav-screens="research">Research hub</a>
+          <a href="#backtestSection" data-nav-screens="research">Backtests + chat</a>
+          <a href="#reportSectionCard" data-nav-screens="research">Full report + SEC compare</a>
+          <a href="#diagnosticsWorkspaceIntro" data-nav-screens="diagnostics">Validation + health</a>
+          <a href="#statusDetailsPanel" data-nav-screens="diagnostics">System status</a>
+          <a href="#settingsWorkspaceIntro" data-nav-screens="settings">Connections + controls</a>
+          <a href="#settingsSection" data-nav-screens="settings">Profile + live trading</a>
+        </nav>
 
-      <section id="screenContextCard" class="card screen-context" aria-live="polite">
-        <div class="screen-context-copy">
-          <strong id="screenContextTitle">Operations workflow</strong>
-          <p id="screenContextText" class="muted">Run scans, review candidates, and execute from the trade queue.</p>
-          <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
-        </div>
-        <div class="screen-context-actions">
-          <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
-          <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
-        </div>
+        <section id="screenContextCard" class="card screen-context" aria-live="polite">
+          <div class="screen-context-copy">
+            <strong id="screenContextTitle">Operations workflow</strong>
+            <p id="screenContextText" class="muted">Run scans, review candidates, and execute from the trade queue.</p>
+            <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
+          </div>
+          <div class="screen-context-actions">
+            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
+            <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
+          </div>
+        </section>
+
+        <section class="card rail-quick-actions operations-surface" aria-label="Core trading actions">
+          <strong>Core workflow</strong>
+          <p class="muted">Keep the daily loop tight: scan, decide, queue, approve.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#scanSection">1) Scan</a>
+            <a class="btn small secondary" href="#scanDetailPanel">2) Evaluate</a>
+            <a class="btn small secondary" href="#pendingSection">3) Approve</a>
+          </div>
+        </section>
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan, evaluate, and queue trades</h2>
+        <div class="workflow-toolbar operations-surface" aria-label="Primary operations actions">
+          <div class="workflow-toolbar-copy">
+            <strong>Daily execution loop</strong>
+            <p class="muted">From landing, reach scan, candidate context, and approvals in one move.</p>
+          </div>
+          <div class="inline-form compact">
+            <button class="btn secondary" type="button" id="workflowRefreshBtn" data-forward-click="refreshBtn">Refresh</button>
+            <button class="btn primary" type="button" id="workflowRunScanBtn" data-forward-click="scanBtn">Run scan</button>
+            <a class="btn secondary" href="#pendingSection">Open approvals</a>
+          </div>
+        </div>
         <div class="layout-2 layout-workflow">
         <article id="scanSection" class="card card--primary-task">
           <div class="section-title">
@@ -414,6 +440,18 @@
         </div>
       </section>
 
+      <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced" aria-label="Research workspace">
+        <div>
+          <p class="workspace-eyebrow">Research</p>
+          <h2>Investigate candidates and refine conviction</h2>
+          <p class="muted">Single-ticker checks, backtests, SEC compare, full reports, and strategy chat live here.</p>
+        </div>
+        <div class="inline-form compact">
+          <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
+          <a class="btn small secondary" href="#backtestSection">Backtest</a>
+          <a class="btn small secondary" href="#reportSectionCard">Full report</a>
+        </div>
+      </section>
       <div class="layout-2 layout-quick-tools">
         <article id="quickCheckSection" class="card card--primary-task section-advanced">
           <div class="section-title">
@@ -471,6 +509,17 @@
         </section>
       </div>
 
+      <section id="settingsWorkspaceIntro" class="card workspace-intro" aria-label="Settings workspace">
+        <div>
+          <p class="workspace-eyebrow">Settings</p>
+          <h2>Configure connectivity and account controls</h2>
+          <p class="muted">Onboarding, profile presets, live-trading safety controls, 2FA, and billing.</p>
+        </div>
+        <div class="inline-form compact">
+          <a class="btn small secondary" href="#onboardingSection">Connections</a>
+          <a class="btn small secondary" href="#settingsSection">Trading controls</a>
+        </div>
+      </section>
       <section class="layout-2 layout-onboarding-presets">
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
@@ -658,6 +707,17 @@
         </article>
       </section>
 
+      <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
+        <div>
+          <p class="workspace-eyebrow">Diagnostics</p>
+          <h2>Trust signals, validation, and system health</h2>
+          <p class="muted">Use this view to debug API/session state without interrupting trade execution flow.</p>
+        </div>
+        <div class="inline-form compact">
+          <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
+          <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
+        </div>
+      </section>
       <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced status-details-wrap">
         <summary class="panel-disclosure-summary">
           Detailed system status
@@ -1003,8 +1063,8 @@
 
         <article id="secCompareSection" class="card">
           <div class="section-title">
-            <h3>SEC Filing Compare</h3>
-            <small class="muted">High-level compare and contrast from filings</small>
+            <h3>Management Execution &amp; Integrity Dashboard</h3>
+            <small class="muted">SEC guidance tracking, execution integrity, and dilution risk map</small>
           </div>
           <div class="inline-form">
             <label class="field-label" for="secCompareMode">Mode</label>
@@ -1026,6 +1086,10 @@
               <input id="secCompareChangesOnly" type="checkbox" />
               Highlight Changes Only
             </label>
+            <label class="muted">
+              <input id="secCompareRuthlessMode" type="checkbox" />
+              Ruthless Mode
+            </label>
             <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
           </div>
           <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
@@ -1035,23 +1099,36 @@
             <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
           </div>
           <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
-          <div id="secCompareHeadline" class="compare-headline">
-            <div class="report-empty">Run SEC compare to generate a headline verdict.</div>
+          <div id="secCompareDashboard" class="mgmt-dashboard">
+            <section id="secSayDoTimeline" class="mgmt-card compare-headline rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
+              <div class="mgmt-card-title-row">
+                <h4 class="font-semibold tracking-wide text-slate-100">The Say-Do Timeline</h4>
+                <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: Last 8Q</span>
+              </div>
+              <div class="report-empty">Run SEC compare to generate management guidance vs realized KPI checkpoints.</div>
+            </section>
+            <section id="secIntegrityScorecard" class="mgmt-card compare-narrative rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
+              <h4 class="font-semibold tracking-wide text-slate-100">The Integrity Scorecard</h4>
+              <div class="report-empty">Integrity pillar scoring will appear here.</div>
+            </section>
+            <section id="secDilutionHeatmap" class="mgmt-card compare-changes rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/10 backdrop-blur-md">
+              <h4 class="font-semibold tracking-wide text-slate-100">Dilution &amp; SBC Heatmap</h4>
+              <div class="report-empty">Dilution pressure and price/earnings performance correlation will appear here.</div>
+            </section>
+            <section id="secRedFlagsPanel" class="mgmt-card compare-narrative rounded-xl border border-rose-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/20 backdrop-blur-md">
+              <h4 class="font-semibold tracking-wide text-slate-100">Ruthless Mode Red Flags</h4>
+              <div class="report-empty">Enable Ruthless Mode to surface filing anomalies and governance alerts.</div>
+            </section>
           </div>
           <details id="secCompareDeepPanel" class="panel-disclosure panel-disclosure--advanced">
             <summary class="panel-disclosure-summary">
-              Narrative, material changes &amp; evidence
+              Underlying SEC compare narrative &amp; evidence
               <span class="disclosure-hint muted">expand for full compare output</span>
             </summary>
-            <div id="secCompareNarrative" class="compare-narrative">
-              <div class="report-empty">Narrative summary will appear here.</div>
-            </div>
-            <div id="secCompareChanges" class="compare-changes">
-              <div class="report-empty">Material changes and shared signals will appear here.</div>
-            </div>
-            <div id="secCompareVisual" class="report-visual">
-              <div class="report-empty">Side-by-side evidence cards will appear here.</div>
-            </div>
+            <div id="secCompareHeadline" class="compare-headline"><div class="report-empty">Headline verdict appears here.</div></div>
+            <div id="secCompareNarrative" class="compare-narrative"><div class="report-empty">Narrative summary will appear here.</div></div>
+            <div id="secCompareChanges" class="compare-changes"><div class="report-empty">Material changes and shared signals will appear here.</div></div>
+            <div id="secCompareVisual" class="report-visual"><div class="report-empty">Side-by-side evidence cards will appear here.</div></div>
           </details>
         </article>
         <article id="activitySection" class="card">
@@ -1142,13 +1219,18 @@
         <input id="approveTickerInput" type="text" autocomplete="off" placeholder="e.g. AAPL" />
         <label class="field-label" for="approveOtpInput">2FA code (required for high-value approvals)</label>
         <input id="approveOtpInput" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" />
+        <label class="muted approve-risk-ack">
+          <input id="approveRiskAck" type="checkbox" />
+          I confirm I reviewed ticker, size, and this is a live market order.
+        </label>
+        <p id="approveConfirmHint" class="approve-confirm-hint warn">Type the ticker and confirm risk to enable live submit.</p>
         <p class="warn-text">
           This sends a live market order through Schwab. You alone decide whether the order is suitable; nothing here is
           personalized investment advice.
         </p>
         <div class="modal-actions">
           <button id="cancelApproveBtn" class="btn secondary" value="cancel">Cancel</button>
-          <button id="confirmApproveBtn" class="btn good" value="default">Confirm Approve</button>
+          <button id="confirmApproveBtn" class="btn good" value="default" disabled>Confirm Approve</button>
         </div>
       </form>
     </dialog>

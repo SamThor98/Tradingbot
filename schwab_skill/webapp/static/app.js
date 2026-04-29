@@ -212,24 +212,24 @@ const SCREEN_CONTEXT = Object.freeze({
   research: {
     title: "Research workflows",
     text: "Investigate symbols with reports, SEC compare, backtests, and strategy chat.",
-    ctaLabel: "Open research tools",
-    ctaHref: "#toolsSection",
+    ctaLabel: "Open research hub",
+    ctaHref: "#researchWorkspaceIntro",
     altCtaLabel: "Open backtests",
     altCtaHref: "#backtestSection",
   },
   diagnostics: {
     title: "Diagnostics and health",
     text: "Inspect tokens, validation status, and system telemetry without cluttering trading flow.",
-    ctaLabel: "Open system status",
-    ctaHref: "#statusDetailsPanel",
+    ctaLabel: "Open diagnostics hub",
+    ctaHref: "#diagnosticsWorkspaceIntro",
     altCtaLabel: "Open health ribbon",
     altCtaHref: "#healthRibbon",
   },
   settings: {
     title: "Settings and connections",
-    text: "Manage Schwab connectivity, presets, automation controls, and account-level options.",
-    ctaLabel: "Open connections",
-    ctaHref: "#onboardingSection",
+    text: "Manage Schwab connectivity, presets, live trading controls, 2FA, and billing options.",
+    ctaLabel: "Open settings hub",
+    ctaHref: "#settingsWorkspaceIntro",
     altCtaLabel: "Open presets",
     altCtaHref: "#settingsSection",
   },
@@ -238,6 +238,7 @@ const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
 const SCREEN_SECTIONS = Object.freeze({
   operations: ["dashboardToday", "workflowPrimary", "pendingSection"],
   research: [
+    "researchWorkspaceIntro",
     "quickCheckSection",
     "toolsSection",
     "decisionSection",
@@ -251,8 +252,8 @@ const SCREEN_SECTIONS = Object.freeze({
     "sectorsSection",
     "performanceSection",
   ],
-  diagnostics: ["healthRibbon", "blockersAlertSection", "statusDetailsPanel", "calibrationSection"],
-  settings: ["onboardingSection", "settingsSection"],
+  diagnostics: ["diagnosticsWorkspaceIntro", "healthRibbon", "blockersAlertSection", "statusDetailsPanel", "calibrationSection"],
+  settings: ["settingsWorkspaceIntro", "onboardingSection", "settingsSection"],
 });
 const SECTION_TO_SCREEN = Object.freeze(
   Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
@@ -1201,6 +1202,7 @@ async function renderScanDetail(sig) {
   const row = normalizeScanSignal(sig || {});
   const ticker = safeText(row.ticker || row.symbol || "");
   state.selectedScanTicker = ticker;
+  highlightSelectedScanRow(ticker);
   const advisory = row.advisory || {};
   const score = optionalNum(row.signal_score ?? row.score);
   const conviction = optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
@@ -1221,6 +1223,16 @@ async function renderScanDetail(sig) {
   setText("scanDetailConviction", conviction === null ? "—" : formatDecimal(conviction, 1));
   setText("scanDetailSector", safeText(row.sector_etf || "—"));
   await renderScanDetailChart(ticker);
+}
+
+function highlightSelectedScanRow(ticker) {
+  const body = document.getElementById("scanTableBody");
+  if (!body) return;
+  const selected = safeText(ticker).toUpperCase();
+  body.querySelectorAll("tr[data-scan-ticker]").forEach((tr) => {
+    const rowTicker = safeText(tr.getAttribute("data-scan-ticker")).toUpperCase();
+    tr.classList.toggle("is-active", Boolean(selected) && rowTicker === selected);
+  });
 }
 
 function renderScanRows(signals = []) {
@@ -1266,6 +1278,7 @@ function renderScanRows(signals = []) {
     if (conf !== "—") confCount += 1;
     if (conviction !== null) convictionCount += 1;
     const tr = document.createElement("tr");
+    tr.setAttribute("data-scan-ticker", ticker);
     tr.innerHTML = `
       <td><strong>${safeText(ticker)}</strong></td>
       <td>${flaggedDays || "—"}</td>
@@ -1345,9 +1358,25 @@ function renderPendingContext(row) {
   const score = sig.signal_score ?? sig.score;
   const sector = sig.sector_etf;
   const conviction = sig.mirofish_conviction;
+  const advisory = sig.advisory || {};
+  const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? sig.p_up_10d ?? sig.advisory_p_up);
+  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
   return `score: ${score !== undefined ? safeNum(score).toFixed(0) : "—"}<br/>
     sector: ${safeText(sector || "—")}<br/>
+    confidence: ${safeText(confidence || "—")} · P(up 10d): ${pUp === null ? "—" : pct(pUp, 1)}<br/>
     conviction: ${conviction !== undefined ? safeText(conviction) : "—"}`;
+}
+
+function getPendingRiskProfile(row) {
+  const sig = row?.signal || {};
+  const score = safeNum(sig.signal_score ?? sig.score, 0);
+  const advisory = sig.advisory || {};
+  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
+  const hasSector = Boolean(safeText(sig.sector_etf || "").trim());
+  const lowConfidence = ["low", "unknown", "—"].includes(String(confidence || "—").toLowerCase());
+  if (!hasSector || score < 60 || lowConfidence) return { label: "Requires extra review", severity: "high" };
+  if (score < 72) return { label: "Moderate confidence", severity: "medium" };
+  return { label: "Ready to review", severity: "low" };
 }
 
 function renderTimeline(row) {
@@ -1388,6 +1417,8 @@ async function openApproveDialog(row) {
   const summary = document.getElementById("approveSummary");
   const est = safeNum(row.price, 0) * safeNum(row.qty, 0);
   const sig = row.signal || {};
+  const expectedTicker = safeText(row.ticker).toUpperCase();
+  state.approvingExpectedTicker = expectedTicker;
   const riskHint = (!sig.sector_etf || safeNum(sig.signal_score, 0) < 60)
     ? "Caution: missing sector or lower-confidence setup."
     : "Setup context looks complete.";
@@ -1412,13 +1443,41 @@ async function openApproveDialog(row) {
   `;
   const tickerInput = document.getElementById("approveTickerInput");
   const otpInput = document.getElementById("approveOtpInput");
+  const riskAck = document.getElementById("approveRiskAck");
   if (tickerInput) {
     tickerInput.value = "";
-    tickerInput.placeholder = String(row.ticker || "TICKER");
+    tickerInput.placeholder = expectedTicker || "TICKER";
   }
   if (otpInput) otpInput.value = "";
+  if (riskAck) riskAck.checked = false;
   state.approvingTradeId = row.id;
+  syncApproveDialogGuardrails();
   dialog.showModal();
+}
+
+function syncApproveDialogGuardrails() {
+  const typed = (document.getElementById("approveTickerInput")?.value || "").trim().toUpperCase();
+  const expected = safeText(state.approvingExpectedTicker || "").toUpperCase();
+  const ack = Boolean(document.getElementById("approveRiskAck")?.checked);
+  const hint = document.getElementById("approveConfirmHint");
+  const btn = document.getElementById("confirmApproveBtn");
+  const tickerMatch = expected && typed === expected;
+  const canSubmit = Boolean(state.approvingTradeId) && tickerMatch && ack;
+  if (btn) btn.disabled = !canSubmit;
+  if (hint) {
+    if (!typed) {
+      hint.textContent = expected
+        ? `Type ${expected} and confirm risk to enable live submit.`
+        : "Type the ticker and confirm risk to enable live submit.";
+    } else if (!tickerMatch) {
+      hint.textContent = `Ticker mismatch. Enter ${expected} exactly.`;
+    } else if (!ack) {
+      hint.textContent = "Confirm the risk acknowledgement to enable submit.";
+    } else {
+      hint.textContent = "Ready to submit this live order.";
+    }
+    hint.className = `approve-confirm-hint ${canSubmit ? "good" : "warn"}`;
+  }
 }
 
 function applySchwabConnectButtonVisibility() {
@@ -2512,14 +2571,18 @@ async function refreshPending() {
         ? "Live trading is off — enable in Strategy Presets after reviewing risk."
         : "";
       const card = document.createElement("article");
-      card.className = "task-card";
+      const risk = getPendingRiskProfile(row);
+      card.className = `task-card task-card--risk-${risk.severity}`;
       card.innerHTML = `
         <div class="task-card-head">
           <div>
             <strong>${safeText(row.ticker)}</strong>
             <span class="muted">#${safeText(row.id)} • Qty ${safeText(row.qty)}</span>
           </div>
-          <span class="${statusClass(row.status)}">${safeText(row.status)}</span>
+          <div class="task-card-badges">
+            <span class="risk-chip ${risk.severity}">${safeText(risk.label)}</span>
+            <span class="${statusClass(row.status)}">${safeText(row.status)}</span>
+          </div>
         </div>
         <div class="task-meters">
           <div>
@@ -2606,20 +2669,39 @@ async function refreshPending() {
 }
 
 async function approveTradeById(id) {
-  const typed = document.getElementById("approveTickerInput")?.value?.trim() || "";
+  const typed = document.getElementById("approveTickerInput")?.value?.trim().toUpperCase() || "";
   const otpCode = document.getElementById("approveOtpInput")?.value?.trim() || "";
+  const expected = safeText(state.approvingExpectedTicker || "").toUpperCase();
+  const ack = Boolean(document.getElementById("approveRiskAck")?.checked);
   if (!typed) {
     updateActionCenter({
       title: "Confirm ticker",
       message: "Type the trade ticker in the box to confirm this live order.",
       severity: "warn",
     });
-    return;
+    return false;
+  }
+  if (expected && typed !== expected) {
+    updateActionCenter({
+      title: "Ticker mismatch",
+      message: `Enter ${expected} exactly before approving this live order.`,
+      severity: "warn",
+    });
+    return false;
+  }
+  if (!ack) {
+    updateActionCenter({
+      title: "Risk acknowledgement required",
+      message: "Confirm the risk acknowledgement before submitting a live order.",
+      severity: "warn",
+    });
+    return false;
   }
   const out = await api.post(`/api/trades/${id}/approve?confirm_live=true`, { typed_ticker: typed, otp_code: otpCode });
   if (!out.ok) {
     logEvent({ kind: "trade", severity: "error", message: `Approve ${id} failed: ${out.error}` });
     updateActionCenter({ title: "Approval Failed", message: out.error, severity: "error" });
+    return false;
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Approved ${id}: order submitted.` });
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_APPROVED_TRADE, {
@@ -2627,8 +2709,9 @@ async function approveTradeById(id) {
       trade_id: id,
     });
     updateActionCenter({ title: "Trade Approved", message: `Trade ${id} approved and submitted.`, severity: "success" });
+    await refreshPending();
+    return true;
   }
-  await refreshPending();
 }
 
 function openQueueScanDialog(sig) {
@@ -2826,6 +2909,13 @@ function wireEvents() {
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   bindEvent("scanBtn", "click", runScan);
+  document.querySelectorAll("[data-forward-click]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetId = safeText(btn.getAttribute("data-forward-click"));
+      if (!targetId) return;
+      document.getElementById(targetId)?.click();
+    });
+  });
   document.getElementById("scanApplyBacktestSpecBtn")?.addEventListener("click", () => void fillScanOptionsFromLatestBacktest());
   document.getElementById("scanClearOptionsBtn")?.addEventListener("click", () => {
     const ta = document.getElementById("scanOptionsJson");
@@ -2928,6 +3018,10 @@ function wireEvents() {
   bindEvent("reportBtn", "click", runReport);
   bindEvent("secCompareBtn", "click", runSecCompare);
   bindEvent("secCompareMode", "change", applySecCompareMode);
+  bindEvent("secCompareRuthlessMode", "change", () => {
+    state.secRuthlessMode = Boolean(document.getElementById("secCompareRuthlessMode")?.checked);
+    if (state.secCompareResult) renderSecCompareVisual(state.secCompareResult);
+  });
   document.querySelectorAll("#secComparePresetButtons button[data-a]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const node = e.currentTarget;
@@ -3006,15 +3100,29 @@ function wireEvents() {
     }
     const confirmBtn = document.getElementById("confirmApproveBtn");
     if (confirmBtn) confirmBtn.disabled = true;
-    await approveTradeById(id);
-    if (confirmBtn) confirmBtn.disabled = false;
-    state.approvingTradeId = null;
-    dialog?.close();
+    const approved = await approveTradeById(id);
+    syncApproveDialogGuardrails();
+    if (!approved && confirmBtn) confirmBtn.disabled = false;
+    if (approved) {
+      state.approvingTradeId = null;
+      state.approvingExpectedTicker = "";
+      dialog?.close();
+    }
   });
   bindEvent("cancelApproveBtn", "click", () => {
     state.approvingTradeId = null;
+    state.approvingExpectedTicker = "";
     dialog?.close();
   });
+  dialog?.addEventListener("close", () => {
+    state.approvingTradeId = null;
+    state.approvingExpectedTicker = "";
+    const riskAck = document.getElementById("approveRiskAck");
+    if (riskAck) riskAck.checked = false;
+    syncApproveDialogGuardrails();
+  });
+  document.getElementById("approveTickerInput")?.addEventListener("input", syncApproveDialogGuardrails);
+  document.getElementById("approveRiskAck")?.addEventListener("change", syncApproveDialogGuardrails);
 
   const navLinks = [...document.querySelectorAll(".section-nav a")]
     .filter((a) => String(a.getAttribute("href") || "").startsWith("#"));

@@ -32,6 +32,8 @@ export const state = {
   lastReportData: null,
   activeReportTab: "summary",
   secCompareResult: null,
+  secManagementDashboard: null,
+  secRuthlessMode: false,
   onboarding: null,
   profile: null,
   presetCatalog: null,

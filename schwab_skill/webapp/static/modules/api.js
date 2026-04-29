@@ -166,4 +166,48 @@ export const api = {
   patch(path, body = {}, options = {}) {
     return this.request(path, { method: "PATCH", body: JSON.stringify(body), ...options });
   },
+
+  /**
+   * Typed SEC analyzer fetch used by integrity scoring.
+   * @param {string} ticker
+   * @param {string} formType
+   * @param {{timeoutMs?: number}} [options]
+   */
+  getSecAnalysis(ticker, formType = "10-K", options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    const safeForm = String(formType || "10-K").trim().toUpperCase();
+    return this.get(`/api/sec/analyze/${encodeURIComponent(safeTicker)}?form_type=${encodeURIComponent(safeForm)}`, options);
+  },
+
+  /**
+   * SEC compare wrapper for over-time/ticker-vs-ticker analysis.
+   * @param {{mode?: string, ticker: string, tickerB?: string, formType?: string, highlightChangesOnly?: boolean, ruthlessMode?: boolean}} params
+   * @param {{timeoutMs?: number}} [options]
+   */
+  getSecCompare(params = {}, options = {}) {
+    const qs = new URLSearchParams();
+    qs.set("mode", String(params.mode || "ticker_over_time").trim());
+    qs.set("ticker", String(params.ticker || "").trim().toUpperCase());
+    qs.set("form_type", String(params.formType || "10-K").trim().toUpperCase());
+    if (params.tickerB) qs.set("ticker_b", String(params.tickerB).trim().toUpperCase());
+    if (params.highlightChangesOnly) qs.set("highlight_changes_only", "true");
+    if (params.ruthlessMode) qs.set("ruthless_mode", "true");
+    return this.get(`/api/sec/compare?${qs.toString()}`, options);
+  },
+
+  /**
+   * /report helper (section optional) for fundamentals fallback.
+   * @param {string} ticker
+   * @param {{section?: string, skipMirofish?: boolean, skipEdgar?: boolean}} [params]
+   * @param {{timeoutMs?: number}} [options]
+   */
+  getReport(ticker, params = {}, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    const qs = new URLSearchParams();
+    if (params.section) qs.set("section", String(params.section).trim().toLowerCase());
+    if (params.skipMirofish) qs.set("skip_mirofish", "true");
+    if (params.skipEdgar) qs.set("skip_edgar", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get(`/api/report/${encodeURIComponent(safeTicker)}${suffix}`, options);
+  },
 };
