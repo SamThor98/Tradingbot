@@ -877,11 +877,12 @@ def get_signal_universe_target_size(skill_dir: Path | None = None) -> int:
 
 def get_signal_scan_full_universe(skill_dir: Path | None = None) -> bool:
     """
-    When True (default), the dynamic index watchlist path (S&P 500 + 400 + 600 + R2000)
+    When True, the dynamic index watchlist path (S&P 500 + 400 + 600 + R2000)
     is not shortened by QUALITY_WATCHLIST_PREFILTER_* or SIGNAL_UNIVERSE_MODE=focused.
-    Set SIGNAL_SCAN_FULL_UNIVERSE=0 to allow those filters on the full index list.
+    Default is False so focused/prefilter behavior remains enabled unless explicitly
+    overridden with SIGNAL_SCAN_FULL_UNIVERSE=1.
     """
-    return _get_bool("SIGNAL_SCAN_FULL_UNIVERSE", True, skill_dir)
+    return _get_bool("SIGNAL_SCAN_FULL_UNIVERSE", False, skill_dir)
 
 
 def get_sec_enrichment_enabled(skill_dir: Path | None = None) -> bool:
