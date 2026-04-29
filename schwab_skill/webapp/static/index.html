@@ -137,7 +137,7 @@
       </header>
 
       <div id="dashboardToday" class="dashboard-today-stack">
-      <section id="healthRibbon" class="card health-ribbon" aria-label="System health ribbon">
+      <section id="healthRibbon" class="card health-ribbon diagnostics-surface" aria-label="System health ribbon">
         <div class="health-tile" id="healthTileAuth" data-state="neutral" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
@@ -168,26 +168,26 @@
         </div>
       </section>
 
-      <section id="blockersAlertSection" class="card blockers-alert hidden" aria-live="polite">
+      <section id="blockersAlertSection" class="card blockers-alert hidden diagnostics-surface" aria-live="polite">
         <strong>Top Blockers</strong>
         <ul id="blockersAlertList" class="report-bullets"></ul>
       </section>
 
-      <section id="platformKillSwitchBanner" class="card blockers-alert hidden" aria-live="polite" style="border-color: rgba(180, 83, 9, 0.65)">
+      <section id="platformKillSwitchBanner" class="card blockers-alert hidden operations-surface" aria-live="polite" style="border-color: rgba(180, 83, 9, 0.65)">
         <strong>Operator trading halt</strong>
         <p id="platformKillSwitchBannerText" class="muted" style="margin: 0.35rem 0 0">
           The host has enabled a global kill switch. New risk-increasing orders are blocked until it is cleared.
         </p>
       </section>
 
-      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden" aria-live="polite">
+      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>
           <a class="btn small secondary pending-summary-link" href="#pendingSection">Review pending</a>
         </div>
       </div>
 
-      <section id="actionCenter" class="card action-center" aria-live="polite">
+      <section id="actionCenter" class="card action-center operations-surface" aria-live="polite">
         <div class="action-center-icon" aria-hidden="true"></div>
         <div class="action-center-body">
           <strong id="actionCenterTitle">Next Action</strong>
@@ -198,33 +198,35 @@
 
       <nav class="section-nav card" aria-label="Screen and section navigation">
         <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
-          <button type="button" class="screen-switch-btn" data-screen-mode="daily" aria-selected="true">Daily</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="setup" aria-selected="false">Setup</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="operations" aria-selected="true">Operations</button>
           <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
-          <button type="button" class="screen-switch-btn" data-screen-mode="portfolio" aria-selected="false">Portfolio</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="diagnostics" aria-selected="false">Diagnostics</button>
+          <button type="button" class="screen-switch-btn" data-screen-mode="settings" aria-selected="false">Settings</button>
         </div>
-        <a href="#dashboardToday" data-nav-screens="daily">Today</a>
-        <a href="#workflowPrimary" data-nav-screens="daily">Scan &amp; queue</a>
-        <a href="#pendingSection" data-nav-screens="daily">Pending</a>
-        <a href="#onboardingSection" data-nav-screens="setup">Setup</a>
+        <a href="#workflowPrimary" data-nav-screens="operations">Scan flow</a>
+        <a href="#pendingSection" data-nav-screens="operations">Trade queue</a>
         <a href="#toolsSection" class="nav-advanced" data-nav-screens="research">Research tools</a>
-        <a href="#portfolioSection" data-nav-screens="portfolio">Portfolio</a>
+        <a href="#backtestSection" data-nav-screens="research">Backtests</a>
+        <a href="#statusDetailsPanel" data-nav-screens="diagnostics">System status</a>
+        <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
+        <a href="#onboardingSection" data-nav-screens="settings">Connections</a>
+        <a href="#settingsSection" data-nav-screens="settings">Settings</a>
       </nav>
 
       <section id="screenContextCard" class="card screen-context" aria-live="polite">
         <div class="screen-context-copy">
-          <strong id="screenContextTitle">Daily workflow</strong>
-          <p id="screenContextText" class="muted">Run a scan, review pending approvals, and only open setup if blocked.</p>
+          <strong id="screenContextTitle">Operations workflow</strong>
+          <p id="screenContextText" class="muted">Run scans, review candidates, and execute from the trade queue.</p>
           <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
         </div>
         <div class="screen-context-actions">
-          <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Go to pending</a>
-          <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Go to workflow</a>
+          <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
+          <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
         </div>
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
-        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan &amp; pending decisions</h2>
+        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan, evaluate, and queue trades</h2>
         <div class="layout-2 layout-workflow">
         <article id="scanSection" class="card card--primary-task">
           <div class="section-title">
@@ -279,27 +281,68 @@
               <button type="button" id="scanClearOptionsBtn" class="btn small secondary">Clear</button>
             </div>
           </details>
-          <div class="table-wrap">
-            <table>
-              <caption class="visually-hidden">Signal candidates table</caption>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Days Flagged</th>
-                  <th>Strategy</th>
-                  <th>Price</th>
-                  <th>Score</th>
-                  <th>P(up 10d)</th>
-                  <th>Confidence</th>
-                  <th>Conviction</th>
-                  <th>Sector</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="scanTableBody">
-                <tr><td colspan="10" class="muted">Run a scan to load candidates.</td></tr>
-              </tbody>
-            </table>
+          <div class="scan-results-layout">
+            <div class="table-wrap">
+              <table>
+                <caption class="visually-hidden">Signal candidates table</caption>
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Days Flagged</th>
+                    <th>Strategy</th>
+                    <th>Price</th>
+                    <th>Score</th>
+                    <th>P(up 10d)</th>
+                    <th>Confidence</th>
+                    <th>Conviction</th>
+                    <th>Sector</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="scanTableBody">
+                  <tr><td colspan="10" class="muted">Run a scan to load candidates.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <aside id="scanDetailPanel" class="scan-detail-panel" aria-live="polite">
+              <div class="scan-detail-header">
+                <h3 id="scanDetailTicker">Select a ticker</h3>
+                <p id="scanDetailStrategy" class="muted">Choose a scan row to review chart and scoring context.</p>
+              </div>
+              <div id="scanDetailChartContainer" class="scan-detail-chart">
+                <p class="muted">Chart will appear after you select a ticker.</p>
+              </div>
+              <div class="scan-detail-grid">
+                <div class="scan-detail-stat">
+                  <span class="muted">Price</span>
+                  <strong id="scanDetailPrice">--</strong>
+                </div>
+                <div class="scan-detail-stat">
+                  <span class="muted">Signal score</span>
+                  <strong id="scanDetailScore">--</strong>
+                  <small class="muted">Composite setup quality score.</small>
+                </div>
+                <div class="scan-detail-stat">
+                  <span class="muted">P(up 10d)</span>
+                  <strong id="scanDetailPup">--</strong>
+                  <small class="muted">Model-estimated 10-day upside probability.</small>
+                </div>
+                <div class="scan-detail-stat">
+                  <span class="muted">Confidence</span>
+                  <strong id="scanDetailConfidence">--</strong>
+                  <small class="muted">Reliability bucket for the advisory model.</small>
+                </div>
+                <div class="scan-detail-stat">
+                  <span class="muted">Conviction</span>
+                  <strong id="scanDetailConviction">--</strong>
+                  <small class="muted">Advisory strength for acting on the setup.</small>
+                </div>
+                <div class="scan-detail-stat">
+                  <span class="muted">Sector ETF</span>
+                  <strong id="scanDetailSector">--</strong>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
 

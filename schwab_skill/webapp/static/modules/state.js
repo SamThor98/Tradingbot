@@ -45,6 +45,7 @@ export const state = {
   backtestQueueBusy: false,
   lastQuoteHealthLogSig: null,
   queueScanDraft: null,
+  selectedScanTicker: "",
   /** Optional scan body: strategy_overrides, universe_mode, tickers (see /api/scan). */
   scanRunOptions: null,
   sseEnabled: false,

@@ -199,59 +199,60 @@ const lazyLoaded = {
   calibration: false,
 };
 
-const SCREEN_MODES = Object.freeze(["daily", "setup", "research", "portfolio"]);
+const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
-  daily: {
-    title: "Daily workflow",
-    text: "Run scan, review pending approvals, and act on top blockers.",
-    ctaLabel: "Go to workflow",
+  operations: {
+    title: "Operations workflow",
+    text: "Run scans, evaluate each candidate, then stage and approve trades.",
+    ctaLabel: "Open scan flow",
     ctaHref: "#workflowPrimary",
-    altCtaLabel: "Go to pending",
+    altCtaLabel: "Open trade queue",
     altCtaHref: "#pendingSection",
   },
-  setup: {
-    title: "Setup and account",
-    text: "Connect services, verify tokens, and tune account controls.",
-    ctaLabel: "Go to setup",
-    ctaHref: "#onboardingSection",
-    altCtaLabel: "Go to presets",
-    altCtaHref: "#settingsSection",
-  },
   research: {
-    title: "Research and diagnostics",
-    text: "Run deeper analysis, validate ideas, and inspect edge cases.",
-    ctaLabel: "Go to research tools",
+    title: "Research workflows",
+    text: "Investigate symbols with reports, SEC compare, backtests, and strategy chat.",
+    ctaLabel: "Open research tools",
     ctaHref: "#toolsSection",
-    altCtaLabel: "Go to backtest",
+    altCtaLabel: "Open backtests",
     altCtaHref: "#backtestSection",
   },
-  portfolio: {
-    title: "Portfolio intelligence",
-    text: "Monitor positions, sector exposure, and performance trends.",
-    ctaLabel: "Go to portfolio",
-    ctaHref: "#portfolioSection",
-    altCtaLabel: "Go to performance",
-    altCtaHref: "#performanceSection",
+  diagnostics: {
+    title: "Diagnostics and health",
+    text: "Inspect tokens, validation status, and system telemetry without cluttering trading flow.",
+    ctaLabel: "Open system status",
+    ctaHref: "#statusDetailsPanel",
+    altCtaLabel: "Open health ribbon",
+    altCtaHref: "#healthRibbon",
+  },
+  settings: {
+    title: "Settings and connections",
+    text: "Manage Schwab connectivity, presets, automation controls, and account-level options.",
+    ctaLabel: "Open connections",
+    ctaHref: "#onboardingSection",
+    altCtaLabel: "Open presets",
+    altCtaHref: "#settingsSection",
   },
 });
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
 const SCREEN_SECTIONS = Object.freeze({
-  daily: ["dashboardToday", "workflowPrimary"],
-  setup: ["onboardingSection", "settingsSection"],
+  operations: ["dashboardToday", "workflowPrimary", "pendingSection"],
   research: [
     "quickCheckSection",
     "toolsSection",
     "decisionSection",
     "recoverySection",
-    "statusDetailsPanel",
     "learningSection",
     "backtestSection",
-    "calibrationSection",
     "reportSectionCard",
     "secCompareSection",
     "activitySection",
+    "portfolioSection",
+    "sectorsSection",
+    "performanceSection",
   ],
-  portfolio: ["portfolioSection", "sectorsSection", "performanceSection"],
+  diagnostics: ["healthRibbon", "blockersAlertSection", "statusDetailsPanel", "calibrationSection"],
+  settings: ["onboardingSection", "settingsSection"],
 });
 const SECTION_TO_SCREEN = Object.freeze(
   Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
@@ -261,7 +262,7 @@ const SECTION_TO_SCREEN = Object.freeze(
     return acc;
   }, {}),
 );
-let currentScreenMode = "daily";
+let currentScreenMode = "operations";
 let screenSwitchTimer = null;
 
 const FUNNEL_EVENTS = Object.freeze({
@@ -321,7 +322,7 @@ function getDisplayMode() {
 
 function normalizeScreenMode(raw) {
   const mode = safeText(raw).toLowerCase();
-  return SCREEN_MODES.includes(mode) ? mode : "daily";
+  return SCREEN_MODES.includes(mode) ? mode : "operations";
 }
 
 function inferScreenFromHash() {
@@ -338,7 +339,7 @@ function getScreenModeFromUrl() {
   } catch {
     /* ignore */
   }
-  return normalizeScreenMode(inferScreenFromHash() || "daily");
+  return normalizeScreenMode(inferScreenFromHash() || "operations");
 }
 
 function writeScreenModeToUrl(mode) {
@@ -372,7 +373,7 @@ function refreshSectionNavForScreen(mode) {
 }
 
 function renderScreenContext(mode) {
-  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.daily;
+  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const titleEl = document.getElementById("screenContextTitle");
   const textEl = document.getElementById("screenContextText");
   const hintEl = document.getElementById("screenContextHint");
@@ -392,13 +393,13 @@ function renderScreenContext(mode) {
 }
 
 function maybePrimeScreenData(mode) {
-  if (mode === "setup") {
+  if (mode === "settings") {
     void runLazyApi("onboarding");
     void runLazyApi("profiles");
+  } else if (mode === "diagnostics") {
+    void runLazyApi("calibration");
   } else if (mode === "research") {
     void runLazyApi("backtest");
-    void runLazyApi("calibration");
-  } else if (mode === "portfolio") {
     void runLazyApi("portfolio");
     void runLazyApi("sectors");
     void runLazyApi("performance");
@@ -406,7 +407,7 @@ function maybePrimeScreenData(mode) {
 }
 
 function maybeShowScreenNudge(mode) {
-  if (!mode || mode === "daily") return;
+  if (!mode || mode === "operations") return;
   const key = `${SCREEN_NUDGE_KEY_PREFIX}${mode}`;
   try {
     if (localStorage.getItem(key)) return;
@@ -414,11 +415,11 @@ function maybeShowScreenNudge(mode) {
   } catch {
     return;
   }
-  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.daily;
+  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const nudgeMap = {
-    setup: "Start with setup steps, then apply presets.",
-    research: "Use backtest and reports to validate decisions.",
-    portfolio: "Review positions first, then check performance trends.",
+    settings: "Finish connectivity and profile settings once, then return to Operations.",
+    research: "Use backtests and reports to validate setup quality.",
+    diagnostics: "Use this screen to troubleshoot without interrupting trade flow.",
   };
   const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";
   showToast(`${cfg.title}: ${hint}`, "info", 2800);
@@ -433,7 +434,7 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
     document.body.classList.remove("ui-screen-switching");
     screenSwitchTimer = null;
   }, 170);
-  document.body.classList.remove("ui-screen-daily", "ui-screen-setup", "ui-screen-research", "ui-screen-portfolio");
+  document.body.classList.remove("ui-screen-operations", "ui-screen-research", "ui-screen-diagnostics", "ui-screen-settings");
   document.body.classList.add(`ui-screen-${m}`);
   refreshScreenSwitchUi(m);
   refreshSectionNavForScreen(m);
@@ -1115,6 +1116,100 @@ function renderDiagnostics(diag = {}) {
   if (diagPanel && getDisplayMode() === "pro") diagPanel.open = true;
 }
 
+let _scanDetailChart = null;
+let _scanDetailResizeObserver = null;
+
+function renderScanDetailChartMessage(message) {
+  const container = document.getElementById("scanDetailChartContainer");
+  if (!container) return;
+  container.innerHTML = `<p class="muted">${safeText(message || "Chart unavailable.")}</p>`;
+}
+
+async function renderScanDetailChart(ticker) {
+  const container = document.getElementById("scanDetailChartContainer");
+  if (!container) return;
+  if (_scanDetailResizeObserver) {
+    _scanDetailResizeObserver.disconnect();
+    _scanDetailResizeObserver = null;
+  }
+  if (_scanDetailChart) {
+    try {
+      _scanDetailChart.remove();
+    } catch {
+      // ignore chart cleanup failures
+    }
+    _scanDetailChart = null;
+  }
+  if (!ticker) {
+    renderScanDetailChartMessage("Select a ticker to load chart data.");
+    return;
+  }
+  if (typeof LightweightCharts === "undefined") {
+    renderScanDetailChartMessage("Chart library unavailable.");
+    return;
+  }
+
+  container.innerHTML = "";
+  const out = await api.get(`/api/chart/${encodeURIComponent(ticker)}`);
+  if (!out.ok || !out.data?.candles?.length) {
+    renderScanDetailChartMessage(`No chart data available for ${ticker}.`);
+    return;
+  }
+
+  const chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 240,
+    layout: { background: { type: "solid", color: "transparent" }, textColor: "#9ca3b8" },
+    grid: {
+      vertLines: { color: "rgba(99,120,200,0.06)" },
+      horzLines: { color: "rgba(99,120,200,0.06)" },
+    },
+    rightPriceScale: { borderColor: "rgba(99,120,200,0.15)" },
+    timeScale: { borderColor: "rgba(99,120,200,0.15)", timeVisible: false },
+  });
+  const candleSeries = chart.addCandlestickSeries({
+    upColor: "#34d399",
+    downColor: "#fb7185",
+    borderUpColor: "#34d399",
+    borderDownColor: "#fb7185",
+    wickUpColor: "#34d399",
+    wickDownColor: "#fb7185",
+  });
+  candleSeries.setData(out.data.candles);
+  chart.timeScale().fitContent();
+  _scanDetailChart = chart;
+  _scanDetailResizeObserver = new ResizeObserver(() => {
+    if (_scanDetailChart) _scanDetailChart.applyOptions({ width: container.clientWidth });
+  });
+  _scanDetailResizeObserver.observe(container);
+}
+
+async function renderScanDetail(sig) {
+  const row = normalizeScanSignal(sig || {});
+  const ticker = safeText(row.ticker || row.symbol || "");
+  state.selectedScanTicker = ticker;
+  const advisory = row.advisory || {};
+  const score = optionalNum(row.signal_score ?? row.score);
+  const conviction = optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
+  const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up);
+  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
+  const strategy = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
+
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+  setText("scanDetailTicker", ticker || "Select a ticker");
+  setText("scanDetailStrategy", ticker ? `Top strategy: ${strategy}` : "Choose a scan row to review chart and scoring context.");
+  setText("scanDetailPrice", row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—");
+  setText("scanDetailScore", score === null ? "—" : formatDecimal(score, 1));
+  setText("scanDetailPup", pUp === null ? "—" : pct(pUp, 1));
+  setText("scanDetailConfidence", confidence || "—");
+  setText("scanDetailConviction", conviction === null ? "—" : formatDecimal(conviction, 1));
+  setText("scanDetailSector", safeText(row.sector_etf || "—"));
+  await renderScanDetailChart(ticker);
+}
+
 function renderScanRows(signals = []) {
   const body = document.getElementById("scanTableBody");
   body.innerHTML = "";
@@ -1135,6 +1230,7 @@ function renderScanRows(signals = []) {
     `;
     const cta = document.getElementById("scanEmptyCtaBtn");
     if (cta) cta.addEventListener("click", runScan);
+    void renderScanDetail(null);
     updateHeroInfographic();
     return;
   }
@@ -1167,7 +1263,10 @@ function renderScanRows(signals = []) {
       <td>${conf}</td>
       <td>${convictionText}</td>
       <td>${safeText(row.sector_etf || "—")}</td>
-      <td><button type="button" class="btn small secondary" data-idx="${idx}">Stage…</button></td>
+      <td class="scan-actions-cell">
+        <button type="button" class="btn small secondary" data-scan-view="${idx}">Inspect</button>
+        <button type="button" class="btn small secondary" data-idx="${idx}">Stage…</button>
+      </td>
     `;
     body.appendChild(tr);
   });
@@ -1188,12 +1287,28 @@ function renderScanRows(signals = []) {
     state.scanMissingEnrichmentWarned = false;
   }
 
+  const preferredIdx = signals.findIndex((sig) => {
+    const t = safeText(sig?.ticker || sig?.symbol || "");
+    return t && t === state.selectedScanTicker;
+  });
+  const selectedIdx = preferredIdx >= 0 ? preferredIdx : 0;
+  if (signals[selectedIdx]) {
+    void renderScanDetail(signals[selectedIdx]);
+  }
+
   body.querySelectorAll("button[data-idx]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-idx"));
       // Prefer freshly rendered row data; fallback to global state during async refreshes.
       const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
       openQueueScanDialog(sig);
+    });
+  });
+  body.querySelectorAll("button[data-scan-view]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const idx = Number(e.currentTarget.getAttribute("data-scan-view"));
+      const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
+      void renderScanDetail(sig);
     });
   });
   updateHeroInfographic();
@@ -2904,7 +3019,7 @@ function wireEvents() {
 
   document.querySelectorAll(".screen-switch-btn[data-screen-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const mode = btn.getAttribute("data-screen-mode") || "daily";
+      const mode = btn.getAttribute("data-screen-mode") || "operations";
       applyScreenMode(mode, { updateUrl: true });
     });
   });

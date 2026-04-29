@@ -42,6 +42,11 @@ export const SECTION_ALIASES = Object.freeze({
   connect: "onboardingSection",
   onboarding: "onboardingSection",
   setup: "onboardingSection",
+  settings: "onboardingSection",
+  diagnostics: "statusDetailsPanel",
+  health: "statusDetailsPanel",
+  operations: "workflowPrimary",
+  research: "toolsSection",
 });
 
 /**

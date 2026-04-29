@@ -32,7 +32,7 @@ export function setupKeyboardShortcuts({
 
     if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4"].includes(e.key)) {
       e.preventDefault();
-      const screenMap = { "1": "daily", "2": "setup", "3": "research", "4": "portfolio" };
+      const screenMap = { "1": "operations", "2": "research", "3": "diagnostics", "4": "settings" };
       const mode = screenMap[e.key];
       if (mode) {
         applyScreenMode?.(mode, { updateUrl: true });

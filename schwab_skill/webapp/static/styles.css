@@ -2532,6 +2532,62 @@ body.trade-drawer-open .trade-drawer-backdrop {
   padding: 0 16px 14px;
 }
 
+.scan-results-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.scan-actions-cell {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.scan-detail-panel {
+  border: 1px solid rgba(100, 116, 139, 0.36);
+  border-radius: 14px;
+  background: rgba(8, 12, 24, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.scan-detail-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.scan-detail-header p {
+  margin: 4px 0 0;
+}
+.scan-detail-chart {
+  min-height: 250px;
+  border-radius: 12px;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+.scan-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.scan-detail-stat {
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.5);
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+}
+.scan-detail-stat strong {
+  font-size: 0.96rem;
+}
+.scan-detail-stat small {
+  font-size: 0.72rem;
+}
+
 .tools-hub .tools-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -2681,66 +2737,68 @@ body.ui-simple #toolsSection,
 body.ui-simple .nav-advanced {
   display: none !important;
 }
-body.ui-screen-daily #onboardingSection,
-body.ui-screen-daily #settingsSection,
-body.ui-screen-daily #quickCheckSection,
-body.ui-screen-daily #toolsSection,
-body.ui-screen-daily #decisionSection,
-body.ui-screen-daily #recoverySection,
-body.ui-screen-daily #statusDetailsPanel,
-body.ui-screen-daily #portfolioSection,
-body.ui-screen-daily #sectorsSection,
-body.ui-screen-daily #performanceSection,
-body.ui-screen-daily #learningSection,
-body.ui-screen-daily #backtestSection,
-body.ui-screen-daily #calibrationSection,
-body.ui-screen-daily #reportSectionCard,
-body.ui-screen-daily #secCompareSection,
-body.ui-screen-daily #activitySection {
+body.ui-screen-operations .diagnostics-surface {
   display: none !important;
 }
-body.ui-screen-setup #dashboardToday,
-body.ui-screen-setup #workflowPrimary,
-body.ui-screen-setup #quickCheckSection,
-body.ui-screen-setup #toolsSection,
-body.ui-screen-setup #decisionSection,
-body.ui-screen-setup #recoverySection,
-body.ui-screen-setup #statusDetailsPanel,
-body.ui-screen-setup #portfolioSection,
-body.ui-screen-setup #sectorsSection,
-body.ui-screen-setup #performanceSection,
-body.ui-screen-setup #learningSection,
-body.ui-screen-setup #backtestSection,
-body.ui-screen-setup #calibrationSection,
-body.ui-screen-setup #reportSectionCard,
-body.ui-screen-setup #secCompareSection,
-body.ui-screen-setup #activitySection {
+body.ui-screen-operations #onboardingSection,
+body.ui-screen-operations #settingsSection,
+body.ui-screen-operations #quickCheckSection,
+body.ui-screen-operations #toolsSection,
+body.ui-screen-operations #decisionSection,
+body.ui-screen-operations #recoverySection,
+body.ui-screen-operations #statusDetailsPanel,
+body.ui-screen-operations #portfolioSection,
+body.ui-screen-operations #sectorsSection,
+body.ui-screen-operations #performanceSection,
+body.ui-screen-operations #learningSection,
+body.ui-screen-operations #backtestSection,
+body.ui-screen-operations #calibrationSection,
+body.ui-screen-operations #reportSectionCard,
+body.ui-screen-operations #secCompareSection,
+body.ui-screen-operations #activitySection {
   display: none !important;
 }
 body.ui-screen-research #dashboardToday,
-body.ui-screen-research #workflowPrimary,
 body.ui-screen-research #onboardingSection,
 body.ui-screen-research #settingsSection,
-body.ui-screen-research #portfolioSection,
-body.ui-screen-research #sectorsSection,
-body.ui-screen-research #performanceSection {
+body.ui-screen-research #statusDetailsPanel,
+body.ui-screen-research #calibrationSection {
   display: none !important;
 }
-body.ui-screen-portfolio #dashboardToday,
-body.ui-screen-portfolio #workflowPrimary,
-body.ui-screen-portfolio #onboardingSection,
-body.ui-screen-portfolio #settingsSection,
-body.ui-screen-portfolio #quickCheckSection,
-body.ui-screen-portfolio #toolsSection,
-body.ui-screen-portfolio #decisionSection,
-body.ui-screen-portfolio #recoverySection,
-body.ui-screen-portfolio #statusDetailsPanel,
-body.ui-screen-portfolio #learningSection,
-body.ui-screen-portfolio #backtestSection,
-body.ui-screen-portfolio #calibrationSection,
-body.ui-screen-portfolio #reportSectionCard,
-body.ui-screen-portfolio #secCompareSection,
-body.ui-screen-portfolio #activitySection {
+body.ui-screen-diagnostics .operations-surface,
+body.ui-screen-diagnostics #workflowPrimary,
+body.ui-screen-diagnostics #quickCheckSection,
+body.ui-screen-diagnostics #toolsSection,
+body.ui-screen-diagnostics #decisionSection,
+body.ui-screen-diagnostics #recoverySection,
+body.ui-screen-diagnostics #onboardingSection,
+body.ui-screen-diagnostics #settingsSection,
+body.ui-screen-diagnostics #portfolioSection,
+body.ui-screen-diagnostics #sectorsSection,
+body.ui-screen-diagnostics #performanceSection,
+body.ui-screen-diagnostics #learningSection,
+body.ui-screen-diagnostics #backtestSection,
+body.ui-screen-diagnostics #reportSectionCard,
+body.ui-screen-diagnostics #secCompareSection,
+body.ui-screen-diagnostics #activitySection {
+  display: none !important;
+}
+body.ui-screen-settings #dashboardToday,
+body.ui-screen-settings #workflowPrimary,
+body.ui-screen-settings #quickCheckSection,
+body.ui-screen-settings #toolsSection,
+body.ui-screen-settings #decisionSection,
+body.ui-screen-settings #recoverySection,
+body.ui-screen-settings #statusDetailsPanel,
+body.ui-screen-settings #portfolioSection,
+body.ui-screen-settings #sectorsSection,
+body.ui-screen-settings #performanceSection,
+body.ui-screen-settings #learningSection,
+body.ui-screen-settings #backtestSection,
+body.ui-screen-settings #calibrationSection,
+body.ui-screen-settings #reportSectionCard,
+body.ui-screen-settings #secCompareSection,
+body.ui-screen-settings #activitySection {
   display: none !important;
 }
 .ui-screen-switching #screenContextCard,
@@ -2947,6 +3005,8 @@ body.ui-pro .panel-disclosure--advanced {
   .stats { grid-template-columns: repeat(3, minmax(170px, 1fr)); }
   .performance-buckets { grid-template-columns: 1fr; }
   .layout-2 { grid-template-columns: 1fr; }
+  .scan-results-layout { grid-template-columns: 1fr; }
+  .scan-detail-grid { grid-template-columns: 1fr; }
   .hero-shell {
     grid-template-columns: 1fr;
     grid-template-areas:
