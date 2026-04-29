@@ -3165,10 +3165,13 @@ body.ui-pro .section-advanced {
 body.ui-screen-operations #researchWorkspaceIntro,
 body.ui-screen-operations #diagnosticsWorkspaceIntro,
 body.ui-screen-operations #settingsWorkspaceIntro,
+body.ui-screen-research #operationsWorkspaceIntro,
 body.ui-screen-research #diagnosticsWorkspaceIntro,
 body.ui-screen-research #settingsWorkspaceIntro,
+body.ui-screen-diagnostics #operationsWorkspaceIntro,
 body.ui-screen-diagnostics #researchWorkspaceIntro,
 body.ui-screen-diagnostics #settingsWorkspaceIntro,
+body.ui-screen-settings #operationsWorkspaceIntro,
 body.ui-screen-settings #researchWorkspaceIntro,
 body.ui-screen-settings #diagnosticsWorkspaceIntro {
   display: none !important;
@@ -3176,6 +3179,69 @@ body.ui-screen-settings #diagnosticsWorkspaceIntro {
 
 body.ui-screen-settings #settingsWorkspaceIntro {
   display: flex !important;
+}
+
+.operations-workspace-intro {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: linear-gradient(145deg, rgba(8, 47, 73, 0.44), rgba(15, 23, 42, 0.84));
+}
+
+.research-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.research-lane {
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.45);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.research-lane h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #dbeafe;
+}
+
+.research-lane p {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.diagnostics-workflow-strip,
+.settings-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.diagnostics-lane,
+.settings-lane {
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.45);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostics-lane h3,
+.settings-lane h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #dbeafe;
+}
+
+.diagnostics-lane p,
+.settings-lane p {
+  margin: 0;
+  font-size: 0.82rem;
 }
 
 body.ui-simple .section-advanced,
@@ -3188,6 +3254,9 @@ body.ui-screen-operations .diagnostics-surface {
 }
 body.ui-screen-operations #onboardingSection,
 body.ui-screen-operations #settingsSection,
+body.ui-screen-operations #researchWorkflowStrip,
+body.ui-screen-operations #settingsWorkflowStrip,
+body.ui-screen-operations #diagnosticsWorkflowStrip,
 body.ui-screen-operations #quickCheckSection,
 body.ui-screen-operations #toolsSection,
 body.ui-screen-operations #decisionSection,
@@ -3207,12 +3276,16 @@ body.ui-screen-operations #activitySection {
 body.ui-screen-research #dashboardToday,
 body.ui-screen-research #onboardingSection,
 body.ui-screen-research #settingsSection,
+body.ui-screen-research #settingsWorkflowStrip,
+body.ui-screen-research #diagnosticsWorkflowStrip,
 body.ui-screen-research #statusDetailsPanel,
 body.ui-screen-research #calibrationSection {
   display: none !important;
 }
 body.ui-screen-diagnostics .operations-surface,
 body.ui-screen-diagnostics #workflowPrimary,
+body.ui-screen-diagnostics #researchWorkflowStrip,
+body.ui-screen-diagnostics #settingsWorkflowStrip,
 body.ui-screen-diagnostics #quickCheckSection,
 body.ui-screen-diagnostics #toolsSection,
 body.ui-screen-diagnostics #decisionSection,
@@ -3231,6 +3304,8 @@ body.ui-screen-diagnostics #activitySection {
 }
 body.ui-screen-settings #dashboardToday,
 body.ui-screen-settings #workflowPrimary,
+body.ui-screen-settings #researchWorkflowStrip,
+body.ui-screen-settings #diagnosticsWorkflowStrip,
 body.ui-screen-settings #quickCheckSection,
 body.ui-screen-settings #toolsSection,
 body.ui-screen-settings #decisionSection,
@@ -3443,10 +3518,16 @@ body.ui-simple #onboardingSection {
 
 #scanSection table tbody tr {
   transition: background-color 120ms ease, box-shadow 120ms ease;
+  cursor: pointer;
 }
 
 #scanSection table tbody tr:hover {
   background: rgba(30, 41, 59, 0.45);
+}
+
+#scanSection table tbody tr:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.9);
+  outline-offset: -2px;
 }
 
 #scanSection table tbody tr.is-active {
@@ -3536,6 +3617,9 @@ body.ui-pro .panel-disclosure--advanced {
   .layout-2 { grid-template-columns: 1fr; }
   .scan-results-layout { grid-template-columns: 1fr; }
   .scan-detail-grid { grid-template-columns: 1fr; }
+  .research-workflow-strip { grid-template-columns: 1fr; }
+  .diagnostics-workflow-strip,
+  .settings-workflow-strip { grid-template-columns: 1fr; }
   .hero-shell {
     grid-template-columns: 1fr;
     grid-template-areas:

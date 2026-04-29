@@ -202,11 +202,48 @@
       <section class="app-rail" aria-label="Workflow context and navigation">
         <nav class="section-nav card" aria-label="Screen and section navigation">
           <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
-            <button type="button" class="screen-switch-btn" data-screen-mode="operations" aria-selected="true">Operations</button>
-            <button type="button" class="screen-switch-btn" data-screen-mode="research" aria-selected="false">Research</button>
-            <button type="button" class="screen-switch-btn" data-screen-mode="diagnostics" aria-selected="false">Diagnostics</button>
-            <button type="button" class="screen-switch-btn" data-screen-mode="settings" aria-selected="false">Settings</button>
+            <button
+              type="button"
+              class="screen-switch-btn"
+              data-screen-mode="operations"
+              role="tab"
+              aria-selected="true"
+              aria-controls="operationsWorkspaceIntro"
+            >
+              Operations
+            </button>
+            <button
+              type="button"
+              class="screen-switch-btn"
+              data-screen-mode="research"
+              role="tab"
+              aria-selected="false"
+              aria-controls="researchWorkspaceIntro"
+            >
+              Research
+            </button>
+            <button
+              type="button"
+              class="screen-switch-btn"
+              data-screen-mode="diagnostics"
+              role="tab"
+              aria-selected="false"
+              aria-controls="diagnosticsWorkspaceIntro"
+            >
+              Diagnostics
+            </button>
+            <button
+              type="button"
+              class="screen-switch-btn"
+              data-screen-mode="settings"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsWorkspaceIntro"
+            >
+              Settings
+            </button>
           </div>
+          <a href="#operationsWorkspaceIntro" data-nav-screens="operations">Operations hub</a>
           <a href="#workflowPrimary" data-nav-screens="operations">Run scans</a>
           <a href="#scanSection" data-nav-screens="operations">Review candidates</a>
           <a href="#pendingSection" data-nav-screens="operations">Approve/execute</a>
@@ -240,6 +277,19 @@
             <a class="btn small secondary" href="#pendingSection">3) Approve</a>
           </div>
         </section>
+      </section>
+
+      <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro" aria-label="Operations workspace">
+        <div>
+          <p class="workspace-eyebrow">Operations</p>
+          <h2>Run the daily trade loop with minimal friction</h2>
+          <p class="muted">Start scan, inspect candidates with chart + scoring context, stage trades, then approve or reject from one workflow.</p>
+        </div>
+        <div class="inline-form compact">
+          <a class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
+          <a class="btn small secondary" href="#scanDetailPanel">Inspect candidate</a>
+          <a class="btn small secondary" href="#pendingSection">Open approvals</a>
+        </div>
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
@@ -452,6 +502,32 @@
           <a class="btn small secondary" href="#reportSectionCard">Full report</a>
         </div>
       </section>
+      <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced" aria-label="Research workflow lanes">
+        <article class="research-lane">
+          <h3>Fast validation</h3>
+          <p class="muted">Quickly test one idea before deeper analysis.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
+            <a class="btn small secondary" href="#decisionSection">Decision card</a>
+          </div>
+        </article>
+        <article class="research-lane">
+          <h3>Scenario testing</h3>
+          <p class="muted">Backtest assumptions and capture rationale in chat.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#backtestSection">Backtest</a>
+            <a class="btn small secondary" href="#backtestSection">Strategy chat</a>
+          </div>
+        </article>
+        <article class="research-lane">
+          <h3>Deep diligence</h3>
+          <p class="muted">Use report + SEC compare before staging larger risk.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#reportSectionCard">Full report</a>
+            <a class="btn small secondary" href="#secCompareSection">SEC compare</a>
+          </div>
+        </article>
+      </section>
       <div class="layout-2 layout-quick-tools">
         <article id="quickCheckSection" class="card card--primary-task section-advanced">
           <div class="section-title">
@@ -519,6 +595,29 @@
           <a class="btn small secondary" href="#onboardingSection">Connections</a>
           <a class="btn small secondary" href="#settingsSection">Trading controls</a>
         </div>
+      </section>
+      <section id="settingsWorkflowStrip" class="card settings-workflow-strip" aria-label="Settings workflow lanes">
+        <article class="settings-lane">
+          <h3>Connect</h3>
+          <p class="muted">Link Schwab account + market data and verify token health.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#onboardingSection">Onboarding</a>
+          </div>
+        </article>
+        <article class="settings-lane">
+          <h3>Risk controls</h3>
+          <p class="muted">Manage presets, live-trading toggles, and pause controls.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#settingsSection">Trading controls</a>
+          </div>
+        </article>
+        <article class="settings-lane">
+          <h3>Security + billing</h3>
+          <p class="muted">Use 2FA and subscription management without leaving Settings.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#settingsSection">Open account panel</a>
+          </div>
+        </article>
       </section>
       <section class="layout-2 layout-onboarding-presets">
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
@@ -717,6 +816,29 @@
           <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
           <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
         </div>
+      </section>
+      <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface" aria-label="Diagnostics workflow lanes">
+        <article class="diagnostics-lane">
+          <h3>Live health</h3>
+          <p class="muted">Monitor auth, quotes, API error rate, and blockers in real time.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
+          </div>
+        </article>
+        <article class="diagnostics-lane">
+          <h3>System status</h3>
+          <p class="muted">Inspect token/session state and validation age before troubleshooting.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
+          </div>
+        </article>
+        <article class="diagnostics-lane">
+          <h3>Calibration</h3>
+          <p class="muted">Review model drift, self-study output, and halt settings context.</p>
+          <div class="inline-form compact">
+            <a class="btn small secondary" href="#calibrationSection">Calibration panel</a>
+          </div>
+        </article>
       </section>
       <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced status-details-wrap">
         <summary class="panel-disclosure-summary">

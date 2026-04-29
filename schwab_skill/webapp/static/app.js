@@ -205,7 +205,7 @@ const SCREEN_CONTEXT = Object.freeze({
     title: "Operations workflow",
     text: "Run scans, evaluate each candidate, then stage and approve trades.",
     ctaLabel: "Open scan flow",
-    ctaHref: "#workflowPrimary",
+    ctaHref: "#operationsWorkspaceIntro",
     altCtaLabel: "Open trade queue",
     altCtaHref: "#pendingSection",
   },
@@ -236,9 +236,10 @@ const SCREEN_CONTEXT = Object.freeze({
 });
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
 const SCREEN_SECTIONS = Object.freeze({
-  operations: ["dashboardToday", "workflowPrimary", "pendingSection"],
+  operations: ["dashboardToday", "operationsWorkspaceIntro", "workflowPrimary", "pendingSection"],
   research: [
     "researchWorkspaceIntro",
+    "researchWorkflowStrip",
     "quickCheckSection",
     "toolsSection",
     "decisionSection",
@@ -252,8 +253,15 @@ const SCREEN_SECTIONS = Object.freeze({
     "sectorsSection",
     "performanceSection",
   ],
-  diagnostics: ["diagnosticsWorkspaceIntro", "healthRibbon", "blockersAlertSection", "statusDetailsPanel", "calibrationSection"],
-  settings: ["settingsWorkspaceIntro", "onboardingSection", "settingsSection"],
+  diagnostics: [
+    "diagnosticsWorkspaceIntro",
+    "diagnosticsWorkflowStrip",
+    "healthRibbon",
+    "blockersAlertSection",
+    "statusDetailsPanel",
+    "calibrationSection",
+  ],
+  settings: ["settingsWorkspaceIntro", "settingsWorkflowStrip", "onboardingSection", "settingsSection"],
 });
 const SECTION_TO_SCREEN = Object.freeze(
   Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
@@ -358,6 +366,7 @@ function refreshScreenSwitchUi(mode) {
   document.querySelectorAll(".screen-switch-btn[data-screen-mode]").forEach((btn) => {
     const active = btn.getAttribute("data-screen-mode") === mode;
     btn.setAttribute("aria-selected", active ? "true" : "false");
+    btn.setAttribute("tabindex", active ? "0" : "-1");
     btn.classList.toggle("active", active);
   });
 }
@@ -1279,6 +1288,8 @@ function renderScanRows(signals = []) {
     if (conviction !== null) convictionCount += 1;
     const tr = document.createElement("tr");
     tr.setAttribute("data-scan-ticker", ticker);
+    tr.setAttribute("data-scan-row-index", String(idx));
+    tr.tabIndex = 0;
     tr.innerHTML = `
       <td><strong>${safeText(ticker)}</strong></td>
       <td>${flaggedDays || "—"}</td>
@@ -1290,8 +1301,8 @@ function renderScanRows(signals = []) {
       <td>${convictionText}</td>
       <td>${safeText(row.sector_etf || "—")}</td>
       <td class="scan-actions-cell">
-        <button type="button" class="btn small secondary" data-scan-view="${idx}">Inspect</button>
-        <button type="button" class="btn small secondary" data-idx="${idx}">Stage…</button>
+        <button type="button" class="btn small secondary" data-scan-view="${idx}">View</button>
+        <button type="button" class="btn small secondary" data-idx="${idx}">Stage</button>
       </td>
     `;
     body.appendChild(tr);
@@ -1335,6 +1346,23 @@ function renderScanRows(signals = []) {
       const idx = Number(e.currentTarget.getAttribute("data-scan-view"));
       const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
       void renderScanDetail(sig);
+    });
+  });
+  body.querySelectorAll("tr[data-scan-row-index]").forEach((rowEl) => {
+    const idx = Number(rowEl.getAttribute("data-scan-row-index"));
+    const selectRow = () => {
+      const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
+      void renderScanDetail(sig);
+    };
+    rowEl.addEventListener("click", (e) => {
+      if (e.target instanceof Element && e.target.closest("button")) return;
+      selectRow();
+    });
+    rowEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectRow();
+      }
     });
   });
   updateHeroInfographic();
@@ -3133,15 +3161,37 @@ function wireEvents() {
     entries.forEach((entry) => {
       if (!entry.isIntersecting) return;
       const id = entry.target.getAttribute("id");
-      navLinks.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === `#${id}`));
+      navLinks.forEach((a) => {
+        const active = a.getAttribute("href") === `#${id}`;
+        a.classList.toggle("active", active);
+        a.setAttribute("aria-current", active ? "location" : "false");
+      });
     });
   }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
   sections.forEach((section) => observer.observe(section));
 
-  document.querySelectorAll(".screen-switch-btn[data-screen-mode]").forEach((btn) => {
+  const screenSwitchButtons = [...document.querySelectorAll(".screen-switch-btn[data-screen-mode]")];
+  screenSwitchButtons.forEach((btn, idx) => {
     btn.addEventListener("click", () => {
       const mode = btn.getAttribute("data-screen-mode") || "operations";
       applyScreenMode(mode, { updateUrl: true });
+    });
+    btn.addEventListener("keydown", (e) => {
+      const key = e.key;
+      if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(key)) return;
+      e.preventDefault();
+      const total = screenSwitchButtons.length;
+      if (!total) return;
+      let nextIdx = idx;
+      if (key === "ArrowRight") nextIdx = (idx + 1) % total;
+      else if (key === "ArrowLeft") nextIdx = (idx - 1 + total) % total;
+      else if (key === "Home") nextIdx = 0;
+      else if (key === "End") nextIdx = total - 1;
+      const nextBtn = screenSwitchButtons[nextIdx];
+      if (!nextBtn) return;
+      const mode = nextBtn.getAttribute("data-screen-mode") || "operations";
+      applyScreenMode(mode, { updateUrl: true });
+      nextBtn.focus();
     });
   });
 
