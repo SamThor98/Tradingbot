@@ -29,15 +29,17 @@
     <main id="mainContent" class="container">
       <header class="hero card hero-shell">
         <div class="hero-main">
-          <p class="eyebrow">Daily Trading Workflow</p>
+          <p class="eyebrow">Operations-first Trading Workflow</p>
           <h1>TradingBot</h1>
           <p class="muted hero-lead">
-            Run <strong>Scan</strong>, review <strong>Pending</strong>, then resolve blockers in <strong>Setup</strong> only when needed.
-            Need scan-only? <a href="/simple">Open Simple scan page</a>.
+            Run <strong>Scan</strong>, inspect each ticker, then stage and approve from <strong>Trade Queue</strong>.
+            Manage connectivity, account controls, and API access in <a href="#onboardingSection">Settings</a>.
           </p>
           <div class="hero-actions">
             <button id="refreshBtn" class="btn secondary">Refresh All</button>
             <button id="scanBtn" class="btn primary">Run Scan</button>
+            <a class="btn secondary" href="#toolsSection">Open Research</a>
+            <a class="btn secondary" href="#onboardingSection">Open Settings</a>
             <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
               <span id="notifBadge" class="notif-badge hidden">0</span>
@@ -54,7 +56,7 @@
           </div>
           <div class="hero-toolbar" role="group" aria-label="Dashboard detail level">
             <label class="field-label" for="displayModeSelect">Detail level</label>
-            <select id="displayModeSelect" title="Simple shows only today’s workflow; Standard balances depth; Pro surfaces diagnostics faster.">
+            <select id="displayModeSelect" title="Simple keeps actions focused; Standard balances depth; Pro expands diagnostics and raw detail.">
               <option value="simple" selected>Simple</option>
               <option value="standard">Standard</option>
               <option value="pro">Pro</option>
@@ -472,8 +474,8 @@
       <section class="layout-2 layout-onboarding-presets">
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
-            <h2>Connect Schwab &amp; setup</h2>
-            <small id="onboardingMeta" class="muted">Complete setup once, then return to Scan and Pending.</small>
+            <h2>Connections &amp; account setup</h2>
+            <small id="onboardingMeta" class="muted">Configure once in Settings, then return to Operations.</small>
           </div>
 
           <ol id="onboardingStepper" class="onboarding-stepper" aria-label="Schwab setup progress">
@@ -705,7 +707,7 @@
         <article id="portfolioSection" class="card" data-lazy-api="portfolio">
           <div class="section-title">
             <h2>Portfolio</h2>
-              <small id="portfolioMeta" class="muted">Open the Portfolio screen to load positions.</small>
+            <small id="portfolioMeta" class="muted">Open the Research screen to load positions.</small>
           </div>
           <div class="table-wrap">
             <table>

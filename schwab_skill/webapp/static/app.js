@@ -381,7 +381,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1..4 switches screens.";
+  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1 Operations, 2 Research, 3 Diagnostics, 4 Settings.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -418,7 +418,7 @@ function maybeShowScreenNudge(mode) {
   const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const nudgeMap = {
     settings: "Finish connectivity and profile settings once, then return to Operations.",
-    research: "Use backtests and reports to validate setup quality.",
+    research: "Use reports, SEC compare, backtests, and portfolio context to validate trades.",
     diagnostics: "Use this screen to troubleshoot without interrupting trade flow.",
   };
   const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";

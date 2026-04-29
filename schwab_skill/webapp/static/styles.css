@@ -231,6 +231,9 @@ html, body {
   z-index: 1;
   margin-top: 0.9rem;
 }
+.hero-actions a.btn {
+  text-decoration: none;
+}
 .hero h1 {
   margin: 8px 0;
   font-size: clamp(1.65rem, 2.5vw, 2.15rem);

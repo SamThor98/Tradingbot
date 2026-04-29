@@ -36,7 +36,8 @@ export function setupKeyboardShortcuts({
       const mode = screenMap[e.key];
       if (mode) {
         applyScreenMode?.(mode, { updateUrl: true });
-        showToast?.(`Switched to ${mode} screen`, "info", 1800);
+        const pretty = mode.charAt(0).toUpperCase() + mode.slice(1);
+        showToast?.(`Switched to ${pretty}`, "info", 1800);
       }
       return;
     }

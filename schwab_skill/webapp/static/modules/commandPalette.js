@@ -37,7 +37,7 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection") },
     { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection") },
     { id: "performance", label: "Go to Performance", icon: "trending", action: lazyJump("performance", "performanceSection") },
-    { id: "onboarding", label: "Go to Settings", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
+    { id: "onboarding", label: "Go to Connections & Settings", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
     { id: "calibration", label: "Go to Calibration", icon: "tune", action: lazyJump("calibration", "calibrationSection") },
     { id: "sec", label: "SEC Filing Compare", icon: "file", action: () => document.getElementById("secCompareSection")?.scrollIntoView({ behavior: "smooth" }) },
     { id: "report", label: "Full Report", icon: "doc", action: () => document.getElementById("reportSectionCard")?.scrollIntoView({ behavior: "smooth" }) },
