@@ -1,4 +1,5 @@
 ---
+source: n/a (operations runbook)
 created: 2026-04-17
 updated: 2026-04-17
 tags: [operations, rollout, governance]

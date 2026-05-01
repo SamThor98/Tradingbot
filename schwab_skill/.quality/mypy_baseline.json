@@ -1,0 +1,5 @@
+{
+  "max_errors": 0,
+  "recorded_at": "2026-04-30T00:00:00Z",
+  "notes": "Type ratchet baseline. New work must not increase mypy errors above this threshold."
+}

@@ -1,3 +1,10 @@
+---
+source: n/a (wiki catalog)
+created: 2026-04-30
+updated: 2026-04-30
+tags: [wiki, index, catalog]
+---
+
 # Wiki Index
 
 > Central catalog of all knowledge compiled into this wiki.
@@ -6,6 +13,7 @@
 ## Project Overview
 
 - [[project-overview]] — High-level summary of the TradingBot project
+- [[governance-source-of-truth]] — precedence model for rules, skills, and wiki docs
 
 ## Architecture & Design
 
@@ -69,6 +77,7 @@
 - [[backup-restore]] — Backup strategy, restore drills, and DR targets
 - [[incident-response-saas]] — SaaS incident triage and escalation flow
 - [[slo-alerting]] — SLI/SLO targets, alert thresholds, and error budget policy
+- [[ops-excellence-loop]] — Drill cadence, pass/fail criteria, and follow-through
 
 ---
 
