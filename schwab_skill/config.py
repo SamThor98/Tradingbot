@@ -877,10 +877,11 @@ def get_signal_universe_target_size(skill_dir: Path | None = None) -> int:
 
 def get_signal_scan_full_universe(skill_dir: Path | None = None) -> bool:
     """
-    When True, the dynamic index watchlist path (S&P 500 + 400 + 600 + R2000)
-    is not shortened by QUALITY_WATCHLIST_PREFILTER_* or SIGNAL_UNIVERSE_MODE=focused.
-    Default is False so focused/prefilter behavior remains enabled unless explicitly
-    overridden with SIGNAL_SCAN_FULL_UNIVERSE=1.
+    Legacy compatibility flag.
+
+    Scan defaults now run strict SP1500 by default and ignore optional universe
+    shortening in the main scanner path. Keep reading this env var for backwards
+    compatibility with older tooling that may still surface it.
     """
     return _get_bool("SIGNAL_SCAN_FULL_UNIVERSE", False, skill_dir)
 

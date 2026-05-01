@@ -95,53 +95,22 @@ def _apply_universe_focus(skill_dir: Path, watchlist: list[str]) -> list[str]:
         return watchlist
 
 
-def _load_watchlist(skill_dir: Path) -> list[str]:
+def _load_watchlist(_skill_dir: Path) -> list[str]:
     """
-    Load watchlist:
-    - If SIGNAL_WATCHLIST is set in .env (non-empty), it overrides everything else (custom list).
-    - Else if USE_STATIC_WATCHLIST is true: DEFAULT_WATCHLIST (~sector basket).
-    - Else: watchlist_loader.load_full_watchlist() (S&P 1500 = S&P 500 + 400 + 600),
-      refreshed from source at least once per UTC day. When SIGNAL_SCAN_FULL_UNIVERSE is true
-      (default), that dynamic list is not shortened by quality prefilter or focused universe.
-    """
-    import os
+    Load the canonical scan universe.
 
-    env_path = skill_dir / ".env"
-    use_static = os.environ.get("USE_STATIC_WATCHLIST", "").strip().lower() in ("1", "true", "yes")
-    custom: list[str] | None = None
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("SIGNAL_WATCHLIST=") and custom is None:
-                val = line.split("=", 1)[1].strip().strip('"\'')
-                if val:
-                    custom = [s.strip().upper() for s in val.split(",") if s.strip()]
-            if line.startswith("USE_STATIC_WATCHLIST="):
-                use_static = line.split("=", 1)[1].strip().lower() in ("1", "true", "yes")
-    if custom is not None:
-        custom = _maybe_prefilter_watchlist(skill_dir, custom)
-        LOG.info("Watchlist mode=custom (SIGNAL_WATCHLIST) tickers=%d", len(custom))
-        return custom
-    if use_static:
-        static_wl = _maybe_prefilter_watchlist(skill_dir, DEFAULT_WATCHLIST)
-        static_wl = _apply_universe_focus(skill_dir, static_wl)
-        LOG.info("Watchlist mode=static (USE_STATIC_WATCHLIST) tickers=%d", len(static_wl))
-        return static_wl
-    from config import get_signal_scan_full_universe
+    Default behavior is strict SP1500 (S&P 500 + 400 + 600) sourced via
+    watchlist_loader and refreshed daily. Static/custom env watchlist paths are
+    intentionally ignored for normal scan runs.
+
+    To scan a non-SP1500 universe, callers must provide an explicit
+    watchlist_override (for example, API universe_mode="tickers").
+    """
     from watchlist_loader import load_full_watchlist
 
     wl = load_full_watchlist()
-    if get_signal_scan_full_universe(skill_dir):
-        LOG.info(
-            "Watchlist mode=full (watchlist_loader: SP1500=S&P500+400+600) tickers=%d "
-            "(SIGNAL_SCAN_FULL_UNIVERSE: no prefilter/focus)",
-            len(wl),
-        )
-        return wl
-    wl = _maybe_prefilter_watchlist(skill_dir, wl)
-    wl = _apply_universe_focus(skill_dir, wl)
     LOG.info(
-        "Watchlist mode=full (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
+        "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
         len(wl),
     )
     return wl
@@ -1495,8 +1464,10 @@ def scan_for_signals_detailed(
 
     if watchlist_override is not None:
         watchlist = [str(t).strip().upper() for t in watchlist_override if str(t).strip()]
+        diagnostics["watchlist_source"] = "explicit_tickers_override"
     else:
         watchlist = _load_watchlist(skill_dir)
+        diagnostics["watchlist_source"] = "sp1500_default"
     diagnostics["watchlist_size"] = len(watchlist)
     top_n = get_signal_top_n(skill_dir)
     stage_a_workers = get_scan_stage_a_max_workers(skill_dir)
