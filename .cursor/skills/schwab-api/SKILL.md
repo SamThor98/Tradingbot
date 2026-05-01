@@ -9,6 +9,15 @@ description: >-
 
 # Schwab API Integration
 
+## Canonical Contract
+
+This is the **canonical Schwab skill contract** for TradingBot.
+
+- OpenClaw/operator-specific usage lives in `schwab_skill/SKILL.md` and must
+  remain consistent with this canonical contract.
+- If behavior differs between documents, this file takes precedence for
+  repository architecture and implementation guidance.
+
 ## Dual OAuth Architecture
 
 The system uses **two separate Schwab developer apps** with distinct permissions:

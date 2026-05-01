@@ -29,6 +29,12 @@ files = [
   "webapp/saas_redis.py",
   "webapp/route_helpers.py",
   "webapp/response_helpers.py",
+  "webapp/tasks.py",
+  "hypothesis_ledger.py",
+  "promotion_utils.py",
+  "scripts/release_gate.py",
+  "scripts/validate_docs_governance.py",
+  "scripts/validate_slo_mapping.py",
 ]
 follow_imports = "skip"
 disable_error_code = ["import-untyped"]

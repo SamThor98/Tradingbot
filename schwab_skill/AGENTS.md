@@ -4,8 +4,14 @@ This file defines how autonomous coding agents should operate in this repository
 
 ## Repository Scope
 
-- Treat `schwab_skill/` as the repo root.
-- Do not modify parent directories.
+- Application/runtime code lives under `schwab_skill/`.
+- Repository governance artifacts may also live in parent paths:
+  - `.cursor/rules/`
+  - `.cursor/skills/`
+  - `wiki/`
+  - `CLAUDE.md`
+- When a task explicitly targets governance, documentation, or skill/rule policy,
+  edits to those parent-level paths are allowed.
 - Never commit secrets, token files, certs, or local runtime caches.
 
 ## Safe Working Rules
@@ -30,6 +36,8 @@ This file defines how autonomous coding agents should operate in this repository
 - Format: `python -m ruff format .`
 - Test: `python -m pytest -q`
 - Typecheck: `python -m mypy .`
+- Type ratchet: `python scripts/validate_typecheck_ratchet.py`
+- Docs/rules governance: `python scripts/validate_docs_governance.py`
 - Fixture chain smoke: `python scripts/validate_hypothesis_chain.py`
 
 **Full validation (release / server profile):**

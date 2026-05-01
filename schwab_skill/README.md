@@ -220,6 +220,10 @@ Additional references:
 Fast CI checks (PR/push):
 
 ```
+python scripts/validate_docs_governance.py
+python scripts/validate_ops_excellence.py
+python scripts/validate_decision_dashboard_contract.py
+python scripts/validate_typecheck_ratchet.py
 python scripts/validate_signal_quality.py
 python scripts/validate_scanner_parallelization.py
 python scripts/validate_shadow_mode.py

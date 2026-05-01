@@ -8,8 +8,8 @@ alwaysApply: true
 ## Architecture
 
 Two deployment modes:
-- **Local** (`webapp/main.py`): single-user, SQLite, API key auth, `schedule`-based bot loop
-- **SaaS** (`webapp/main_saas.py` + `tenant_dashboard.py`): multi-tenant, Postgres, Supabase JWT auth, Stripe billing, Celery workers, Redis
+- **Local** (`schwab_skill/webapp/main.py`): single-user, SQLite, API key auth, `schedule`-based bot loop
+- **SaaS** (`schwab_skill/webapp/main_saas.py` + `schwab_skill/webapp/tenant_dashboard.py`): multi-tenant, Postgres, Supabase JWT auth, Stripe billing, Celery workers, Redis
 
 ## Scanner Pipeline
 

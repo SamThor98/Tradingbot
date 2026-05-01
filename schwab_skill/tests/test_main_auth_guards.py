@@ -24,6 +24,7 @@ def _request_with_host(hostname: str) -> Request:
 def test_require_trade_api_key_allows_loopback_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WEB_API_KEY", raising=False)
     monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("RENDER", "1")
     monkeypatch.delenv("WEB_ALLOW_UNSAFE_LOCAL_WRITES", raising=False)
 
     out = webapp_main.require_trade_api_key(
@@ -37,6 +38,7 @@ def test_require_trade_api_key_allows_loopback_when_unconfigured(monkeypatch: py
 def test_require_trade_api_key_rejects_remote_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WEB_API_KEY", raising=False)
     monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("RENDER", "1")
     monkeypatch.delenv("WEB_ALLOW_UNSAFE_LOCAL_WRITES", raising=False)
 
     with pytest.raises(HTTPException) as exc:

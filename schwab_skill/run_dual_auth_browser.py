@@ -12,12 +12,13 @@ You'll get a browser security warning (self-signed cert) - click Advanced -> Pro
 """
 import datetime
 import os
+import secrets
 import ssl
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 SKILL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL_DIR))
@@ -26,6 +27,7 @@ CALLBACK_PORT = 8182
 CALLBACK_URL = f"https://127.0.0.1:{CALLBACK_PORT}/"
 
 _captured = {"code": None, "error": None}
+_expected_state: str | None = None
 
 
 class OAuthHandler(BaseHTTPRequestHandler):
@@ -33,16 +35,36 @@ class OAuthHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        global _expected_state
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+        state = str((qs.get("state") or [""])[0] or "").strip()
+        state_mismatch = bool(_expected_state) and state != _expected_state
         if "code" in qs:
-            _captured["code"] = qs["code"][0]
-            body = b"<html><body><h1>Success!</h1><p>Close this window and check the terminal.</p></body></html>"
+            if state_mismatch:
+                body = (
+                    b"<html><body><h1>Ignored callback</h1>"
+                    b"<p>OAuth state mismatch. Complete the most recently opened login tab.</p>"
+                    b"</body></html>"
+                )
+            else:
+                _captured["code"] = qs["code"][0]
+                body = (
+                    b"<html><body><h1>Success!</h1>"
+                    b"<p>Close this window and check the terminal.</p></body></html>"
+                )
         elif "error" in qs:
-            _captured["error"] = qs.get("error_description", qs.get("error", [b"Unknown"]))[0]
-            if isinstance(_captured["error"], bytes):
-                _captured["error"] = _captured["error"].decode("utf-8", "replace")
-            body = f"<html><body><h1>Error</h1><p>{_captured['error']}</p></body></html>".encode()
+            if state_mismatch:
+                body = (
+                    b"<html><body><h1>Ignored callback</h1>"
+                    b"<p>OAuth state mismatch. Complete the most recently opened login tab.</p>"
+                    b"</body></html>"
+                )
+            else:
+                _captured["error"] = qs.get("error_description", qs.get("error", [b"Unknown"]))[0]
+                if isinstance(_captured["error"], bytes):
+                    _captured["error"] = _captured["error"].decode("utf-8", "replace")
+                body = f"<html><body><h1>Error</h1><p>{_captured['error']}</p></body></html>".encode()
         else:
             body = b"<html><body><h1>No code. Check callback URL matches Schwab app settings.</h1></body></html>"
 
@@ -89,6 +111,7 @@ def _make_cert():
 
 
 def _run_session(session, name: str) -> bool:
+    global _expected_state
     _captured["code"] = None
     _captured["error"] = None
 
@@ -96,7 +119,13 @@ def _run_session(session, name: str) -> bool:
     orig = session.redirect_uri
     session.redirect_uri = CALLBACK_URL
 
-    auth_url = session.get_authorization_url()
+    state_prefix = str(name or "session").split()[0].lower()
+    _expected_state = f"{state_prefix}-{secrets.token_urlsafe(16)}"
+    base_url = session.get_authorization_url()
+    parsed = urlparse(base_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["state"] = _expected_state
+    auth_url = urlunparse(parsed._replace(query=urlencode(query)))
     print(f"\n--- {name} ---")
     print("Opening browser. Log in to Schwab, approve. Accept cert warning if prompted.")
     webbrowser.open(auth_url)
@@ -113,6 +142,7 @@ def _run_session(session, name: str) -> bool:
     server.server_close()
 
     session.redirect_uri = orig
+    _expected_state = None
 
     if _captured["error"]:
         print(f"OAuth error: {_captured['error']}")

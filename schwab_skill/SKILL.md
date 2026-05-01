@@ -1,11 +1,18 @@
 ---
-name: schwab-api
-description: Interact with Schwab Developer API for trading. Handles OAuth2 auth, token refresh, and enforces guardrails (defaults: max $500k account, $50k per ticker, 20 trades/day—configurable in .env). Use when placing trades via Schwab, checking accounts, or managing Schwab API auth. OpenClaw operator prompt: openclaw_operator_prompt.txt
+name: schwab-openclaw
+description: OpenClaw/operator extension for Schwab trading workflows. Canonical Schwab architecture contract is .cursor/skills/schwab-api/SKILL.md. This file documents OpenClaw-specific tool usage and guardrail behavior.
 metadata:
   {"openclaw":{"requires":{"bins":["python3"],"env":["SCHWAB_MARKET_APP_KEY","SCHWAB_ACCOUNT_APP_KEY"]},"emoji":"📈"}}
 ---
 
 # Schwab API Skill
+
+## Canonical Skill Reference
+
+This document extends the canonical TradingBot Schwab skill:
+
+- Canonical: `.cursor/skills/schwab-api/SKILL.md`
+- This file: OpenClaw/operator execution details and tool wrappers.
 
 ## Critical: Guardrail Wrapper
 

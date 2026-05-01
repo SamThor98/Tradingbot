@@ -45,3 +45,43 @@ def test_parse_ticker_universe() -> None:
 def test_rejects_tickers_without_mode() -> None:
     with pytest.raises(ValueError):
         parse_scan_run_body({"universe_mode": "tickers", "tickers": []})
+
+
+def test_runtime_env_overrides_are_string_values() -> None:
+    out = parse_scan_run_body(
+        {
+            "strategy_overrides": {
+                "breakout_confirm_enabled": True,
+                "quality_gates_mode": "hard",
+            }
+        }
+    )
+    env = out["env_overrides"]
+    assert isinstance(env, dict)
+    assert env["BREAKOUT_CONFIRM_ENABLED"] == "true"
+    assert env["QUALITY_GATES_MODE"] == "hard"
+
+
+def test_universe_overrides_drive_test_scan() -> None:
+    """The dashboard's "Test scan" button posts focused-mode overrides — verify they
+    survive the validator and reach env_overrides as expected."""
+    out = parse_scan_run_body(
+        {
+            "strategy_overrides": {
+                "signal_universe_mode": "focused",
+                "signal_universe_target_size": 100,
+                "quality_watchlist_prefilter_enabled": False,
+            }
+        }
+    )
+    env = out["env_overrides"]
+    assert env["SIGNAL_UNIVERSE_MODE"] == "focused"
+    assert env["SIGNAL_UNIVERSE_TARGET_SIZE"] == "100"
+    assert env["QUALITY_WATCHLIST_PREFILTER_ENABLED"] == "false"
+
+
+def test_universe_target_size_bounds_enforced() -> None:
+    with pytest.raises(ValueError):
+        parse_scan_run_body({"strategy_overrides": {"signal_universe_target_size": 5}})
+    with pytest.raises(ValueError):
+        parse_scan_run_body({"strategy_overrides": {"signal_universe_target_size": 5000}})
