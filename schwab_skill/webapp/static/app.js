@@ -160,6 +160,8 @@ import {
   showScQueueCallout as _showScQueueCalloutPanel,
   sendStrategyChat as _sendStrategyChatPanel,
 } from "./panels/strategyChat.js";
+import { renderValidationRecentSteps } from "./modules/validationView.js";
+import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
 
 // Thin wrappers preserve the call signatures used by `wireEvents`,
 // `connectSSE`, `runLazyApi`, etc. without leaking the panel-module
@@ -202,7 +204,7 @@ const lazyLoaded = {
 const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
-    title: "Operations workflow",
+    title: "Operate workflow",
     text: "Run scans, evaluate each candidate, then stage and approve trades.",
     ctaLabel: "Open scan flow",
     ctaHref: "#operationsWorkspaceIntro",
@@ -218,7 +220,7 @@ const SCREEN_CONTEXT = Object.freeze({
     altCtaHref: "#backtestSection",
   },
   diagnostics: {
-    title: "Diagnostics and health",
+    title: "Trust and health",
     text: "Inspect tokens, validation status, and system telemetry without cluttering trading flow.",
     ctaLabel: "Open diagnostics hub",
     ctaHref: "#diagnosticsWorkspaceIntro",
@@ -226,7 +228,7 @@ const SCREEN_CONTEXT = Object.freeze({
     altCtaHref: "#healthRibbon",
   },
   settings: {
-    title: "Settings and connections",
+    title: "Configure connections",
     text: "Manage Schwab connectivity, presets, live trading controls, 2FA, and billing options.",
     ctaLabel: "Open settings hub",
     ctaHref: "#settingsWorkspaceIntro",
@@ -236,7 +238,14 @@ const SCREEN_CONTEXT = Object.freeze({
 });
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
 const SCREEN_SECTIONS = Object.freeze({
-  operations: ["dashboardToday", "operationsWorkspaceIntro", "workflowPrimary", "pendingSection"],
+  operations: [
+    "dashboardToday",
+    "operationsWorkspaceIntro",
+    "workflowPrimary",
+    "scanSection",
+    "scanDetailPanel",
+    "pendingSection",
+  ],
   research: [
     "researchWorkspaceIntro",
     "researchWorkflowStrip",
@@ -254,9 +263,11 @@ const SCREEN_SECTIONS = Object.freeze({
     "performanceSection",
   ],
   diagnostics: [
+    "dashboardToday",
     "diagnosticsWorkspaceIntro",
     "diagnosticsWorkflowStrip",
     "healthRibbon",
+    "decisionDashboardCard",
     "blockersAlertSection",
     "statusDetailsPanel",
     "calibrationSection",
@@ -391,7 +402,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1 Operations, 2 Research, 3 Diagnostics, 4 Settings.";
+  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1 Operate, 2 Research, 3 Trust, 4 Configure.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -747,29 +758,6 @@ async function initSupabaseAuth(url, anonKey) {
   markAuthReady();
 }
 
-function renderValidationRecentSteps(validation = {}) {
-  const listEl = document.getElementById("validationRecentSteps");
-  const wrapEl = document.getElementById("validationRecentWrap");
-  if (!listEl || !wrapEl) return;
-  listEl.innerHTML = "";
-  const rows = Array.isArray(validation.results) ? validation.results : [];
-  if (!rows.length) {
-    listEl.innerHTML = `<li class="muted">No validation steps yet.</li>`;
-    return;
-  }
-  const lastFive = rows.slice(-5).reverse();
-  lastFive.forEach((step) => {
-    const name = safeText(step.name || "unknown_step");
-    const rc = safeNum(step.returncode, 1);
-    const status = rc === 0 ? "PASS" : "FAIL";
-    const seconds = durationSec(step.started_at, step.ended_at);
-    const durText = seconds === null ? "n/a" : `${seconds}s`;
-    const li = document.createElement("li");
-    li.innerHTML = `${name}: <strong>${status}</strong> (${durText})`;
-    listEl.appendChild(li);
-  });
-}
-
 function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
   const high = signals.filter((s) => (s?.advisory?.confidence_bucket || "").toLowerCase() === "high").length;
@@ -1029,7 +1017,12 @@ function buildDiagnosticsSummary(diag = {}) {
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
 
-  const watch = safeNum(diag.watchlist_size, 0);
+  const source = safeText(diag.watchlist_source || "").toLowerCase();
+  const watchRaw = safeNum(diag.watchlist_size, 0);
+  // SP1500 is the canonical default universe; keep KPI stable for default or unknown source.
+  // Only show a smaller number when source explicitly declares custom tickers.
+  const watch =
+    source === "explicit_tickers_override" ? watchRaw : Math.max(1500, watchRaw);
   const stageFail = safeNum(diag.stage2_fail, 0);
   const vcpFail = safeNum(diag.vcp_fail, 0);
   const finalSignals = state.latestSignals.length;
@@ -2033,7 +2026,28 @@ async function refreshStatus() {
   updateHeroInfographic();
 }
 
-const SCAN_START_META = "Scanning market candidates...";
+async function refreshDecisionDashboard() {
+  const out = await api.get("/api/decision-dashboard");
+  if (!out.ok) {
+    const msg = safeText(out.error || "Decision dashboard unavailable.");
+    const statusEl = document.getElementById("decisionPromotionState");
+    if (statusEl) {
+      statusEl.className = "health-badge bg-slate-900";
+      statusEl.textContent = "Unknown";
+    }
+    const reliEl = document.getElementById("decisionReliabilityState");
+    if (reliEl) {
+      reliEl.className = "health-badge bg-slate-900";
+      reliEl.textContent = "Unknown";
+    }
+    const lineEl = document.getElementById("decisionLatestPromotion");
+    if (lineEl) lineEl.textContent = msg;
+    return;
+  }
+  renderDecisionDashboard(out.data || {});
+}
+
+const SCAN_START_META = "Scanning SP1500 market candidates...";
 
 function scanBodyFromBacktestSpec(spec) {
   if (!spec || typeof spec !== "object") return {};
@@ -2041,8 +2055,9 @@ function scanBodyFromBacktestSpec(spec) {
   if (spec.overrides && typeof spec.overrides === "object" && Object.keys(spec.overrides).length) {
     out.strategy_overrides = spec.overrides;
   }
-  const um = safeText(spec.universe_mode || "watchlist").toLowerCase();
-  if (um === "tickers" || um === "watchlist") out.universe_mode = um;
+  const um = safeText(spec.universe_mode || "").toLowerCase();
+  // Scan defaults to server-side SP1500; only carry explicit ticker overrides.
+  if (um === "tickers") out.universe_mode = um;
   if (um === "tickers" && Array.isArray(spec.tickers)) out.tickers = spec.tickers;
   return out;
 }
@@ -2335,17 +2350,47 @@ async function waitForSaaScanCompletion(taskId) {
   });
 }
 
-async function runScan() {
+// Quick smoke-test affordance: focused mode + 100 tickers, no quality prefilter.
+// Lives next to "Run Scan" so operators can validate the pipeline without scanning all of SP1500.
+const TEST_SCAN_OVERRIDES = Object.freeze({
+  strategy_overrides: {
+    signal_universe_mode: "focused",
+    signal_universe_target_size: 100,
+    quality_watchlist_prefilter_enabled: false,
+  },
+});
+
+async function runScan(options = {}) {
   const btn = document.getElementById("scanBtn");
   const scanMetaEl = document.getElementById("scanMeta");
+  const overrideBody = options && typeof options.body === "object" && options.body ? options.body : null;
+  const isTestScan = Boolean(options && options.testScan);
+  const testBtn = document.getElementById("scanTestBtn");
+  // Disable both buttons during any scan; only change the *active* button's text so the
+  // affordance the user clicked is the one that visibly transitions to a spinner state.
   btn.disabled = true;
-  btn.textContent = "Scanning...";
+  if (testBtn) testBtn.disabled = true;
+  if (isTestScan) {
+    if (testBtn) testBtn.textContent = "Testing...";
+  } else {
+    btn.textContent = "Scanning...";
+  }
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
-  updateActionCenter({ title: "Scan Running", message: "Market scan is running. Results will stream into this page.", severity: "info" });
+  updateActionCenter({
+    title: isTestScan ? "Test Scan Running" : "Scan Running",
+    message: isTestScan
+      ? "Test scan (100 tickers, focused mode) running — pipeline smoke check."
+      : "SP1500 default scan is running. Results will stream into this page.",
+    severity: "info",
+  });
   try {
-    if (!readScanOptionsFromForm()) return;
-    const scanBody = state.scanRunOptions && typeof state.scanRunOptions === "object" ? state.scanRunOptions : {};
+    if (!overrideBody && !readScanOptionsFromForm()) return;
+    const scanBody = overrideBody
+      ? overrideBody
+      : state.scanRunOptions && typeof state.scanRunOptions === "object"
+        ? state.scanRunOptions
+        : {};
     const out = await api.post("/api/scan?async_mode=true", scanBody);
     if (!out.ok) {
       scanMetaEl.textContent = "Scan failed.";
@@ -2414,6 +2459,10 @@ async function runScan() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Run Scan";
+    if (testBtn) {
+      testBtn.disabled = false;
+      testBtn.textContent = "Test scan (100)";
+    }
     if (scanMetaEl && scanMetaEl.textContent === SCAN_START_META) {
       scanMetaEl.textContent = "No scan run yet.";
       updateActionCenter({
@@ -2423,6 +2472,10 @@ async function runScan() {
       });
     }
   }
+}
+
+function runTestScan() {
+  return runScan({ testScan: true, body: TEST_SCAN_OVERRIDES });
 }
 
 async function waitForScanCompletion() {
@@ -2856,6 +2909,7 @@ async function refreshAll() {
   setLoading({ portfolio: "Loading portfolio..." });
   const jobs = [
     ["status", refreshStatus()],
+    ["decision_dashboard", refreshDecisionDashboard()],
     ["account", refreshAccountMe()],
     ["pending", refreshPending()],
     ["portfolio", refreshPortfolio()],
@@ -2937,6 +2991,7 @@ function wireEvents() {
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   bindEvent("scanBtn", "click", runScan);
+  bindEvent("scanTestBtn", "click", runTestScan);
   document.querySelectorAll("[data-forward-click]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const targetId = safeText(btn.getAttribute("data-forward-click"));
@@ -3235,10 +3290,14 @@ function connectSSE() {
       if (event === "scan_started") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = true; btn.textContent = "Scanning..."; }
+        const tbtn = document.getElementById("scanTestBtn");
+        if (tbtn) tbtn.disabled = true;
         updateActionCenter({ title: "Scan Running", message: "Market scan started. Results will appear automatically.", severity: "info" });
       } else if (event === "scan_completed") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = false; btn.textContent = "Run Scan"; }
+        const tbtn = document.getElementById("scanTestBtn");
+        if (tbtn) { tbtn.disabled = false; tbtn.textContent = "Test scan (100)"; }
         const count = msg.signals_found ?? 0;
         showToast(`Scan complete: ${count} signal(s) found`, "success", 4000);
         addNotification(`Scan complete: ${count} signal(s) found`, "success");
@@ -3248,6 +3307,8 @@ function connectSSE() {
       } else if (event === "scan_failed") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = false; btn.textContent = "Run Scan"; }
+        const tbtn = document.getElementById("scanTestBtn");
+        if (tbtn) { tbtn.disabled = false; tbtn.textContent = "Test scan (100)"; }
         showToast("Scan failed: " + (msg.error || "unknown error"), "error", 6000);
         addNotification(`Scan failed: ${msg.error || "unknown"}`, "error");
         updateActionCenter({ title: "Scan Failed", message: msg.error || "Unknown error", severity: "error" });

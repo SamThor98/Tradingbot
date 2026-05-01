@@ -9,8 +9,8 @@
 
 export const state = {
   latestSignals: [],
-  /** Last watchlist size from scan diagnostics (for hero KPI). */
-  lastWatchlistSize: null,
+  /** Last watchlist size from scan diagnostics (for hero KPI). Defaults to SP1500. */
+  lastWatchlistSize: 1500,
   approvingTradeId: null,
   approvingChecklist: null,
   pendingFilter: "pending",

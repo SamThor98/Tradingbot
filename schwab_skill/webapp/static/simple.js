@@ -110,7 +110,7 @@ function setProgress(fraction, label) {
 }
 
 const DIAG_LABELS = {
-  watchlist_size: "Watchlist symbols",
+  watchlist_size: "Universe symbols scanned",
   stage2_fail: "Failed Stage 2 trend",
   vcp_fail: "Failed VCP / consolidation",
   breakout_not_confirmed: "Breakout not confirmed",
@@ -165,8 +165,15 @@ function renderBlockers(diagnostics, signalCount) {
   ul.innerHTML = "";
   const diag = diagnostics && typeof diagnostics === "object" ? diagnostics : {};
   const watch = safeNum(diag.watchlist_size, 0);
+  const sourceRaw = safeText(diag.watchlist_source || "").toLowerCase();
+  const sourceLabel =
+    sourceRaw === "explicit_tickers_override"
+      ? "Custom ticker override"
+      : sourceRaw === "sp1500_default"
+        ? "SP1500 default"
+        : "Universe source";
   const li0 = document.createElement("li");
-  li0.innerHTML = `<strong>Watchlist</strong>: ${watch} symbol(s) scanned.`;
+  li0.innerHTML = `<strong>${sourceLabel}</strong>: ${watch} symbol(s) scanned.`;
   ul.appendChild(li0);
 
   const blockers = Object.entries(diag)

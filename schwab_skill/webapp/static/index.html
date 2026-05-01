@@ -4,137 +4,184 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="TradingBot Dashboard — scan, approve, and manage your automated trading pipeline." />
-    <meta name="theme-color" content="#07080d" />
+    <meta name="theme-color" content="#0c1018" />
     <title>TradingBot Dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230c0e14'/><path d='M20 65 L35 45 L50 55 L65 30 L80 40' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='80' cy='40' r='5' fill='%23818cf8'/></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c1018'/><text x='50' y='66' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='62' fill='%23e7d9b5'>T</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
+    <link rel="stylesheet" href="/static/overhaul.css?v=__APP_VERSION__" />
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"
             integrity="sha384-JZigAjwiaZtkUbA44CWkPaT3iBb/mU5pO6QOANp+OqHd4q+1+7MG1kzp2OOP9ZfP"
             crossorigin="anonymous"
             referrerpolicy="no-referrer"></script>
   </head>
-  <body>
+  <body data-theme="editorial">
     <a class="skip-link" href="#mainContent">Skip to main content</a>
     <div class="bg-blur bg1"></div>
     <div class="bg-blur bg2"></div>
     <div class="bg-blur bg3"></div>
     <div class="bg-grid" aria-hidden="true"></div>
 
-    <main id="mainContent" class="container">
-      <header class="hero card hero-shell">
-        <div class="hero-main">
-          <p class="eyebrow">Operations-first Trading Workflow</p>
-          <h1>TradingBot</h1>
-          <p class="muted hero-lead">
-            Run <strong>Scan</strong>, inspect candidates with chart + score context, then stage and approve from
-            <strong>Trade Queue</strong>. Keep diagnostics and account controls reachable but out of the way.
-          </p>
-          <div class="hero-actions">
-            <button id="refreshBtn" class="btn secondary">Refresh All</button>
-            <button id="scanBtn" class="btn primary">Run Scan</button>
-            <a class="btn secondary" href="#toolsSection">Open Research</a>
-            <a class="btn secondary" href="#settingsWorkspaceIntro">Open Settings</a>
-            <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              <span id="notifBadge" class="notif-badge hidden">0</span>
-            </button>
-          </div>
-          <div id="notifPanel" class="notif-panel hidden">
-            <div class="notif-panel-header">
-              <strong>Notifications</strong>
-              <button id="notifClearBtn" class="btn small secondary" type="button">Clear all</button>
-            </div>
-            <ul id="notifList" class="notif-list">
-              <li class="muted">No notifications yet.</li>
-            </ul>
-          </div>
-          <div class="hero-toolbar" role="group" aria-label="Dashboard detail level">
-            <label class="field-label" for="displayModeSelect">Detail level</label>
-            <select id="displayModeSelect" title="Simple keeps actions focused; Standard balances depth; Pro expands diagnostics and raw detail.">
-              <option value="simple" selected>Simple</option>
-              <option value="standard">Standard</option>
-              <option value="pro">Pro</option>
-            </select>
-          </div>
-          <div id="supabaseAuthBlock" class="auth-supabase-block hidden" aria-label="Supabase sign-in">
-            <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
-              <label class="field-label" for="supabaseEmail">Email</label>
-              <input id="supabaseEmail" type="email" autocomplete="username" placeholder="you@example.com" />
-              <label class="field-label" for="supabasePassword">Password</label>
-              <input id="supabasePassword" type="password" autocomplete="current-password" placeholder="••••••••" />
-              <button id="supabaseSignInBtn" class="btn small secondary" type="button">Sign in</button>
-              <button id="supabaseSignUpBtn" class="btn small secondary" type="button">Sign up</button>
-            </div>
-            <div id="supabaseSignedIn" class="inline-form compact auth-supabase-row hidden">
-              <span id="supabaseUserLabel" class="muted"></span>
-              <button id="supabaseSignOutBtn" class="btn small secondary" type="button">Sign out</button>
-            </div>
-          </div>
-          <details id="manualJwtDetails" class="auth-manual-jwt">
-            <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
-            <div class="inline-form compact">
-              <label class="field-label" for="jwtInput">JWT</label>
-              <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
-              <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
-              <button id="copyJwtBtn" class="btn small secondary" type="button">Copy Token</button>
-            </div>
-          </details>
+    <header class="app-topbar" role="banner">
+      <a href="#operationsWorkspaceIntro" class="app-topbar-brand" aria-label="TradingBot home">
+        <span class="brand-mark" aria-hidden="true">T</span>
+        <span class="brand-text">TradingBot</span>
+      </a>
+
+      <nav class="app-topbar-tabs" role="tablist" aria-label="Workflow modes">
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="operations"
+          role="tab"
+          aria-selected="true"
+          aria-controls="operationsWorkspaceIntro"
+        >
+          <span class="tab-num" aria-hidden="true">1</span>Operate
+        </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="research"
+          role="tab"
+          aria-selected="false"
+          aria-controls="researchWorkspaceIntro"
+        >
+          <span class="tab-num" aria-hidden="true">2</span>Research
+        </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="diagnostics"
+          role="tab"
+          aria-selected="false"
+          aria-controls="diagnosticsWorkspaceIntro"
+        >
+          <span class="tab-num" aria-hidden="true">3</span>Trust
+        </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="settings"
+          role="tab"
+          aria-selected="false"
+          aria-controls="settingsWorkspaceIntro"
+        >
+          <span class="tab-num" aria-hidden="true">4</span>Configure
+        </button>
+      </nav>
+
+      <div class="app-topbar-actions">
+        <label class="topbar-detail" for="displayModeSelect">
+          <span class="visually-hidden">Detail level</span>
+          <select id="displayModeSelect" title="Simple keeps actions focused; Standard balances depth; Pro expands diagnostics and raw detail.">
+            <option value="simple" selected>Simple</option>
+            <option value="standard">Standard</option>
+            <option value="pro">Pro</option>
+          </select>
+        </label>
+        <button id="refreshBtn" class="btn secondary small" type="button">Refresh</button>
+        <button
+          id="scanTestBtn"
+          class="btn secondary small"
+          type="button"
+          data-tooltip="Quick 100-ticker sample (focused mode) — useful for smoke-testing the pipeline."
+          title="Quick 100-ticker sample (focused mode) — useful for smoke-testing the pipeline."
+        >
+          Test 100
+        </button>
+        <button id="scanBtn" class="btn primary small" type="button">Run Scan</button>
+        <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span id="notifBadge" class="notif-badge hidden">0</span>
+        </button>
+      </div>
+      <div id="notifPanel" class="notif-panel hidden">
+        <div class="notif-panel-header">
+          <strong>Notifications</strong>
+          <button id="notifClearBtn" class="btn small secondary" type="button">Clear all</button>
         </div>
-        <aside class="hero-aside" aria-label="Session snapshot">
-          <div class="hero-chart" aria-hidden="true">
-            <svg viewBox="0 0 320 120" class="hero-chart-svg" preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <linearGradient id="heroLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stop-color="#38bdf8" />
-                  <stop offset="50%" stop-color="#818cf8" />
-                  <stop offset="100%" stop-color="#c084fc" />
-                </linearGradient>
-                <linearGradient id="heroAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stop-color="rgba(56, 189, 248, 0.35)" />
-                  <stop offset="100%" stop-color="rgba(56, 189, 248, 0)" />
-                </linearGradient>
-              </defs>
-              <path
-                class="hero-chart-area"
-                d="M0,95 L40,88 L80,72 L120,78 L160,52 L200,58 L240,38 L280,48 L320,32 L320,120 L0,120 Z"
-                fill="url(#heroAreaGrad)"
-              />
-              <path
-                class="hero-chart-line"
-                d="M0,95 L40,88 L80,72 L120,78 L160,52 L200,58 L240,38 L280,48 L320,32"
-                fill="none"
-                stroke="url(#heroLineGrad)"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <circle class="hero-chart-dot" cx="320" cy="32" r="4" fill="#e0e7ff" />
-            </svg>
-            <span class="hero-chart-caption">Scan pipeline flow</span>
+        <ul id="notifList" class="notif-list">
+          <li class="muted">No notifications yet.</li>
+        </ul>
+      </div>
+    </header>
+
+    <main id="mainContent" class="container">
+      <div id="supabaseAuthBlock" class="auth-supabase-block auth-shelf hidden" aria-label="Supabase sign-in">
+        <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
+          <label class="field-label" for="supabaseEmail">Email</label>
+          <input id="supabaseEmail" type="email" autocomplete="username" placeholder="you@example.com" />
+          <label class="field-label" for="supabasePassword">Password</label>
+          <input id="supabasePassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+          <button id="supabaseSignInBtn" class="btn small secondary" type="button">Sign in</button>
+          <button id="supabaseSignUpBtn" class="btn small secondary" type="button">Sign up</button>
+        </div>
+        <div id="supabaseSignedIn" class="inline-form compact auth-supabase-row hidden">
+          <span id="supabaseUserLabel" class="muted"></span>
+          <button id="supabaseSignOutBtn" class="btn small secondary" type="button">Sign out</button>
+        </div>
+        <details id="manualJwtDetails" class="auth-manual-jwt">
+          <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
+          <div class="inline-form compact">
+            <label class="field-label" for="jwtInput">JWT</label>
+            <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
+            <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
+            <button id="copyJwtBtn" class="btn small secondary" type="button">Copy Token</button>
           </div>
-          <div class="hero-kpi-strip">
-            <div class="hero-kpi" data-kpi="signals">
-              <span class="hero-kpi-label">Open signals</span>
-              <strong id="heroKpiSignals" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">from last scan</span>
-            </div>
-            <div class="hero-kpi" data-kpi="pending">
-              <span class="hero-kpi-label">Pending</span>
-              <strong id="heroKpiPending" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">awaiting you</span>
-            </div>
-            <div class="hero-kpi" data-kpi="watchlist">
-              <span class="hero-kpi-label">Universe</span>
-              <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">—</strong>
-              <span class="hero-kpi-hint">watchlist size</span>
-            </div>
+        </details>
+      </div>
+
+      <header id="screenContextCard" class="mode-header" aria-live="polite">
+        <div class="mode-header-copy">
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Operate</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Trust</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Configure</p>
+          <h1 id="screenContextTitle" class="mode-header-title">Operate workflow</h1>
+          <p id="screenContextText" class="muted mode-header-lead">
+            Run scans, evaluate each candidate with chart + scoring context, then stage and approve trades from one workspace.
+          </p>
+          <nav class="mode-header-anchors section-nav" aria-label="In-mode navigation">
+            <a href="#scanSection" data-nav-screens="operations">Run scan</a>
+            <a href="#scanDetailPanel" data-nav-screens="operations">Review candidates</a>
+            <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
+            <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
+            <a href="#backtestSection" data-nav-screens="research">Backtest + chat</a>
+            <a href="#reportSectionCard" data-nav-screens="research">Full report + SEC compare</a>
+            <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
+            <a href="#decisionDashboardCard" data-nav-screens="diagnostics">Decision dashboard</a>
+            <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Detailed status</a>
+            <a href="#onboardingSection" data-nav-screens="settings">Connections</a>
+            <a href="#settingsSection" data-nav-screens="settings">Trading controls</a>
+          </nav>
+          <div class="mode-header-actions">
+            <a id="screenContextCta" class="btn small primary" href="#workflowPrimary">Open scan flow</a>
+            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
+            <small id="screenContextHint" class="muted mode-header-hint">Tip: Ctrl/Cmd + 1..4 switches modes.</small>
+          </div>
+        </div>
+        <aside class="mode-header-kpis" aria-label="Session snapshot">
+          <div class="hero-kpi" data-kpi="signals">
+            <span class="hero-kpi-label">Open signals</span>
+            <strong id="heroKpiSignals" class="hero-kpi-value mono-nums">—</strong>
+            <span class="hero-kpi-hint">from last scan</span>
+          </div>
+          <div class="hero-kpi" data-kpi="pending">
+            <span class="hero-kpi-label">Pending</span>
+            <strong id="heroKpiPending" class="hero-kpi-value mono-nums">—</strong>
+            <span class="hero-kpi-hint">awaiting you</span>
+          </div>
+          <div class="hero-kpi" data-kpi="watchlist">
+            <span class="hero-kpi-label">Universe</span>
+            <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">1500</strong>
+            <span class="hero-kpi-hint">watchlist size</span>
           </div>
         </aside>
       </header>
@@ -171,6 +218,36 @@
         </div>
       </section>
 
+      <section id="decisionDashboardCard" class="card diagnostics-surface" aria-label="Leadership decision dashboard">
+        <div class="section-head">
+          <h3 style="margin: 0">Decision Dashboard</h3>
+          <span class="muted">Reliability + strategy quality + promotion readiness</span>
+        </div>
+        <div class="dashboard-today-stack" style="gap: 8px">
+          <div class="health-ribbon" style="grid-template-columns: repeat(2, minmax(140px, 1fr))">
+            <div class="health-tile" data-state="neutral">
+              <div class="health-tile-copy">
+                <span class="health-label">Reliability</span>
+                <strong id="decisionReliabilityState" class="health-badge bg-slate-900">Unknown</strong>
+              </div>
+            </div>
+            <div class="health-tile" data-state="neutral">
+              <div class="health-tile-copy">
+                <span class="health-label">Promotion</span>
+                <strong id="decisionPromotionState" class="health-badge bg-slate-900">Unknown</strong>
+              </div>
+            </div>
+          </div>
+          <p id="decisionValidationStatus" class="muted" style="margin: 0">Validation: --</p>
+          <p id="decisionSloStatus" class="muted" style="margin: 0">SLO gate: --</p>
+          <p id="decisionLastScan" class="muted" style="margin: 0">Last scan unavailable</p>
+          <p id="decisionSignalsFound" class="muted" style="margin: 0">0 signals</p>
+          <p id="decisionStrategyLead" class="muted" style="margin: 0">No dominant strategy</p>
+          <p id="decisionDataQuality" class="muted" style="margin: 0">Data quality: unknown</p>
+          <p id="decisionLatestPromotion" class="muted" style="margin: 0">No promotion decision recorded yet</p>
+        </div>
+      </section>
+
       <section id="blockersAlertSection" class="card blockers-alert hidden diagnostics-surface" aria-live="polite">
         <strong>Top Blockers</strong>
         <ul id="blockersAlertList" class="report-bullets"></ul>
@@ -197,91 +274,45 @@
           <p id="actionCenterText" class="muted">Ready. Run Scan to load candidates.</p>
         </div>
       </section>
-      </div>
-
-      <section class="app-rail" aria-label="Workflow context and navigation">
-        <nav class="section-nav card" aria-label="Screen and section navigation">
-          <div class="screen-switch" role="tablist" aria-label="Dashboard screens">
-            <button
-              type="button"
-              class="screen-switch-btn"
-              data-screen-mode="operations"
-              role="tab"
-              aria-selected="true"
-              aria-controls="operationsWorkspaceIntro"
-            >
-              Operations
-            </button>
-            <button
-              type="button"
-              class="screen-switch-btn"
-              data-screen-mode="research"
-              role="tab"
-              aria-selected="false"
-              aria-controls="researchWorkspaceIntro"
-            >
-              Research
-            </button>
-            <button
-              type="button"
-              class="screen-switch-btn"
-              data-screen-mode="diagnostics"
-              role="tab"
-              aria-selected="false"
-              aria-controls="diagnosticsWorkspaceIntro"
-            >
-              Diagnostics
-            </button>
-            <button
-              type="button"
-              class="screen-switch-btn"
-              data-screen-mode="settings"
-              role="tab"
-              aria-selected="false"
-              aria-controls="settingsWorkspaceIntro"
-            >
-              Settings
-            </button>
+      <section class="card command-center operations-surface" aria-label="KPI command center">
+        <div class="command-center-head">
+          <div>
+            <p class="workspace-eyebrow">Command Center</p>
+            <h3>Execution telemetry</h3>
           </div>
-          <a href="#operationsWorkspaceIntro" data-nav-screens="operations">Operations hub</a>
-          <a href="#workflowPrimary" data-nav-screens="operations">Run scans</a>
-          <a href="#scanSection" data-nav-screens="operations">Review candidates</a>
-          <a href="#pendingSection" data-nav-screens="operations">Approve/execute</a>
-          <a href="#researchWorkspaceIntro" class="nav-advanced" data-nav-screens="research">Research hub</a>
-          <a href="#backtestSection" data-nav-screens="research">Backtests + chat</a>
-          <a href="#reportSectionCard" data-nav-screens="research">Full report + SEC compare</a>
-          <a href="#diagnosticsWorkspaceIntro" data-nav-screens="diagnostics">Validation + health</a>
-          <a href="#statusDetailsPanel" data-nav-screens="diagnostics">System status</a>
-          <a href="#settingsWorkspaceIntro" data-nav-screens="settings">Connections + controls</a>
-          <a href="#settingsSection" data-nav-screens="settings">Profile + live trading</a>
-        </nav>
-
-        <section id="screenContextCard" class="card screen-context" aria-live="polite">
-          <div class="screen-context-copy">
-            <strong id="screenContextTitle">Operations workflow</strong>
-            <p id="screenContextText" class="muted">Run scans, review candidates, and execute from the trade queue.</p>
-            <small id="screenContextHint" class="muted screen-context-hint">Tip: Ctrl/Cmd + 1..4 switches screens.</small>
-          </div>
-          <div class="screen-context-actions">
-            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
-            <a id="screenContextCta" class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
-          </div>
-        </section>
-
-        <section class="card rail-quick-actions operations-surface" aria-label="Core trading actions">
-          <strong>Core workflow</strong>
-          <p class="muted">Keep the daily loop tight: scan, decide, queue, approve.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#scanSection">1) Scan</a>
-            <a class="btn small secondary" href="#scanDetailPanel">2) Evaluate</a>
-            <a class="btn small secondary" href="#pendingSection">3) Approve</a>
+            <button class="btn secondary" type="button" data-forward-click="refreshBtn">Refresh now</button>
+            <button class="btn primary" type="button" data-forward-click="scanBtn">Run scan</button>
           </div>
-        </section>
+        </div>
+        <div class="command-kpi-grid">
+          <article class="command-kpi-card">
+            <span class="muted">Core loop</span>
+            <strong>Scan → Evaluate → Approve</strong>
+            <small class="muted">All three lanes stay visible in the workspace below.</small>
+          </article>
+          <article class="command-kpi-card">
+            <span class="muted">Priority</span>
+            <strong>Protect downside first</strong>
+            <small class="muted">Use Trust mode for debugging, Operate mode for decisions.</small>
+          </article>
+          <article class="command-kpi-card">
+            <span class="muted">Queue posture</span>
+            <strong>Review pending continuously</strong>
+            <small class="muted">Approve only highest-conviction setups from lane 3.</small>
+          </article>
+          <article class="command-kpi-card">
+            <span class="muted">Action</span>
+            <strong>Stay in flow</strong>
+            <small class="muted">Run scan, inspect context, stage, then approve.</small>
+          </article>
+        </div>
       </section>
+      </div>
 
       <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro" aria-label="Operations workspace">
         <div>
-          <p class="workspace-eyebrow">Operations</p>
+          <p class="workspace-eyebrow">Operate</p>
           <h2>Run the daily trade loop with minimal friction</h2>
           <p class="muted">Start scan, inspect candidates with chart + scoring context, stage trades, then approve or reject from one workflow.</p>
         </div>
@@ -292,8 +323,26 @@
         </div>
       </section>
 
+      <section class="card operate-priority-bar operations-surface" aria-label="Primary operating priorities">
+        <article>
+          <span class="muted">Priority 1</span>
+          <strong>Run scan and review top candidates</strong>
+          <a href="#scanSection">Go to scan results</a>
+        </article>
+        <article>
+          <span class="muted">Priority 2</span>
+          <strong>Stage and approve only highest-conviction setups</strong>
+          <a href="#pendingSection">Open approvals</a>
+        </article>
+        <article>
+          <span class="muted">Priority 3</span>
+          <strong>Use Trust mode for troubleshooting, not execution</strong>
+          <a href="#diagnosticsWorkspaceIntro">Open trust view</a>
+        </article>
+      </section>
+
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
-        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Scan, evaluate, and queue trades</h2>
+        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Primary trade flow</h2>
         <div class="workflow-toolbar operations-surface" aria-label="Primary operations actions">
           <div class="workflow-toolbar-copy">
             <strong>Daily execution loop</strong>
@@ -302,11 +351,22 @@
           <div class="inline-form compact">
             <button class="btn secondary" type="button" id="workflowRefreshBtn" data-forward-click="refreshBtn">Refresh</button>
             <button class="btn primary" type="button" id="workflowRunScanBtn" data-forward-click="scanBtn">Run scan</button>
+            <button class="btn secondary" type="button" id="workflowTestScanBtn" data-forward-click="scanTestBtn">Test scan (100)</button>
             <a class="btn secondary" href="#pendingSection">Open approvals</a>
           </div>
         </div>
-        <div class="layout-2 layout-workflow">
-        <article id="scanSection" class="card card--primary-task">
+        <nav class="flow-stepper card operations-surface" aria-label="Scan to trade flow">
+          <a href="#scanSection"><span>1</span>Run scan</a>
+          <a href="#scanDetailPanel"><span>2</span>Evaluate setup</a>
+          <a href="#pendingSection"><span>3</span>Queue trade</a>
+          <a href="#pendingSection"><span>4</span>Approve or reject</a>
+        </nav>
+        <div class="operate-kanban">
+        <article id="scanSection" class="card card--primary-task kanban-lane">
+          <div class="kanban-lane-head">
+            <span class="kanban-lane-step">Lane 1</span>
+            <strong>Scan + shortlist</strong>
+          </div>
           <div class="section-title">
             <h2>Scan results</h2>
             <div class="scan-title-meta">
@@ -341,8 +401,8 @@
               <span class="disclosure-hint muted">optional JSON overrides</span>
             </summary>
             <p class="muted small" style="margin: 0.5rem 0">
-              Optional keys: <code>strategy_overrides</code>, <code>universe_mode</code>
-              (<code>watchlist</code> or <code>tickers</code>), and <code>tickers</code>.
+              Default scan universe is <code>SP1500</code>. Use <code>strategy_overrides</code> for runtime knobs, or set
+              <code>universe_mode</code> to <code>tickers</code> with explicit <code>tickers</code> to override SP1500.
             </p>
             <textarea
               id="scanOptionsJson"
@@ -382,49 +442,58 @@
                 </tbody>
               </table>
             </div>
-            <aside id="scanDetailPanel" class="scan-detail-panel" aria-live="polite">
-              <div class="scan-detail-header">
-                <h3 id="scanDetailTicker">Select a ticker</h3>
-                <p id="scanDetailStrategy" class="muted">Choose a scan row to review chart and scoring context.</p>
-              </div>
-              <div id="scanDetailChartContainer" class="scan-detail-chart">
-                <p class="muted">Chart will appear after you select a ticker.</p>
-              </div>
-              <div class="scan-detail-grid">
-                <div class="scan-detail-stat">
-                  <span class="muted">Price</span>
-                  <strong id="scanDetailPrice">--</strong>
-                </div>
-                <div class="scan-detail-stat">
-                  <span class="muted">Signal score</span>
-                  <strong id="scanDetailScore">--</strong>
-                  <small class="muted">Composite setup quality score.</small>
-                </div>
-                <div class="scan-detail-stat">
-                  <span class="muted">P(up 10d)</span>
-                  <strong id="scanDetailPup">--</strong>
-                  <small class="muted">Model-estimated 10-day upside probability.</small>
-                </div>
-                <div class="scan-detail-stat">
-                  <span class="muted">Confidence</span>
-                  <strong id="scanDetailConfidence">--</strong>
-                  <small class="muted">Reliability bucket for the advisory model.</small>
-                </div>
-                <div class="scan-detail-stat">
-                  <span class="muted">Conviction</span>
-                  <strong id="scanDetailConviction">--</strong>
-                  <small class="muted">Advisory strength for acting on the setup.</small>
-                </div>
-                <div class="scan-detail-stat">
-                  <span class="muted">Sector ETF</span>
-                  <strong id="scanDetailSector">--</strong>
-                </div>
-              </div>
-            </aside>
           </div>
         </article>
 
-        <article id="pendingSection" class="card card--primary-task">
+        <aside id="scanDetailPanel" class="scan-detail-panel card kanban-lane" aria-live="polite">
+          <div class="kanban-lane-head">
+            <span class="kanban-lane-step">Lane 2</span>
+            <strong>Evaluate setup</strong>
+          </div>
+          <div class="scan-detail-header">
+            <h3 id="scanDetailTicker">Select a ticker</h3>
+            <p id="scanDetailStrategy" class="muted">Choose a scan row to review chart and scoring context.</p>
+          </div>
+          <div id="scanDetailChartContainer" class="scan-detail-chart">
+            <p class="muted">Chart will appear after you select a ticker.</p>
+          </div>
+          <div class="scan-detail-grid">
+            <div class="scan-detail-stat">
+              <span class="muted">Price</span>
+              <strong id="scanDetailPrice">--</strong>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Signal score</span>
+              <strong id="scanDetailScore">--</strong>
+              <small class="muted">Composite setup quality score.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">P(up 10d)</span>
+              <strong id="scanDetailPup">--</strong>
+              <small class="muted">Model-estimated 10-day upside probability.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Confidence</span>
+              <strong id="scanDetailConfidence">--</strong>
+              <small class="muted">Reliability bucket for the advisory model.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Conviction</span>
+              <strong id="scanDetailConviction">--</strong>
+              <small class="muted">Advisory strength for acting on the setup.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Sector ETF</span>
+              <strong id="scanDetailSector">--</strong>
+            </div>
+          </div>
+        </aside>
+
+        <article id="pendingSection" class="card card--primary-task kanban-lane">
+          <div class="kanban-lane-head">
+            <span class="kanban-lane-step">Lane 3</span>
+            <strong>Queue + approve</strong>
+          </div>
           <div class="section-title section-title--with-action">
             <div>
               <h2>Pending approvals</h2>
@@ -587,7 +656,7 @@
 
       <section id="settingsWorkspaceIntro" class="card workspace-intro" aria-label="Settings workspace">
         <div>
-          <p class="workspace-eyebrow">Settings</p>
+          <p class="workspace-eyebrow">Configure</p>
           <h2>Configure connectivity and account controls</h2>
           <p class="muted">Onboarding, profile presets, live-trading safety controls, 2FA, and billing.</p>
         </div>
@@ -808,7 +877,7 @@
 
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
         <div>
-          <p class="workspace-eyebrow">Diagnostics</p>
+          <p class="workspace-eyebrow">Trust</p>
           <h2>Trust signals, validation, and system health</h2>
           <p class="muted">Use this view to debug API/session state without interrupting trade execution flow.</p>
         </div>
@@ -1332,6 +1401,12 @@
         <ul id="logList" class="log-list"></ul>
       </div>
     </section>
+
+    <nav class="mobile-primary-dock" aria-label="Primary mobile actions">
+      <button type="button" class="btn secondary" data-forward-click="refreshBtn">Refresh</button>
+      <button type="button" class="btn primary" data-forward-click="scanBtn">Run Scan</button>
+      <a class="btn secondary" href="#pendingSection">Approvals</a>
+    </nav>
 
     <dialog id="approveDialog" class="modal">
       <form method="dialog">

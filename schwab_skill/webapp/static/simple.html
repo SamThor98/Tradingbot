@@ -4,19 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="TradingBot — focused scan and diagnostics view." />
-    <meta name="theme-color" content="#07080d" />
+    <meta name="theme-color" content="#0c1018" />
     <title>Scan — TradingBot</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230c0e14'/><path d='M20 65 L35 45 L50 55 L65 30 L80 40' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='80' cy='40' r='5' fill='%23818cf8'/></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c1018'/><text x='50' y='66' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='62' fill='%23e7d9b5'>T</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
     <link rel="stylesheet" href="/static/simple.css?v=__APP_VERSION__" />
+    <link rel="stylesheet" href="/static/overhaul.css?v=__APP_VERSION__" />
   </head>
-  <body>
+  <body data-theme="editorial">
     <a class="skip-link" href="#simpleMain">Skip to main content</a>
     <div class="bg-blur bg1"></div>
     <div class="bg-blur bg2"></div>
@@ -24,11 +25,11 @@
     <main id="simpleMain" class="container simple-wrap">
       <header class="card simple-header">
         <div>
-          <p class="eyebrow">External-friendly view</p>
+          <p class="eyebrow">Focused operate view</p>
           <h1>Signal scan</h1>
           <p class="muted simple-lead">
-            Connect your session, run one scan, and read why the list is empty when filters block every name. For backtests,
-            staging trades, and approvals use the
+            Connect your session, run one <strong>SP1500-default</strong> scan, and read why the list is empty when filters
+            block every name. For backtests, staging trades, and approvals use the
             <a href="/">full dashboard</a>
             (<a href="/?section=backtest">backtest</a>,
             <a href="/?section=pending">pending</a>) or sign in only at
@@ -39,6 +40,12 @@
           <a class="btn secondary" href="/">Full dashboard</a>
         </div>
       </header>
+
+      <nav class="simple-flow-strip card" aria-label="Simple workflow">
+        <a href="#simpleScanBtn"><span>1</span>Run scan</a>
+        <a href="#simpleBlockers"><span>2</span>Inspect blockers</a>
+        <a href="#simpleTableBody"><span>3</span>Review candidates</a>
+      </nav>
 
       <p id="simpleMessage" class="simple-message muted" role="status" aria-live="polite"></p>
 
@@ -88,6 +95,9 @@
         <h2 class="simple-h2">Scan</h2>
         <p class="muted">
           <strong id="simpleScanHeadline" class="simple-scan-headline">No scan yet.</strong>
+        </p>
+        <p class="muted small" style="margin-top: -0.2rem">
+          Default universe is SP1500. Custom ticker overrides are available in the full dashboard advanced options.
         </p>
         <div id="simpleProgressWrap" class="job-progress-wrap hidden">
           <progress id="simpleProgress" max="100" value="0"></progress>

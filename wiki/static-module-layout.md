@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/app.js
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-04-30
 tags: [frontend, refactor, modules, dashboard]
 ---
 
@@ -50,7 +50,8 @@ webapp/static/
 │  ├─ scrollToTop.js              floating "back to top" button
 │  ├─ commandPalette.js           Cmd-K palette (action callbacks injected by app.js)
 │  ├─ shortcuts.js                global keyboard shortcuts (callbacks injected by app.js)
-│  └─ logger.js                   logEvent, action center, activity badge, status pills
+│  ├─ logger.js                   logEvent, action center, activity badge, status pills
+│  └─ validationView.js           validation recent-steps renderer
 └─ panels/
    ├─ twoFa.js                    2FA enable-live-trading panel
    ├─ onboarding.js               Schwab onboarding wizard (5-step stepper + auto-derived next CTA)
@@ -64,6 +65,7 @@ webapp/static/
    ├─ profile.js                  preset/profile panel + apply-preview diff
    ├─ performance.js              backtest/shadow/live + challenger + evolve cards
    ├─ strategyChat.js             chat bubble renderer + queue callout + send loop
+   ├─ decisionDashboard.js        executive reliability/quality/readiness render card
    └─ backtest.js                 form persistence, queue, polling, results, hub tabs
 ```
 

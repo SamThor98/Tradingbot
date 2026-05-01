@@ -1,0 +1,1895 @@
+/* ============================================================
+   Editorial Trading Terminal — Visual Overhaul v3
+   Loaded AFTER styles.css and simple.css; intentionally high
+   specificity (body[data-theme="editorial"]) to win the cascade
+   without rewriting legacy stylesheets.
+
+   Aesthetic: dark navy ink + warm newsprint cream + muted
+   editorial accents. Display serif (Fraunces, italic) paired
+   with Manrope body and JetBrains Mono numerics. Sharp corners,
+   strong vertical rhythm, generous white space.
+============================================================ */
+
+body[data-theme="editorial"] {
+  /* Tokens ---------------------------------------------------- */
+  --ink: #0a0d14;
+  --ink-2: #0e1320;
+  --ink-3: #131a2a;
+  --ink-line: rgba(231, 217, 181, 0.14);
+  --ink-line-strong: rgba(231, 217, 181, 0.32);
+
+  --paper: #ede5d3;
+  --paper-soft: #d8cdb6;
+  --paper-warm: #e7d9b5;
+  --paper-mute: rgba(231, 217, 181, 0.62);
+
+  --gold: #c9a66b;
+  --gold-soft: rgba(201, 166, 107, 0.18);
+  --positive: #7fb47a;
+  --positive-soft: rgba(127, 180, 122, 0.18);
+  --negative: #c25450;
+  --negative-soft: rgba(194, 84, 80, 0.18);
+  --warn: #d9a441;
+
+  --serif: "Fraunces", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --sans: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --rule: 1px solid var(--ink-line);
+  --rule-strong: 1px solid var(--ink-line-strong);
+  --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 0 0 1px rgba(201, 166, 107, 0.22) inset;
+
+  /* Reset noisy backdrops -------------------------------------- */
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(201, 166, 107, 0.08), transparent 60%),
+    radial-gradient(1100px 720px at 100% 0%, rgba(127, 180, 122, 0.05), transparent 65%),
+    linear-gradient(180deg, var(--ink) 0%, #070a13 100%) !important;
+  color: var(--paper);
+  font-family: var(--sans);
+  font-feature-settings: "ss01", "cv11", "cv05", "tnum" 0;
+  letter-spacing: -0.005em;
+}
+
+body[data-theme="editorial"] .bg-blur,
+body[data-theme="editorial"] .bg-grid,
+body[data-theme="editorial"] .hero-shell::before {
+  display: none !important;
+}
+
+/* Typography overhaul ----------------------------------------- */
+body[data-theme="editorial"] {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+body[data-theme="editorial"] h1,
+body[data-theme="editorial"] h2,
+body[data-theme="editorial"] h3,
+body[data-theme="editorial"] .hero h1,
+body[data-theme="editorial"] .workflow-primary-heading,
+body[data-theme="editorial"] .workspace-intro h2,
+body[data-theme="editorial"] .section-title h2,
+body[data-theme="editorial"] .section-title h3,
+body[data-theme="editorial"] .command-center-head h3 {
+  font-family: var(--serif) !important;
+  font-weight: 400 !important;
+  font-style: italic !important;
+  color: var(--paper-warm) !important;
+  letter-spacing: -0.012em !important;
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  background-clip: initial !important;
+  -webkit-text-fill-color: var(--paper-warm) !important;
+  text-wrap: balance;
+}
+
+body[data-theme="editorial"] .hero h1 {
+  font-size: clamp(2.4rem, 4.4vw, 3.8rem) !important;
+  font-weight: 300 !important;
+  font-variation-settings: "opsz" 144, "SOFT" 30 !important;
+  line-height: 1 !important;
+  margin: 0.4rem 0 1rem !important;
+}
+
+body[data-theme="editorial"] .workflow-primary-heading {
+  font-size: clamp(1.45rem, 2.4vw, 1.95rem) !important;
+  margin: 0 0 0.6rem !important;
+}
+
+body[data-theme="editorial"] .workspace-intro h2 {
+  font-size: 1.55rem !important;
+}
+
+body[data-theme="editorial"] .eyebrow,
+body[data-theme="editorial"] .workspace-eyebrow,
+body[data-theme="editorial"] .field-label,
+body[data-theme="editorial"] .stat-label,
+body[data-theme="editorial"] .health-label,
+body[data-theme="editorial"] .kanban-lane-step {
+  font-family: var(--sans) !important;
+  font-style: normal !important;
+  font-size: 0.66rem !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  color: var(--gold) !important;
+  font-weight: 600 !important;
+}
+
+body[data-theme="editorial"] .muted,
+body[data-theme="editorial"] .hero-lead,
+body[data-theme="editorial"] p {
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .mono-nums,
+body[data-theme="editorial"] .hero-kpi-value,
+body[data-theme="editorial"] code,
+body[data-theme="editorial"] pre {
+  font-family: var(--mono) !important;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* Surfaces (kill glassy gradients) ---------------------------- */
+body[data-theme="editorial"] .card {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 4px !important;
+  backdrop-filter: none !important;
+  box-shadow: var(--shadow-1) !important;
+  animation: none !important;
+}
+
+body[data-theme="editorial"] .card:hover {
+  border-color: var(--ink-line-strong) !important;
+}
+
+body[data-theme="editorial"] .hero-shell,
+body[data-theme="editorial"] .hero {
+  background:
+    linear-gradient(180deg, rgba(201, 166, 107, 0.06) 0%, rgba(10, 13, 20, 0) 70%),
+    var(--ink) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 4px !important;
+  padding: 36px 32px !important;
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .hero::after,
+body[data-theme="editorial"] .hero-shell::after {
+  content: "";
+  position: absolute;
+  left: 32px;
+  right: 32px;
+  bottom: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold) 30%, var(--gold) 70%, transparent);
+  opacity: 0.5;
+}
+
+body[data-theme="editorial"] .hero-aside {
+  border-left: 1px solid var(--ink-line);
+  padding-left: 1.4rem;
+}
+
+body[data-theme="editorial"] .hero-chart {
+  background: rgba(8, 11, 18, 0.6) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+}
+
+body[data-theme="editorial"] .hero-chart-caption {
+  color: var(--gold) !important;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+}
+
+body[data-theme="editorial"] .hero-kpi {
+  background: transparent !important;
+  border: none !important;
+  border-top: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 12px 4px !important;
+}
+
+body[data-theme="editorial"] .hero-kpi-value {
+  font-size: 1.75rem !important;
+  color: var(--paper) !important;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+body[data-theme="editorial"] .hero-kpi-hint {
+  color: var(--paper-mute) !important;
+  font-size: 0.72rem;
+}
+
+/* Buttons ----------------------------------------------------- */
+body[data-theme="editorial"] .btn {
+  font-family: var(--sans) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  font-size: 0.74rem !important;
+  border-radius: 2px !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  padding: 10px 16px !important;
+  background: transparent !important;
+  color: var(--paper) !important;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+body[data-theme="editorial"] .btn:hover {
+  background: rgba(231, 217, 181, 0.06) !important;
+  border-color: var(--gold) !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .btn.primary {
+  background: var(--paper-warm) !important;
+  border-color: var(--paper-warm) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+body[data-theme="editorial"] .btn.primary:hover {
+  background: var(--paper) !important;
+  border-color: var(--paper) !important;
+  color: var(--ink) !important;
+}
+
+body[data-theme="editorial"] .btn.secondary {
+  border-color: var(--ink-line-strong) !important;
+}
+
+body[data-theme="editorial"] .btn.small {
+  padding: 7px 12px !important;
+  font-size: 0.68rem !important;
+}
+
+body[data-theme="editorial"] .btn.icon-btn {
+  border-radius: 2px !important;
+  padding: 8px !important;
+}
+
+/* Forms ------------------------------------------------------- */
+body[data-theme="editorial"] input,
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea {
+  background: rgba(7, 10, 18, 0.85) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+  color: var(--paper) !important;
+  font-family: var(--sans) !important;
+  font-size: 0.86rem !important;
+  padding: 8px 10px !important;
+}
+
+body[data-theme="editorial"] input:focus,
+body[data-theme="editorial"] select:focus,
+body[data-theme="editorial"] textarea:focus {
+  border-color: var(--gold) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 1px var(--gold-soft) !important;
+}
+
+/* Navigation rail --------------------------------------------- */
+body[data-theme="editorial"] .section-nav {
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 4px !important;
+  padding: 16px !important;
+  box-shadow: none !important;
+  display: grid !important;
+  gap: 6px;
+  grid-template-columns: 1fr;
+}
+
+body[data-theme="editorial"] .screen-switch {
+  width: 100%;
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px !important;
+  margin-bottom: 12px !important;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ink-line);
+}
+
+body[data-theme="editorial"] .screen-switch-btn {
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+  background: transparent !important;
+  color: var(--paper) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.66rem !important;
+  font-weight: 600 !important;
+  padding: 9px 8px !important;
+}
+
+body[data-theme="editorial"] .screen-switch-btn[aria-selected="true"] {
+  background: var(--paper-warm) !important;
+  border-color: var(--paper-warm) !important;
+  color: var(--ink) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .section-nav a {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  border-left: 2px solid transparent !important;
+  padding: 7px 10px !important;
+  color: var(--paper) !important;
+  font-size: 0.82rem !important;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+body[data-theme="editorial"] .section-nav a:hover {
+  background: rgba(231, 217, 181, 0.04) !important;
+  border-left-color: var(--ink-line-strong) !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .section-nav a.active {
+  border-left-color: var(--gold) !important;
+  color: var(--paper-warm) !important;
+  background: rgba(201, 166, 107, 0.06) !important;
+}
+
+/* Screen context ---------------------------------------------- */
+body[data-theme="editorial"] .screen-context {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+  border-left: 2px solid var(--gold) !important;
+}
+
+body[data-theme="editorial"] .screen-context-copy strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  text-transform: none !important;
+  letter-spacing: -0.005em !important;
+  font-size: 1.05rem !important;
+  color: var(--paper-warm) !important;
+}
+
+/* Health ribbon ----------------------------------------------- */
+body[data-theme="editorial"] .health-ribbon {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .health-tile {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 16px 18px !important;
+  min-height: 84px;
+}
+
+body[data-theme="editorial"] .health-tile:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .health-badge {
+  font-family: var(--mono) !important;
+  font-size: 0.78rem !important;
+  font-weight: 500 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 0 !important;
+  padding: 4px 8px !important;
+  background: transparent !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  color: var(--paper) !important;
+}
+
+body[data-theme="editorial"] .bg-green-900,
+body[data-theme="editorial"] .health-tile[data-state="good"] .health-badge {
+  background: var(--positive-soft) !important;
+  border-color: var(--positive) !important;
+  color: var(--positive) !important;
+}
+
+body[data-theme="editorial"] .bg-red-900,
+body[data-theme="editorial"] .health-tile[data-state="bad"] .health-badge {
+  background: var(--negative-soft) !important;
+  border-color: var(--negative) !important;
+  color: var(--negative) !important;
+}
+
+body[data-theme="editorial"] .bg-slate-900 {
+  background: rgba(231, 217, 181, 0.06) !important;
+  border-color: var(--ink-line-strong) !important;
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .health-ring {
+  width: 36px !important;
+  height: 36px !important;
+}
+
+/* Command center ---------------------------------------------- */
+body[data-theme="editorial"] .command-center {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 2px !important;
+  padding: 22px !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] .command-center::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 64px;
+  height: 2px;
+  background: var(--gold);
+}
+
+body[data-theme="editorial"] .command-center-head h3 {
+  font-size: 1.6rem !important;
+}
+
+body[data-theme="editorial"] .command-kpi-grid {
+  gap: 0 !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  border-top: 1px solid var(--ink-line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+body[data-theme="editorial"] .command-kpi-card {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 4px 16px !important;
+}
+
+body[data-theme="editorial"] .command-kpi-card:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .command-kpi-card span {
+  color: var(--gold) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+body[data-theme="editorial"] .command-kpi-card strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.15rem !important;
+  color: var(--paper-warm) !important;
+  display: block;
+  margin: 4px 0;
+}
+
+/* Workflow primary -------------------------------------------- */
+body[data-theme="editorial"] #workflowPrimary {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .workflow-toolbar {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-left: 3px solid var(--gold) !important;
+  border-radius: 0 !important;
+  padding: 16px 20px !important;
+  margin-bottom: 14px;
+}
+
+body[data-theme="editorial"] .workflow-toolbar-copy strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.1rem !important;
+  color: var(--paper-warm) !important;
+  letter-spacing: -0.005em;
+  text-transform: none !important;
+}
+
+body[data-theme="editorial"] .flow-stepper {
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 10px !important;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0 !important;
+  margin-bottom: 16px;
+}
+
+body[data-theme="editorial"] .flow-stepper a {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  color: var(--paper) !important;
+  font-family: var(--sans) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  min-height: 48px !important;
+  padding: 12px 14px !important;
+}
+
+body[data-theme="editorial"] .flow-stepper a:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .flow-stepper a span {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  width: auto !important;
+  height: auto !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--gold) !important;
+  font-size: 1.1rem !important;
+}
+
+/* Kanban lanes ------------------------------------------------ */
+body[data-theme="editorial"] .operate-kanban {
+  gap: 0 !important;
+  border: 1px solid var(--ink-line);
+  background: var(--ink-2);
+}
+
+body[data-theme="editorial"] .kanban-lane {
+  background: var(--ink-2) !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 16px 18px !important;
+  min-height: 620px;
+}
+
+body[data-theme="editorial"] .kanban-lane:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-head {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 0 0 12px !important;
+  margin-bottom: 14px !important;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+body[data-theme="editorial"] .kanban-lane-head strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.25rem !important;
+  color: var(--paper-warm) !important;
+  letter-spacing: -0.005em;
+  text-transform: none !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-step {
+  font-family: var(--mono) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.62rem !important;
+  color: var(--gold) !important;
+}
+
+/* Tables ------------------------------------------------------ */
+body[data-theme="editorial"] .table-wrap {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+body[data-theme="editorial"] table thead th {
+  background: transparent !important;
+  border-bottom: 1px solid var(--ink-line-strong) !important;
+  color: var(--gold) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.66rem !important;
+  font-weight: 600;
+  padding: 10px 12px !important;
+  text-align: left;
+}
+
+body[data-theme="editorial"] table tbody td {
+  border-bottom: 1px solid var(--ink-line) !important;
+  padding: 12px !important;
+  color: var(--paper) !important;
+  font-size: 0.86rem;
+}
+
+body[data-theme="editorial"] table tbody tr:hover td {
+  background: rgba(201, 166, 107, 0.05) !important;
+}
+
+body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: rgba(201, 166, 107, 0.1) !important;
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+
+/* Pending / task board ---------------------------------------- */
+body[data-theme="editorial"] .task-board {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .task-card {
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-left: 3px solid var(--gold) !important;
+  border-radius: 0 !important;
+  padding: 14px !important;
+  margin-bottom: 10px;
+}
+
+body[data-theme="editorial"] .task-card:hover {
+  border-color: var(--ink-line-strong) !important;
+}
+
+body[data-theme="editorial"] .task-empty {
+  border: 1px dashed var(--ink-line) !important;
+  padding: 24px !important;
+  text-align: center;
+  color: var(--paper-mute) !important;
+  font-style: italic;
+}
+
+/* Scan detail panel ------------------------------------------- */
+body[data-theme="editorial"] .scan-detail-panel {
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .scan-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 !important;
+  border-top: 1px solid var(--ink-line);
+  margin-top: 12px;
+}
+
+body[data-theme="editorial"] .scan-detail-stat {
+  border-right: 1px solid var(--ink-line);
+  border-bottom: 1px solid var(--ink-line);
+  padding: 12px !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .scan-detail-stat:nth-child(2n) {
+  border-right: none;
+}
+
+body[data-theme="editorial"] .scan-detail-stat strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.4rem !important;
+  color: var(--paper-warm) !important;
+  display: block;
+}
+
+body[data-theme="editorial"] .scan-detail-stat span {
+  color: var(--gold) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+/* Workspace intros ------------------------------------------- */
+body[data-theme="editorial"] .workspace-intro {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 18px 4px 22px !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] .workspace-intro::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 1px;
+  background: var(--gold);
+}
+
+body[data-theme="editorial"] .operate-priority-bar {
+  background: transparent !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 !important;
+}
+
+body[data-theme="editorial"] .operate-priority-bar article {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 18px !important;
+}
+
+body[data-theme="editorial"] .operate-priority-bar article:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .operate-priority-bar strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.1rem !important;
+  color: var(--paper-warm) !important;
+  letter-spacing: -0.005em;
+  display: block;
+  margin: 6px 0 8px;
+}
+
+body[data-theme="editorial"] .operate-priority-bar a {
+  font-family: var(--sans) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--gold) !important;
+  border-bottom: 1px solid var(--gold);
+  padding-bottom: 1px;
+}
+
+body[data-theme="editorial"] .operate-priority-bar a:hover {
+  color: var(--paper-warm) !important;
+}
+
+/* Chips, badges, pills ---------------------------------------- */
+body[data-theme="editorial"] .chip,
+body[data-theme="editorial"] .pill {
+  background: rgba(201, 166, 107, 0.08) !important;
+  border: 1px solid var(--gold-soft) !important;
+  color: var(--paper-warm) !important;
+  border-radius: 2px !important;
+  font-family: var(--mono) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem !important;
+  padding: 3px 8px !important;
+  font-weight: 500 !important;
+}
+
+/* Tools grid -------------------------------------------------- */
+body[data-theme="editorial"] .tool-card {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 18px !important;
+}
+
+body[data-theme="editorial"] .tool-card:hover {
+  border-color: var(--gold) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
+}
+
+body[data-theme="editorial"] .tool-card-title {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  color: var(--paper-warm) !important;
+  text-transform: none;
+  letter-spacing: -0.005em;
+  font-size: 1.15rem;
+}
+
+body[data-theme="editorial"] .tool-card-cta {
+  font-family: var(--sans) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.66rem;
+  color: var(--gold) !important;
+}
+
+/* Mobile dock ------------------------------------------------- */
+body[data-theme="editorial"] .mobile-primary-dock {
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 2px !important;
+}
+
+/* Trade drawer & dialogs -------------------------------------- */
+body[data-theme="editorial"] .trade-drawer,
+body[data-theme="editorial"] dialog.modal {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 2px !important;
+  color: var(--paper);
+}
+
+body[data-theme="editorial"] dialog.modal::backdrop {
+  background: rgba(7, 9, 16, 0.8);
+  backdrop-filter: blur(2px);
+}
+
+body[data-theme="editorial"] .trade-drawer-tab {
+  text-transform: uppercase !important;
+  letter-spacing: 0.14em !important;
+  font-size: 0.7rem !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .trade-drawer-tab.active {
+  border-bottom: 2px solid var(--gold) !important;
+  color: var(--paper-warm) !important;
+}
+
+/* Scrollbar styling for the long lanes ------------------------ */
+body[data-theme="editorial"] *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+body[data-theme="editorial"] *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body[data-theme="editorial"] *::-webkit-scrollbar-thumb {
+  background: var(--ink-line-strong);
+  border-radius: 0;
+}
+
+body[data-theme="editorial"] *::-webkit-scrollbar-thumb:hover {
+  background: var(--gold);
+}
+
+/* Footer ------------------------------------------------------ */
+body[data-theme="editorial"] .site-footer {
+  background: transparent !important;
+  border: none !important;
+  border-top: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 18px 4px !important;
+  font-family: var(--sans);
+  color: var(--paper-mute);
+}
+
+body[data-theme="editorial"] .site-footer a {
+  color: var(--gold) !important;
+  text-decoration: none;
+  border-bottom: 1px solid var(--gold-soft);
+}
+
+body[data-theme="editorial"] .site-footer a:hover {
+  color: var(--paper-warm) !important;
+  border-bottom-color: var(--paper-warm);
+}
+
+/* Toasts ------------------------------------------------------ */
+body[data-theme="editorial"] .toast {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-left: 3px solid var(--gold) !important;
+  border-radius: 0 !important;
+  font-family: var(--sans);
+  color: var(--paper);
+}
+
+/* Diagnostic surfaces / detail disclosures -------------------- */
+body[data-theme="editorial"] details > summary {
+  color: var(--paper-warm) !important;
+  cursor: pointer;
+}
+
+body[data-theme="editorial"] .panel-disclosure {
+  background: rgba(7, 10, 18, 0.6) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .panel-disclosure-summary {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem !important;
+  color: var(--gold) !important;
+}
+
+/* Decorative volume marker for hero --------------------------- */
+body[data-theme="editorial"] .hero-main {
+  position: relative;
+}
+
+body[data-theme="editorial"] .hero-main::before {
+  content: "Vol. 01 — Operate";
+  position: absolute;
+  top: -6px;
+  right: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+/* Workspace intro typographic flourish ------------------------ */
+body[data-theme="editorial"] .workspace-intro h2::before {
+  content: "—";
+  display: inline-block;
+  margin-right: 0.5rem;
+  color: var(--gold);
+  font-style: normal;
+}
+
+/* Responsive --------------------------------------------------- */
+@media (max-width: 1280px) {
+  body[data-theme="editorial"] .command-kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  body[data-theme="editorial"] .command-kpi-card {
+    border-bottom: 1px solid var(--ink-line);
+  }
+  body[data-theme="editorial"] .command-kpi-card:nth-child(2) {
+    border-right: none !important;
+  }
+  body[data-theme="editorial"] .health-ribbon {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  body[data-theme="editorial"] .health-tile:nth-child(2) {
+    border-right: none !important;
+  }
+  body[data-theme="editorial"] .health-tile:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--ink-line);
+  }
+}
+
+@media (max-width: 1120px) {
+  body[data-theme="editorial"] .operate-kanban {
+    grid-template-columns: 1fr !important;
+  }
+  body[data-theme="editorial"] .kanban-lane {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
+    min-height: 0;
+  }
+  body[data-theme="editorial"] .kanban-lane:last-child {
+    border-bottom: none !important;
+  }
+  body[data-theme="editorial"] .flow-stepper {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  body[data-theme="editorial"] .flow-stepper a:nth-child(2n) {
+    border-right: none !important;
+  }
+  body[data-theme="editorial"] .operate-priority-bar {
+    grid-template-columns: 1fr;
+  }
+  body[data-theme="editorial"] .operate-priority-bar article {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
+  }
+  body[data-theme="editorial"] .operate-priority-bar article:last-child {
+    border-bottom: none !important;
+  }
+  body[data-theme="editorial"] .hero-main::before {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  body[data-theme="editorial"] {
+    font-size: 14px;
+  }
+  body[data-theme="editorial"] .hero,
+  body[data-theme="editorial"] .hero-shell {
+    padding: 22px 18px !important;
+  }
+  body[data-theme="editorial"] .command-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+  body[data-theme="editorial"] .command-kpi-card {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line);
+    padding: 12px 4px !important;
+  }
+  body[data-theme="editorial"] .health-ribbon {
+    grid-template-columns: 1fr !important;
+  }
+  body[data-theme="editorial"] .health-tile {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
+  }
+  body[data-theme="editorial"] .flow-stepper {
+    grid-template-columns: 1fr;
+  }
+  body[data-theme="editorial"] .flow-stepper a {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line);
+  }
+}
+
+/* Simple page (external view) ---------------------------------- */
+body[data-theme="editorial"] .simple-wrap {
+  max-width: 56rem;
+}
+
+body[data-theme="editorial"] .simple-header {
+  background: transparent !important;
+  border: none !important;
+  border-top: 2px solid var(--gold) !important;
+  padding: 28px 0 22px !important;
+  border-radius: 0 !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] .simple-flow-strip {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+body[data-theme="editorial"] .simple-flow-strip a {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.72rem;
+  color: var(--paper) !important;
+  font-weight: 600;
+  min-height: 48px;
+}
+
+body[data-theme="editorial"] .simple-flow-strip a:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .simple-flow-strip a span {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  background: transparent !important;
+  border: none !important;
+  color: var(--gold) !important;
+  width: auto !important;
+  height: auto !important;
+  font-size: 1rem !important;
+}
+
+body[data-theme="editorial"] .simple-pill {
+  background: transparent !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.78rem;
+}
+
+/* App-rail (desktop persistent left column) ------------------- */
+@media (min-width: 1280px) {
+  body[data-theme="editorial"] .app-rail {
+    background: var(--ink) !important;
+    border-right: 1px solid var(--ink-line);
+    padding: 24px 16px !important;
+  }
+}
+
+body[data-theme="editorial"] .app-rail {
+  display: grid;
+  gap: 12px;
+}
+
+body[data-theme="editorial"] .rail-quick-actions {
+  background: transparent !important;
+  border: 1px solid var(--ink-line) !important;
+  border-left: 2px solid var(--gold) !important;
+  border-radius: 0 !important;
+  padding: 14px !important;
+}
+
+body[data-theme="editorial"] .rail-quick-actions strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  text-transform: none !important;
+  font-size: 1.05rem !important;
+  color: var(--paper-warm) !important;
+}
+
+/* Decision dashboard refinements ------------------------------ */
+body[data-theme="editorial"] #decisionDashboardCard .health-ribbon {
+  border: none !important;
+}
+
+body[data-theme="editorial"] #decisionDashboardCard .health-tile {
+  padding: 10px 14px !important;
+  min-height: 0 !important;
+}
+
+/* Activity drawer toggle treatment ---------------------------- */
+body[data-theme="editorial"] .activity-drawer-toggle {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 0 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem !important;
+  color: var(--paper-warm) !important;
+  font-weight: 600 !important;
+}
+
+body[data-theme="editorial"] .activity-drawer-body {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  color: var(--paper);
+}
+
+/* Approve dialog reinforcement -------------------------------- */
+body[data-theme="editorial"] dialog.modal h3 {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.5rem !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .warn-text {
+  border-left: 2px solid var(--negative);
+  padding: 10px 14px;
+  background: var(--negative-soft) !important;
+  color: var(--paper) !important;
+}
+
+/* Tabs ------------------------------------------------------- */
+body[data-theme="editorial"] .tab-btn {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.14em !important;
+  font-size: 0.7rem !important;
+  color: var(--paper-mute) !important;
+  font-weight: 600 !important;
+  padding: 8px 14px !important;
+}
+
+body[data-theme="editorial"] .tab-btn-active,
+body[data-theme="editorial"] .tab-btn[aria-selected="true"] {
+  border-bottom-color: var(--gold) !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .tab-bar {
+  border-bottom: 1px solid var(--ink-line) !important;
+}
+
+/* Notifications panel ---------------------------------------- */
+body[data-theme="editorial"] .notif-panel {
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 0 !important;
+  color: var(--paper);
+}
+
+body[data-theme="editorial"] .notif-badge {
+  background: var(--negative) !important;
+  color: var(--ink) !important;
+  border-radius: 0 !important;
+  font-family: var(--mono);
+}
+
+/* Hero KPI strip vertical rules ------------------------------- */
+body[data-theme="editorial"] .hero-kpi-strip {
+  border-top: 1px solid var(--ink-line);
+  margin-top: 18px;
+  padding-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+body[data-theme="editorial"] .hero-kpi {
+  border-top: none !important;
+  border-right: 1px solid var(--ink-line) !important;
+  padding: 14px 16px !important;
+}
+
+body[data-theme="editorial"] .hero-kpi:last-child {
+  border-right: none !important;
+}
+
+/* ============================================================
+   DECONGESTION PASS — kill redundant blocks, fix rail overlap,
+   and let the hero + kanban do the work alone.
+============================================================ */
+
+/* 1. Restore inline (non-fixed) rail. The fixed rail at >=1280
+      was overlapping the hero. We keep nav at the top, sticky. */
+body[data-theme="editorial"] .container {
+  width: min(1380px, 94vw) !important;
+  margin: 22px auto 56px !important;
+  padding-bottom: 220px;
+  display: grid !important;
+  gap: 18px !important;
+}
+
+body[data-theme="editorial"] .app-rail {
+  position: sticky !important;
+  top: 12px !important;
+  left: auto !important;
+  width: auto !important;
+  height: auto !important;
+  display: grid !important;
+  grid-template-columns: 1fr;
+  gap: 0 !important;
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line);
+  padding: 0 !important;
+  z-index: 12;
+}
+
+body[data-theme="editorial"] .app-rail .section-nav {
+  border: none !important;
+  padding: 12px 14px !important;
+  display: grid !important;
+  gap: 4px !important;
+}
+
+/* Tabs row first, then a compact horizontal link strip. */
+body[data-theme="editorial"] .screen-switch {
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  gap: 4px !important;
+  margin-bottom: 10px !important;
+  padding-bottom: 10px !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+}
+
+body[data-theme="editorial"] .section-nav a {
+  display: inline-block;
+  border-left: none !important;
+  padding: 6px 10px !important;
+  margin-right: 4px;
+  font-size: 0.78rem !important;
+  border-bottom: 1px solid transparent !important;
+}
+
+body[data-theme="editorial"] .section-nav a.active {
+  border-left: none !important;
+  border-bottom: 1px solid var(--gold) !important;
+  background: transparent !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .section-nav a:hover {
+  background: transparent !important;
+  border-left: none !important;
+  border-bottom-color: var(--ink-line-strong) !important;
+  color: var(--paper-warm) !important;
+}
+
+/* 2. Drop redundant marketing/wayfinding blocks. The kanban
+      lane headers, hero, and section-nav already convey this. */
+body[data-theme="editorial"] .operate-priority-bar,
+body[data-theme="editorial"] .flow-stepper,
+body[data-theme="editorial"] .rail-quick-actions,
+body[data-theme="editorial"] .screen-context,
+body[data-theme="editorial"] #researchWorkflowStrip,
+body[data-theme="editorial"] #diagnosticsWorkflowStrip,
+body[data-theme="editorial"] #settingsWorkflowStrip,
+body[data-theme="editorial"] .workflow-toolbar,
+body[data-theme="editorial"] #operationsWorkspaceIntro,
+body[data-theme="editorial"] #researchWorkspaceIntro,
+body[data-theme="editorial"] #diagnosticsWorkspaceIntro,
+body[data-theme="editorial"] #settingsWorkspaceIntro {
+  display: none !important;
+}
+
+/* 3. Command center: hide on operations (the hero already shows
+      the same KPIs). Keep available on Trust/Configure if needed. */
+body.ui-screen-operations[data-theme="editorial"] .command-center {
+  display: none !important;
+}
+
+/* 4. Hero compaction: shorter, no decorative dateline, smaller
+      headline scale, KPI strip becomes the only secondary thing. */
+body[data-theme="editorial"] .hero,
+body[data-theme="editorial"] .hero-shell {
+  padding: 24px 28px !important;
+}
+
+body[data-theme="editorial"] .hero h1 {
+  font-size: clamp(1.9rem, 3.2vw, 2.7rem) !important;
+  margin: 0 0 0.4rem !important;
+}
+
+body[data-theme="editorial"] .hero-lead {
+  font-size: 0.92rem !important;
+  max-width: 60ch;
+  margin-bottom: 1rem;
+}
+
+body[data-theme="editorial"] .hero-actions {
+  margin-top: 0.6rem !important;
+  gap: 8px !important;
+}
+
+body[data-theme="editorial"] .hero-toolbar,
+body[data-theme="editorial"] .hero-main::before,
+body[data-theme="editorial"] .hero::after,
+body[data-theme="editorial"] .hero-shell::after {
+  display: none !important;
+}
+
+/* On smaller viewports, let the hero be a single column block. */
+@media (max-width: 1100px) {
+  body[data-theme="editorial"] .hero-aside {
+    display: none !important;
+  }
+  body[data-theme="editorial"] .hero-shell {
+    grid-template-columns: 1fr !important;
+    grid-template-areas: "main" !important;
+  }
+}
+
+/* 5. dashboardToday: keep only the health ribbon + decision
+      dashboard. Drop the action-center prose tile (noise). */
+body[data-theme="editorial"] #actionCenter,
+body[data-theme="editorial"] #pendingSummaryStrip,
+body[data-theme="editorial"] #blockersAlertSection,
+body[data-theme="editorial"] #platformKillSwitchBanner {
+  display: none !important;
+}
+
+body.ui-pro[data-theme="editorial"] #actionCenter,
+body.ui-pro[data-theme="editorial"] #blockersAlertSection {
+  display: flex !important;
+}
+
+/* 6. Mobile dock: only show on actual narrow widths, not at
+      tablet width where the page is already compact. */
+@media (min-width: 761px) {
+  body[data-theme="editorial"] .mobile-primary-dock {
+    display: none !important;
+  }
+}
+
+/* 7. Kanban: fewer hairlines fighting each other; cleaner head. */
+body[data-theme="editorial"] .operate-kanban {
+  border: 1px solid var(--ink-line);
+  background: var(--ink-2);
+}
+
+body[data-theme="editorial"] .kanban-lane {
+  padding: 18px 20px !important;
+  min-height: 540px;
+}
+
+body[data-theme="editorial"] .kanban-lane .section-title {
+  padding: 0 !important;
+  margin-bottom: 10px;
+  border: none !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] .kanban-lane .section-title h2 {
+  font-size: 1.05rem !important;
+  margin: 0 !important;
+}
+
+/* 8. Reduce visual weight of inline-form rows inside cards. */
+body[data-theme="editorial"] .inline-form {
+  padding: 0 !important;
+  gap: 8px !important;
+  margin-bottom: 10px;
+}
+
+/* 9. Section title hairline so each card has a clear masthead. */
+body[data-theme="editorial"] .section-title {
+  border-bottom: 1px solid var(--ink-line) !important;
+  padding: 12px 14px !important;
+  margin-bottom: 12px !important;
+}
+
+/* 10. Footer breathing room. */
+body[data-theme="editorial"] .site-footer {
+  margin-top: 24px !important;
+}
+
+/* ============================================================
+   v4 — UNIFIED TOP REGION
+   Replaces redundant hero + app-rail with a single sticky
+   top app bar (brand · mode tabs · primary actions) above
+   a mode-aware contextual header (eyebrow · headline ·
+   in-mode anchors · KPIs).
+
+   Backwards compat: existing JS hooks are preserved
+   (.screen-switch-btn[data-screen-mode], .section-nav a
+   [data-nav-screens], #screenContextTitle/Text/Hint/Cta/
+   AltCta, #heroKpiSignals/Pending/Watchlist, #notifBellBtn,
+   #notifPanel, #notifBadge, #notifList, #notifClearBtn,
+   #displayModeSelect, #scanBtn, #refreshBtn, #scanTestBtn,
+   #supabaseAuthBlock and children, #manualJwtDetails,
+   #jwtInput, #saveJwtBtn, #copyJwtBtn).
+============================================================ */
+
+/* Sticky app top bar ----------------------------------------- */
+body[data-theme="editorial"] .app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(160px, auto) 1fr minmax(280px, auto);
+  align-items: center;
+  gap: 18px;
+  padding: 10px clamp(18px, 4vw, 36px);
+  background:
+    linear-gradient(180deg, rgba(10, 13, 20, 0.96) 0%, rgba(10, 13, 20, 0.88) 100%);
+  border-bottom: 1px solid var(--ink-line-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+body[data-theme="editorial"] .app-topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--paper-warm);
+  letter-spacing: 0.02em;
+  border: 0;
+  padding: 4px 0;
+}
+
+body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: var(--ink);
+  background: var(--paper-warm);
+  border-radius: 2px;
+  line-height: 1;
+}
+
+body[data-theme="editorial"] .app-topbar-brand .brand-text {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.15rem;
+  color: var(--paper-warm);
+}
+
+body[data-theme="editorial"] .app-topbar-tabs {
+  display: inline-flex;
+  justify-self: center;
+  gap: 0;
+  border: 1px solid var(--ink-line);
+  border-radius: 2px;
+  background: rgba(7, 10, 18, 0.6);
+  padding: 2px;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 2px !important;
+  color: var(--paper) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  padding: 8px 14px !important;
+  margin: 0 !important;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:hover {
+  background: rgba(231, 217, 181, 0.06) !important;
+  color: var(--paper-warm) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: var(--paper-warm) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .tab-num {
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 0.62rem;
+  opacity: 0.55;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
+  opacity: 0.75;
+  color: var(--ink);
+}
+
+body[data-theme="editorial"] .app-topbar-actions {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .topbar-detail select {
+  padding: 6px 8px !important;
+  font-size: 0.74rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .btn {
+  padding: 7px 12px !important;
+  font-size: 0.7rem !important;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn {
+  padding: 6px !important;
+}
+
+body[data-theme="editorial"] .app-topbar #notifPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: clamp(18px, 4vw, 36px);
+  width: min(380px, 92vw);
+  background: var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 0 !important;
+  z-index: 50;
+}
+
+/* Auth shelf (only visible when supabase block is unhidden) -- */
+body[data-theme="editorial"] .auth-shelf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--ink) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-left: 2px solid var(--gold) !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .auth-shelf.hidden {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .auth-shelf .auth-supabase-row {
+  flex: 1 1 auto;
+  margin: 0 !important;
+}
+
+body[data-theme="editorial"] .auth-shelf .auth-manual-jwt {
+  margin-left: auto;
+}
+
+/* Mode-aware page header (replaces hero + screen-context) ---- */
+body[data-theme="editorial"] .mode-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 32%);
+  gap: 32px;
+  padding: 28px 30px 30px !important;
+  background:
+    linear-gradient(180deg, rgba(201, 166, 107, 0.05) 0%, rgba(10, 13, 20, 0) 65%),
+    var(--ink) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 4px !important;
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .mode-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 30px;
+  width: 56px;
+  height: 2px;
+  background: var(--gold);
+}
+
+body[data-theme="editorial"] .mode-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .mode-header .mode-eyebrow {
+  margin: 0 0 0.5rem !important;
+  display: none;
+}
+
+body[data-theme="editorial"].ui-screen-operations .mode-header .mode-eyebrow[data-mode-eyebrow="operations"],
+body[data-theme="editorial"].ui-screen-research .mode-header .mode-eyebrow[data-mode-eyebrow="research"],
+body[data-theme="editorial"].ui-screen-diagnostics .mode-header .mode-eyebrow[data-mode-eyebrow="diagnostics"],
+body[data-theme="editorial"].ui-screen-settings .mode-header .mode-eyebrow[data-mode-eyebrow="settings"] {
+  display: block;
+}
+
+/* Default to operations eyebrow when no body class is set yet. */
+body[data-theme="editorial"]:not(.ui-screen-operations):not(.ui-screen-research):not(.ui-screen-diagnostics):not(.ui-screen-settings) .mode-header .mode-eyebrow[data-mode-eyebrow="operations"] {
+  display: block;
+}
+
+body[data-theme="editorial"] .mode-header-title {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 300 !important;
+  font-size: clamp(1.7rem, 3vw, 2.4rem) !important;
+  line-height: 1.05 !important;
+  margin: 0 0 0.6rem !important;
+  color: var(--paper-warm) !important;
+  text-wrap: balance;
+}
+
+body[data-theme="editorial"] .mode-header-lead {
+  font-size: 0.92rem !important;
+  max-width: 64ch;
+  margin: 0 0 1rem !important;
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .mode-header-anchors {
+  background: transparent !important;
+  border: none !important;
+  border-top: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 12px 0 !important;
+  margin: 0 0 12px !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 0 !important;
+  grid-template-columns: none !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .mode-header-anchors a {
+  border: none !important;
+  border-left: none !important;
+  border-bottom: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--paper) !important;
+  font-family: var(--sans) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.7rem !important;
+  font-weight: 600 !important;
+  padding: 6px 14px 6px 0 !important;
+  margin: 0 14px 0 0;
+  text-decoration: none;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+body[data-theme="editorial"] .mode-header-anchors a:hover {
+  color: var(--paper-warm) !important;
+  border-bottom-color: var(--ink-line-strong) !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] .mode-header-anchors a.active {
+  color: var(--gold) !important;
+  border-bottom-color: var(--gold) !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] .mode-header-anchors a.hidden {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .mode-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+body[data-theme="editorial"] .mode-header-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--paper-mute) !important;
+}
+
+/* KPI rail in mode header ----------------------------------- */
+body[data-theme="editorial"] .mode-header-kpis {
+  display: grid;
+  grid-template-rows: repeat(3, auto);
+  gap: 0;
+  padding-left: 24px;
+  border-left: 1px solid var(--ink-line);
+  align-content: start;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi {
+  border: none !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+  padding: 14px 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 8px 16px;
+  grid-template-areas:
+    "label value"
+    "hint  value";
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi:last-child {
+  border-bottom: none !important;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi-label {
+  grid-area: label;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi-hint {
+  grid-area: hint;
+  font-size: 0.7rem;
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi-value {
+  grid-area: value;
+  font-size: 1.85rem !important;
+  font-weight: 500 !important;
+  color: var(--paper-warm) !important;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+/* Container offset now that the topbar is sticky ----------- */
+body[data-theme="editorial"] .container {
+  margin: 18px auto 56px !important;
+}
+
+/* Hide any lingering mode-header anchors not matching active mode.
+   refreshSectionNavForScreen() toggles .hidden on each link. */
+body[data-theme="editorial"] .section-nav a.hidden {
+  display: none !important;
+}
+
+/* Responsive ------------------------------------------------- */
+@media (max-width: 1080px) {
+  body[data-theme="editorial"] .app-topbar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "brand actions"
+      "tabs  tabs";
+    row-gap: 8px;
+    padding: 8px 18px 10px;
+  }
+  body[data-theme="editorial"] .app-topbar-brand { grid-area: brand; }
+  body[data-theme="editorial"] .app-topbar-actions { grid-area: actions; }
+  body[data-theme="editorial"] .app-topbar-tabs {
+    grid-area: tabs;
+    justify-self: stretch;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  body[data-theme="editorial"] .mode-header {
+    grid-template-columns: 1fr;
+    gap: 18px;
+    padding: 22px 22px 24px !important;
+  }
+  body[data-theme="editorial"] .mode-header-kpis {
+    border-left: none;
+    border-top: 1px solid var(--ink-line);
+    padding-left: 0;
+    padding-top: 8px;
+    grid-template-rows: none;
+    grid-template-columns: repeat(3, 1fr);
+  }
+  body[data-theme="editorial"] .mode-header-kpis .hero-kpi {
+    border-bottom: none !important;
+    border-right: 1px solid var(--ink-line) !important;
+    padding: 12px 14px !important;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "label"
+      "value"
+      "hint";
+  }
+  body[data-theme="editorial"] .mode-header-kpis .hero-kpi:last-child {
+    border-right: none !important;
+  }
+}
+
+@media (max-width: 720px) {
+  body[data-theme="editorial"] .app-topbar {
+    padding: 8px 12px 10px;
+  }
+  body[data-theme="editorial"] .app-topbar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  body[data-theme="editorial"] .app-topbar-actions .btn {
+    padding: 6px 10px !important;
+    font-size: 0.66rem !important;
+  }
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    padding: 7px 6px !important;
+    font-size: 0.62rem !important;
+    letter-spacing: 0.08em;
+  }
+  body[data-theme="editorial"] .app-topbar-tabs .tab-num { display: none; }
+  body[data-theme="editorial"] .mode-header-kpis {
+    grid-template-columns: 1fr;
+  }
+  body[data-theme="editorial"] .mode-header-kpis .hero-kpi {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
+  }
+  body[data-theme="editorial"] .mode-header-kpis .hero-kpi:last-child {
+    border-bottom: none !important;
+  }
+  body[data-theme="editorial"] .mode-header-hint {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  body[data-theme="editorial"] .mode-header-anchors {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  body[data-theme="editorial"] .mode-header-anchors a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
