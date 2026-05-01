@@ -13,10 +13,8 @@ Checks:
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = ROOT / "schwab_skill"

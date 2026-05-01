@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 SKILL_DIR = Path(__file__).resolve().parent.parent
 DOC = SKILL_DIR / "docs" / "SLO_METRIC_MAPPING.md"
 TASKS = SKILL_DIR / "webapp" / "tasks.py"
