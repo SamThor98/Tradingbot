@@ -45,6 +45,16 @@ def _save_ledger(skill_dir: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def load_ledger_data(skill_dir: Path | str | None = None) -> dict[str, Any]:
+    """Public read helper for governance/score workflows."""
+    return _load_ledger(Path(skill_dir or SKILL_DIR))
+
+
+def save_ledger_data(data: dict[str, Any], skill_dir: Path | str | None = None) -> None:
+    """Public write helper for governance/score workflows."""
+    _save_ledger(Path(skill_dir or SKILL_DIR), data)
+
+
 def fingerprint_from_mapping(payload: dict[str, Any], *, exclude_keys: frozenset[str] | None = None) -> str:
     ex = exclude_keys or frozenset()
     normalized = {k: payload[k] for k in sorted(payload.keys()) if k not in ex}

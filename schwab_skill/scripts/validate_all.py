@@ -67,6 +67,16 @@ def _steps_for_profile(
     if promotion:
         advisory_cmd += ["--strict", "--promotion"]
     steps: list[tuple[str, list[str], dict[str, str] | None]] = [
+        ("validate_docs_governance", [py, str(SCRIPTS_DIR / "validate_docs_governance.py")], None),
+        ("validate_ops_excellence", [py, str(SCRIPTS_DIR / "validate_ops_excellence.py")], None),
+        (
+            "validate_decision_dashboard_contract",
+            [py, str(SCRIPTS_DIR / "validate_decision_dashboard_contract.py")],
+            None,
+        ),
+        ("validate_slo_mapping", [py, str(SCRIPTS_DIR / "validate_slo_mapping.py")], None),
+        ("validate_typecheck_ratchet", [py, str(SCRIPTS_DIR / "validate_typecheck_ratchet.py")], None),
+        ("validate_experiment_registry", [py, str(SCRIPTS_DIR / "validate_experiment_registry.py")], None),
         ("validate_hypothesis_chain", [py, str(SCRIPTS_DIR / "validate_hypothesis_chain.py")], None),
         ("validate_plugin_modes", [py, str(SCRIPTS_DIR / "validate_plugin_modes.py")], None),
         ("validate_execution_quality", [py, str(SCRIPTS_DIR / "validate_execution_quality.py")], None),
@@ -82,6 +92,11 @@ def _steps_for_profile(
         (
             "validate_regime_counterfactual_guardrail",
             [py, str(SCRIPTS_DIR / "validate_regime_counterfactual_guardrail.py")],
+            None,
+        ),
+        (
+            "validate_hybrid_alpha_policy",
+            [py, str(SCRIPTS_DIR / "validate_hybrid_alpha_policy.py")],
             None,
         ),
         ("validate_agent_intelligence", [py, str(SCRIPTS_DIR / "validate_agent_intelligence.py")], None),

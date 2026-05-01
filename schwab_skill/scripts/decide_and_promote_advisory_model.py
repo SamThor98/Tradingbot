@@ -22,6 +22,9 @@ sys.path.insert(0, str(SKILL_DIR))
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from promotion_guard import ensure_signed_approval
+from release_gate import ensure_release_gate_for_apply
+
+from experiment_registry import append_registry_event
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -82,6 +85,14 @@ def main() -> int:
     parser.add_argument("--max-brier-delta", type=float, default=0.0)
     parser.add_argument("--require-walkforward-gain", action="store_true")
     args = parser.parse_args()
+    if args.apply:
+        ok, _reasons = ensure_release_gate_for_apply(
+            skill_dir=SKILL_DIR,
+            target="advisory_model",
+            require_slo_status=False,
+        )
+        if not ok:
+            return 3
     if not ensure_signed_approval("advisory_model", apply_requested=args.apply):
         return 2
 
@@ -140,6 +151,26 @@ def main() -> int:
         shutil.copy2(challenger_path, champion_path)
         decision["applied"] = True
         decision["archive_path"] = str(archive_path)
+
+    append_registry_event(
+        event_type="advisory_promotion_decision",
+        target="advisory_model",
+        decision="promote" if bool(decision.get("promote")) else "reject",
+        rationale=[str(x) for x in (decision.get("reasons") or [])],
+        gates={
+            "min_auc_delta": float(args.min_auc_delta),
+            "min_top20_delta": float(args.min_top20_delta),
+            "max_brier_delta": float(args.max_brier_delta),
+            "require_walkforward_gain": bool(args.require_walkforward_gain),
+        },
+        metadata={
+            "applied": bool(decision.get("applied")),
+            "challenger_model": str(challenger_path),
+            "champion_model": str(champion_path),
+            "validate_rc": decision.get("validate_rc"),
+        },
+        skill_dir=SKILL_DIR,
+    )
 
     VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
     out_file = VALIDATION_DIR / f"advisory_promotion_decision_{run_id}.json"

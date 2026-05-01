@@ -16,6 +16,19 @@ from typing import Any
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _strategy_gates import (  # noqa: E402
+    DEFAULT_MAX_DD_DEGRADE_CAP_PCT,
+    DEFAULT_MIN_EXPECTANCY_DELTA,
+    DEFAULT_MIN_OOS_PF,
+    DEFAULT_MIN_OOS_PF_DELTA,
+    DEFAULT_MIN_PF_DELTA,
+    DEFAULT_MIN_TRADES_PER_ERA,
+    DEFAULT_MIN_TRADES_THRESHOLD,
+    PromotionGates,
+    evaluate_promotion_gates,
+)
+
 
 def _ticker_pool() -> list[str]:
     return [
@@ -115,7 +128,16 @@ def _load_params(path_like: str) -> dict[str, str]:
     return {}
 
 
-def _write_markdown(path: Path, champion: dict[str, Any], challenger: dict[str, Any], comparison: dict[str, Any], gates: dict[str, Any], reasons: list[str], passed: bool) -> None:
+def _write_markdown(
+    path: Path,
+    champion: dict[str, Any],
+    challenger: dict[str, Any],
+    comparison: dict[str, Any],
+    gates: dict[str, Any],
+    reasons: list[str],
+    passed: bool,
+    per_era: list[dict[str, Any]] | None = None,
+) -> None:
     ca = champion["aggregates"]
     na = challenger["aggregates"]
     lines = [
@@ -132,12 +154,34 @@ def _write_markdown(path: Path, champion: dict[str, Any], challenger: dict[str, 
         f"| OOS PF | {ca['oos_pf_net']:.4f} | {na['oos_pf_net']:.4f} | {comparison['oos_pf_delta']:+.4f} |",
         f"| Trades min | {int(ca['trades_min'])} | {int(na['trades_min'])} | {comparison['trades_min_delta']:+d} |",
         "",
-        "## Promotion Gates",
-        "",
-        "```json",
-        json.dumps(gates, indent=2),
-        "```",
     ]
+    if per_era:
+        lines.extend(
+            [
+                "## Per-Era Throughput (Challenger)",
+                "",
+                "| Era | Trades | PF | Drawdown (%) | Zero-Trade | Sparse |",
+                "|---|---:|---:|---:|:---:|:---:|",
+            ]
+        )
+        for row in per_era:
+            lines.append(
+                f"| {row.get('name', '?')} | {int(row.get('total_trades', 0))} | "
+                f"{float(row.get('profit_factor_net', 0)):.4f} | "
+                f"{float(row.get('max_drawdown_net_pct', 0)):.4f} | "
+                f"{'YES' if row.get('is_zero_trade') else 'no'} | "
+                f"{'YES' if row.get('is_sparse') else 'no'} |"
+            )
+        lines.append("")
+    lines.extend(
+        [
+            "## Promotion Gates",
+            "",
+            "```json",
+            json.dumps(gates, indent=2),
+            "```",
+        ]
+    )
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -145,12 +189,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="PF robustness and strategy promotion gate checks")
     parser.add_argument("--champion-artifact", default="", help="Champion params artifact (json)")
     parser.add_argument("--challenger-artifact", default="", help="Challenger params artifact (json)")
-    parser.add_argument("--min-pf-delta", type=float, default=0.02)
-    parser.add_argument("--min-expectancy-delta", type=float, default=0.0)
-    parser.add_argument("--min-oos-pf", type=float, default=1.15)
-    parser.add_argument("--min-oos-pf-delta", type=float, default=0.01)
-    parser.add_argument("--max-drawdown-degrade-cap", type=float, default=2.0)
-    parser.add_argument("--min-trades-threshold", type=int, default=25)
+    parser.add_argument("--min-pf-delta", type=float, default=DEFAULT_MIN_PF_DELTA)
+    parser.add_argument("--min-expectancy-delta", type=float, default=DEFAULT_MIN_EXPECTANCY_DELTA)
+    parser.add_argument("--min-oos-pf", type=float, default=DEFAULT_MIN_OOS_PF)
+    parser.add_argument("--min-oos-pf-delta", type=float, default=DEFAULT_MIN_OOS_PF_DELTA)
+    parser.add_argument("--max-drawdown-degrade-cap", type=float, default=DEFAULT_MAX_DD_DEGRADE_CAP_PCT)
+    parser.add_argument("--min-trades-threshold", type=int, default=DEFAULT_MIN_TRADES_THRESHOLD)
+    parser.add_argument(
+        "--min-trades-per-era",
+        type=int,
+        default=DEFAULT_MIN_TRADES_PER_ERA,
+        help=(
+            "Per-era throughput floor. Any walk-forward window with trades below "
+            "this value triggers a balanced-throughput rejection. Zero-trade eras "
+            "are rejected unconditionally regardless of this value."
+        ),
+    )
     parser.add_argument("--fast-smoke", action="store_true", help="Use deterministic synthetic windows for quick validation.")
     args = parser.parse_args()
 
@@ -162,51 +216,24 @@ def main() -> int:
     champion = _run_profile("champion", champion_params, fast_smoke=args.fast_smoke)
     challenger = _run_profile("challenger", challenger_params if challenger_params else champion_params, fast_smoke=args.fast_smoke)
 
-    ca = champion["aggregates"]
-    na = challenger["aggregates"]
-    comparison = {
-        "pf_delta": round(float(na["pf_net_mean"]) - float(ca["pf_net_mean"]), 6),
-        "expectancy_delta": round(float(na["expectancy_net_mean"]) - float(ca["expectancy_net_mean"]), 6),
-        "oos_pf_delta": round(float(na["oos_pf_net"]) - float(ca["oos_pf_net"]), 6),
-        "drawdown_delta": round(float(na["max_drawdown_net_worst"]) - float(ca["max_drawdown_net_worst"]), 6),
-        "trades_min_delta": int(na["trades_min"]) - int(ca["trades_min"]),
-    }
-    gates = {
-        "min_pf_delta": float(args.min_pf_delta),
-        "min_expectancy_delta": float(args.min_expectancy_delta),
-        "min_oos_pf": float(args.min_oos_pf),
-        "min_oos_pf_delta": float(args.min_oos_pf_delta),
-        "max_drawdown_degrade_cap": float(args.max_drawdown_degrade_cap),
-        "min_trades_threshold": int(args.min_trades_threshold),
-    }
-    reasons: list[str] = []
-    passed = True
-    if comparison["pf_delta"] < float(args.min_pf_delta):
-        passed = False
-        reasons.append(f"pf_delta_too_small:{comparison['pf_delta']:.6f}<{float(args.min_pf_delta):.6f}")
-    if comparison["expectancy_delta"] < float(args.min_expectancy_delta):
-        passed = False
-        reasons.append(
-            f"expectancy_delta_too_small:{comparison['expectancy_delta']:.6f}<{float(args.min_expectancy_delta):.6f}"
-        )
-    if float(na["oos_pf_net"]) < float(args.min_oos_pf):
-        passed = False
-        reasons.append(f"oos_pf_below_floor:{float(na['oos_pf_net']):.6f}<{float(args.min_oos_pf):.6f}")
-    if comparison["oos_pf_delta"] < float(args.min_oos_pf_delta):
-        passed = False
-        reasons.append(f"oos_pf_delta_too_small:{comparison['oos_pf_delta']:.6f}<{float(args.min_oos_pf_delta):.6f}")
-    champ_dd = abs(min(0.0, float(ca["max_drawdown_net_worst"])))
-    chall_dd = abs(min(0.0, float(na["max_drawdown_net_worst"])))
-    if chall_dd > champ_dd + float(args.max_drawdown_degrade_cap):
-        passed = False
-        reasons.append(
-            f"drawdown_degraded_too_much:{chall_dd:.4f}>{champ_dd + float(args.max_drawdown_degrade_cap):.4f}"
-        )
-    if int(na["trades_min"]) < int(args.min_trades_threshold):
-        passed = False
-        reasons.append(f"trades_min_too_low:{int(na['trades_min'])}<{int(args.min_trades_threshold)}")
-    if not reasons:
-        reasons.append("challenger_meets_walkforward_promotion_gates")
+    promotion_gates = PromotionGates(
+        min_pf_delta=float(args.min_pf_delta),
+        min_expectancy_delta=float(args.min_expectancy_delta),
+        min_oos_pf=float(args.min_oos_pf),
+        min_oos_pf_delta=float(args.min_oos_pf_delta),
+        max_drawdown_degrade_cap=float(args.max_drawdown_degrade_cap),
+        min_trades_threshold=int(args.min_trades_threshold),
+        min_trades_per_era=int(args.min_trades_per_era),
+    )
+    gate_result = evaluate_promotion_gates(
+        champion=champion,
+        challenger=challenger,
+        gates=promotion_gates,
+    )
+    comparison = gate_result.comparison
+    gates = promotion_gates.as_dict()
+    reasons = list(gate_result.reasons)
+    passed = bool(gate_result.passed)
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -219,6 +246,7 @@ def main() -> int:
         "reasons": reasons,
         "gates": gates,
         "comparison": comparison,
+        "per_era": gate_result.per_era,
         "champion": champion,
         "challenger": challenger,
         "input_artifacts": {
@@ -227,7 +255,16 @@ def main() -> int:
         },
     }
     out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    _write_markdown(out_md, champion, challenger, comparison, gates, reasons, passed)
+    _write_markdown(
+        out_md,
+        champion,
+        challenger,
+        comparison,
+        gates,
+        reasons,
+        passed,
+        per_era=gate_result.per_era,
+    )
 
     if passed:
         print("PASS: strategy promotion gates satisfied")

@@ -89,6 +89,31 @@ def main() -> int:
         default=0.001,
         help="Minimum expectancy delta required in volatility_chop (decimal form).",
     )
+    # Adaptive regime behaviour: require a participation floor in every era
+    # so weak regimes size down + tighten quality but never flat-shut-off.
+    # Keeping a non-trivial trade flow in every regime preserves the
+    # learning signal (counterfactuals, ledger scoring, etc.).
+    parser.add_argument(
+        "--min-participation-floor-pct",
+        type=float,
+        default=0.30,
+        help=(
+            "Minimum trade retention ratio (0-1) per era for the target "
+            "cohort. Enforces 'adaptive, not off' regime behaviour: weak "
+            "regimes may size down or tighten quality but must keep at "
+            "least this fraction of original trade flow so the learning "
+            "loop has signal."
+        ),
+    )
+    parser.add_argument(
+        "--participation-required-eras",
+        default="bear_rates,volatility_chop",
+        help=(
+            "Comma-separated era names that must satisfy "
+            "--min-participation-floor-pct. Add eras here as additional "
+            "regime buckets are introduced."
+        ),
+    )
     parser.add_argument(
         "--refresh-artifact",
         action="store_true",
@@ -122,6 +147,12 @@ def main() -> int:
 
     failures: list[str] = []
     print("Regime counterfactual evidence")
+
+    participation_eras = {
+        e.strip()
+        for e in str(args.participation_required_eras).split(",")
+        if e.strip()
+    }
 
     for era in required_eras:
         era_data = counterfactual.get(era) or {}
@@ -166,6 +197,22 @@ def main() -> int:
                 failures.append(
                     "chop_expectancy_delta_below_threshold:"
                     f"{exp_delta}<{float(args.min_chop_exp_delta)}"
+                )
+
+        # Adaptive-regime participation floor: every required era must
+        # retain at least min_participation_floor_pct of the baseline
+        # trade flow under the regime cohort. If this fails, the regime
+        # guard has degenerated into a full shutdown — re-tune sizing /
+        # quality knobs instead of blocking entirely.
+        if era in participation_eras:
+            if keep_ratio is None:
+                failures.append(
+                    f"participation_floor_unmeasurable:{era}"
+                )
+            elif keep_ratio < float(args.min_participation_floor_pct):
+                failures.append(
+                    "participation_floor_breach:"
+                    f"{era}:{keep_ratio:.4f}<{float(args.min_participation_floor_pct):.4f}"
                 )
 
     if failures:

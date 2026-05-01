@@ -7,7 +7,6 @@ Uses daily OHLCV from market_data.get_daily_history. Safe to run on a schedule a
 
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,18 +16,7 @@ import pandas as pd
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
-
-
-def _load_ledger(skill_dir: Path) -> dict[str, Any]:
-    path = skill_dir / ".hypothesis_ledger.json"
-    if not path.exists():
-        return {"schema": 1, "records": []}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _save_ledger(skill_dir: Path, data: dict[str, Any]) -> None:
-    path = skill_dir / ".hypothesis_ledger.json"
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+from hypothesis_ledger import load_ledger_data, save_ledger_data
 
 
 def _entry_price_and_start_idx(df: pd.DataFrame, created: pd.Timestamp, explicit: float | None) -> tuple[float, int] | None:
@@ -90,7 +78,7 @@ def run_score(skill_dir: Path, dry_run: bool) -> int:
     from schwab_auth import DualSchwabAuth
 
     horizons = get_hypothesis_score_horizons(skill_dir)
-    data = _load_ledger(skill_dir)
+    data = load_ledger_data(skill_dir)
     records = data.get("records")
     if not isinstance(records, list):
         print("No records in ledger.")
@@ -139,7 +127,7 @@ def run_score(skill_dir: Path, dry_run: bool) -> int:
         rec["outcomes"] = outcomes
 
     if changed and not dry_run:
-        _save_ledger(skill_dir, data)
+        save_ledger_data(data, skill_dir)
         print("Ledger updated.")
     elif dry_run and changed:
         print("Dry run: would update ledger.")

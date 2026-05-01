@@ -9,6 +9,7 @@ import argparse
 import json
 import sys
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -96,13 +97,25 @@ def main() -> int:
         except Exception as e:
             failures.append(f"web_metrics_fetch_failed:{e}")
 
+    payload = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "details": details,
+    }
+    out_path = SKILL_DIR / "validation_artifacts" / "latest_slo_gate_status.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
     if failures:
         print("FAIL: observability gates failed")
-        print(json.dumps({"failures": failures, "details": details}, indent=2))
+        print(json.dumps(payload, indent=2))
+        print(f"SLO gate artifact: {out_path}")
         return 1
 
     print("PASS: observability gates satisfied")
-    print(json.dumps({"details": details}, indent=2))
+    print(json.dumps(payload, indent=2))
+    print(f"SLO gate artifact: {out_path}")
     return 0
 
 

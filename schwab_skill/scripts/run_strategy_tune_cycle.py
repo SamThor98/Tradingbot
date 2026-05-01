@@ -16,6 +16,15 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_DIR / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+from _strategy_gates import (
+    DEFAULT_MAX_DD_DEGRADE_CAP_PCT,
+    DEFAULT_MIN_EXPECTANCY_DELTA,
+    DEFAULT_MIN_OOS_PF,
+    DEFAULT_MIN_OOS_PF_DELTA,
+    DEFAULT_MIN_PF_DELTA,
+    DEFAULT_MIN_TRADES_PER_ERA,
+    DEFAULT_MIN_TRADES_THRESHOLD,
+)
 from promotion_guard import ensure_signed_approval
 
 
@@ -32,12 +41,13 @@ def main() -> int:
     parser.add_argument("--stall-rounds", type=int, default=3)
     parser.add_argument("--tickers", type=int, default=30)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--min-trades", type=int, default=35)
-    parser.add_argument("--min-oos-pf", type=float, default=1.15)
-    parser.add_argument("--min-oos-pf-delta", type=float, default=0.01)
-    parser.add_argument("--min-pf-delta", type=float, default=0.02)
-    parser.add_argument("--min-expectancy-delta", type=float, default=0.0)
-    parser.add_argument("--max-drawdown-degrade-cap", type=float, default=2.0)
+    parser.add_argument("--min-trades", type=int, default=DEFAULT_MIN_TRADES_THRESHOLD)
+    parser.add_argument("--min-trades-per-era", type=int, default=DEFAULT_MIN_TRADES_PER_ERA)
+    parser.add_argument("--min-oos-pf", type=float, default=DEFAULT_MIN_OOS_PF)
+    parser.add_argument("--min-oos-pf-delta", type=float, default=DEFAULT_MIN_OOS_PF_DELTA)
+    parser.add_argument("--min-pf-delta", type=float, default=DEFAULT_MIN_PF_DELTA)
+    parser.add_argument("--min-expectancy-delta", type=float, default=DEFAULT_MIN_EXPECTANCY_DELTA)
+    parser.add_argument("--max-drawdown-degrade-cap", type=float, default=DEFAULT_MAX_DD_DEGRADE_CAP_PCT)
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
@@ -106,6 +116,8 @@ def main() -> int:
         str(args.max_drawdown_degrade_cap),
         "--min-trades-threshold",
         str(args.min_trades),
+        "--min-trades-per-era",
+        str(args.min_trades_per_era),
     ]
     if args.apply:
         decision_cmd.append("--apply")
@@ -132,6 +144,7 @@ def main() -> int:
             "min_expectancy_delta": float(args.min_expectancy_delta),
             "max_drawdown_degrade_cap": float(args.max_drawdown_degrade_cap),
             "min_trades": int(args.min_trades),
+            "min_trades_per_era": int(args.min_trades_per_era),
         },
         "artifacts": {
             "ranking": str(ranking),
