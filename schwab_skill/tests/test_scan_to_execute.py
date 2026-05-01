@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from core.scan_service import ScanRunResult
 from webapp.db import Base
 from webapp.models import User
 
@@ -114,9 +115,9 @@ def _auth_headers() -> dict[str, str]:
 
 
 class TestScanEndpoint:
-    @patch("webapp.main.scan_for_signals_detailed")
+    @patch("webapp.main.run_scan")
     def test_sync_scan_returns_signals(self, mock_scan, client: TestClient):
-        mock_scan.return_value = (FAKE_SIGNALS, FAKE_DIAGNOSTICS)
+        mock_scan.return_value = ScanRunResult(signals=FAKE_SIGNALS, diagnostics=FAKE_DIAGNOSTICS)
         resp = client.post(
             "/api/scan?async_mode=false",
             json={},
@@ -130,9 +131,9 @@ class TestScanEndpoint:
         assert "diagnostics_summary" in data["data"]
         assert "strategy_summary" in data["data"]
 
-    @patch("webapp.main.scan_for_signals_detailed")
+    @patch("webapp.main.run_scan")
     def test_async_scan_starts_job(self, mock_scan, client: TestClient):
-        mock_scan.return_value = (FAKE_SIGNALS, FAKE_DIAGNOSTICS)
+        mock_scan.return_value = ScanRunResult(signals=FAKE_SIGNALS, diagnostics=FAKE_DIAGNOSTICS)
         resp = client.post(
             "/api/scan?async_mode=true",
             json={},
