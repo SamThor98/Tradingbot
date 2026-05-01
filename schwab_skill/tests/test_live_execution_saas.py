@@ -171,7 +171,7 @@ def test_enable_live_trading_then_approve(
 
     with (
         patch("webapp.tenant_dashboard.get_account_status", return_value={"accounts": []}),
-        patch("webapp.tenant_dashboard.place_order", return_value={"orderId": "ord_1"}),
+        patch("webapp.tenant_dashboard.submit_order", return_value={"orderId": "ord_1"}),
     ):
         ap = saas_client.post(
             "/api/trades/abc12345/approve?confirm_live=true",
