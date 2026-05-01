@@ -209,6 +209,8 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
             from .prometheus_metrics import inc, observe
 
             inc("http_requests_total")
+            if int(getattr(response, "status_code", 200)) >= 500:
+                inc("http_5xx_total")
             observe("http_request_duration", time.perf_counter() - t0)
         except Exception:
             pass

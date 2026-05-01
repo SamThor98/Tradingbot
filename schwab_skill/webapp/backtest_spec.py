@@ -26,6 +26,11 @@ class StrategyOverrides(BaseModel):
     forensic_filter_mode: Literal["off", "shadow", "soft", "hard"] | None = None
     pead_enabled: bool | None = None
     skip_mirofish: bool | None = None
+    # Universe selection (used by Run Scan vs Test Scan affordance).
+    signal_universe_mode: Literal["broad", "focused"] | None = None
+    signal_universe_target_size: int | None = Field(default=None, ge=20, le=1600)
+    quality_watchlist_prefilter_enabled: bool | None = None
+    quality_watchlist_prefilter_max: int | None = Field(default=None, ge=20, le=1600)
 
     def to_env_overrides(self) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -41,6 +46,16 @@ class StrategyOverrides(BaseModel):
             out["PEAD_ENABLED"] = "true" if self.pead_enabled else "false"
         if self.skip_mirofish is not None:
             out["BACKTEST_SKIP_MIROFISH"] = "1" if self.skip_mirofish else "0"
+        if self.signal_universe_mode is not None:
+            out["SIGNAL_UNIVERSE_MODE"] = self.signal_universe_mode
+        if self.signal_universe_target_size is not None:
+            out["SIGNAL_UNIVERSE_TARGET_SIZE"] = str(int(self.signal_universe_target_size))
+        if self.quality_watchlist_prefilter_enabled is not None:
+            out["QUALITY_WATCHLIST_PREFILTER_ENABLED"] = (
+                "true" if self.quality_watchlist_prefilter_enabled else "false"
+            )
+        if self.quality_watchlist_prefilter_max is not None:
+            out["QUALITY_WATCHLIST_PREFILTER_MAX"] = str(int(self.quality_watchlist_prefilter_max))
         return out
 
 

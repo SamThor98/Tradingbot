@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,8 +12,8 @@ from typing import Any
 
 from celery import Celery
 
-from execution import place_order
-from signal_scanner import scan_for_signals_detailed
+from core.execution_service import submit_order
+from core.scan_service import run_scan, summarize_live_strategy
 
 from .billing_stripe import user_has_paid_entitlement
 from .calibration_snapshot import build_calibration_snapshot
@@ -73,6 +74,24 @@ if _conc:
 celery_app.conf.update(**_celery_conf)
 
 
+def _metrics_inc(name: str, value: int = 1) -> None:
+    try:
+        from .prometheus_metrics import inc
+
+        inc(name, value=value)
+    except Exception:
+        pass
+
+
+def _metrics_observe(name: str, value_sec: float) -> None:
+    try:
+        from .prometheus_metrics import observe
+
+        observe(name, value_sec)
+    except Exception:
+        pass
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -86,24 +105,6 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _strategy_summary_from_signals(signals: list[dict[str, Any]]) -> dict[str, Any]:
-    rows = signals or []
-    counts: dict[str, int] = {}
-    for sig in rows:
-        attr = sig.get("strategy_attribution") if isinstance(sig, dict) else None
-        name = str((attr or {}).get("top_live") or "unknown")
-        counts[name] = int(counts.get(name, 0) or 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
-    dominant = ranked[0][0] if ranked else None
-    dominant_count = ranked[0][1] if ranked else 0
-    return {
-        "dominant_live_strategy": dominant,
-        "dominant_count": dominant_count,
-        "total_ranked": len(rows),
-        "counts": {k: v for k, v in ranked},
-    }
 
 
 def _persist_calibration_snapshot(db: Any, user_id: str, skill_dir: Any) -> None:
@@ -320,10 +321,14 @@ def _run_logged_subprocess(*, cmd: list[str], env: dict[str, str], cwd: Path, ti
 @celery_app.task(name="webapp.scan_for_user")
 def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> dict[str, Any]:
     job_id = uuid.uuid4().hex
+    started = time.perf_counter()
+    task_ok = False
+    _metrics_inc("scan_tasks_total")
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user_has_paid_entitlement(user):
+            _metrics_inc("scan_tasks_failed_total")
             return {"ok": False, "job_id": job_id, "error": "Active subscription required."}
         opts = scan_options if isinstance(scan_options, dict) else {}
         skw = scan_runtime_kwargs(opts)
@@ -338,9 +343,12 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
             except Exception:
                 pass
         if runtime_errors:
+            _metrics_inc("scan_tasks_failed_total")
             return {"ok": False, "job_id": job_id, "error": "; ".join(runtime_errors)}
         with tenant_skill_dir(db, user_id) as skill_dir:
-            signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir, **skw)
+            scan_out = run_scan(skill_dir=skill_dir, **skw)
+            signals = scan_out.signals
+            diagnostics = scan_out.diagnostics
             inserted = 0
             for sig in signals:
                 # Persist canonical JSON objects (not pre-encoded JSON strings)
@@ -356,7 +364,7 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
                 db.add(row)
                 inserted += 1
             db.commit()
-            strat = _strategy_summary_from_signals(signals)
+            strat = summarize_live_strategy(signals)
             try:
                 _persist_user_last_scan(
                     db,
@@ -386,8 +394,10 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
                 "strategy_summary": strat,
             }
             try:
+                task_ok = True
                 return json.loads(json.dumps(out, default=str))
             except Exception:
+                task_ok = True
                 return {
                     "ok": True,
                     "job_id": job_id,
@@ -396,8 +406,12 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
                 }
     except Exception as exc:
         db.rollback()
+        _metrics_inc("scan_tasks_failed_total")
         return {"ok": False, "job_id": job_id, "error": safe_exception_message(exc, fallback="scan_failed")}
     finally:
+        if task_ok:
+            _metrics_inc("scan_tasks_succeeded_total")
+        _metrics_observe("scan_task_duration", time.perf_counter() - started)
         db.close()
 
 
@@ -667,11 +681,18 @@ def execute_order_for_user(
     order_type: str = "MARKET",
     price: float | None = None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    task_ok = False
+    _metrics_inc("order_tasks_total")
     db = SessionLocal()
     user = db.query(User).filter(User.id == user_id).first()
     if not user_has_paid_entitlement(user):
+        _metrics_inc("order_tasks_failed_total")
+        _metrics_observe("order_task_duration", time.perf_counter() - started)
         return {"ok": False, "error": "Active subscription required."}
     if not user or not getattr(user, "live_execution_enabled", False):
+        _metrics_inc("order_tasks_failed_total")
+        _metrics_observe("order_task_duration", time.perf_counter() - started)
         return {"ok": False, "error": "Live execution is disabled for this account."}
     order_id = uuid.uuid4().hex[:12]
     row = Order(
@@ -690,7 +711,7 @@ def execute_order_for_user(
     db.refresh(row)
     try:
         with tenant_skill_dir(db, user_id) as skill_dir:
-            result = place_order(
+            result = submit_order(
                 ticker=row.ticker,
                 qty=row.qty,
                 side=row.side,
@@ -703,6 +724,7 @@ def execute_order_for_user(
             row.error_message = result
             row.result_json = json.dumps({"ok": False, "error": result})
             db.commit()
+            _metrics_inc("order_tasks_failed_total")
             return {"ok": False, "order_id": row.id, "error": result}
 
         row.status = "executed"
@@ -716,6 +738,7 @@ def execute_order_for_user(
             )
         except Exception as outcome_exc:
             LOG.debug("Trade outcome persist skipped for user=%s order=%s: %s", user_id, row.id, outcome_exc)
+        task_ok = True
         return {"ok": True, "order_id": row.id, "result": result}
     except Exception as exc:
         db.rollback()
@@ -726,6 +749,10 @@ def execute_order_for_user(
             row.error_message = safe_error
             row.result_json = json.dumps({"ok": False, "error": safe_error})
             db.commit()
+        _metrics_inc("order_tasks_failed_total")
         return {"ok": False, "order_id": order_id, "error": safe_error}
     finally:
+        if task_ok:
+            _metrics_inc("order_tasks_succeeded_total")
+        _metrics_observe("order_task_duration", time.perf_counter() - started)
         db.close()

@@ -56,6 +56,9 @@ def parse_scan_run_body(raw: Any) -> dict[str, Any]:
     """
     Validate API body and return a Celery/json-safe dict:
     env_overrides, universe_mode (optional), tickers (optional).
+
+    Default behavior is server-side SP1500; custom universe requires
+    universe_mode="tickers" with explicit symbols.
     """
     if raw is None:
         return {}

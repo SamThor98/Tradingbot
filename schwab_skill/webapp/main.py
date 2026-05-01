@@ -17,14 +17,15 @@ from typing import Any
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+from core.scan_service import run_scan, summarize_live_strategy
 from execution import get_account_status, get_position_size_usd, place_order
 from market_data import extract_schwab_last_price, get_current_quote, get_current_quote_with_status
 from schwab_auth import DualSchwabAuth, write_encrypted_token_file
 from sector_strength import get_sector_heatmap
-from signal_scanner import scan_for_signals_detailed
 
 from ._shared import (
     build_portfolio_risk_analytics as _shared_build_portfolio_risk_analytics,
@@ -44,7 +45,7 @@ from ._shared import (
 from .checklist_language import with_plain_language
 from .cors_config import build_allowed_origins
 from .db import DATABASE_URL, Base, SessionLocal, engine
-from .models import AppState, PendingTrade, User
+from .models import AppState, PendingTrade, ScanResult, User
 from .oauth_schwab import exchange_schwab_code_for_tokens, schwab_authorize_url
 from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
 from .recovery_map import map_failure as _map_failure
@@ -82,6 +83,7 @@ SKILL_DIR = APP_DIR.parent
 STATIC_DIR = APP_DIR / "static"
 AUDIT_LOG_PATH = APP_DIR / "audit.log"
 VALIDATION_ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
+EXPERIMENT_REGISTRY_PATH = VALIDATION_ARTIFACT_DIR / "experiment_registry.jsonl"
 BACKTEST_RESULTS_PATH = SKILL_DIR / ".backtest_results.json"
 TRADE_OUTCOMES_PATH = SKILL_DIR / ".trade_outcomes.json"
 EXECUTION_METRICS_PATH = SKILL_DIR / "execution_safety_metrics.json"
@@ -592,22 +594,116 @@ def _latest_validation_status() -> dict[str, Any]:
     }
 
 
-def _strategy_summary(signals: list[dict[str, Any]] | None) -> dict[str, Any]:
-    rows = signals or []
-    counts: dict[str, int] = {}
-    for sig in rows:
-        attr = sig.get("strategy_attribution") if isinstance(sig, dict) else None
-        name = str((attr or {}).get("top_live") or "unknown")
-        counts[name] = int(counts.get(name, 0) or 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
-    dominant = ranked[0][0] if ranked else None
-    dominant_count = ranked[0][1] if ranked else 0
+def _latest_slo_gate_status() -> dict[str, Any]:
+    path = VALIDATION_ARTIFACT_DIR / "latest_slo_gate_status.json"
+    payload = _read_json_file(path, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    passed_raw = payload.get("passed")
+    passed = bool(passed_raw) if isinstance(passed_raw, bool) else None
+    failures = payload.get("failures")
     return {
-        "dominant_live_strategy": dominant,
-        "dominant_count": dominant_count,
-        "total_ranked": len(rows),
-        "counts": {k: v for k, v in ranked},
+        "exists": path.exists(),
+        "checked_at": payload.get("checked_at"),
+        "passed": passed,
+        "failures": list(failures) if isinstance(failures, list) else [],
     }
+
+
+def _latest_registry_decision() -> dict[str, Any] | None:
+    if not EXPERIMENT_REGISTRY_PATH.exists():
+        return None
+    try:
+        lines = EXPERIMENT_REGISTRY_PATH.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return None
+    for raw in reversed(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        return {
+            "recorded_at": row.get("recorded_at"),
+            "event_type": row.get("event_type"),
+            "target": row.get("target"),
+            "decision": row.get("decision"),
+            "rationale": list(row.get("rationale") or []),
+        }
+    return None
+
+
+def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
+    validation = _latest_validation_status()
+    slo = _latest_slo_gate_status()
+    last_scan = _load_state(
+        db,
+        key="last_scan",
+        default={
+            "at": None,
+            "signals_found": None,
+            "signals": [],
+            "diagnostics": None,
+            "diagnostics_summary": None,
+            "strategy_summary": None,
+        },
+    )
+    diagnostics_summary = (
+        last_scan.get("diagnostics_summary")
+        if isinstance(last_scan, dict) and isinstance(last_scan.get("diagnostics_summary"), dict)
+        else {}
+    )
+    strategy_summary = (
+        last_scan.get("strategy_summary")
+        if isinstance(last_scan, dict) and isinstance(last_scan.get("strategy_summary"), dict)
+        else {}
+    )
+    validation_passed = True if validation.get("passed") is True else False
+    slo_passed = True if slo.get("passed") is True else False
+    gate_ready = bool(validation_passed and slo_passed)
+    readiness_checks = [
+        {"name": "validation", "passed": validation.get("passed")},
+        {"name": "slo_gate", "passed": slo.get("passed")},
+    ]
+    if validation.get("run_status") == "running":
+        readiness_checks.append({"name": "validation_running", "passed": False})
+    latest_decision = _latest_registry_decision()
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "reliability": {
+            "validation_passed": validation.get("passed"),
+            "validation_run_status": validation.get("run_status"),
+            "slo_gate_passed": slo.get("passed"),
+            "slo_failures": list(slo.get("failures") or []),
+            "state": "healthy" if gate_ready else "at_risk",
+        },
+        "strategy_quality": {
+            "last_scan_at": last_scan.get("at") if isinstance(last_scan, dict) else None,
+            "signals_found": last_scan.get("signals_found") if isinstance(last_scan, dict) else None,
+            "dominant_strategy": strategy_summary.get("dominant_live_strategy"),
+            "dominant_count": strategy_summary.get("dominant_count"),
+            "data_quality": diagnostics_summary.get("data_quality"),
+            "scan_blocked": diagnostics_summary.get("scan_blocked"),
+            "top_blocker": (
+                ((diagnostics_summary.get("top_blockers") or [{}])[0]).get("key")
+                if isinstance(diagnostics_summary.get("top_blockers"), list)
+                else None
+            ),
+        },
+        "promotion_readiness": {
+            "release_gate_ready": gate_ready,
+            "checks": readiness_checks,
+            "latest_decision": latest_decision,
+        },
+    }
+
+
+def _strategy_summary(signals: list[dict[str, Any]] | None) -> dict[str, Any]:
+    return summarize_live_strategy(signals)
 
 
 def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -717,25 +813,180 @@ def _sec_analysis_settings() -> dict[str, Any]:
     }
 
 
+# Retention window for the local ScanResult table — keeps `flagged_days` queries cheap
+# and stops the SQLite file from growing unbounded across repeated scans.
+_LOCAL_SCAN_RESULT_RETENTION_DAYS = max(
+    7, int(os.getenv("WEB_LOCAL_SCAN_RESULT_RETENTION_DAYS", "30") or 30)
+)
+_LOCAL_FLAGGED_DAYS_LOOKBACK = max(
+    1, int(os.getenv("WEB_LOCAL_FLAGGED_DAYS_LOOKBACK", "30") or 30)
+)
+
+
+def _scan_result_signal_score(signal: dict[str, Any]) -> float | None:
+    raw = signal.get("signal_score")
+    if raw is None:
+        raw = signal.get("score")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persist_scan_results_local(
+    db: Session,
+    job_id: str,
+    signals: list[dict[str, Any]] | None,
+) -> int:
+    """Mirror the SaaS path: insert one ScanResult row per signal for the local user.
+
+    These rows are what `_enrich_signals_with_flagged_days` then groups by ticker to
+    derive the per-row "Days Flagged" count shown in the dashboard.
+    """
+    rows = signals or []
+    if not rows:
+        return 0
+    inserted = 0
+    for sig in rows:
+        ticker = str(sig.get("ticker") or sig.get("symbol") or "").strip().upper()
+        if not ticker:
+            continue
+        try:
+            payload_obj = json.loads(json.dumps(sig, default=_json_default))
+        except (TypeError, ValueError):
+            payload_obj = {"ticker": ticker}
+        db.add(
+            ScanResult(
+                user_id=LOCAL_DASHBOARD_USER_ID,
+                job_id=job_id,
+                ticker=ticker,
+                signal_score=_scan_result_signal_score(sig),
+                payload_json=payload_obj,
+            )
+        )
+        inserted += 1
+    if inserted:
+        try:
+            db.commit()
+        except Exception as exc:
+            LOG.warning("Local scan_results commit failed: %s", exc)
+            db.rollback()
+            return 0
+    return inserted
+
+
+def _enrich_signals_with_flagged_days(
+    db: Session,
+    signals: list[dict[str, Any]] | None,
+    *,
+    lookback_days: int = _LOCAL_FLAGGED_DAYS_LOOKBACK,
+) -> list[dict[str, Any]]:
+    """Attach `flagged_days` to each signal in-place using the local ScanResult table.
+
+    Mirrors the SaaS query: for each ticker, count distinct UTC dates where the local
+    user produced a ScanResult within the lookback window. The dashboard reads
+    `signal.flagged_days` via the same fallback chain it already uses for SaaS payloads.
+    """
+    from datetime import timedelta
+
+    rows = signals or []
+    if not rows:
+        return rows
+    tickers = sorted(
+        {
+            str(sig.get("ticker") or sig.get("symbol") or "").strip().upper()
+            for sig in rows
+            if str(sig.get("ticker") or sig.get("symbol") or "").strip()
+        }
+    )
+    if not tickers:
+        return rows
+    flagged_days_map: dict[str, int] = {}
+    try:
+        # `func.date(...)` collapses timestamps to UTC calendar days on both SQLite and
+        # Postgres; counting distinct values gives the "days flagged" metric.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(0, int(lookback_days)))
+        day_counts = (
+            db.query(
+                ScanResult.ticker,
+                func.count(func.distinct(func.date(ScanResult.created_at))),
+            )
+            .filter(
+                ScanResult.user_id == LOCAL_DASHBOARD_USER_ID,
+                ScanResult.ticker.in_(tickers),
+                ScanResult.created_at >= cutoff,
+            )
+            .group_by(ScanResult.ticker)
+            .all()
+        )
+        flagged_days_map = {
+            str(ticker or "").upper(): int(days or 0)
+            for ticker, days in day_counts
+            if str(ticker or "").strip()
+        }
+    except Exception as exc:
+        LOG.debug("flagged_days enrichment skipped: %s", exc)
+        return rows
+    for sig in rows:
+        ticker = str(sig.get("ticker") or sig.get("symbol") or "").strip().upper()
+        if not ticker:
+            continue
+        sig["flagged_days"] = int(flagged_days_map.get(ticker, 0))
+    return rows
+
+
+def _prune_local_scan_results(
+    db: Session,
+    *,
+    retention_days: int = _LOCAL_SCAN_RESULT_RETENTION_DAYS,
+) -> None:
+    """Drop ScanResult rows older than `retention_days` for the local user."""
+    from datetime import timedelta
+
+    if retention_days <= 0:
+        return
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(retention_days))
+        (
+            db.query(ScanResult)
+            .filter(
+                ScanResult.user_id == LOCAL_DASHBOARD_USER_ID,
+                ScanResult.created_at < cutoff,
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    except Exception as exc:
+        LOG.debug("Local scan_results prune skipped: %s", exc)
+        db.rollback()
+
+
 def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None:
     try:
         _sse_publish("scan_started", {"job_id": job_id})
         skw = scan_kwargs or {}
-        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR, **skw)
+        scan_out = run_scan(skill_dir=SKILL_DIR, **skw)
+        signals = scan_out.signals
+        diagnostics = scan_out.diagnostics
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         finished_at = datetime.now(timezone.utc).isoformat()
-        signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
-        last_scan = {
-            "at": finished_at,
-            "signals_found": len(signals),
-            "signals": signals_persist,
-            "diagnostics": diagnostics,
-            "diagnostics_summary": diagnostics_summary,
-            "strategy_summary": strategy_summary,
-        }
         db = SessionLocal()
         try:
+            _persist_scan_results_local(db, job_id, signals)
+            _enrich_signals_with_flagged_days(db, signals)
+            _prune_local_scan_results(db)
+            signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
+            last_scan = {
+                "at": finished_at,
+                "signals_found": len(signals),
+                "signals": signals_persist,
+                "diagnostics": diagnostics,
+                "diagnostics_summary": diagnostics_summary,
+                "strategy_summary": strategy_summary,
+            }
             _save_state(db, "last_scan", last_scan)
         finally:
             db.close()
@@ -872,7 +1123,13 @@ def get_db() -> Session:
 
 
 def _request_is_loopback(request: Request) -> bool:
-    return _shared_is_loopback_host(request.url.hostname)
+    host = (request.url.hostname or "").strip()
+    if not host:
+        host = str(request.headers.get("host") or "").split(":")[0].strip()
+    if host:
+        return _shared_is_loopback_host(host)
+    client_host = request.client.host if request.client is not None else None
+    return _shared_is_loopback_host(client_host)
 
 
 def require_trade_api_key(
@@ -883,13 +1140,21 @@ def require_trade_api_key(
     """Require a configured API key for trade-grade mutating operations."""
     configured = os.getenv("WEB_API_KEY", "").strip()
     if not configured:
+        render_env = (os.getenv("RENDER") or "").strip()
+        # Local/dev workflows should keep working without a server-side API key.
+        # Enforce strict missing-key failures only on hosted deployments.
+        if not render_env:
+            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
+        production_like = _is_production_like()
         unsafe = (os.getenv("WEB_ALLOW_UNSAFE_LOCAL_WRITES") or "").strip().lower() in (
             "1",
             "true",
             "yes",
             "on",
         )
-        if unsafe or _request_is_loopback(request):
+        # Local/dev runs should work without WEB_API_KEY; production-like hosts still
+        # require explicit opt-in (unsafe flag) or strict loopback-only origin.
+        if unsafe or (not production_like) or _request_is_loopback(request):
             return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
         raise HTTPException(
             status_code=503,
@@ -1240,6 +1505,17 @@ def validation_status() -> ApiResponse:
         return _err("validation_status", e)
 
 
+@app.get("/api/decision-dashboard", response_model=ApiResponse)
+def decision_dashboard(
+    db: Session = Depends(get_db),
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    try:
+        return _ok(_decision_dashboard_snapshot(db))
+    except Exception as e:
+        return _err("decision_dashboard", e)
+
+
 @app.post("/api/scan", response_model=ApiResponse)
 def scan(
     async_mode: bool = True,
@@ -1290,10 +1566,16 @@ def scan(
             snapshot = _scan_snapshot()
             return _ok({"started": started, **snapshot})
 
-        signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR, **skw)
+        scan_out = run_scan(skill_dir=SKILL_DIR, **skw)
+        signals = scan_out.signals
+        diagnostics = scan_out.diagnostics
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         now_iso = datetime.now(timezone.utc).isoformat()
+        sync_job_id = uuid.uuid4().hex[:10]
+        _persist_scan_results_local(db, sync_job_id, signals)
+        _enrich_signals_with_flagged_days(db, signals)
+        _prune_local_scan_results(db)
         signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
         last_scan = {
             "at": now_iso,
@@ -1820,7 +2102,9 @@ def onboarding_step(
             }
     elif step_key == "test_scan":
         try:
-            signals, diagnostics = scan_for_signals_detailed(skill_dir=SKILL_DIR)
+            scan_out = run_scan(skill_dir=SKILL_DIR)
+            signals = scan_out.signals
+            diagnostics = scan_out.diagnostics
             ok = diagnostics.get("scan_blocked", 0) == 0 and diagnostics.get("exceptions", 0) == 0
             steps["test_scan"] = {
                 "ok": bool(ok),

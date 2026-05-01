@@ -26,8 +26,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session as OrmSession
 
 from challenger_mode import ChallengerRunner
+from core.execution_service import submit_order
+from core.scan_service import run_scan
 from evolve_logic import LearningEngine
-from execution import get_account_status, get_position_size_usd, place_order
+from execution import get_account_status, get_position_size_usd
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
 from market_data import (
     extract_schwab_last_price,
@@ -38,7 +40,6 @@ from market_data import (
 from schwab_auth import DualSchwabAuth
 from sec_filing_compare import compare_ticker_over_time, compare_ticker_vs_ticker
 from sector_strength import get_sector_heatmap
-from signal_scanner import scan_for_signals_detailed
 
 from ._shared import (
     build_portfolio_risk_analytics as _build_portfolio_risk_analytics,
@@ -1504,7 +1505,7 @@ def tenant_approve_trade(
         )
 
     with tenant_skill_dir(db, user.id) as skill_dir:
-        result = place_order(
+        result = submit_order(
             ticker=row.ticker,
             qty=row.qty,
             side="BUY",
@@ -1807,7 +1808,9 @@ def tenant_onboarding_step(
         else:
             try:
                 with tenant_skill_dir(db, user.id) as skill_dir:
-                    signals, diagnostics = scan_for_signals_detailed(skill_dir=skill_dir)
+                    scan_out = run_scan(skill_dir=skill_dir)
+                    signals = scan_out.signals
+                    diagnostics = scan_out.diagnostics
                 scan_ok = diagnostics.get("scan_blocked", 0) == 0 and diagnostics.get("exceptions", 0) == 0
                 steps["test_scan"] = {
                     "ok": bool(scan_ok),
@@ -1837,7 +1840,7 @@ def tenant_onboarding_step(
                     with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
                         quote = get_current_quote("AAPL", auth=auth, skill_dir=skill_dir)
                         price = extract_schwab_last_price(quote) or 100.0
-                        result = place_order(
+                        result = submit_order(
                             ticker="AAPL",
                             qty=1,
                             side="BUY",

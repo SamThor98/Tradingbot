@@ -53,15 +53,23 @@ def _require_api_key_if_set(
 ) -> dict[str, str]:
     configured = os.getenv("WEB_API_KEY", "").strip()
     if not configured:
+        if not (os.getenv("RENDER") or "").strip():
+            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
+        env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+        production_like = env in ("prod", "production", "staging") or bool((os.getenv("RENDER") or "").strip())
         unsafe = (os.getenv("WEB_ALLOW_UNSAFE_LOCAL_WRITES") or "").strip().lower() in (
             "1",
             "true",
             "yes",
             "on",
         )
-        host = request.url.hostname
+        host = (request.url.hostname or "").strip()
+        if not host:
+            host = str(request.headers.get("host") or "").split(":")[0].strip()
+        if not host and request.client is not None:
+            host = str(request.client.host or "").strip()
         loopback = host in {"127.0.0.1", "localhost", "::1"}
-        if unsafe or loopback:
+        if unsafe or (not production_like) or loopback:
             return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
         raise HTTPException(
             status_code=503,
