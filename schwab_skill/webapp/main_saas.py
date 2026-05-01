@@ -672,11 +672,20 @@ def auth_destroy_session(response: Response) -> ApiResponse:
 @app.get("/api/auth/session", response_model=ApiResponse)
 def auth_session_status(
     request: Request,
+    response: Response,
 ) -> ApiResponse:
     token = (request.cookies.get(auth_session_cookie_name()) or "").strip()
     if not token:
         return _ok({"authenticated": False})
-    claims = decode_supabase_jwt(token)
+    try:
+        claims = decode_supabase_jwt(token)
+    except HTTPException as exc:
+        # Stale/invalid cookies should degrade to unauthenticated instead of
+        # returning an auth error from this status endpoint.
+        if 400 <= exc.status_code < 500:
+            _clear_auth_session_cookie(response)
+            return _ok({"authenticated": False})
+        raise
     return _ok({"authenticated": True, "sub": claims.get("sub"), "email": claims.get("email")})
 
 

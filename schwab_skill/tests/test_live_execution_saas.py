@@ -81,6 +81,18 @@ def _auth_header() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_auth_session_status_invalid_cookie_returns_unauthenticated(
+    saas_client: TestClient,
+) -> None:
+    response = saas_client.get("/api/auth/session", cookies={"tradingbot_session": "not-a-jwt"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("ok") is True
+    assert (payload.get("data") or {}).get("authenticated") is False
+    set_cookie = response.headers.get("set-cookie") or ""
+    assert "tradingbot_session=" in set_cookie
+
+
 def _seed_user_with_schwab(db: Session) -> None:
     db.add(User(id="user_1", email="a@b.c", auth_provider="supabase", live_execution_enabled=False))
     market_json = json.dumps({"access_token": "m1", "refresh_token": "mr1"})
