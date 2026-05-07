@@ -10,26 +10,80 @@
  */
 
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatMoney, formatDecimal } from "../modules/format.js";
+import {
+  safeText,
+  safeNum,
+  formatMoney,
+  formatDecimal,
+  formatCount,
+  formatSignedDelta,
+} from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
 import { state } from "../modules/state.js";
+import { applyFreshness, markUnavailable, clearUnavailable } from "../modules/freshness.js";
 
 export async function refreshPortfolio() {
-  const out = await api.get("/api/portfolio");
+  const card = document.getElementById("portfolioSection");
   const body = document.getElementById("portfolioBody");
   const meta = document.getElementById("portfolioMeta");
-  body.innerHTML = "";
+  if (!body) return;
+  if (card) card.setAttribute("data-async-state", "loading");
+  body.innerHTML = `<tr><td colspan="5" class="muted">
+    <div class="async-state async-state--loading">
+      <span class="async-spinner" aria-hidden="true"></span>
+      <span>Loading positions…</span>
+    </div>
+  </td></tr>`;
+  const out = await api.get("/api/portfolio");
   if (!out.ok) {
     state.lastPortfolioData = null;
-    meta.textContent = "Portfolio unavailable.";
-    body.innerHTML = `<tr><td colspan="5" class="muted">${safeText(out.error)}</td></tr>`;
+    const reason = safeText(out.user_message || out.error || "fetch failed");
+    // 401 → signed-out banner. 409 → "link Schwab in Settings". Other → generic.
+    if (out.status === 401) {
+      if (card) card.setAttribute("data-async-state", "signed_out");
+      if (meta) {
+        markUnavailable(meta, "signed out");
+        meta.textContent = "Sign in to load positions.";
+      }
+      body.innerHTML = `<tr><td colspan="5">
+        <div class="signed-out-banner" role="status">
+          <strong>Signed out.</strong>
+          <span>Sign in to load tenant-scoped portfolio data.</span>
+          <a class="btn small secondary" href="#supabaseAuthBlock">Sign in</a>
+        </div>
+      </td></tr>`;
+      return;
+    }
+    if (card) card.setAttribute("data-async-state", "error");
+    if (meta) {
+      markUnavailable(meta, reason);
+      meta.textContent = `Portfolio unavailable: ${reason}`;
+    }
+    const hint = out.status === 409
+      ? "Link Schwab account + market data in Settings, then retry."
+      : "";
+    body.innerHTML = `<tr><td colspan="5">
+      <div class="async-state async-state--error" role="alert">
+        <div>
+          <div>${reason}</div>
+          ${hint ? `<div class="muted small">${safeText(hint)}</div>` : ""}
+        </div>
+        <button type="button" class="btn small secondary" data-portfolio-retry>Retry</button>
+      </div>
+    </td></tr>`;
+    body.querySelector("[data-portfolio-retry]")?.addEventListener("click", () => void refreshPortfolio());
     logEvent({ kind: "system", severity: "warn", message: `Portfolio load failed: ${out.error}` });
     return;
   }
-  const data = out.data;
+  const data = out.data || {};
   state.lastPortfolioData = data;
-  meta.textContent = `${data.positions_count} position(s) • ${formatMoney(data.total_market_value)}`;
-  if (!data.positions.length) {
+  if (meta) {
+    clearUnavailable(meta);
+    meta.textContent = `${formatCount(data.positions_count, "0")} position(s) • ${formatMoney(data.total_market_value)}`;
+  }
+  body.innerHTML = "";
+  if (!Array.isArray(data.positions) || !data.positions.length) {
+    if (card) card.setAttribute("data-async-state", "empty");
     body.innerHTML = `
       <tr>
         <td colspan="5" class="muted">
@@ -46,17 +100,32 @@ export async function refreshPortfolio() {
     `;
     return;
   }
+  if (card) card.setAttribute("data-async-state", "success");
   data.positions.slice(0, 25).forEach((p) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${safeText(p.symbol)}</td>
-      <td>${safeText(p.qty)}</td>
+      <td>${formatCount(p.qty, "—")}</td>
       <td>${formatMoney(p.last)}</td>
       <td>${formatMoney(p.market_value)}</td>
-      <td>${safeNum(p.pl_pct) >= 0 ? "+" : ""}${formatDecimal(p.pl_pct, 2, "0.00")}%</td>
+      <td>${formatSignedDelta(p.pl_pct, (n) => formatDecimal(n, 2, "0.00"))}%</td>
     `;
     body.appendChild(tr);
   });
+  // Provenance label: portfolio meta gets a freshness chip too.
+  if (meta && !meta.dataset.freshAttached) {
+    meta.dataset.freshAttached = "1";
+    const fresh = document.createElement("small");
+    fresh.style.display = "block";
+    meta.appendChild(fresh);
+    applyFreshness(fresh, {
+      asOf: new Date().toISOString(),
+      source: "/api/portfolio",
+      surface: "portfolio",
+    });
+  }
+  // suppress unused-var lint for safeNum which is intentionally still imported.
+  void safeNum;
 }
 
 export async function loadPortfolioRisk() {

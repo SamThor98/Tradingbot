@@ -228,7 +228,25 @@ def get_vcp_days(skill_dir: Path | None = None) -> int:
 
 # Signal ranking: max number of signals to send (0 = no limit)
 def get_signal_top_n(skill_dir: Path | None = None) -> int:
-    return _get_int("SIGNAL_TOP_N", 5, skill_dir)
+    """
+    Number of top signals returned after final ranking.
+
+    SIGNAL_TOP_N=0 (or negative) means "return all ranked signals" -- the
+    dashboard /api/scan endpoint relies on this to surface every Stage B
+    candidate without truncation. Stage A shortlist sizing also honors 0
+    via _compute_stage_a_shortlist_limit.
+
+    Implemented as a dedicated parser instead of _get_int because _get_int
+    clamps to >=1, which silently broke the documented "0 = no cap" contract.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("SIGNAL_TOP_N", env).strip()
+    if not raw:
+        return 5
+    try:
+        return max(0, int(float(raw)))
+    except (ValueError, TypeError):
+        return 5
 
 
 # Scanner: bounded workers for fast filter stage
@@ -251,6 +269,15 @@ def get_scan_stage_a_shortlist_multiplier(skill_dir: Path | None = None) -> floa
 # Scanner: hard cap for Stage A shortlist candidates
 def get_scan_stage_a_shortlist_cap(skill_dir: Path | None = None) -> int:
     return _get_int("SCAN_STAGE_A_SHORTLIST_CAP", 40, skill_dir)
+
+
+# Scanner: ceiling that applies only when SIGNAL_TOP_N <= 0 ("show all").
+# Without this, a permissive top_n=0 scan would dispatch Stage B enrichment on
+# every Stage A survivor (potentially hundreds of names), which inflates scan
+# latency and Schwab API pressure. Default 250 is generous for SP1500-scale
+# scans while still bounding worst-case work. Set to 0 to disable the ceiling.
+def get_scan_stage_a_nocap_limit(skill_dir: Path | None = None) -> int:
+    return _get_int("SCAN_STAGE_A_NOCAP_LIMIT", 250, skill_dir)
 
 
 # Scanner: per-ticker stage timeout safety bound (seconds)
@@ -921,6 +948,30 @@ def get_edgar_user_agent(skill_dir: Path | None = None) -> str:
     if len(raw) >= 12 and "@" in raw:
         return raw
     return "SchwabTradingBot contact@example.com"
+
+
+def get_finnhub_api_key(skill_dir: Path | None = None) -> str:
+    """Finnhub API key (empty string means Finnhub integrations are disabled)."""
+    env = _load_env(skill_dir)
+    return _env_value("FINNHUB_API_KEY", env).strip()
+
+
+def get_finnhub_timeout_sec(skill_dir: Path | None = None) -> float:
+    """Per-request timeout in seconds for Finnhub HTTP calls."""
+    value = _get_float("FINNHUB_TIMEOUT_SEC", 8.0, skill_dir)
+    return max(1.0, min(30.0, value))
+
+
+def get_finnhub_news_days(skill_dir: Path | None = None) -> int:
+    """Lookback window (days) for company-news fetches."""
+    value = _get_int("FINNHUB_NEWS_DAYS", 30, skill_dir)
+    return max(1, min(90, value))
+
+
+def get_finnhub_max_news_items(skill_dir: Path | None = None) -> int:
+    """Maximum company-news items retained in normalized payloads."""
+    value = _get_int("FINNHUB_MAX_NEWS_ITEMS", 12, skill_dir)
+    return max(1, min(50, value))
 
 
 def get_sec_filing_analysis_enabled(skill_dir: Path | None = None) -> bool:

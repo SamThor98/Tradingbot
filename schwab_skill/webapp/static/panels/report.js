@@ -161,6 +161,75 @@ function renderScenarioRow(row) {
   `;
 }
 
+function fmtPctSmart(value, digits = 1) {
+  if (value === null || value === undefined || value === "") return "<span class='muted'>n/a</span>";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "<span class='muted'>n/a</span>";
+  const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
+  return `${safeNum(pctVal).toFixed(digits)}%`;
+}
+
+function renderInstitutionalWriteup(rawData, normalized) {
+  const snap = rawData?.finnhub_snapshot || {};
+  const profile = snap?.profile || {};
+  const quote = snap?.quote || {};
+  const metrics = snap?.metrics || {};
+  const earnings = Array.isArray(snap?.earnings) ? snap.earnings.slice(0, 4) : [];
+  const sec = rawData?.edgar?.filing_analysis || {};
+  const valuation = rawData?.dcf || {};
+  const technical = rawData?.technical || {};
+  const recommendation = normalized?.ic_snapshot?.recommendation || "Pass";
+  const confidence = normalized?.ic_snapshot?.confidence_score;
+  const confidenceTextValue = Number.isFinite(Number(confidence)) ? `${confidence}/100` : "n/a";
+  const summaryHeadline = sec?.summary_headline || sec?.high_level_takeaway || "SEC filing summary unavailable.";
+  const businessName = profile?.name || normalized?.ticker || "This issuer";
+
+  return `
+    <div class="report-section">
+      <h4>Formal Write-Up</h4>
+      <div class="subtle">Institutional-style synthesis across technicals, fundamentals, SEC, and risk context.</div>
+      <div class="report-text">
+        ${safeText(businessName)} is evaluated with a blended framework: market structure, valuation underwriting, filing intelligence, and scenario-based risk control.
+        Current framing is <strong>${safeText(recommendation)}</strong> with confidence <strong>${safeText(confidenceTextValue)}</strong>.
+      </div>
+      <div class="report-text">
+        Market snapshot: price ${formatMoney(quote?.current)}, day move ${fmtPctSmart(quote?.change_percent)},
+        52-week range ${formatMoney(metrics?.["52week_low"])} to ${formatMoney(metrics?.["52week_high"])}.
+        Technical score is ${safeText(technical?.signal_score)} with Stage 2 = ${technical?.stage_2 ? "YES" : "NO"} and VCP = ${technical?.vcp ? "YES" : "NO"}.
+      </div>
+      <div class="report-text">
+        Fundamental lens: DCF margin of safety ${fmtPctSmart(valuation?.margin_of_safety)}, P/E ${safeText(metrics?.pe_ttm ?? "n/a")},
+        operating margin ${fmtPctSmart(metrics?.operating_margin_ttm)}, net margin ${fmtPctSmart(metrics?.net_margin_ttm)},
+        and revenue growth ${fmtPctSmart(metrics?.revenue_growth_ttm_yoy)}.
+      </div>
+      <div class="report-text">
+        SEC narrative signal: ${safeText(summaryHeadline)}
+      </div>
+      <div class="table-wrap report-table-wrap">
+        <table class="report-scenario-table">
+          <thead>
+            <tr><th>Recent Earnings</th><th>Actual</th><th>Estimate</th><th>Surprise %</th></tr>
+          </thead>
+          <tbody>
+            ${
+              earnings.length
+                ? earnings.map((row) => `
+                  <tr>
+                    <td>${safeText(row?.period || "n/a")}</td>
+                    <td class="mono-nums">${safeText(row?.actual ?? "n/a")}</td>
+                    <td class="mono-nums">${safeText(row?.estimate ?? "n/a")}</td>
+                    <td class="mono-nums">${fmtPctSmart(row?.surprise_percent, 1)}</td>
+                  </tr>
+                `).join("")
+                : "<tr><td colspan='4' class='muted'>No earnings series returned from Finnhub.</td></tr>"
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 export function renderReportTabs(data) {
   const tabs = document.getElementById("reportTabs");
   tabs.innerHTML = "";
@@ -230,6 +299,7 @@ export function renderReportVisual(data) {
     <div class="report-grid">
       ${kpis.map((k) => `<div class="report-kpi"><div class="label">${k.label}</div><div class="value">${safeText(k.value)}</div></div>`).join("")}
     </div>
+    ${renderInstitutionalWriteup(data, normalized)}
     <div class="report-section">
       <h4>IC Snapshot ${inferredBadge(inferred.has("ic_snapshot.recommendation") || inferred.has("ic_snapshot.expected_return_base_case"))}</h4>
       <div class="subtle">Thesis-first decision frame for IC review and position expression.</div>
@@ -376,6 +446,8 @@ export async function runReport() {
     }
 
     state.lastReportData = out.data;
+    state.reportRawView = false;
+    applyReportViewMode();
     try {
       const portfolioRiskOut = await api.get("/api/portfolio/risk", { timeoutMs: 20000 });
       state.lastPortfolioRiskData = portfolioRiskOut.ok ? portfolioRiskOut.data : null;
@@ -392,5 +464,260 @@ export async function runReport() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Run Report";
+  }
+}
+
+function setDossierMeta(message, severity = "muted") {
+  const meta = document.getElementById("dossierMeta");
+  if (!meta) return;
+  meta.textContent = message;
+  meta.classList.remove("muted", "warn", "good");
+  if (severity === "warn") meta.classList.add("warn");
+  else if (severity === "good") meta.classList.add("good");
+  else meta.classList.add("muted");
+}
+
+function escapeHtml(raw) {
+  return String(raw || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function markdownToPreviewHtml(markdown) {
+  const lines = String(markdown || "").split(/\r?\n/);
+  const out = [];
+  let listOpen = false;
+  let para = [];
+  let inTable = false;
+  let table = [];
+
+  const flushParagraph = () => {
+    if (!para.length) return;
+    const text = escapeHtml(para.join(" ").trim());
+    if (text) out.push(`<p class="report-text">${text}</p>`);
+    para = [];
+  };
+
+  const flushList = () => {
+    if (!listOpen) return;
+    out.push("</ul>");
+    listOpen = false;
+  };
+
+  const flushTable = () => {
+    if (!inTable) return;
+    out.push(`<pre class="code-block code-block--tight">${escapeHtml(table.join("\n"))}</pre>`);
+    inTable = false;
+    table = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      continue;
+    }
+    if (trimmed.startsWith("|")) {
+      flushParagraph();
+      flushList();
+      inTable = true;
+      table.push(trimmed);
+      continue;
+    }
+    flushTable();
+    if (trimmed.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      out.push(`<h5>${escapeHtml(trimmed.slice(4))}</h5>`);
+      continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      out.push(`<h4>${escapeHtml(trimmed.slice(3))}</h4>`);
+      continue;
+    }
+    if (trimmed.startsWith("# ")) {
+      flushParagraph();
+      flushList();
+      out.push(`<h3>${escapeHtml(trimmed.slice(2))}</h3>`);
+      continue;
+    }
+    if (trimmed.startsWith("- ")) {
+      flushParagraph();
+      if (!listOpen) {
+        out.push('<ul class="report-bullets">');
+        listOpen = true;
+      }
+      out.push(`<li>${escapeHtml(trimmed.slice(2))}</li>`);
+      continue;
+    }
+    para.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushTable();
+  return out.join("");
+}
+
+function setDossierPreview(data, markdownText = "") {
+  const writeup = document.getElementById("dossierWriteup");
+  const details = document.getElementById("dossierDetails");
+  const out = document.getElementById("dossierOutput");
+  if (!details || !out) return;
+  if (writeup) {
+    writeup.classList.remove("hidden");
+    const html = markdownText
+      ? markdownToPreviewHtml(markdownText)
+      : `<div class="report-empty">Narrative preview unavailable. Use Download Markdown as fallback.</div>`;
+    writeup.innerHTML = `<div class="report-section"><h4>Dossier Narrative Preview</h4>${html}</div>`;
+  }
+  details.classList.remove("hidden");
+  out.textContent = JSON.stringify(data, null, 2);
+}
+
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "research_dossier.bin";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1200);
+}
+
+function resolveDossierTicker() {
+  const reportTicker = document.getElementById("reportTickerInput")?.value?.trim()?.toUpperCase() || "";
+  if (reportTicker) return reportTicker;
+  // Allow SEC compare users to generate a dossier without retyping.
+  const secCompareTicker = document.getElementById("secCompareTickerA")?.value?.trim()?.toUpperCase() || "";
+  if (secCompareTicker) {
+    const reportInput = document.getElementById("reportTickerInput");
+    if (reportInput) reportInput.value = secCompareTicker;
+    return secCompareTicker;
+  }
+  return "";
+}
+
+function handleDossierRuntimeUnavailable(responseLike) {
+  if (!responseLike || responseLike.status !== 404) return false;
+  const msg = "Dossier endpoint unavailable in this runtime";
+  setDossierMeta(msg, "warn");
+  updateActionCenter({
+    title: "Dossier Unavailable",
+    message: msg,
+    severity: "warn",
+  });
+  return true;
+}
+
+export async function runResearchDossier() {
+  const ticker = resolveDossierTicker();
+  if (!ticker) {
+    setDossierMeta("Enter a ticker in Full Report or SEC Compare first.", "warn");
+    updateActionCenter({
+      title: "Ticker Required",
+      message: "Set a ticker in Full Report or SEC Compare before generating a dossier.",
+      severity: "warn",
+    });
+    return;
+  }
+  const btn = document.getElementById("dossierBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Generating...";
+  }
+  setDossierMeta(`Generating dossier for ${ticker}...`);
+  updateActionCenter({ title: "Dossier Running", message: `Building research dossier for ${ticker}...`, severity: "info" });
+  try {
+    const out = await api.getResearchDossier(ticker, { timeoutMs: 300000 });
+    if (handleDossierRuntimeUnavailable(out)) return;
+    if (!out.ok) {
+      setDossierMeta(out.error || "Dossier generation failed.", "warn");
+      logEvent({ kind: "report", severity: "error", message: `Dossier ${ticker} failed: ${out.error}` });
+      return;
+    }
+    state.lastResearchDossier = out.data;
+    let mdPreview = "";
+    const mdOut = await api.downloadResearchDossier(ticker, "md", { timeoutMs: 300000 });
+    if (mdOut?.ok && mdOut?.data?.blob) {
+      try {
+        mdPreview = await mdOut.data.blob.text();
+      } catch {
+        mdPreview = "";
+      }
+    }
+    setDossierPreview(out.data, mdPreview);
+    const fallbackCount = Array.isArray(out.data?.fallback_notes) ? out.data.fallback_notes.length : 0;
+    setDossierMeta(
+      fallbackCount
+        ? `Dossier ready for ${ticker} (${fallbackCount} fallback note${fallbackCount === 1 ? "" : "s"})`
+        : `Dossier ready for ${ticker}`,
+      fallbackCount ? "warn" : "good",
+    );
+    updateActionCenter({
+      title: "Dossier Ready",
+      message: fallbackCount
+        ? `${ticker} dossier generated with ${fallbackCount} fallback note${fallbackCount === 1 ? "" : "s"}.`
+        : `${ticker} dossier generated and ready for download.`,
+      severity: fallbackCount ? "warn" : "success",
+    });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Generate Dossier";
+    }
+  }
+}
+
+export async function downloadResearchDossier(format = "json") {
+  const ticker = resolveDossierTicker();
+  if (!ticker) {
+    setDossierMeta("Enter a ticker in Full Report or SEC Compare first.", "warn");
+    updateActionCenter({
+      title: "Ticker Required",
+      message: "Set a ticker in Full Report or SEC Compare before downloading dossier exports.",
+      severity: "warn",
+    });
+    return;
+  }
+  const buttonMap = {
+    json: "dossierDownloadJsonBtn",
+    md: "dossierDownloadMdBtn",
+    pdf: "dossierDownloadPdfBtn",
+  };
+  const btn = document.getElementById(buttonMap[format] || "");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Downloading...";
+  }
+  setDossierMeta(`Downloading ${format.toUpperCase()} export...`);
+  try {
+    const out = await api.downloadResearchDossier(ticker, format, { timeoutMs: 300000 });
+    if (handleDossierRuntimeUnavailable(out)) return;
+    if (!out.ok) {
+      setDossierMeta(out.error || "Download failed.", "warn");
+      logEvent({ kind: "report", severity: "error", message: `Dossier ${format} download failed: ${out.error}` });
+      return;
+    }
+    triggerBlobDownload(out.data.blob, out.data.filename);
+    setDossierMeta(`Downloaded ${out.data.filename}`, "good");
+    updateActionCenter({
+      title: "Download Complete",
+      message: `${out.data.filename} saved from the latest dossier export.`,
+      severity: "success",
+    });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      if (format === "json") btn.textContent = "Download JSON";
+      else if (format === "md") btn.textContent = "Download Markdown";
+      else btn.textContent = "Download PDF";
+    }
   }
 }

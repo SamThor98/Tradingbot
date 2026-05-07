@@ -93,7 +93,7 @@ def test_db(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def client(test_db: sessionmaker) -> TestClient:
+def client(test_db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from webapp import main as webapp_main
 
     def override_db():
@@ -105,6 +105,13 @@ def client(test_db: sessionmaker) -> TestClient:
 
     app = webapp_main.app
     app.dependency_overrides[webapp_main.get_db] = override_db
+    # `_scan_worker` runs in a background thread and bypasses the
+    # `Depends(get_db)` injection by calling `SessionLocal()` directly. Without
+    # this monkeypatch, async-scan tests posted FAKE_DIAGNOSTICS / FAKE_SIGNALS
+    # into the developer's real `webapp/webapp.db` (visible as a "watchlist=200,
+    # signals=AAPL/MSFT" stale state on their dashboard). Bind SessionLocal to
+    # the test's in-memory engine so worker threads stay isolated too.
+    monkeypatch.setattr(webapp_main, "SessionLocal", test_db)
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

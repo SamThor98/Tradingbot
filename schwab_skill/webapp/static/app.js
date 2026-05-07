@@ -25,8 +25,24 @@ import {
   verdictFromScore,
   timeAgo,
   durationSec,
+  formatCount,
 } from "./modules/format.js";
 import { api } from "./modules/api.js";
+import {
+  applyFreshness,
+  markUnavailable,
+  clearUnavailable,
+  FRESHNESS_BUDGETS_SEC,
+} from "./modules/freshness.js";
+import {
+  setAsyncState,
+  busyButton,
+  retryGet,
+  ASYNC_LOADING,
+  ASYNC_EMPTY,
+  ASYNC_ERROR,
+  ASYNC_SUCCESS,
+} from "./modules/asyncState.js";
 import {
   authSessionReady,
   markAuthReady,
@@ -118,6 +134,8 @@ import {
   renderReportVisual,
   applyReportViewMode,
   runReport,
+  runResearchDossier,
+  downloadResearchDossier,
 } from "./panels/report.js";
 import {
   PRESET_SETTING_LABELS,
@@ -204,35 +222,35 @@ const lazyLoaded = {
 const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
-    title: "Operate workflow",
-    text: "Run scans, evaluate each candidate, then stage and approve trades.",
-    ctaLabel: "Open scan flow",
-    ctaHref: "#operationsWorkspaceIntro",
-    altCtaLabel: "Open trade queue",
+    title: "Today",
+    text: "Run a scan, look over the candidates, and approve only the trades you like.",
+    ctaLabel: "Run a scan",
+    ctaHref: "#scanSection",
+    altCtaLabel: "Review pending",
     altCtaHref: "#pendingSection",
   },
   research: {
-    title: "Research workflows",
-    text: "Investigate symbols with reports, SEC compare, backtests, and strategy chat.",
-    ctaLabel: "Open research hub",
-    ctaHref: "#researchWorkspaceIntro",
+    title: "Analyze",
+    text: "Review pending approvals, then run research and diligence before you size up.",
+    ctaLabel: "Quick check",
+    ctaHref: "#quickCheckSection",
     altCtaLabel: "Open backtests",
     altCtaHref: "#backtestSection",
   },
   diagnostics: {
-    title: "Trust and health",
-    text: "Inspect tokens, validation status, and system telemetry without cluttering trading flow.",
-    ctaLabel: "Open diagnostics hub",
-    ctaHref: "#diagnosticsWorkspaceIntro",
-    altCtaLabel: "Open health ribbon",
-    altCtaHref: "#healthRibbon",
+    title: "Health",
+    text: "How the system is doing right now \u2014 connections, data quality, and recent runs.",
+    ctaLabel: "Health ribbon",
+    ctaHref: "#healthRibbon",
+    altCtaLabel: "Detailed status",
+    altCtaHref: "#statusDetailsPanel",
   },
   settings: {
-    title: "Configure connections",
-    text: "Manage Schwab connectivity, presets, live trading controls, 2FA, and billing options.",
-    ctaLabel: "Open settings hub",
-    ctaHref: "#settingsWorkspaceIntro",
-    altCtaLabel: "Open presets",
+    title: "Settings",
+    text: "Connect your Schwab account, choose a strategy preset, and manage live-trading guardrails.",
+    ctaLabel: "Connections",
+    ctaHref: "#onboardingSection",
+    altCtaLabel: "Trading controls",
     altCtaHref: "#settingsSection",
   },
 });
@@ -251,7 +269,6 @@ const SCREEN_SECTIONS = Object.freeze({
     "researchWorkflowStrip",
     "quickCheckSection",
     "toolsSection",
-    "decisionSection",
     "recoverySection",
     "learningSection",
     "backtestSection",
@@ -402,7 +419,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Tip: Ctrl/Cmd + 1 Operate, 2 Research, 3 Trust, 4 Configure.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Trade, 2 Analyze, 3 Health, 4 Settings.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -535,11 +552,20 @@ function renderLiveTradingSaasPanel() {
   const block = document.getElementById("liveTradingSaasBlock");
   const killBanner = document.getElementById("platformKillSwitchBanner");
   if (killBanner) {
+    const freshEl = document.getElementById("platformKillSwitchBannerFresh");
     if (state.publicConfig.platform_live_trading_kill_switch) {
       killBanner.classList.remove("hidden");
     } else {
       killBanner.classList.add("hidden");
     }
+    // Stamp freshness whenever we re-evaluate, even if hidden — so toggling
+    // the banner on/off carries a "verified at" label.
+    applyFreshness(freshEl, {
+      asOf: new Date().toISOString(),
+      source: "/api/public-config",
+      surface: "status_details",
+      unavailable: "config not loaded",
+    });
   }
   if (!block) return;
   if (!state.publicConfig.saas_mode) {
@@ -882,6 +908,36 @@ function updateTopStrategyChip(summary = null) {
   el.textContent = `Top Strategy: ${dominant} (${count}/${total})`;
 }
 
+function setHealthRibbonUnavailable(reason) {
+  const ribbon = document.getElementById("healthRibbon");
+  if (ribbon) ribbon.setAttribute("data-async-state", "error");
+  ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = "health-badge bg-slate-900";
+    el.textContent = "Unknown";
+    markUnavailable(el, reason || "status fetch failed");
+  });
+  ["healthTileAuth", "healthTileQuotes", "healthTileApi", "healthTileValidation"].forEach((id) => {
+    const tile = document.getElementById(id);
+    if (!tile) return;
+    tile.dataset.state = "unknown";
+    tile.style.setProperty("--gauge", "0");
+  });
+  const noteIso = new Date().toISOString();
+  ["ribbonAuthFresh", "ribbonQuotesFresh", "ribbonApiErrorRateFresh", "ribbonValidationFresh"].forEach((id) => {
+    applyFreshness(document.getElementById(id), {
+      asOf: null,
+      source: "/api/status",
+      surface: "health_ribbon",
+      unavailable: reason ? `unavailable: ${reason}` : "unavailable",
+    });
+  });
+  // Reference noteIso so eslint stays quiet; the timestamp is unused but kept
+  // for future "last failure at" labels.
+  void noteIso;
+}
+
 function setHealthRibbonTiles(authOk, quoteOk, errRate, validation) {
   const setTile = (id, stateName, gauge) => {
     const el = document.getElementById(id);
@@ -968,17 +1024,65 @@ function prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation
 
 function updateHeroInfographic() {
   const sigEl = document.getElementById("heroKpiSignals");
+  const sigFreshEl = document.getElementById("heroKpiSignalsFresh");
   const pendEl = document.getElementById("heroKpiPending");
+  const pendFreshEl = document.getElementById("heroKpiPendingFresh");
   const wlEl = document.getElementById("heroKpiWatchlist");
-  if (sigEl) sigEl.textContent = String(Array.isArray(state.latestSignals) ? state.latestSignals.length : 0);
+  const wlFreshEl = document.getElementById("heroKpiWatchlistFresh");
+
+  // Signals: "—" until a scan has actually returned (state.lastScanAt set).
+  if (sigEl) {
+    if (state.lastScanAt) {
+      clearUnavailable(sigEl);
+      sigEl.textContent = formatCount(
+        Array.isArray(state.latestSignals) ? state.latestSignals.length : 0,
+      );
+    } else {
+      markUnavailable(sigEl, "no scan run this session");
+    }
+  }
+  applyFreshness(sigFreshEl, {
+    asOf: state.lastScanAt,
+    source: "/api/scan",
+    surface: "scan_results",
+    unavailable: "no scan yet",
+  });
+
+  // Pending: "—" until /api/pending-trades has answered. We piggyback on the
+  // dedicated state field rather than scraping #pendingCount text.
   if (pendEl) {
-    const pc = document.getElementById("pendingCount");
-    pendEl.textContent = pc && pc.textContent.trim() !== "" ? pc.textContent.trim() : "0";
+    if (state.lastPendingCount === null || state.lastPendingCount === undefined) {
+      markUnavailable(pendEl, "/api/pending-trades not loaded");
+    } else {
+      clearUnavailable(pendEl);
+      pendEl.textContent = formatCount(state.lastPendingCount);
+    }
   }
+  applyFreshness(pendFreshEl, {
+    asOf: state.lastPendingAt || null,
+    source: "/api/pending-trades",
+    surface: "pending_queue",
+    unavailable: "awaiting status",
+  });
+
+  // Watchlist universe: defaults to SP1500 (the canonical scan universe)
+  // and is overwritten by scan diagnostics. We label provenance so the
+  // user knows whether it's the assumed default or a measured count.
   if (wlEl) {
-    const n = state.lastWatchlistSize;
-    wlEl.textContent = n !== null && n !== undefined && n >= 0 ? String(n) : "—";
+    const n = Number(state.lastWatchlistSize);
+    if (!Number.isFinite(n) || n <= 0) {
+      markUnavailable(wlEl, "scan diagnostics have not reported watchlist_size yet");
+    } else {
+      clearUnavailable(wlEl);
+      wlEl.textContent = formatCount(n);
+    }
   }
+  applyFreshness(wlFreshEl, {
+    asOf: state.lastScanAt,
+    source: state.lastScanAt ? "/api/scan diagnostics" : "SP1500 default",
+    surface: "scan_results",
+    unavailable: "scan to populate",
+  });
 }
 
 function setLoading(textMap = {}) {
@@ -1017,24 +1121,196 @@ function buildDiagnosticsSummary(diag = {}) {
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
 
-  const source = safeText(diag.watchlist_source || "").toLowerCase();
+  // Watchlist sourcing: trust the actual watchlist_size from diagnostics.
+  // Honoured sources from the backend include:
+  //   - explicit_tickers_override : custom ticker list (e.g. /api/scan body)
+  //   - sp1500_focused            : SIGNAL_UNIVERSE_MODE=focused (used by
+  //                                 backtests / API callers; no UI trigger)
+  //   - sp1500_default            : full SP1500 broad universe (Run Scan)
+  // Fall back to the SP1500 default size only when diagnostics carry no
+  // watchlist_size at all (e.g. before the first scan completes).
   const watchRaw = safeNum(diag.watchlist_size, 0);
-  // SP1500 is the canonical default universe; keep KPI stable for default or unknown source.
-  // Only show a smaller number when source explicitly declares custom tickers.
-  const watch =
-    source === "explicit_tickers_override" ? watchRaw : Math.max(1500, watchRaw);
-  const stageFail = safeNum(diag.stage2_fail, 0);
-  const vcpFail = safeNum(diag.vcp_fail, 0);
+  const watch = watchRaw > 0 ? watchRaw : 1500;
   const finalSignals = state.latestSignals.length;
-
-  const funnel = {
-    watchlist: watch,
-    stage2_pass: Math.max(0, watch - stageFail),
-    vcp_pass: Math.max(0, watch - stageFail - vcpFail),
-    final: finalSignals,
-  };
+  const funnel = buildFunnelStages(diag, watch, finalSignals);
 
   return { blockers, funnel };
+}
+
+/**
+ * Dev-mode integrity check for the scan funnel. The hero "Open signals" KPI
+ * and the candidate table both render off `state.latestSignals`; the funnel
+ * counts are computed from `diagnostics`. They must reconcile at the bottom.
+ *
+ * If they don't, surface a single grouped console.warn instead of failing
+ * silently — this is exactly the kind of contradiction the cleanup pass is
+ * trying to eliminate.
+ */
+function assertScanDeltasReconcile(diag, funnel, signals) {
+  if (!funnel || !Array.isArray(funnel.stages)) return;
+  const last = funnel.stages[funnel.stages.length - 1];
+  if (!last) return;
+  const rendered = Array.isArray(signals) ? signals.length : 0;
+  // Only assert the *final* stage matches the rendered candidate count;
+  // intermediate stages can legitimately drift due to multi-source counting.
+  if (Number.isFinite(last.value) && last.value !== rendered) {
+    if (typeof console !== "undefined" && console.groupCollapsed) {
+      console.groupCollapsed(
+        "[scan reconcile] funnel terminal stage does not match rendered signals",
+      );
+      console.warn(
+        `funnel "${last.key || last.label}" reports ${last.value} but ${rendered} rows were rendered.`,
+      );
+      console.warn("diagnostics:", diag);
+      console.warn("funnel:", funnel);
+      console.groupEnd();
+    }
+  }
+}
+
+function buildFunnelStages(diag, watchlistOverride, finalCount) {
+  const stage2Fail = safeNum(diag.stage2_fail, 0);
+  const vcpFail = safeNum(diag.vcp_fail, 0);
+  const noSectorEtf = safeNum(diag.no_sector_etf, 0);
+  const sectorNotWinning = safeNum(diag.sector_not_winning, 0);
+  const breakoutNotConfirmed = safeNum(diag.breakout_not_confirmed, 0);
+  const exceptions = safeNum(diag.exceptions, 0);
+
+  const stageACandidatesRaw = safeNum(diag.stage_a_candidates, 0);
+  const stageAShortlistedRaw = safeNum(diag.stage_a_shortlisted, 0);
+  const stageAPruned = safeNum(diag.stage_a_pruned, 0);
+
+  const primaryProviderFiltered = safeNum(diag.primary_provider_filtered, 0);
+  const stageBExceptions = safeNum(diag.stage_b_exceptions, 0);
+  const stageBTimeouts = safeNum(diag.stage_b_timeouts, 0);
+  const selfStudyFiltered = safeNum(diag.self_study_filtered, 0);
+  const qualityGatesFiltered = safeNum(diag.quality_gates_filtered, 0);
+
+  const vcpWouldFilter = safeNum(diag.stage_a_vcp_would_filter, 0);
+  const sectorWouldFilter =
+    safeNum(diag.stage_a_sector_would_filter, 0) +
+    safeNum(diag.stage_a_no_sector_would_filter, 0);
+
+  const vcpGateMode = safeText(diag.scan_vcp_gate_mode || "").toLowerCase() || null;
+  const sectorGateMode = safeText(diag.scan_sector_gate_mode || "").toLowerCase() || null;
+  const primaryProviderMode =
+    safeText(diag.scan_primary_provider_mode || "").toLowerCase() || null;
+  const qualityGatesMode = safeText(diag.quality_gates_mode || "").toLowerCase() || null;
+
+  const nWatchlist = watchlistOverride;
+  const nStage2 = Math.max(0, nWatchlist - stage2Fail);
+  const nVcp = Math.max(0, nStage2 - vcpFail);
+  const sectorFiltered = noSectorEtf + sectorNotWinning;
+  const nSector = Math.max(0, nVcp - sectorFiltered);
+  const nBreakout = Math.max(0, nSector - breakoutNotConfirmed - exceptions);
+  // ``stage_a_candidates`` is the authoritative pass count when present.
+  const nStageA = stageACandidatesRaw > 0 ? stageACandidatesRaw : nBreakout;
+  const nAfterProvider = Math.max(0, nStageA - primaryProviderFiltered);
+  const nShortlist =
+    stageAShortlistedRaw > 0
+      ? stageAShortlistedRaw
+      : Math.max(0, nAfterProvider - stageAPruned);
+  const qualityFilteredTotal =
+    stageBExceptions + stageBTimeouts + selfStudyFiltered + qualityGatesFiltered;
+  const nQuality = Math.max(0, nShortlist - qualityFilteredTotal);
+  const topNTrimmed = Math.max(0, nQuality - finalCount);
+
+  const watchlistSource = safeText(diag.watchlist_source || "").toLowerCase();
+  const watchlistSourceLabel =
+    watchlistSource === "explicit_tickers_override"
+      ? "custom ticker override"
+      : watchlistSource === "sp1500_focused"
+        ? "SP1500 focused (SIGNAL_UNIVERSE_MODE=focused)"
+        : watchlistSource === "sp1500_default"
+          ? "SP1500 default (broad universe)"
+          : "default universe";
+  const watchlistTooltip =
+    `Total tickers actually scanned: ${nWatchlist}. Source: ${watchlistSourceLabel}. ` +
+    "Run Scan covers the full SP1500 (S&P 500 + 400 + 600). Set SIGNAL_UNIVERSE_MODE=focused in .env to narrow to a sample.";
+
+  const stages = [
+    {
+      key: "watchlist",
+      label: "Watchlist",
+      value: nWatchlist,
+      filtered: 0,
+      tooltip: watchlistTooltip,
+    },
+    {
+      key: "stage2",
+      label: "Passed Stage 2",
+      value: nStage2,
+      filtered: stage2Fail,
+      tooltip:
+        "Tickers in a confirmed Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail.",
+    },
+    {
+      key: "vcp",
+      label: "Passed VCP",
+      value: nVcp,
+      filtered: vcpFail,
+      shadow_filtered: vcpWouldFilter,
+      mode: vcpGateMode,
+      tooltip:
+        "Tickers showing volatility-contraction-pattern volume. In shadow mode the VCP gate observes but does not filter; the would-filter count shows how many it would have removed.",
+    },
+    {
+      key: "sector",
+      label: "Sector OK",
+      value: nSector,
+      filtered: sectorFiltered,
+      shadow_filtered: sectorWouldFilter,
+      mode: sectorGateMode,
+      tooltip:
+        "Tickers in a winning sector ETF. Filtered by no_sector_etf + sector_not_winning when the sector gate is hard.",
+    },
+    {
+      key: "stage_a",
+      label: "Stage A Candidates",
+      value: nStageA,
+      filtered: Math.max(0, nSector - nStageA),
+      tooltip:
+        "Final Stage A pass count after breakout confirmation, exceptions, and timed gates. Sourced from stage_a_candidates.",
+    },
+    {
+      key: "shortlist",
+      label: "Shortlist (top-scored)",
+      value: nShortlist,
+      filtered: Math.max(0, nStageA - nShortlist),
+      mode: primaryProviderMode,
+      tooltip:
+        "Top-scored Stage A candidates picked for Stage B enrichment (forensic, PEAD, advisory, MiroFish). Lower-scored picks are pruned by the shortlist cap.",
+    },
+    {
+      key: "quality",
+      label: "Quality Gates",
+      value: nQuality,
+      filtered: qualityFilteredTotal,
+      mode: qualityGatesMode,
+      tooltip:
+        "Survivors of Stage B exceptions, timeouts, self-study min conviction, and quality gates (forensic, weak breakout volume, etc.).",
+    },
+    {
+      key: "final",
+      label: "Final Signals",
+      value: finalCount,
+      filtered: topNTrimmed,
+      tooltip:
+        "Tradeable signals returned after the top-N rank cap. If much smaller than Quality Gates, the cap (TOP_N) is trimming output.",
+    },
+  ];
+
+  return {
+    watchlist: nWatchlist,
+    stage2_pass: nStage2,
+    vcp_pass: nVcp,
+    final: finalCount,
+    stages,
+    vcp_gate_mode: vcpGateMode,
+    sector_gate_mode: sectorGateMode,
+    primary_provider_mode: primaryProviderMode,
+    quality_gates_mode: qualityGatesMode,
+  };
 }
 
 function renderDiagnostics(diag = {}) {
@@ -1062,9 +1338,16 @@ function renderDiagnostics(diag = {}) {
 
   const summary = buildDiagnosticsSummary(diag);
   const showBlockerAlert = getDisplayMode() === "pro";
+  const headerChip = document.getElementById("scanBlockersChip");
+  const headerChipCount = document.getElementById("scanBlockersChipCount");
   if (!summary.blockers.length) {
-    blockersEl.innerHTML = `<li>No major blockers detected.</li>`;
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No major blockers detected.";
+    blockersEl.appendChild(empty);
     if (alertWrap) alertWrap.classList.add("hidden");
+    if (headerChip) headerChip.classList.add("hidden");
+    if (headerChipCount) headerChipCount.textContent = "0";
   } else {
     summary.blockers.forEach((b) => {
       const li = document.createElement("li");
@@ -1077,32 +1360,50 @@ function renderDiagnostics(diag = {}) {
       }
     });
     if (alertWrap) alertWrap.classList.toggle("hidden", !showBlockerAlert);
+    if (headerChip) headerChip.classList.remove("hidden");
+    if (headerChipCount) headerChipCount.textContent = String(summary.blockers.length);
   }
 
-  const funnelPairs = [
-    ["Watchlist", summary.funnel.watchlist],
-    ["Stage2 Pass", summary.funnel.stage2_pass],
-    ["VCP Pass", summary.funnel.vcp_pass],
-    ["Final", summary.funnel.final],
-  ];
-  const funnelVals = funnelPairs.map(([, v]) => safeNum(v, 0));
+  const stages = Array.isArray(summary.funnel.stages) ? summary.funnel.stages : [];
+  const funnelVals = stages.map((s) => safeNum(s.value, 0));
   const funnelMax = Math.max(1, ...funnelVals);
+  const hueStep = stages.length > 1 ? 132 / (stages.length - 1) : 0;
 
-  funnelPairs.forEach(([label, value], i) => {
-    const n = safeNum(value, 0);
+  stages.forEach((stage, i) => {
+    const n = safeNum(stage.value, 0);
     const pct = Math.round((n / funnelMax) * 100);
-    const hue = 200 - i * 22;
+    const hue = Math.round(200 - i * hueStep);
+    const filtered = safeNum(stage.filtered, 0);
+    const shadowFiltered = safeNum(stage.shadow_filtered, 0);
+    const mode = safeText(stage.mode || "").toLowerCase();
+    const tooltip = safeText(stage.tooltip || "");
+    const showShadowBadge = shadowFiltered > 0 && (mode === "shadow" || mode === "soft" || mode === "off" || !mode);
     const node = document.createElement("div");
     node.className = "funnel-node";
+    if (mode) node.dataset.gateMode = mode;
+    if (tooltip) node.title = tooltip;
+    const filteredLine =
+      i === 0 || filtered <= 0
+        ? ""
+        : `<div class="funnel-node-filtered" title="Removed at this step">&minus;${filtered}</div>`;
+    const shadowBadge = showShadowBadge
+      ? `<span class="funnel-shadow-badge" title="${escapeHtml(
+          `Gate is in ${mode || "shadow"} mode. Would have filtered ${shadowFiltered} more in hard mode.`,
+        )}">${escapeHtml(mode || "shadow")} &middot; would-filter ${shadowFiltered}</span>`
+      : "";
     node.innerHTML = `
       <div class="funnel-node-head">
-        <span class="label">${label}</span>
+        <span class="label">${escapeHtml(stage.label || stage.key || "")}</span>
         <span class="funnel-node-pct mono-nums">${pct}%</span>
       </div>
       <div class="funnel-bar-track" aria-hidden="true">
         <div class="funnel-bar-fill" style="width:${pct}%;--funnel-hue:${hue}"></div>
       </div>
-      <div class="value mono-nums">${n}</div>
+      <div class="funnel-node-foot">
+        <span class="value mono-nums" aria-label="pass count">${n}</span>
+        ${filteredLine}
+      </div>
+      ${shadowBadge}
     `;
     funnelEl.appendChild(node);
   });
@@ -1114,13 +1415,47 @@ function renderDiagnostics(diag = {}) {
     chipWrap.appendChild(chip);
   });
   state.lastWatchlistSize = summary.funnel.watchlist;
+  state.lastScanAt = new Date().toISOString();
+  assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
   updateHeroInfographic();
   const diagPanel = document.getElementById("scanDiagnosticsPanel");
   if (diagPanel && getDisplayMode() === "pro") diagPanel.open = true;
+  if (headerChip && diagPanel && !headerChip.dataset.boundExpand) {
+    headerChip.addEventListener("click", () => {
+      diagPanel.open = true;
+      headerChip.setAttribute("aria-expanded", "true");
+      const target = document.getElementById("scanBlockers");
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
+    headerChip.dataset.boundExpand = "1";
+  }
 }
 
 let _scanDetailChart = null;
 let _scanDetailResizeObserver = null;
+let _scanDetailSignal = null;
+
+function syncScanDetailStageButton(signal) {
+  const btn = document.getElementById("scanDetailStageBtn");
+  if (!btn) return;
+  const sig = normalizeScanSignal(signal || {});
+  const ticker = safeText(sig.ticker || sig.symbol || "");
+  if (!ticker) {
+    btn.disabled = true;
+    btn.textContent = "Stage selected trade";
+    btn.title = "Select a candidate first.";
+    return;
+  }
+  const status = safeText(sig._filter_status || "kept").toLowerCase();
+  const stageable = status === "kept";
+  btn.disabled = !stageable;
+  btn.textContent = stageable ? `Stage ${ticker}` : `${ticker} filtered`;
+  btn.title = stageable
+    ? `Stage ${ticker} into pending approvals.`
+    : "Filtered candidates cannot be staged. Adjust gates or scan options to include this setup.";
+}
 
 function renderScanDetailChartMessage(message) {
   const container = document.getElementById("scanDetailChartContainer");
@@ -1203,6 +1538,7 @@ async function renderScanDetailChart(ticker) {
 async function renderScanDetail(sig) {
   const row = normalizeScanSignal(sig || {});
   const ticker = safeText(row.ticker || row.symbol || "");
+  _scanDetailSignal = ticker ? row : null;
   state.selectedScanTicker = ticker;
   highlightSelectedScanRow(ticker);
   const advisory = row.advisory || {};
@@ -1224,6 +1560,7 @@ async function renderScanDetail(sig) {
   setText("scanDetailConfidence", confidence || "—");
   setText("scanDetailConviction", conviction === null ? "—" : formatDecimal(conviction, 1));
   setText("scanDetailSector", safeText(row.sector_etf || "—"));
+  syncScanDetailStageButton(_scanDetailSignal);
   await renderScanDetailChart(ticker);
 }
 
@@ -1237,13 +1574,85 @@ function highlightSelectedScanRow(ticker) {
   });
 }
 
+// Update both `state.latestSignals` (kept-only — used for trade staging /
+// pending-queue counts) and `state.latestShortlistSignals` (full Stage-B
+// shortlist with `_filter_status` tags — used for the candidate table).
+// Returns the rows that should drive `renderScanRows`: prefers the full
+// shortlist when the backend provided one, falls back to kept signals so
+// older API versions still render.
+function applyScanResponseSignals(payload = {}) {
+  const signals = Array.isArray(payload?.signals) ? payload.signals : [];
+  const shortlist = Array.isArray(payload?.shortlist_signals) ? payload.shortlist_signals : [];
+  state.latestSignals = signals;
+  state.latestShortlistSignals = shortlist;
+  return shortlist.length > 0 ? shortlist : signals;
+}
+
+// Map a raw `_filter_status` value from the scanner shortlist into a
+// human-readable label, a CSS pill class, and a tooltip explaining the
+// disposition. Unknown values fall through as "—" so the table still
+// renders cleanly even if the scanner emits a new status we haven't
+// taught the dashboard about yet.
+function formatScanStatusBadge(status, reasons) {
+  const safeStatus = safeText(status || "").toLowerCase();
+  const reasonText = Array.isArray(reasons) && reasons.length ? reasons.join(", ") : "";
+  switch (safeStatus) {
+    case "kept":
+      return {
+        label: "Kept",
+        cls: "pill success",
+        title: "Survived all filters and is eligible for trade staging.",
+      };
+    case "filtered_quality_gates":
+      return {
+        label: "Quality gate",
+        cls: "pill warn",
+        title: reasonText
+          ? `Dropped by quality gates. Reasons: ${reasonText}.`
+          : "Dropped by quality gates (forensic / breakout-volume / etc).",
+      };
+    case "filtered_self_study":
+      return {
+        label: "Self-study",
+        cls: "pill warn",
+        title: "Dropped by self-study learned minimum conviction.",
+      };
+    case "filtered_event_risk":
+      return {
+        label: "Event risk",
+        cls: "pill warn",
+        title: "Suppressed by event-risk policy (earnings, FOMC, etc).",
+      };
+    case "filtered_meta_policy":
+      return {
+        label: "Meta-policy",
+        cls: "pill warn",
+        title: "Suppressed by the meta-policy / uncertainty combiner.",
+      };
+    case "filtered_ensemble":
+      return {
+        label: "Ensemble",
+        cls: "pill warn",
+        title: "Removed by the strategy ensemble step.",
+      };
+    case "trimmed_top_n":
+      return {
+        label: "Top-N trim",
+        cls: "pill info",
+        title: "Survived gates but ranked below SIGNAL_TOP_N — kept for review.",
+      };
+    default:
+      return { label: "—", cls: "pill", title: "No disposition reported." };
+  }
+}
+
 function renderScanRows(signals = []) {
   const body = document.getElementById("scanTableBody");
   body.innerHTML = "";
   if (!signals.length) {
     body.innerHTML = `
       <tr>
-        <td colspan="10" class="muted">
+        <td colspan="11" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M4 8h16M6 12h12M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -1276,26 +1685,38 @@ function renderScanRows(signals = []) {
     const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up);
     const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
     const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
+    // `_filter_status` is set by the scanner shortlist; falls back to "kept"
+    // for legacy responses that don't include it (e.g. older API versions).
+    const filterStatus = safeText(sig?._filter_status || "kept");
+    const isKept = filterStatus === "kept";
+    const filterReasons = Array.isArray(sig?._filter_reasons) ? sig._filter_reasons : null;
+    const badge = formatScanStatusBadge(filterStatus, filterReasons);
     if (pUp !== null) pupCount += 1;
     if (conf !== "—") confCount += 1;
     if (conviction !== null) convictionCount += 1;
     const tr = document.createElement("tr");
     tr.setAttribute("data-scan-ticker", ticker);
     tr.setAttribute("data-scan-row-index", String(idx));
+    tr.setAttribute("data-filter-status", filterStatus);
+    if (!isKept) tr.classList.add("scan-row--filtered");
     tr.tabIndex = 0;
+    const stageBtn = isKept
+      ? `<button type="button" class="btn small secondary" data-idx="${idx}" title="Stage ${safeText(ticker)} as a pending trade">Stage</button>`
+      : `<button type="button" class="btn small secondary" disabled title="Filtered candidates cannot be staged. Adjust gates if you want this signal in the trade queue.">Stage</button>`;
     tr.innerHTML = `
       <td><strong>${safeText(ticker)}</strong></td>
-      <td>${flaggedDays || "—"}</td>
+      <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
+      <td class="scan-col-advanced">${flaggedDays || "—"}</td>
       <td><span class="pill info strategy-badge">${topLive}</span></td>
-      <td>${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
+      <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
       <td>${score !== null ? `${score.toFixed(1)}` : "—"}</td>
-      <td>${pUp !== null ? pct(pUp, 1) : "—"}</td>
+      <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
       <td>${conf}</td>
-      <td>${convictionText}</td>
-      <td>${safeText(row.sector_etf || "—")}</td>
+      <td class="scan-col-advanced">${convictionText}</td>
+      <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
       <td class="scan-actions-cell">
-        <button type="button" class="btn small secondary" data-scan-view="${idx}">View</button>
-        <button type="button" class="btn small secondary" data-idx="${idx}">Stage</button>
+        <button type="button" class="btn small secondary" data-scan-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
+        ${stageBtn}
       </td>
     `;
     body.appendChild(tr);
@@ -1317,44 +1738,99 @@ function renderScanRows(signals = []) {
     state.scanMissingEnrichmentWarned = false;
   }
 
-  const preferredIdx = signals.findIndex((sig) => {
-    const t = safeText(sig?.ticker || sig?.symbol || "");
-    return t && t === state.selectedScanTicker;
-  });
-  const selectedIdx = preferredIdx >= 0 ? preferredIdx : 0;
-  if (signals[selectedIdx]) {
-    void renderScanDetail(signals[selectedIdx]);
+  // Chart panel intentionally does NOT auto-render. Operators repeatedly hit
+  // the "Test scan" / focused-mode confusion partly because the first row's
+  // chart auto-loaded and dominated the surface. Now the panel stays idle
+  // until the user clicks a row's "Chart" button or presses Enter on a row.
+  // Re-highlight the previously selected ticker if it's still in the table,
+  // so a refresh doesn't lose row selection — but don't trigger network fetch.
+  if (state.selectedScanTicker) {
+    const stillPresent = signals.some(
+      (sig) => safeText(sig?.ticker || sig?.symbol || "") === state.selectedScanTicker,
+    );
+    if (stillPresent) {
+      highlightSelectedScanRow(state.selectedScanTicker);
+    } else {
+      state.selectedScanTicker = "";
+      void renderScanDetail(null);
+    }
+  } else {
+    void renderScanDetail(null);
   }
 
+  // After moving to shortlist-driven rendering, the row indexes refer to
+  // entries in the (possibly larger) shortlist, NOT to `state.latestSignals`
+  // (which holds only kept candidates). Don't fall back to latestSignals[idx]
+  // — that would silently surface the wrong ticker. Instead, prefer the
+  // freshly rendered row, and as a last resort look it up by ticker.
+  const lookupRowSignal = (idx, btnEl) => {
+    const fromSignals = signals[idx];
+    if (fromSignals) return fromSignals;
+    const ticker = safeText(btnEl?.closest("tr")?.getAttribute("data-scan-ticker") || "").toUpperCase();
+    if (!ticker) return null;
+    const fromShortlist = (state.latestShortlistSignals || []).find(
+      (s) => safeText(s?.ticker || s?.symbol || "").toUpperCase() === ticker,
+    );
+    if (fromShortlist) return fromShortlist;
+    return (state.latestSignals || []).find(
+      (s) => safeText(s?.ticker || s?.symbol || "").toUpperCase() === ticker,
+    );
+  };
   body.querySelectorAll("button[data-idx]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-idx"));
-      // Prefer freshly rendered row data; fallback to global state during async refreshes.
-      const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
-      openQueueScanDialog(sig);
+      const raw = lookupRowSignal(idx, e.currentTarget);
+      if (!raw) return;
+      openQueueScanDialog(normalizeScanSignal(raw));
     });
   });
   body.querySelectorAll("button[data-scan-view]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-scan-view"));
-      const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
-      void renderScanDetail(sig);
+      const raw = lookupRowSignal(idx, e.currentTarget);
+      if (!raw) return;
+      void renderScanDetail(normalizeScanSignal(raw));
     });
   });
   body.querySelectorAll("tr[data-scan-row-index]").forEach((rowEl) => {
     const idx = Number(rowEl.getAttribute("data-scan-row-index"));
-    const selectRow = () => {
-      const sig = normalizeScanSignal(signals[idx] || state.latestSignals[idx]);
-      void renderScanDetail(sig);
+    // Pressing Enter / Space on a focused row is treated as the explicit
+    // "Chart" action — same as clicking the Chart button. Plain row clicks
+    // (anywhere other than a button) only update selection highlight without
+    // fetching chart data, so the panel doesn't auto-populate during scrolling.
+    const resolveSignal = () => {
+      const raw = signals[idx];
+      if (raw) return normalizeScanSignal(raw);
+      const ticker = safeText(rowEl.getAttribute("data-scan-ticker") || "").toUpperCase();
+      if (!ticker) return null;
+      const fallback =
+        (state.latestShortlistSignals || []).find(
+          (s) => safeText(s?.ticker || s?.symbol || "").toUpperCase() === ticker,
+        ) ||
+        (state.latestSignals || []).find(
+          (s) => safeText(s?.ticker || s?.symbol || "").toUpperCase() === ticker,
+        );
+      return fallback ? normalizeScanSignal(fallback) : null;
+    };
+    const openChart = () => {
+      const sig = resolveSignal();
+      if (sig) void renderScanDetail(sig);
+    };
+    const justSelect = () => {
+      const sig = resolveSignal();
+      if (!sig) return;
+      const ticker = safeText(sig?.ticker || sig?.symbol || "");
+      state.selectedScanTicker = ticker;
+      highlightSelectedScanRow(ticker);
     };
     rowEl.addEventListener("click", (e) => {
       if (e.target instanceof Element && e.target.closest("button")) return;
-      selectRow();
+      justSelect();
     });
     rowEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        selectRow();
+        openChart();
       }
     });
   });
@@ -1544,13 +2020,23 @@ async function loadConfig() {
     schwab_market_oauth: false,
     auth_setup: null,
   };
-  const cfgOut = await api.get("/api/public-config", { timeoutMs: 20000 });
+  // Bootstrap GETs are idempotent — retry with capped backoff on transient
+  // failures so a single packet loss doesn't poison the entire dashboard.
+  // Mutations (POST/PATCH/DELETE) are NEVER auto-retried; they require an
+  // explicit user click so unintended duplicates can't slip through.
+  const cfgOut = await retryGet(() => api.get("/api/public-config", { timeoutMs: 20000 }), {
+    attempts: 3,
+    baseDelayMs: 500,
+  });
   if (cfgOut?.ok && cfgOut?.data) {
     publicCfg = { ...publicCfg, ...cfgOut.data };
   } else if (cfgOut?.error) {
     logEvent({ kind: "system", severity: "warn", message: `Public config unavailable: ${cfgOut.error}` });
   }
-  const runtimeOut = await api.get("/api/runtime-contract", { timeoutMs: 20000 });
+  const runtimeOut = await retryGet(
+    () => api.get("/api/runtime-contract", { timeoutMs: 20000 }),
+    { attempts: 3, baseDelayMs: 500 },
+  );
   if (runtimeOut?.ok && runtimeOut?.data) {
     state.runtimeContract = runtimeOut.data;
     validateRuntimeContract(publicCfg, runtimeOut.data);
@@ -1782,12 +2268,12 @@ async function hydrateScanTableFromStatus(status) {
     const foundN = foundRaw === null || foundRaw === undefined ? null : safeNum(foundRaw, 0);
 
     if (jobId && foundN === 0) {
-      state.latestSignals = [];
+      const tableRows = applyScanResponseSignals({ signals: [], shortlist_signals: ls.shortlist_signals });
       const headline = diagnosticsHeadline(diag);
       if (metaEl) metaEl.textContent = (headline || buildScanMeta([], 0)) + formatStrategySummary(strat);
       updateTopStrategyChip(strat);
       renderDiagnostics(diag);
-      renderScanRows([]);
+      renderScanRows(tableRows);
       return;
     }
 
@@ -1798,26 +2284,106 @@ async function hydrateScanTableFromStatus(status) {
     if (!listOut.ok) return;
     const rows = Array.isArray(listOut.data) ? listOut.data : [];
     const signals = rows.map((r) => signalFromScanResultRow(r)).filter((p) => p && typeof p === "object");
-    state.latestSignals = signals;
+    // SaaS path persists kept-only signals via /api/scan-results; the
+    // shortlist (when present) comes from the lifecycle response itself.
+    const tableRows = applyScanResponseSignals({ signals, shortlist_signals: ls.shortlist_signals });
     const headline = diagnosticsHeadline(diag);
     if (metaEl)
       metaEl.textContent =
         (headline || buildScanMeta(signals, ls.signals_found ?? signals.length)) + formatStrategySummary(strat);
     updateTopStrategyChip(strat);
     renderDiagnostics(diag);
-    renderScanRows(signals);
+    renderScanRows(tableRows);
     return;
   }
 
   const localSignals = Array.isArray(ls.signals) ? ls.signals : [];
-  state.latestSignals = localSignals;
+  const tableRows = applyScanResponseSignals({
+    signals: localSignals,
+    shortlist_signals: ls.shortlist_signals,
+  });
   const headline = diagnosticsHeadline(diag);
   if (metaEl)
     metaEl.textContent =
       (headline || buildScanMeta(localSignals, ls.signals_found)) + formatStrategySummary(strat);
   updateTopStrategyChip(strat);
   renderDiagnostics(diag);
-  renderScanRows(localSignals);
+  renderScanRows(tableRows);
+}
+
+// Render the Schwab refresh-token health chip + detail row.
+// Status field comes from /api/status -> schwab_token_health (a roll-up of
+// market + account sessions, severity-ordered). The chip warns *before* the
+// 7-day refresh-token TTL silently runs out, so the operator can re-OAuth on
+// schedule rather than being surprised by 401s mid-session.
+function renderSchwabTokenHealth(health) {
+  const badgeEl = document.getElementById("tokenAgeBadge");
+  const detailEl = document.getElementById("tokenAgeDetail");
+  if (!badgeEl || !detailEl) return;
+
+  const safe = health && typeof health === "object" ? health : {};
+  const market = (safe.market && typeof safe.market === "object") ? safe.market : {};
+  const account = (safe.account && typeof safe.account === "object") ? safe.account : {};
+  const status = safeText(safe.status || "unknown").toLowerCase();
+
+  // Pick the worst session for the visible badge (matches roll-up semantics).
+  const severity = { healthy: 0, unknown: 1, warn: 2, critical: 3, expired: 4 };
+  const worstSession =
+    (severity[market.status] || 0) >= (severity[account.status] || 0) ? market : account;
+  const hours = Number.isFinite(worstSession.hours_until_expiry)
+    ? worstSession.hours_until_expiry
+    : null;
+
+  clearUnavailable(badgeEl);
+  badgeEl.removeAttribute("data-unavailable");
+
+  let label = "—";
+  let pillClass = "pill neutral";
+  let detail = "no token age recorded yet";
+
+  if (status === "healthy") {
+    pillClass = "pill ok";
+    if (hours !== null) {
+      const days = hours / 24;
+      label = days >= 1 ? `Fresh · ${days.toFixed(1)}d left` : `Fresh · ${Math.max(1, Math.round(hours))}h left`;
+    } else {
+      label = "Fresh";
+    }
+    detail = "Both Schwab refresh tokens are healthy.";
+  } else if (status === "warn") {
+    pillClass = "pill warn";
+    label = hours !== null ? `Refresh soon · ${(hours / 24).toFixed(1)}d` : "Refresh soon";
+    detail = "Re-OAuth within 1–2 days. Run python run_dual_auth.py from schwab_skill/.";
+  } else if (status === "critical") {
+    pillClass = "pill warn";
+    label = hours !== null ? `Refresh now · ${Math.max(0, Math.round(hours))}h` : "Refresh now";
+    detail = "< 12 h until Schwab refresh tokens expire. Re-OAuth immediately.";
+  } else if (status === "expired") {
+    pillClass = "pill error";
+    label = "Expired";
+    detail = "Schwab refresh tokens are dead. Re-OAuth (python run_dual_auth.py) before scanning.";
+  } else {
+    // "unknown" — token file present but no _last_refresh_at marker (legacy
+    // file from before the timestamp rollout). Trigger one save cycle and
+    // the badge will populate; in the meantime just say "unknown".
+    pillClass = "pill neutral";
+    label = "Unknown";
+    detail = "Token age unknown — will populate on next refresh cycle (~25 min).";
+  }
+  badgeEl.className = pillClass;
+  badgeEl.textContent = label;
+  detailEl.textContent = detail;
+  detailEl.dataset.freshness = status;
+
+  // Mirror critical/expired into the action center so it's visible without
+  // expanding the "Detailed system status" disclosure.
+  if (status === "expired" || status === "critical") {
+    updateActionCenter({
+      title: status === "expired" ? "Schwab tokens expired" : "Schwab tokens expiring soon",
+      message: detail,
+      severity: status === "expired" ? "error" : "warn",
+    });
+  }
 }
 
 async function refreshStatus() {
@@ -1871,14 +2437,18 @@ async function refreshStatus() {
     const quoteEl = document.getElementById("quoteHealth");
     const errEl = document.getElementById("apiErrorRate");
     const validationEl = document.getElementById("validationHealth");
-    setStatusPill(document.getElementById("marketToken"), "Unknown");
-    setStatusPill(document.getElementById("accountToken"), "Unknown");
-    setStatusPill(quoteEl, "Unknown");
-    setStatusPill(validationEl, "Unknown");
-    if (errEl) {
-      errEl.className = "pill neutral";
-      errEl.textContent = "--";
-    }
+    // Mark each detail pill unavailable. Honest "—" beats a confident "Unknown"
+    // because "Unknown" can read as "passed Unknown check" to a tired user.
+    [
+      "marketToken",
+      "accountToken",
+      "quoteHealth",
+      "validationHealth",
+      "lastScan",
+      "apiErrorRate",
+    ].forEach((id) => markUnavailable(document.getElementById(id), statusRes.error || "/api/status failed"));
+    // Reset ribbon to honest unknown.
+    setHealthRibbonUnavailable(statusRes.error || "/api/status failed");
     updateActionCenter({ title: "Status unavailable", message: statusRes.error, severity: "error" });
     return;
   }
@@ -1889,17 +2459,30 @@ async function refreshStatus() {
   } catch (e) {
     console.warn("hydrateScanTableFromStatus", e);
   }
-  setStatusPill(document.getElementById("marketToken"), status.market_state || (status.market_token_ok ? "Connected" : "Disconnected"));
-  setStatusPill(document.getElementById("accountToken"), status.account_state || (status.account_token_ok ? "Connected" : "Disconnected"));
+  const marketTokenEl = document.getElementById("marketToken");
+  const accountTokenEl = document.getElementById("accountToken");
+  clearUnavailable(marketTokenEl);
+  clearUnavailable(accountTokenEl);
+  setStatusPill(marketTokenEl, status.market_state || (status.market_token_ok ? "Connected" : "Disconnected"));
+  setStatusPill(accountTokenEl, status.account_state || (status.account_token_ok ? "Connected" : "Disconnected"));
+  renderSchwabTokenHealth(status.schwab_token_health);
 
   const lastScanEl = document.getElementById("lastScan");
-  lastScanEl.className = "pill neutral";
-  if (status.last_scan && status.last_scan.at) {
-    const ts = new Date(status.last_scan.at);
-    const when = Number.isNaN(ts.getTime()) ? "recently" : ts.toLocaleTimeString();
-    lastScanEl.textContent = `${status.last_scan.signals_found ?? 0} @ ${when}`;
-  } else {
-    lastScanEl.textContent = "Never";
+  if (lastScanEl) {
+    if (status.last_scan && status.last_scan.at) {
+      clearUnavailable(lastScanEl);
+      lastScanEl.className = "pill neutral";
+      const ts = new Date(status.last_scan.at);
+      const when = Number.isNaN(ts.getTime()) ? "recently" : ts.toLocaleTimeString();
+      lastScanEl.textContent = `${formatCount(status.last_scan.signals_found, "0")} @ ${when}`;
+      // Carry the timestamp into shared state so the hero KPI can render
+      // freshness without re-parsing pill text.
+      if (!state.lastScanAt && !Number.isNaN(ts.getTime())) {
+        state.lastScanAt = ts.toISOString();
+      }
+    } else {
+      markUnavailable(lastScanEl, "no scan recorded yet");
+    }
   }
 
   const quoteEl = document.getElementById("quoteHealth");
@@ -1987,25 +2570,76 @@ async function refreshStatus() {
   const ribbonQuotes = document.getElementById("ribbonQuotes");
   const ribbonApi = document.getElementById("ribbonApiErrorRate");
   const ribbonValidation = document.getElementById("ribbonValidation");
+  const nowIso = new Date().toISOString();
+  state.lastStatusAt = nowIso;
   if (ribbonAuth) {
+    clearUnavailable(ribbonAuth);
     ribbonAuth.className = healthBadgeClass(authOk);
     ribbonAuth.textContent = authOk ? "Connected" : "Disconnected";
   }
+  applyFreshness(document.getElementById("ribbonAuthFresh"), {
+    asOf: nowIso,
+    source: "/api/status",
+    surface: "health_ribbon",
+  });
   if (ribbonQuotes) {
-    ribbonQuotes.className = healthBadgeClass(quoteOk);
-    ribbonQuotes.textContent = quoteOk ? "Healthy" : "Degraded";
+    clearUnavailable(ribbonQuotes);
+    if (deepRes.ok) {
+      ribbonQuotes.className = healthBadgeClass(quoteOk);
+      ribbonQuotes.textContent = quoteOk ? "Healthy" : "Degraded";
+    } else {
+      markUnavailable(ribbonQuotes, deepRes.error || "/api/health/deep failed");
+      ribbonQuotes.className = "health-badge bg-slate-900";
+      ribbonQuotes.textContent = "Unknown";
+    }
   }
+  applyFreshness(document.getElementById("ribbonQuotesFresh"), {
+    asOf: deepRes.ok ? nowIso : null,
+    source: "/api/health/deep",
+    surface: "health_ribbon",
+    unavailable: "deep health unreachable",
+  });
   if (ribbonApi) {
-    const apiHealthy = errRate < 2.0;
-    ribbonApi.className = healthBadgeClass(apiHealthy);
-    ribbonApi.textContent = `${errRate.toFixed(1)}%`;
+    if (deepRes.ok) {
+      clearUnavailable(ribbonApi);
+      const apiHealthy = errRate < 2.0;
+      ribbonApi.className = healthBadgeClass(apiHealthy);
+      ribbonApi.textContent = `${errRate.toFixed(1)}%`;
+    } else {
+      markUnavailable(ribbonApi, deepRes.error || "no metrics available");
+      ribbonApi.className = "health-badge bg-slate-900";
+      ribbonApi.textContent = "—";
+    }
   }
+  applyFreshness(document.getElementById("ribbonApiErrorRateFresh"), {
+    asOf: deepRes.ok ? nowIso : null,
+    source: "/api/health/deep metrics",
+    surface: "health_ribbon",
+    unavailable: "metrics unreachable",
+  });
   if (ribbonValidation) {
-    const validOk = validation.exists && validation.passed === true;
-    ribbonValidation.className = healthBadgeClass(validOk);
-    ribbonValidation.textContent = validOk ? "Pass" : safeText(validation.run_status || "Unknown");
+    if (validation.exists) {
+      clearUnavailable(ribbonValidation);
+      const validOk = validation.passed === true;
+      ribbonValidation.className = healthBadgeClass(validOk);
+      ribbonValidation.textContent = validOk ? "Pass" : safeText(validation.run_status || "Fail");
+    } else {
+      markUnavailable(ribbonValidation, "no validation artifact yet");
+      ribbonValidation.className = "health-badge bg-slate-900";
+      ribbonValidation.textContent = "Unknown";
+    }
   }
+  applyFreshness(document.getElementById("ribbonValidationFresh"), {
+    asOf: validation.generated_at || null,
+    source: "validation_status.generated_at",
+    surface: "health_ribbon",
+    budgetSec: 24 * 3600,
+    unavailable: "no validation artifact",
+  });
   setHealthRibbonTiles(authOk, quoteOk, errRate, validation);
+  // Mark the ribbon container as success now that it has rendered real data.
+  const ribbonContainer = document.getElementById("healthRibbon");
+  if (ribbonContainer) ribbonContainer.setAttribute("data-async-state", "success");
   const topBlocker =
     status?.last_scan?.diagnostics_summary?.top_blockers?.[0]?.key ||
     status?.last_scan?.diagnostics_summary?.headline ||
@@ -2027,24 +2661,59 @@ async function refreshStatus() {
 }
 
 async function refreshDecisionDashboard() {
+  const card = document.getElementById("decisionDashboardCard");
+  const freshEl = document.getElementById("decisionDashboardFresh");
   const out = await api.get("/api/decision-dashboard");
   if (!out.ok) {
-    const msg = safeText(out.error || "Decision dashboard unavailable.");
-    const statusEl = document.getElementById("decisionPromotionState");
-    if (statusEl) {
-      statusEl.className = "health-badge bg-slate-900";
-      statusEl.textContent = "Unknown";
-    }
-    const reliEl = document.getElementById("decisionReliabilityState");
-    if (reliEl) {
-      reliEl.className = "health-badge bg-slate-900";
-      reliEl.textContent = "Unknown";
-    }
-    const lineEl = document.getElementById("decisionLatestPromotion");
-    if (lineEl) lineEl.textContent = msg;
+    if (card) card.setAttribute("data-async-state", "error");
+    const msg = safeText(out.user_message || out.error || "Decision dashboard unavailable.");
+    [
+      "decisionReliabilityState",
+      "decisionPromotionState",
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = "health-badge bg-slate-900";
+      el.textContent = "Unknown";
+      markUnavailable(el, msg);
+    });
+    [
+      "decisionValidationStatus",
+      "decisionSloStatus",
+      "decisionLastScan",
+      "decisionSignalsFound",
+      "decisionStrategyLead",
+      "decisionDataQuality",
+      "decisionLatestPromotion",
+    ].forEach((id) => markUnavailable(document.getElementById(id), msg));
+    applyFreshness(freshEl, {
+      asOf: null,
+      source: "/api/decision-dashboard",
+      surface: "decision_dashboard",
+      unavailable: msg,
+    });
     return;
   }
+  if (card) card.setAttribute("data-async-state", "success");
+  // Clear any prior unavailable styling before the panel paints.
+  [
+    "decisionReliabilityState",
+    "decisionPromotionState",
+    "decisionValidationStatus",
+    "decisionSloStatus",
+    "decisionLastScan",
+    "decisionSignalsFound",
+    "decisionStrategyLead",
+    "decisionDataQuality",
+    "decisionLatestPromotion",
+  ].forEach((id) => clearUnavailable(document.getElementById(id)));
+  state.lastDecisionDashboardAt = new Date().toISOString();
   renderDecisionDashboard(out.data || {});
+  applyFreshness(freshEl, {
+    asOf: state.lastDecisionDashboardAt,
+    source: "/api/decision-dashboard",
+    surface: "decision_dashboard",
+  });
 }
 
 const SCAN_START_META = "Scanning SP1500 market candidates...";
@@ -2264,7 +2933,10 @@ async function waitForSaaScanCompletion(taskId) {
       }
       const rows = Array.isArray(listOut.data) ? listOut.data : [];
       const signals = rows.map((r) => signalFromScanResultRow(r)).filter((p) => p && typeof p === "object");
-      state.latestSignals = signals;
+      const tableRows = applyScanResponseSignals({
+        signals,
+        shortlist_signals: result.shortlist_signals,
+      });
       const diag = result.diagnostics || {};
       const headline = diagnosticsHeadline(diag);
       const n = safeNum(result.signals_found, signals.length);
@@ -2276,7 +2948,7 @@ async function waitForSaaScanCompletion(taskId) {
         (headline || buildScanMeta(signals, n)) + formatStrategySummary(strat);
       updateTopStrategyChip(strat);
       renderDiagnostics(diag);
-      renderScanRows(signals);
+      renderScanRows(tableRows);
       logEvent({
         kind: "scan",
         severity: "info",
@@ -2350,45 +3022,22 @@ async function waitForSaaScanCompletion(taskId) {
   });
 }
 
-// Quick smoke-test affordance: focused mode + 100 tickers, no quality prefilter.
-// Lives next to "Run Scan" so operators can validate the pipeline without scanning all of SP1500.
-const TEST_SCAN_OVERRIDES = Object.freeze({
-  strategy_overrides: {
-    signal_universe_mode: "focused",
-    signal_universe_target_size: 100,
-    quality_watchlist_prefilter_enabled: false,
-  },
-});
-
-async function runScan(options = {}) {
+async function runScan() {
   const btn = document.getElementById("scanBtn");
   const scanMetaEl = document.getElementById("scanMeta");
-  const overrideBody = options && typeof options.body === "object" && options.body ? options.body : null;
-  const isTestScan = Boolean(options && options.testScan);
-  const testBtn = document.getElementById("scanTestBtn");
-  // Disable both buttons during any scan; only change the *active* button's text so the
-  // affordance the user clicked is the one that visibly transitions to a spinner state.
   btn.disabled = true;
-  if (testBtn) testBtn.disabled = true;
-  if (isTestScan) {
-    if (testBtn) testBtn.textContent = "Testing...";
-  } else {
-    btn.textContent = "Scanning...";
-  }
+  btn.textContent = "Scanning...";
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
   updateActionCenter({
-    title: isTestScan ? "Test Scan Running" : "Scan Running",
-    message: isTestScan
-      ? "Test scan (100 tickers, focused mode) running — pipeline smoke check."
-      : "SP1500 default scan is running. Results will stream into this page.",
+    title: "Scan Running",
+    message: "SP1500 default scan is running. Results will stream into this page.",
     severity: "info",
   });
   try {
-    if (!overrideBody && !readScanOptionsFromForm()) return;
-    const scanBody = overrideBody
-      ? overrideBody
-      : state.scanRunOptions && typeof state.scanRunOptions === "object"
+    if (!readScanOptionsFromForm()) return;
+    const scanBody =
+      state.scanRunOptions && typeof state.scanRunOptions === "object"
         ? state.scanRunOptions
         : {};
     const out = await api.post("/api/scan?async_mode=true", scanBody);
@@ -2429,13 +3078,13 @@ async function runScan(options = {}) {
       return;
     }
     if (d.signals) {
-      state.latestSignals = d.signals || [];
+      const tableRows = applyScanResponseSignals(d);
       const headline = diagnosticsHeadline(d.diagnostics_summary || d.diagnostics || {});
       scanMetaEl.textContent =
         (headline || buildScanMeta(state.latestSignals, d.signals_found)) + formatStrategySummary(d.strategy_summary);
       updateTopStrategyChip(d.strategy_summary);
       renderDiagnostics(d.diagnostics || d.diagnostics_summary || {});
-      renderScanRows(state.latestSignals);
+      renderScanRows(tableRows);
       logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${d.signals_found} signal(s).` });
       void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_SCAN, {
         transport: state.publicConfig?.saas_mode ? "saas_inline" : "local",
@@ -2459,10 +3108,6 @@ async function runScan(options = {}) {
   } finally {
     btn.disabled = false;
     btn.textContent = "Run Scan";
-    if (testBtn) {
-      testBtn.disabled = false;
-      testBtn.textContent = "Test scan (100)";
-    }
     if (scanMetaEl && scanMetaEl.textContent === SCAN_START_META) {
       scanMetaEl.textContent = "No scan run yet.";
       updateActionCenter({
@@ -2472,10 +3117,6 @@ async function runScan(options = {}) {
       });
     }
   }
-}
-
-function runTestScan() {
-  return runScan({ testScan: true, body: TEST_SCAN_OVERRIDES });
 }
 
 async function waitForScanCompletion() {
@@ -2512,14 +3153,14 @@ async function waitForScanCompletion() {
     }
     if (data.status === "completed") {
       unknownStatusStreak = 0;
-      state.latestSignals = data.signals || [];
+      const tableRows = applyScanResponseSignals(data);
       const headline = diagnosticsHeadline(data.diagnostics_summary || data.diagnostics || {});
       metaEl.textContent =
         (headline || buildScanMeta(state.latestSignals, data.signals_found ?? state.latestSignals.length))
         + formatStrategySummary(data.strategy_summary);
       updateTopStrategyChip(data.strategy_summary);
       renderDiagnostics(data.diagnostics_summary || data.diagnostics || {});
-      renderScanRows(state.latestSignals);
+      renderScanRows(tableRows);
       logEvent({ kind: "scan", severity: "info", message: `Scan complete: ${data.signals_found ?? state.latestSignals.length} signal(s).` });
       void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_SCAN, {
         transport: "local_polling",
@@ -2603,9 +3244,16 @@ async function refreshPending() {
     const msg = out.user_message || out.error;
     logEvent({ kind: "trade", severity: "error", message: `Pending trades load failed: ${out.error}` });
     if (board) {
-      board.innerHTML = `<div class="task-empty muted">Pending trades unavailable: ${safeText(msg)} <button id="pendingRetryBtn" class="btn small secondary" type="button">Retry</button></div>`;
-      document.getElementById("pendingRetryBtn")?.addEventListener("click", () => void refreshPending());
+      setAsyncState(board, ASYNC_ERROR, {
+        message: `Pending trades unavailable: ${safeText(msg)}`,
+        onRetry: () => void refreshPending(),
+      });
     }
+    // Honest "unavailable" for the count badge — never silently render 0.
+    const pcEl = document.getElementById("pendingCount");
+    if (pcEl) markUnavailable(pcEl, msg || "fetch failed");
+    state.lastPendingCount = null;
+    updateHeroInfographic();
     updateActionCenter({ title: "Pending queue unavailable", message: msg, severity: "error" });
     return;
   }
@@ -2614,7 +3262,13 @@ async function refreshPending() {
     pendingOnlyOut.ok && Array.isArray(pendingOnlyOut.data)
       ? pendingOnlyOut.data.length
       : rows.filter((r) => r.status === "pending").length;
-  document.getElementById("pendingCount").textContent = String(pendingN);
+  const pcEl = document.getElementById("pendingCount");
+  if (pcEl) {
+    clearUnavailable(pcEl);
+    pcEl.textContent = formatCount(pendingN);
+  }
+  state.lastPendingCount = pendingN;
+  state.lastPendingAt = new Date().toISOString();
   if (pendingN > 0) {
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
       source: "pending_queue_refresh",
@@ -2707,33 +3361,41 @@ async function refreshPending() {
   board.querySelectorAll("button[data-reject]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const clicked = e.currentTarget;
-      clicked.disabled = true;
+      const release = busyButton(clicked, "Rejecting…");
       const id = clicked.getAttribute("data-reject");
-      const out = await api.post(`/api/trades/${id}/reject`, {});
-      if (!out.ok) {
-        logEvent({ kind: "trade", severity: "error", message: `Reject ${id} failed: ${out.error}` });
-        updateActionCenter({ title: "Trade Reject Failed", message: out.error, severity: "error" });
-      } else {
-        logEvent({ kind: "trade", severity: "info", message: `Rejected ${id}.` });
-        updateActionCenter({ title: "Trade Rejected", message: `Trade ${id} was rejected.`, severity: "warn" });
+      try {
+        const out = await api.post(`/api/trades/${id}/reject`, {});
+        if (!out.ok) {
+          logEvent({ kind: "trade", severity: "error", message: `Reject ${id} failed: ${out.error}` });
+          updateActionCenter({ title: "Trade Reject Failed", message: out.user_message || out.error, severity: "error" });
+        } else {
+          logEvent({ kind: "trade", severity: "info", message: `Rejected ${id}.` });
+          updateActionCenter({ title: "Trade Rejected", message: `Trade ${id} was rejected.`, severity: "warn" });
+        }
+        await refreshPending();
+      } finally {
+        release();
       }
-      await refreshPending();
-      clicked.disabled = false;
     });
   });
 
   board.querySelectorAll("button[data-delete]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const clicked = e.currentTarget;
-      clicked.disabled = true;
+      const release = busyButton(clicked, "Deleting…");
       const id = clicked.getAttribute("data-delete");
-      const out = await api.post(`/api/trades/${id}/delete`, {});
-      if (!out.ok) {
-        logEvent({ kind: "trade", severity: "error", message: `Delete ${id} failed: ${out.error}` });
-      } else {
-        logEvent({ kind: "trade", severity: "info", message: `Deleted ${id}.` });
+      try {
+        const out = await api.post(`/api/trades/${id}/delete`, {});
+        if (!out.ok) {
+          logEvent({ kind: "trade", severity: "error", message: `Delete ${id} failed: ${out.error}` });
+          updateActionCenter({ title: "Trade Delete Failed", message: out.user_message || out.error, severity: "error" });
+        } else {
+          logEvent({ kind: "trade", severity: "info", message: `Deleted ${id}.` });
+        }
+        await refreshPending();
+      } finally {
+        release();
       }
-      await refreshPending();
     });
   });
 
@@ -2986,12 +3648,18 @@ function wireEvents() {
   document.getElementById("queueScanCancelBtn")?.addEventListener("click", closeQueueScanDialog);
   document.getElementById("queueScanConfirmBtn")?.addEventListener("click", () => void confirmQueueScanDialog());
   document.getElementById("manualPendingBtn")?.addEventListener("click", () => void submitManualPendingTrade());
+  document.getElementById("scanDetailStageBtn")?.addEventListener("click", () => {
+    if (!_scanDetailSignal) return;
+    const normalized = normalizeScanSignal(_scanDetailSignal);
+    const status = safeText(normalized._filter_status || "kept").toLowerCase();
+    if (status !== "kept") return;
+    openQueueScanDialog(normalized);
+  });
   document.getElementById("queueScanDialog")?.addEventListener("click", (e) => {
     if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   bindEvent("scanBtn", "click", runScan);
-  bindEvent("scanTestBtn", "click", runTestScan);
   document.querySelectorAll("[data-forward-click]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const targetId = safeText(btn.getAttribute("data-forward-click"));
@@ -3099,6 +3767,10 @@ function wireEvents() {
   });
   bindEvent("checkBtn", "click", quickCheck);
   bindEvent("reportBtn", "click", runReport);
+  bindEvent("dossierBtn", "click", runResearchDossier);
+  bindEvent("dossierDownloadJsonBtn", "click", () => downloadResearchDossier("json"));
+  bindEvent("dossierDownloadMdBtn", "click", () => downloadResearchDossier("md"));
+  bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
   bindEvent("secCompareBtn", "click", runSecCompare);
   bindEvent("secCompareMode", "change", applySecCompareMode);
   bindEvent("secCompareRuthlessMode", "change", () => {
@@ -3290,14 +3962,10 @@ function connectSSE() {
       if (event === "scan_started") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = true; btn.textContent = "Scanning..."; }
-        const tbtn = document.getElementById("scanTestBtn");
-        if (tbtn) tbtn.disabled = true;
         updateActionCenter({ title: "Scan Running", message: "Market scan started. Results will appear automatically.", severity: "info" });
       } else if (event === "scan_completed") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = false; btn.textContent = "Run Scan"; }
-        const tbtn = document.getElementById("scanTestBtn");
-        if (tbtn) { tbtn.disabled = false; tbtn.textContent = "Test scan (100)"; }
         const count = msg.signals_found ?? 0;
         showToast(`Scan complete: ${count} signal(s) found`, "success", 4000);
         addNotification(`Scan complete: ${count} signal(s) found`, "success");
@@ -3307,8 +3975,6 @@ function connectSSE() {
       } else if (event === "scan_failed") {
         const btn = document.getElementById("scanBtn");
         if (btn) { btn.disabled = false; btn.textContent = "Run Scan"; }
-        const tbtn = document.getElementById("scanTestBtn");
-        if (tbtn) { tbtn.disabled = false; tbtn.textContent = "Test scan (100)"; }
         showToast("Scan failed: " + (msg.error || "unknown error"), "error", 6000);
         addNotification(`Scan failed: ${msg.error || "unknown"}`, "error");
         updateActionCenter({ title: "Scan Failed", message: msg.error || "Unknown error", severity: "error" });

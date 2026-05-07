@@ -71,27 +71,38 @@ export function renderCalibrationPanel(panel, data, error) {
 
 export async function refreshCalibration() {
   const panel = document.getElementById("calibrationPanel");
+  const card = document.getElementById("calibrationSection");
   if (!panel) return;
-  renderCalibrationPanel(panel, null, "Loading calibration snapshot...");
+  if (card) card.setAttribute("data-async-state", "loading");
+  panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
+    <span class="async-spinner" aria-hidden="true"></span>
+    <span>Loading calibration snapshot…</span>
+  </div>`;
   const out = await api.get("/api/calibration/summary");
   if (!out.ok) {
-    renderCalibrationPanel(
-      panel,
-      null,
-      `Calibration load failed: ${out.user_message || out.error}`,
-    );
+    if (card) card.setAttribute("data-async-state", "error");
+    const msg = out.user_message || out.error || "Request failed";
+    panel.innerHTML = `<div class="async-state async-state--error" role="alert">
+      <span>Calibration load failed: ${escapeHtml(String(msg))}</span>
+      <button type="button" class="btn small secondary" data-calib-retry>Retry</button>
+    </div>`;
+    panel.querySelector("[data-calib-retry]")?.addEventListener("click", () => void refreshCalibration());
     return;
   }
   state.calibration = out.data;
+  if (card) card.setAttribute("data-async-state", out.data?.empty ? "empty" : "success");
   renderCalibrationPanel(panel, out.data, null);
 }
 
 export async function submitTradingHaltSave({ refreshAccountMe = async () => {} } = {}) {
   if (!state.publicConfig.saas_mode) return;
+  // PATCH is a mutation — never auto-retry. Caller-driven, one-shot.
   const halted = Boolean(document.getElementById("tradingHaltedCheckbox")?.checked);
   const out = await api.patch("/api/settings/trading-halt", { halted });
   if (!out.ok) {
-    const msg = typeof out.error === "string" ? out.error : JSON.stringify(out.error || "Request failed");
+    const msg =
+      out.user_message ||
+      (typeof out.error === "string" ? out.error : JSON.stringify(out.error || "Request failed"));
     updateActionCenter({ title: "Trading pause", message: msg, severity: "error" });
     return;
   }

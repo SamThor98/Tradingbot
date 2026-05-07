@@ -1469,8 +1469,8 @@ select:focus-visible,
 }
 
 .scan-insights {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 0 16px 12px;
 }
@@ -1484,9 +1484,82 @@ select:focus-visible,
   margin: 0 0 8px 0;
   font-size: 0.9rem;
 }
+.scan-block--blockers {
+  padding: 6px 10px;
+  background: rgba(9, 16, 35, 0.4);
+  border-color: rgba(130, 153, 221, 0.18);
+  order: 2;
+}
+.scan-block--blockers h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.scan-block-hint {
+  font-size: 0.66rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.scan-block--funnel {
+  order: 1;
+}
+.blocker-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.blocker-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(164, 184, 242, 0.2);
+  background: rgba(54, 76, 140, 0.18);
+  color: #c8d4f0;
+}
+.blocker-chips li strong {
+  color: #e8ecff;
+  font-weight: 600;
+}
+.blocker-chips li .pill {
+  padding: 1px 6px;
+  font-size: 0.62rem;
+}
+.blocker-chips li.empty {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.scan-blockers-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+  font-weight: 600;
+}
+.scan-blockers-chip:hover,
+.scan-blockers-chip:focus-visible {
+  background: rgba(245, 158, 11, 0.28);
+  outline: none;
+}
 .funnel-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
 }
 .funnel-node {
@@ -1498,6 +1571,17 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 6px;
+  cursor: help;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.funnel-node:hover {
+  border-color: rgba(165, 180, 252, 0.55);
+  transform: translateY(-1px);
+}
+.funnel-node[data-gate-mode="shadow"],
+.funnel-node[data-gate-mode="off"],
+.funnel-node[data-gate-mode="soft"] {
+  border-style: dashed;
 }
 .funnel-node-head {
   display: flex;
@@ -1536,10 +1620,35 @@ select:focus-visible,
   transition: width 0.45s ease;
   min-width: 4px;
 }
+.funnel-node-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+}
 .funnel-node .value {
   font-size: 1.05rem;
   font-weight: 700;
   color: #e8ecff;
+}
+.funnel-node-filtered {
+  font-size: 0.7rem;
+  color: rgba(248, 113, 113, 0.85);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.funnel-shadow-badge {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
   margin-top: 2px;
 }
 
@@ -1845,7 +1954,7 @@ select:focus-visible,
   inset: 0;
   background: rgba(2, 6, 23, 0.55);
   backdrop-filter: blur(2px);
-  z-index: 29;
+  z-index: 79;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s ease;
@@ -1864,7 +1973,7 @@ body.trade-drawer-open .trade-drawer-backdrop {
   border-left: 1px solid rgba(82, 82, 91, 0.9);
   transform: translateX(100%);
   transition: transform 0.2s ease;
-  z-index: 30;
+  z-index: 80;
   display: grid;
   grid-template-rows: auto auto 1fr;
   gap: 10px;
@@ -2902,6 +3011,21 @@ body.trade-drawer-open .trade-drawer-backdrop {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* Filtered candidates (everything in the shortlist except disposition="kept")
+   are visually de-emphasised so the kept survivors still pop. The Stage
+   button is also disabled on these rows so a misclick can't queue a
+   filtered name as a trade. */
+tr.scan-row--filtered {
+  opacity: 0.62;
+}
+tr.scan-row--filtered:hover,
+tr.scan-row--filtered:focus-within {
+  opacity: 0.85;
+}
+tr.scan-row--filtered td:first-child strong {
+  color: var(--paper-mute, #94a3b8);
+}
 .scan-detail-panel {
   border: 1px solid rgba(100, 116, 139, 0.36);
   border-radius: 14px;
@@ -3085,6 +3209,9 @@ body.ui-standard .section-advanced {
   opacity: 0.94;
   filter: saturate(0.92);
 }
+body.ui-standard .nav-advanced {
+  display: none !important;
+}
 body.ui-pro .section-advanced {
   opacity: 1;
   filter: none;
@@ -3120,31 +3247,8 @@ body.ui-pro .section-advanced {
   letter-spacing: 0.02em;
 }
 
-.workflow-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  border-radius: 12px;
-  background: rgba(8, 47, 73, 0.22);
-}
-
-.workflow-toolbar-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.workflow-toolbar-copy strong {
-  font-size: 0.9rem;
-  letter-spacing: 0.02em;
-}
-
-.workflow-toolbar .inline-form {
-  align-items: center;
-}
+/* .workflow-toolbar removed in cleanup pass: was duplicate of topbar
+   actions with marketing copy and no live data binding. */
 
 .flow-stepper {
   display: grid;
@@ -3189,39 +3293,14 @@ body.ui-pro .section-advanced {
   background: rgba(30, 41, 59, 0.62);
 }
 
-.operate-priority-bar {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(125, 211, 252, 0.26);
-  background: linear-gradient(145deg, rgba(6, 11, 24, 0.9), rgba(8, 14, 30, 0.84));
+.workflow-strapline {
+  margin: 0 0 10px;
+  padding: 0 4px;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
 }
 
-.operate-priority-bar article {
-  display: grid;
-  gap: 6px;
-  border-radius: 12px;
-  border: 1px solid rgba(147, 197, 253, 0.2);
-  background: rgba(10, 18, 40, 0.68);
-  padding: 10px;
-}
-
-.operate-priority-bar strong {
-  font-size: 0.9rem;
-  line-height: 1.35;
-}
-
-.operate-priority-bar a {
-  font-size: 0.78rem;
-  color: #93c5fd;
-  text-decoration: none;
-}
-
-.operate-priority-bar a:hover {
-  color: #c4b5fd;
-}
+/* .operate-priority-bar removed in cleanup pass: marketing tiles. */
 
 .workspace-intro {
   margin-bottom: 12px;
@@ -3339,7 +3418,9 @@ body.ui-simple #toolsSection,
 body.ui-simple .nav-advanced {
   display: none !important;
 }
-body.ui-screen-operations .diagnostics-surface {
+body.ui-screen-operations .diagnostics-surface,
+body.ui-screen-research .diagnostics-surface,
+body.ui-screen-settings .diagnostics-surface {
   display: none !important;
 }
 body.ui-screen-operations #onboardingSection,
@@ -3369,8 +3450,19 @@ body.ui-screen-research #settingsSection,
 body.ui-screen-research #settingsWorkflowStrip,
 body.ui-screen-research #diagnosticsWorkflowStrip,
 body.ui-screen-research #statusDetailsPanel,
+body.ui-screen-research #scanSection,
+body.ui-screen-research #scanDetailPanel,
 body.ui-screen-research #calibrationSection {
   display: none !important;
+}
+
+body.ui-screen-research #workflowPrimary .workflow-primary-heading,
+body.ui-screen-research #workflowPrimary .workflow-strapline {
+  display: none !important;
+}
+
+body.ui-screen-research #workflowPrimary .operate-kanban {
+  grid-template-columns: minmax(0, 1fr);
 }
 body.ui-screen-diagnostics .operations-surface,
 body.ui-screen-diagnostics #workflowPrimary,
@@ -3412,6 +3504,24 @@ body.ui-screen-settings #secCompareSection,
 body.ui-screen-settings #activitySection {
   display: none !important;
 }
+
+body.ui-simple .scan-col-secondary,
+body.ui-simple .scan-col-advanced {
+  display: none !important;
+}
+
+body.ui-standard .scan-col-advanced {
+  display: none !important;
+}
+
+.scan-detail-actions {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(100, 116, 139, 0.28);
+  display: grid;
+  gap: 0.4rem;
+}
+
 .ui-screen-switching #screenContextCard,
 .ui-screen-switching #workflowPrimary,
 .ui-screen-switching .layout-2,
@@ -3421,9 +3531,9 @@ body.ui-screen-settings #activitySection {
   transform: translateY(2px);
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
-body:not(.ui-pro) #blockersAlertSection {
-  display: none !important;
-}
+/* Blockers alert is part of the Health tab; visibility is mode-driven
+   (diagnostics-surface) rather than detail-level driven, so users in
+   Simple mode still see scan blockers when they're on Health. */
 /* Setup wizard stays available in Simple view; presets stay under section-advanced. */
 body.ui-simple .layout-onboarding-presets {
   grid-template-columns: 1fr;
@@ -3571,15 +3681,11 @@ body.ui-simple #onboardingSection {
 }
 
 @media (max-width: 900px) {
-  .workflow-toolbar,
   .workspace-intro {
     flex-direction: column;
   }
   .flow-stepper {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .operate-priority-bar {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -3743,7 +3849,7 @@ body.ui-pro .panel-disclosure--advanced {
   .scan-insights { grid-template-columns: 1fr; }
   .task-meters { grid-template-columns: 1fr; }
   .funnel-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   }
   .ic-snapshot-grid,
   .report-split-grid,
@@ -4618,12 +4724,6 @@ html, body {
   letter-spacing: -0.01em;
 }
 
-.workflow-toolbar {
-  border-radius: 14px;
-  border-color: rgba(96, 165, 250, 0.45);
-  background: linear-gradient(145deg, rgba(30, 64, 175, 0.26), rgba(6, 10, 22, 0.85));
-}
-
 #scanSection,
 #pendingSection {
   border-radius: 18px;
@@ -4734,50 +4834,10 @@ html, body {
 }
 
 /* ------------------------------------------------------------------
-   Operating Shell Overhaul: left rail + command center + kanban lanes
+   Operating Shell Overhaul: left rail + kanban lanes
+   (Command center / KPI cards removed in cleanup pass — they were
+   decorative tiles with no live data binding.)
 ------------------------------------------------------------------- */
-.command-center {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(125, 211, 252, 0.26);
-  background: linear-gradient(155deg, rgba(7, 14, 30, 0.9), rgba(6, 10, 22, 0.95));
-}
-
-.command-center-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.command-center-head h3 {
-  margin: 2px 0 0;
-  font-size: 1rem;
-  letter-spacing: -0.01em;
-}
-
-.command-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.command-kpi-card {
-  border: 1px solid rgba(147, 197, 253, 0.2);
-  border-radius: 12px;
-  background: rgba(10, 19, 40, 0.65);
-  padding: 10px;
-  display: grid;
-  gap: 6px;
-}
-
-.command-kpi-card strong {
-  font-size: 0.92rem;
-  line-height: 1.35;
-}
-
 .operate-kanban {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.9fr) minmax(0, 1fr);
@@ -4856,25 +4916,10 @@ html, body {
 }
 
 @media (max-width: 1120px) {
-  .command-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .operate-kanban {
     grid-template-columns: 1fr;
   }
   .kanban-lane {
     min-height: 0;
-  }
-}
-
-@media (max-width: 760px) {
-  .command-center {
-    padding: 12px;
-  }
-  .command-center-head {
-    flex-direction: column;
-  }
-  .command-kpi-grid {
-    grid-template-columns: 1fr;
   }
 }

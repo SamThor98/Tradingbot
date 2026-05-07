@@ -9,8 +9,31 @@
 
 export const state = {
   latestSignals: [],
-  /** Last watchlist size from scan diagnostics (for hero KPI). Defaults to SP1500. */
+  /** Full Stage-B shortlist from the most recent scan, each signal tagged
+   *  with `_filter_status` describing whether it was kept or filtered (and
+   *  why). Populated from /api/scan responses when the backend supplies
+   *  `shortlist_signals`. The candidate table prefers this over
+   *  `latestSignals` so operators can see filtered candidates with their
+   *  disposition; trade-staging still uses the kept subset only. */
+  latestShortlistSignals: [],
+  /** Last watchlist size from scan diagnostics. Defaults to SP1500 (the
+   *  canonical universe) so the hero KPI is meaningful before the first
+   *  scan reports diagnostics. Real per-scan values overwrite this in
+   *  `renderDiagnostics`; an explicit ticker override will show the
+   *  smaller count. */
   lastWatchlistSize: 1500,
+  /** ISO timestamp of the most recent scan response that populated
+   *  `latestSignals` / `lastWatchlistSize`. Used for freshness labels. */
+  lastScanAt: null,
+  /** Most recent integer pending-trades count from /api/pending-trades.
+   *  `null` means we have not loaded yet — render "—". */
+  lastPendingCount: null,
+  /** ISO timestamp from the most recent successful pending-trades fetch. */
+  lastPendingAt: null,
+  /** ISO timestamp of the last health/status response (for ribbon freshness). */
+  lastStatusAt: null,
+  /** ISO timestamp of the last decision-dashboard response. */
+  lastDecisionDashboardAt: null,
   approvingTradeId: null,
   approvingChecklist: null,
   pendingFilter: "pending",
@@ -30,6 +53,7 @@ export const state = {
   twoFaStatus: null,
   reportRawView: false,
   lastReportData: null,
+  lastResearchDossier: null,
   activeReportTab: "summary",
   secCompareResult: null,
   secManagementDashboard: null,

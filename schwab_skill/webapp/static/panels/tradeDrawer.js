@@ -190,11 +190,13 @@ export async function loadRecoveryInDrawer() {
 export function openTradeDrawer(opts = {}) {
   const drawer = $("tradeDrawer");
   if (!drawer) return;
+  const backdrop = $("tradeDrawerBackdrop");
   ensureWired();
   const tab = opts.tab && TABS.includes(opts.tab) ? opts.tab : "decision";
   setActiveTab(tab);
   drawer.classList.add("open");
   drawer.removeAttribute("hidden");
+  backdrop?.removeAttribute("hidden");
   document.body.classList.add("trade-drawer-open");
   if (tab === "decision") {
     if (opts.ticker) {
@@ -225,8 +227,10 @@ export async function openTradeDrawerForTrade(row) {
 
 export function closeTradeDrawer() {
   const drawer = $("tradeDrawer");
+  const backdrop = $("tradeDrawerBackdrop");
   if (!drawer) return;
   drawer.classList.remove("open");
+  backdrop?.setAttribute("hidden", "");
   // Hide after the slide animation so screen readers don't announce it.
   setTimeout(() => {
     if (!drawer.classList.contains("open")) drawer.setAttribute("hidden", "");

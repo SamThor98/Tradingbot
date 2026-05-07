@@ -62,9 +62,12 @@ def test_runtime_env_overrides_are_string_values() -> None:
     assert env["QUALITY_GATES_MODE"] == "hard"
 
 
-def test_universe_overrides_drive_test_scan() -> None:
-    """The dashboard's "Test scan" button posts focused-mode overrides — verify they
-    survive the validator and reach env_overrides as expected."""
+def test_universe_overrides_drive_focused_scan() -> None:
+    """API callers (backtests, automation, scripts) can post focused-mode
+    overrides via strategy_overrides. The dashboard itself no longer exposes a
+    UI for this — the toolbar Test scan button was removed because operators
+    were unintentionally narrowing scans. Verify the validator still accepts
+    these overrides for programmatic callers."""
     out = parse_scan_run_body(
         {
             "strategy_overrides": {

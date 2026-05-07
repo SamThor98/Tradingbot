@@ -71,8 +71,7 @@ body[data-theme="editorial"] .hero h1,
 body[data-theme="editorial"] .workflow-primary-heading,
 body[data-theme="editorial"] .workspace-intro h2,
 body[data-theme="editorial"] .section-title h2,
-body[data-theme="editorial"] .section-title h3,
-body[data-theme="editorial"] .command-center-head h3 {
+body[data-theme="editorial"] .section-title h3 {
   font-family: var(--serif) !important;
   font-weight: 400 !important;
   font-style: italic !important;
@@ -423,91 +422,16 @@ body[data-theme="editorial"] .health-ring {
   height: 36px !important;
 }
 
-/* Command center ---------------------------------------------- */
-body[data-theme="editorial"] .command-center {
-  background: var(--ink-2) !important;
-  border: 1px solid var(--ink-line) !important;
-  border-radius: 2px !important;
-  padding: 22px !important;
-  position: relative;
-}
-
-body[data-theme="editorial"] .command-center::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 64px;
-  height: 2px;
-  background: var(--gold);
-}
-
-body[data-theme="editorial"] .command-center-head h3 {
-  font-size: 1.6rem !important;
-}
-
-body[data-theme="editorial"] .command-kpi-grid {
-  gap: 0 !important;
-  grid-template-columns: repeat(4, 1fr) !important;
-  border-top: 1px solid var(--ink-line);
-  margin-top: 14px;
-  padding-top: 14px;
-}
-
-body[data-theme="editorial"] .command-kpi-card {
-  background: transparent !important;
-  border: none !important;
-  border-right: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  padding: 4px 16px !important;
-}
-
-body[data-theme="editorial"] .command-kpi-card:last-child {
-  border-right: none !important;
-}
-
-body[data-theme="editorial"] .command-kpi-card span {
-  color: var(--gold) !important;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.62rem;
-  font-weight: 600;
-}
-
-body[data-theme="editorial"] .command-kpi-card strong {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  font-size: 1.15rem !important;
-  color: var(--paper-warm) !important;
-  display: block;
-  margin: 4px 0;
-}
+/* Command center / workflow toolbar / kpi cards: removed in the
+   accuracy/dependability cleanup pass — they were decorative blocks
+   with no live data binding. The Trade landing now leads directly
+   into the scan → evaluate → approve flow. */
 
 /* Workflow primary -------------------------------------------- */
 body[data-theme="editorial"] #workflowPrimary {
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
-}
-
-body[data-theme="editorial"] .workflow-toolbar {
-  background: var(--ink-2) !important;
-  border: 1px solid var(--ink-line) !important;
-  border-left: 3px solid var(--gold) !important;
-  border-radius: 0 !important;
-  padding: 16px 20px !important;
-  margin-bottom: 14px;
-}
-
-body[data-theme="editorial"] .workflow-toolbar-copy strong {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  font-size: 1.1rem !important;
-  color: var(--paper-warm) !important;
-  letter-spacing: -0.005em;
-  text-transform: none !important;
 }
 
 body[data-theme="editorial"] .flow-stepper {
@@ -734,53 +658,8 @@ body[data-theme="editorial"] .workspace-intro::before {
   background: var(--gold);
 }
 
-body[data-theme="editorial"] .operate-priority-bar {
-  background: transparent !important;
-  border: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  padding: 0 !important;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0 !important;
-}
-
-body[data-theme="editorial"] .operate-priority-bar article {
-  background: transparent !important;
-  border: none !important;
-  border-right: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  padding: 18px !important;
-}
-
-body[data-theme="editorial"] .operate-priority-bar article:last-child {
-  border-right: none !important;
-}
-
-body[data-theme="editorial"] .operate-priority-bar strong {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  font-size: 1.1rem !important;
-  color: var(--paper-warm) !important;
-  letter-spacing: -0.005em;
-  display: block;
-  margin: 6px 0 8px;
-}
-
-body[data-theme="editorial"] .operate-priority-bar a {
-  font-family: var(--sans) !important;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--gold) !important;
-  border-bottom: 1px solid var(--gold);
-  padding-bottom: 1px;
-}
-
-body[data-theme="editorial"] .operate-priority-bar a:hover {
-  color: var(--paper-warm) !important;
-}
+/* .operate-priority-bar removed in cleanup pass: was three marketing
+   tiles with no live data binding. */
 
 /* Chips, badges, pills ---------------------------------------- */
 body[data-theme="editorial"] .chip,
@@ -961,15 +840,6 @@ body[data-theme="editorial"] .workspace-intro h2::before {
 
 /* Responsive --------------------------------------------------- */
 @media (max-width: 1280px) {
-  body[data-theme="editorial"] .command-kpi-grid {
-    grid-template-columns: repeat(2, 1fr) !important;
-  }
-  body[data-theme="editorial"] .command-kpi-card {
-    border-bottom: 1px solid var(--ink-line);
-  }
-  body[data-theme="editorial"] .command-kpi-card:nth-child(2) {
-    border-right: none !important;
-  }
   body[data-theme="editorial"] .health-ribbon {
     grid-template-columns: repeat(2, 1fr) !important;
   }
@@ -999,16 +869,6 @@ body[data-theme="editorial"] .workspace-intro h2::before {
   body[data-theme="editorial"] .flow-stepper a:nth-child(2n) {
     border-right: none !important;
   }
-  body[data-theme="editorial"] .operate-priority-bar {
-    grid-template-columns: 1fr;
-  }
-  body[data-theme="editorial"] .operate-priority-bar article {
-    border-right: none !important;
-    border-bottom: 1px solid var(--ink-line) !important;
-  }
-  body[data-theme="editorial"] .operate-priority-bar article:last-child {
-    border-bottom: none !important;
-  }
   body[data-theme="editorial"] .hero-main::before {
     display: none;
   }
@@ -1021,14 +881,6 @@ body[data-theme="editorial"] .workspace-intro h2::before {
   body[data-theme="editorial"] .hero,
   body[data-theme="editorial"] .hero-shell {
     padding: 22px 18px !important;
-  }
-  body[data-theme="editorial"] .command-kpi-grid {
-    grid-template-columns: 1fr !important;
-  }
-  body[data-theme="editorial"] .command-kpi-card {
-    border-right: none !important;
-    border-bottom: 1px solid var(--ink-line);
-    padding: 12px 4px !important;
   }
   body[data-theme="editorial"] .health-ribbon {
     grid-template-columns: 1fr !important;
@@ -1312,25 +1164,20 @@ body[data-theme="editorial"] .section-nav a:hover {
 }
 
 /* 2. Drop redundant marketing/wayfinding blocks. The kanban
-      lane headers, hero, and section-nav already convey this. */
-body[data-theme="editorial"] .operate-priority-bar,
+      lane headers, hero, and section-nav already convey this.
+      operate-priority-bar, command-center, workflow-toolbar
+      were removed from HTML; remaining selectors are kept hidden
+      until they are also removed from styles.css. */
 body[data-theme="editorial"] .flow-stepper,
 body[data-theme="editorial"] .rail-quick-actions,
 body[data-theme="editorial"] .screen-context,
 body[data-theme="editorial"] #researchWorkflowStrip,
 body[data-theme="editorial"] #diagnosticsWorkflowStrip,
 body[data-theme="editorial"] #settingsWorkflowStrip,
-body[data-theme="editorial"] .workflow-toolbar,
 body[data-theme="editorial"] #operationsWorkspaceIntro,
 body[data-theme="editorial"] #researchWorkspaceIntro,
 body[data-theme="editorial"] #diagnosticsWorkspaceIntro,
 body[data-theme="editorial"] #settingsWorkspaceIntro {
-  display: none !important;
-}
-
-/* 3. Command center: hide on operations (the hero already shows
-      the same KPIs). Keep available on Trust/Configure if needed. */
-body.ui-screen-operations[data-theme="editorial"] .command-center {
   display: none !important;
 }
 
@@ -1451,7 +1298,7 @@ body[data-theme="editorial"] .site-footer {
    [data-nav-screens], #screenContextTitle/Text/Hint/Cta/
    AltCta, #heroKpiSignals/Pending/Watchlist, #notifBellBtn,
    #notifPanel, #notifBadge, #notifList, #notifClearBtn,
-   #displayModeSelect, #scanBtn, #refreshBtn, #scanTestBtn,
+   #displayModeSelect, #scanBtn, #refreshBtn,
    #supabaseAuthBlock and children, #manualJwtDetails,
    #jwtInput, #saveJwtBtn, #copyJwtBtn).
 ============================================================ */
@@ -1892,4 +1739,517 @@ body[data-theme="editorial"] .section-nav a.hidden {
     flex: 0 0 auto;
     white-space: nowrap;
   }
+}
+
+/* ============================================================
+   USER-FRIENDLINESS PASS — flow > catalog
+   The point of this pass is to make tools FEEL connected and to
+   keep only the things a daily trader needs in front of them.
+============================================================ */
+
+/* 1. Mode-header lead: keep just the title + lead + 2 actions.
+      The dense in-mode anchor list inside the header is redundant
+      with the kanban that follows it on Trade and adds noise on
+      every other tab. Hide unless we are in Pro detail mode. */
+body[data-theme="editorial"] .mode-header-anchors {
+  display: none !important;
+}
+body.ui-pro[data-theme="editorial"] .mode-header-anchors {
+  display: flex !important;
+}
+
+body[data-theme="editorial"] .mode-header-title {
+  font-size: clamp(1.6rem, 2.6vw, 2.1rem) !important;
+  margin: 0 0 0.4rem !important;
+}
+
+body[data-theme="editorial"] .mode-header-lead {
+  font-size: 0.95rem !important;
+  max-width: 56ch;
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .mode-header-hint {
+  margin-top: 0.45rem;
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+
+/* 2. Bring back actionCenter on the Trade tab as the friendly
+      "next step" prompt. Hide it on every other tab. The JS
+      already updates the text dynamically. */
+body[data-theme="editorial"] #actionCenter {
+  display: flex !important;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px !important;
+  background: linear-gradient(
+    90deg,
+    rgba(201, 166, 107, 0.10) 0%,
+    rgba(201, 166, 107, 0.02) 60%,
+    transparent 100%
+  ) !important;
+  border: 1px solid var(--ink-line) !important;
+  border-left: 3px solid var(--gold) !important;
+  border-radius: 0 !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] #actionCenter::after {
+  content: "Tip";
+  position: absolute;
+  top: -10px;
+  left: 14px;
+  background: var(--ink);
+  padding: 0 8px;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 700;
+  font-family: var(--sans);
+}
+
+body[data-theme="editorial"] #actionCenter .action-center-icon {
+  width: 32px !important;
+  height: 32px !important;
+  background: var(--gold-soft) !important;
+  border: 1px solid var(--gold) !important;
+}
+
+body[data-theme="editorial"] #actionCenter strong {
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.15rem !important;
+  color: var(--paper-warm) !important;
+  text-transform: none !important;
+  letter-spacing: -0.005em !important;
+}
+
+body[data-theme="editorial"] #actionCenter p {
+  font-size: 0.9rem !important;
+  color: var(--paper) !important;
+}
+
+body:not(.ui-screen-operations)[data-theme="editorial"] #actionCenter {
+  display: none !important;
+}
+
+/* 3. Decision dashboard / health ribbon now live structurally
+      under the Health tab; the .diagnostics-surface class hides
+      them on Trade. Old override rule was redundant and removed. */
+
+/* 4. Kanban as a single flowing surface, not three islands.
+      - Outer wrapper acts as one card.
+      - Lanes share an internal directional gradient.
+      - Chevrons sit between lanes with editorial accent.       */
+body[data-theme="editorial"] .operate-kanban {
+  position: relative;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(201, 166, 107, 0.06) 0%,
+      rgba(231, 217, 181, 0.025) 50%,
+      rgba(127, 180, 122, 0.06) 100%
+    ),
+    var(--ink-2) !important;
+  border: 1px solid var(--ink-line-strong) !important;
+  border-radius: 0 !important;
+  overflow: visible !important;
+}
+
+body[data-theme="editorial"] .operate-kanban::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold) 50%, transparent);
+  opacity: 0.55;
+}
+
+body[data-theme="editorial"] .kanban-lane {
+  position: relative;
+}
+
+/* Chevron between lanes (only on wider screens where they sit
+   horizontally). The chevron draws an editorial italic glyph that
+   subtly signals progression. */
+@media (min-width: 1121px) {
+  body[data-theme="editorial"] .kanban-lane:not(:last-child)::after {
+    content: "\203A"; /* a single right angle */
+    position: absolute;
+    top: 32px;
+    right: -10px;
+    z-index: 2;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--ink);
+    border: 1px solid var(--ink-line-strong);
+    color: var(--gold);
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 1.15rem;
+    line-height: 1;
+    border-radius: 50%;
+  }
+}
+
+/* Lane head: clearer step numbers + soft gold rule beneath. */
+body[data-theme="editorial"] .kanban-lane-head {
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 14px !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] .kanban-lane-head::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 28px;
+  height: 1px;
+  background: var(--gold);
+}
+
+body[data-theme="editorial"] .kanban-lane-step {
+  font-family: var(--mono) !important;
+  background: var(--gold) !important;
+  color: var(--ink) !important;
+  padding: 2px 8px !important;
+  font-size: 0.62rem !important;
+  letter-spacing: 0.16em !important;
+  font-weight: 700 !important;
+  border-radius: 0;
+}
+
+/* 5. Better empty states — friendly, directive copy that points
+      to the next physical step in the workspace. */
+body[data-theme="editorial"] .task-empty {
+  border: 1px dashed var(--ink-line) !important;
+  padding: 28px 18px !important;
+  text-align: center;
+  color: var(--paper-mute) !important;
+  font-style: italic;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  position: relative;
+}
+
+body[data-theme="editorial"] .task-empty::before {
+  content: "Approve trades";
+  display: block;
+  font-family: var(--sans);
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.62rem;
+  color: var(--gold);
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+body[data-theme="editorial"] #scanTableBody td.muted {
+  color: var(--paper-mute) !important;
+  font-style: italic;
+  font-family: var(--serif);
+  padding: 22px 14px !important;
+}
+
+/* Evaluate lane (middle) when nothing is selected. */
+body[data-theme="editorial"] #scanDetailPanel .scan-detail-header h3:only-child,
+body[data-theme="editorial"] #scanDetailPanel .scan-detail-header h3 {
+  font-size: 1.1rem !important;
+}
+
+body[data-theme="editorial"] #scanDetailPanel .scan-detail-header p {
+  font-style: italic;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+}
+
+/* 6. Make the Run Scan button in the topbar visually primary.
+      It's the single most-used affordance for a daily trader. */
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  background: var(--gold) !important;
+  border-color: var(--gold) !important;
+  color: var(--ink) !important;
+  letter-spacing: 0.08em !important;
+  font-weight: 700 !important;
+  padding: 9px 16px !important;
+}
+
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary:hover {
+  background: var(--paper-warm) !important;
+  border-color: var(--paper-warm) !important;
+}
+
+/* 7. Hide deeply technical sections on the Trade tab to remove
+      cognitive load. They remain available on Analyze/Health. */
+body.ui-screen-operations[data-theme="editorial"] #performanceSection,
+body.ui-screen-operations[data-theme="editorial"] #learningSection,
+body.ui-screen-operations[data-theme="editorial"] #calibrationSection,
+body.ui-screen-operations[data-theme="editorial"] #portfolioSection,
+body.ui-screen-operations[data-theme="editorial"] #sectorsSection,
+body.ui-screen-operations[data-theme="editorial"] #reportSectionCard,
+body.ui-screen-operations[data-theme="editorial"] #secCompareSection,
+body.ui-screen-operations[data-theme="editorial"] #activitySection,
+body.ui-screen-operations[data-theme="editorial"] #recoverySection,
+body.ui-screen-operations[data-theme="editorial"] #decisionSection {
+  display: none !important;
+}
+
+/* 8. When section nav is shown (Pro), keep the labels short. */
+body[data-theme="editorial"] .section-nav a {
+  white-space: nowrap;
+}
+
+/* 9. Subtle card-to-card spacing tightening so the page reads
+      as one document, not a stack of unrelated tiles. */
+body[data-theme="editorial"] .container > * + * {
+  margin-top: 14px;
+}
+
+/* 10. Friendlier health badges: spell out "OK" instead of color
+       blocks alone. The HTML already has the labels, but pad them
+       so the visual chip reads as a small inline status pill. */
+body[data-theme="editorial"] .health-badge {
+  min-width: 92px;
+  text-align: center;
+}
+
+/* 11. Health ribbon: a single inline status row, not a card. It
+       reads as ambient telemetry above the kanban. */
+body[data-theme="editorial"] #healthRibbon {
+  background: transparent !important;
+  border: none !important;
+  border-top: 1px solid var(--ink-line) !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+  border-radius: 0 !important;
+  padding: 4px 0 !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-tile {
+  padding: 12px 18px !important;
+  min-height: 0 !important;
+  border-right: 1px solid var(--ink-line) !important;
+}
+
+/* 12. Topbar: cleaner, more newspaper-masthead. */
+body[data-theme="editorial"] .app-topbar {
+  border-bottom: 1px solid var(--ink-line-strong) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  font-family: var(--sans) !important;
+  font-weight: 600 !important;
+  text-transform: none !important;
+  letter-spacing: 0.02em !important;
+  font-size: 0.86rem !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--paper-mute) !important;
+  padding: 8px 12px !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:hover {
+  color: var(--paper) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  color: var(--paper-warm) !important;
+  background: transparent !important;
+  border-bottom-color: var(--gold) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .tab-num {
+  display: inline-block;
+  margin-right: 6px;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--gold);
+  font-weight: 700;
+}
+
+/* 13. Topbar Run Scan + Refresh feel like the only primary
+       actions; everything else is quiet support. */
+body[data-theme="editorial"] .app-topbar-actions .btn.secondary.small {
+  border: 1px solid var(--ink-line) !important;
+  color: var(--paper-mute) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .topbar-detail select {
+  background: transparent !important;
+  border: 1px solid var(--ink-line) !important;
+  color: var(--paper-mute) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.7rem !important;
+}
+
+/* 14. Site footer reads as a colophon, not a card. */
+body[data-theme="editorial"] .site-footer p {
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+/* 15. Workflow heading + workflowPrimary block: the kanban itself
+       is the headline; reduce the "Primary trade flow" label to
+       a single thin caption above the lanes. */
+body[data-theme="editorial"] .workflow-primary-heading {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.78rem !important;
+  font-style: normal !important;
+  font-family: var(--sans) !important;
+  font-weight: 700 !important;
+  color: var(--gold) !important;
+  margin-bottom: 6px !important;
+}
+
+body[data-theme="editorial"] .workflow-primary-heading::before {
+  content: "\2014  ";
+  color: var(--gold);
+}
+
+/* ============================================================
+   16. Async surface state + freshness affordances
+   These work with modules/asyncState.js + modules/freshness.js.
+   Every panel that paints data sets data-async-state on its
+   container; freshness labels under values get data-freshness.
+   No backend coupling — purely visual contract.
+============================================================ */
+
+.async-state {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.async-state--loading {
+  border: 1px dashed var(--ink-line, rgba(127, 127, 127, 0.32));
+  color: var(--paper-mute, rgba(127, 127, 127, 0.85));
+}
+
+.async-state--empty {
+  border: 1px dashed var(--ink-line, rgba(127, 127, 127, 0.32));
+  color: var(--paper-mute, rgba(127, 127, 127, 0.85));
+  font-style: italic;
+}
+
+.async-state--error {
+  border: 1px solid rgba(194, 84, 80, 0.55);
+  background: rgba(194, 84, 80, 0.08);
+  color: #f1d6d4;
+  justify-content: space-between;
+}
+
+.async-state--error [data-async-retry] {
+  flex: 0 0 auto;
+}
+
+.async-spinner {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: async-spin 0.85s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes async-spin {
+  to { transform: rotate(360deg); }
+}
+
+[data-async-state="stale"] {
+  position: relative;
+}
+
+[data-async-state="stale"]::before {
+  content: "refreshing — last fetch may be out of date";
+  position: absolute;
+  top: -0.85rem;
+  right: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--warn, #d9a441);
+  pointer-events: none;
+}
+
+/* Freshness label under a KPI value. Text content is set by
+   freshness.js; CSS only colours by data-freshness attribute. */
+[data-freshness] {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+[data-freshness="fresh"] {
+  color: var(--paper-mute, rgba(127, 127, 127, 0.85));
+}
+[data-freshness="stale"] {
+  color: var(--warn, #d9a441);
+}
+[data-freshness="unknown"] {
+  color: var(--paper-mute, rgba(127, 127, 127, 0.55));
+  font-style: italic;
+}
+
+/* "Unavailable" treatment for KPI/badge values. Stamps the value
+   element so we can spot any silently-zero KPI in DevTools. */
+[data-unavailable="true"] {
+  color: var(--paper-mute, rgba(127, 127, 127, 0.6)) !important;
+  font-style: italic;
+}
+
+/* Health badge "unknown" colour, distinct from the bg-red-900 /
+   bg-green-900 tailwind utilities so the ribbon honestly reads
+   "we don't know" instead of "everything is down". */
+.health-badge.bg-slate-900,
+.health-badge[data-state="unknown"] {
+  background: rgba(40, 50, 65, 0.85);
+  color: var(--paper-mute, rgba(231, 217, 181, 0.6));
+}
+
+/* Cross-mode banner: stays visible on Trade/Analyze/Health/Settings.
+   Only used for safety-critical info like the kill switch. */
+.cross-mode-banner {
+  display: none;
+}
+.cross-mode-banner:not(.hidden) {
+  display: block !important;
+}
+
+/* Signed-out / token-missing banner used by panels that depend on
+   tenant-scoped data. Renders inside the panel container instead of
+   the generic empty state so users can see it's actionable. */
+.signed-out-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(217, 164, 65, 0.55);
+  background: rgba(217, 164, 65, 0.08);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--paper, #e7d9b5);
+}
+
+.signed-out-banner strong {
+  color: var(--gold, #c9a66b);
 }

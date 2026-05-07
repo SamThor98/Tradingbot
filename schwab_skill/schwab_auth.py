@@ -6,6 +6,11 @@ Maintains TWO separate authenticated sessions:
 - Account Session: SCHWAB_ACCOUNT_APP_KEY / SCHWAB_ACCOUNT_APP_SECRET (orders, balances)
 
 Tokens saved securely in local JSON files. Background refresh before expiry.
+
+Each saved token payload is stamped with `_last_refresh_at` (ISO-8601 UTC)
+so the dashboard can surface "refresh token expires in N days" warnings
+before the 7-day Schwab TTL silently runs out. The marker is private — it
+lives alongside the OAuth fields but is never sent back to Schwab.
 """
 
 import base64
@@ -14,7 +19,9 @@ import os
 import threading
 import time
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import requests
 from cryptography.fernet import Fernet
@@ -27,6 +34,93 @@ AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 REFRESH_INTERVAL_SEC = 25 * 60  # 25 minutes
 KEY_ENV_VAR = "SCHWAB_TOKEN_ENCRYPTION_KEY"
+
+# Schwab refresh token TTL is 7 days from issue. We surface warnings well
+# before that so the operator has time to re-OAuth.
+REFRESH_TOKEN_TTL_DAYS = 7
+TOKEN_HEALTH_WARN_DAYS_REMAINING = 2.0   # < 2 days left  -> "warn"
+TOKEN_HEALTH_CRITICAL_DAYS_REMAINING = 0.5  # < 12h left     -> "critical"
+
+
+def _stamp_refresh_at(tokens: dict[str, Any]) -> dict[str, Any]:
+    """Inject the wall-clock UTC time the refresh/exchange just succeeded.
+    The marker is `_last_refresh_at` (private — not part of the OAuth spec)."""
+    out = dict(tokens)
+    out["_last_refresh_at"] = datetime.now(timezone.utc).isoformat()
+    return out
+
+
+def _parse_refresh_at(tokens: dict[str, Any] | None) -> datetime | None:
+    if not tokens:
+        return None
+    raw = tokens.get("_last_refresh_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        # Python 3.11+ accepts trailing 'Z'; coerce just in case.
+        normalized = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def compute_token_health(tokens: dict[str, Any] | None, now: datetime | None = None) -> dict[str, Any]:
+    """Pure helper (testable without I/O): compute refresh-token age + status.
+
+    Returns a dict with:
+      - has_tokens (bool)
+      - last_refresh_at (ISO str or None)
+      - refresh_token_age_hours (float or None)
+      - refresh_token_expires_at_estimate (ISO str or None)
+      - hours_until_expiry (float or None — negative if past TTL)
+      - status: "unknown" | "healthy" | "warn" | "critical" | "expired"
+    """
+    has_tokens = bool(tokens and tokens.get("refresh_token"))
+    refreshed = _parse_refresh_at(tokens)
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+    if not has_tokens:
+        return {
+            "has_tokens": False,
+            "last_refresh_at": None,
+            "refresh_token_age_hours": None,
+            "refresh_token_expires_at_estimate": None,
+            "hours_until_expiry": None,
+            "status": "expired",
+        }
+    if refreshed is None:
+        return {
+            "has_tokens": True,
+            "last_refresh_at": None,
+            "refresh_token_age_hours": None,
+            "refresh_token_expires_at_estimate": None,
+            "hours_until_expiry": None,
+            "status": "unknown",
+        }
+
+    age_hours = max(0.0, (now_dt - refreshed).total_seconds() / 3600.0)
+    expires_at = refreshed + timedelta(days=REFRESH_TOKEN_TTL_DAYS)
+    hours_until_expiry = (expires_at - now_dt).total_seconds() / 3600.0
+    days_until_expiry = hours_until_expiry / 24.0
+
+    if hours_until_expiry <= 0:
+        status = "expired"
+    elif days_until_expiry < TOKEN_HEALTH_CRITICAL_DAYS_REMAINING:
+        status = "critical"
+    elif days_until_expiry < TOKEN_HEALTH_WARN_DAYS_REMAINING:
+        status = "warn"
+    else:
+        status = "healthy"
+
+    return {
+        "has_tokens": True,
+        "last_refresh_at": refreshed.isoformat(),
+        "refresh_token_age_hours": round(age_hours, 2),
+        "refresh_token_expires_at_estimate": expires_at.isoformat(),
+        "hours_until_expiry": round(hours_until_expiry, 2),
+        "status": status,
+    }
 
 
 def _derive_key(password: str, salt: bytes) -> bytes:
@@ -49,12 +143,16 @@ def write_encrypted_token_file(token_path: Path, tokens: dict, client_secret: st
     """
     Persist an OAuth token payload in the same Fernet format used by SchwabSession.
     Used by SaaS workers when materializing a per-tenant skill directory.
+
+    Stamps `_last_refresh_at` so the dashboard's token-age health probe works
+    for SaaS-materialised skill dirs too. Existing callers don't need to pass
+    the timestamp — we capture it here at write time.
     """
     key = _get_encryption_key(client_secret)
     token_path = Path(token_path)
     token_path.parent.mkdir(parents=True, exist_ok=True)
     with open(token_path, "wb") as f:
-        f.write(_encrypt(tokens, key))
+        f.write(_encrypt(_stamp_refresh_at(tokens), key))
 
 
 def _decrypt(encrypted: bytes, key: bytes) -> dict | None:
@@ -203,10 +301,34 @@ class SchwabSession:
         return tokens
 
     def _save_tokens(self, tokens: dict) -> None:
+        # Stamp `_last_refresh_at` on every save (initial OAuth, refresh loop,
+        # and force_refresh all flow through here) so the dashboard health
+        # probe can compute "days until refresh-token expiry" accurately.
+        stamped = _stamp_refresh_at(tokens)
         key = _get_encryption_key(self.client_secret)
         self.token_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.token_path, "wb") as f:
-            f.write(_encrypt(tokens, key))
+            f.write(_encrypt(stamped, key))
+        # Reflect the stamp into the in-memory cache so callers reading
+        # `self._tokens["_last_refresh_at"]` see the persisted value.
+        self._tokens = stamped
+
+    def get_token_health(self) -> dict[str, Any]:
+        """Return health info for this session's refresh token.
+        Loads tokens from disk if not yet cached. Pure read — never refreshes."""
+        with self._lock:
+            cached = self._tokens
+        if not cached and self.token_path.exists():
+            # Read-only load; do not start the refresh thread for a health probe.
+            key = _get_encryption_key(self.client_secret)
+            try:
+                with open(self.token_path, "rb") as f:
+                    decrypted = _decrypt(f.read(), key)
+                if decrypted and "access_token" in decrypted:
+                    cached = decrypted
+            except Exception:
+                cached = None
+        return compute_token_health(cached)
 
     def load_tokens(self) -> bool:
         if not self.token_path.exists():
@@ -366,3 +488,17 @@ class DualSchwabAuth:
     def ensure_authenticated(self) -> str:
         """Alias for get_account_token for compatibility with guardrail client."""
         return self.get_account_token()
+
+    def get_token_health(self) -> dict[str, Any]:
+        """Aggregated refresh-token health for both sessions.
+
+        Returns a dict with `market`, `account`, and a roll-up `status` set to
+        the worst severity across the two (so the dashboard chip can pick
+        a single colour). Severity order: expired > critical > warn > unknown
+        > healthy.
+        """
+        market = self.market_session.get_token_health()
+        account = self.account_session.get_token_health()
+        severity = {"expired": 4, "critical": 3, "warn": 2, "unknown": 1, "healthy": 0}
+        worst = max(market["status"], account["status"], key=lambda s: severity.get(s, 0))
+        return {"market": market, "account": account, "status": worst}

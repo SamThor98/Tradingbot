@@ -43,7 +43,7 @@
           aria-selected="true"
           aria-controls="operationsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">1</span>Operate
+          <span class="tab-num" aria-hidden="true">1</span>Trade
         </button>
         <button
           type="button"
@@ -53,7 +53,7 @@
           aria-selected="false"
           aria-controls="researchWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">2</span>Research
+          <span class="tab-num" aria-hidden="true">2</span>Analyze
         </button>
         <button
           type="button"
@@ -63,7 +63,7 @@
           aria-selected="false"
           aria-controls="diagnosticsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">3</span>Trust
+          <span class="tab-num" aria-hidden="true">3</span>Health
         </button>
         <button
           type="button"
@@ -73,7 +73,7 @@
           aria-selected="false"
           aria-controls="settingsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">4</span>Configure
+          <span class="tab-num" aria-hidden="true">4</span>Settings
         </button>
       </nav>
 
@@ -87,15 +87,6 @@
           </select>
         </label>
         <button id="refreshBtn" class="btn secondary small" type="button">Refresh</button>
-        <button
-          id="scanTestBtn"
-          class="btn secondary small"
-          type="button"
-          data-tooltip="Quick 100-ticker sample (focused mode) — useful for smoke-testing the pipeline."
-          title="Quick 100-ticker sample (focused mode) — useful for smoke-testing the pipeline."
-        >
-          Test 100
-        </button>
         <button id="scanBtn" class="btn primary small" type="button">Run Scan</button>
         <button id="notifBellBtn" class="btn icon-btn" type="button" aria-label="Notifications" data-tooltip="Notifications">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -140,13 +131,13 @@
 
       <header id="screenContextCard" class="mode-header" aria-live="polite">
         <div class="mode-header-copy">
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Operate</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Trust</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Configure</p>
-          <h1 id="screenContextTitle" class="mode-header-title">Operate workflow</h1>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Trade</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Analyze</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Health</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Settings</p>
+          <h1 id="screenContextTitle" class="mode-header-title">Today</h1>
           <p id="screenContextText" class="muted mode-header-lead">
-            Run scans, evaluate each candidate with chart + scoring context, then stage and approve trades from one workspace.
+            Run a scan, look over the candidates, and approve only the trades you like.
           </p>
           <nav class="mode-header-anchors section-nav" aria-label="In-mode navigation">
             <a href="#scanSection" data-nav-screens="operations">Run scan</a>
@@ -162,104 +153,47 @@
             <a href="#settingsSection" data-nav-screens="settings">Trading controls</a>
           </nav>
           <div class="mode-header-actions">
-            <a id="screenContextCta" class="btn small primary" href="#workflowPrimary">Open scan flow</a>
-            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Open trade queue</a>
-            <small id="screenContextHint" class="muted mode-header-hint">Tip: Ctrl/Cmd + 1..4 switches modes.</small>
+            <a id="screenContextCta" class="btn small primary" href="#workflowPrimary">Run a scan</a>
+            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Review pending</a>
+            <small id="screenContextHint" class="muted mode-header-hint">Press Ctrl/Cmd + 1..4 to switch tabs.</small>
           </div>
         </div>
         <aside class="mode-header-kpis" aria-label="Session snapshot">
           <div class="hero-kpi" data-kpi="signals">
             <span class="hero-kpi-label">Open signals</span>
-            <strong id="heroKpiSignals" class="hero-kpi-value mono-nums">—</strong>
-            <span class="hero-kpi-hint">from last scan</span>
+            <strong id="heroKpiSignals" class="hero-kpi-value mono-nums" data-unavailable="true">—</strong>
+            <small id="heroKpiSignalsFresh" class="hero-kpi-hint" data-freshness="unknown">no scan yet</small>
           </div>
           <div class="hero-kpi" data-kpi="pending">
             <span class="hero-kpi-label">Pending</span>
-            <strong id="heroKpiPending" class="hero-kpi-value mono-nums">—</strong>
-            <span class="hero-kpi-hint">awaiting you</span>
+            <strong id="heroKpiPending" class="hero-kpi-value mono-nums" data-unavailable="true">—</strong>
+            <small id="heroKpiPendingFresh" class="hero-kpi-hint" data-freshness="unknown">awaiting status</small>
           </div>
           <div class="hero-kpi" data-kpi="watchlist">
             <span class="hero-kpi-label">Universe</span>
             <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">1500</strong>
-            <span class="hero-kpi-hint">watchlist size</span>
+            <small id="heroKpiWatchlistFresh" class="hero-kpi-hint" data-freshness="unknown">SP1500 default</small>
           </div>
         </aside>
       </header>
 
-      <div id="dashboardToday" class="dashboard-today-stack">
-      <section id="healthRibbon" class="card health-ribbon diagnostics-surface" aria-label="System health ribbon">
-        <div class="health-tile" id="healthTileAuth" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Auth</span>
-            <strong id="ribbonAuth" class="health-badge bg-red-900">Disconnected</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileQuotes" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Quotes</span>
-            <strong id="ribbonQuotes" class="health-badge bg-red-900">Degraded</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileApi" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">API errors</span>
-            <strong id="ribbonApiErrorRate" class="health-badge bg-green-900">0.0%</strong>
-          </div>
-        </div>
-        <div class="health-tile" id="healthTileValidation" data-state="neutral" style="--gauge: 0">
-          <div class="health-ring" aria-hidden="true"></div>
-          <div class="health-tile-copy">
-            <span class="health-label">Validation</span>
-            <strong id="ribbonValidation" class="health-badge bg-red-900">Unknown</strong>
-          </div>
-        </div>
-      </section>
-
-      <section id="decisionDashboardCard" class="card diagnostics-surface" aria-label="Leadership decision dashboard">
-        <div class="section-head">
-          <h3 style="margin: 0">Decision Dashboard</h3>
-          <span class="muted">Reliability + strategy quality + promotion readiness</span>
-        </div>
-        <div class="dashboard-today-stack" style="gap: 8px">
-          <div class="health-ribbon" style="grid-template-columns: repeat(2, minmax(140px, 1fr))">
-            <div class="health-tile" data-state="neutral">
-              <div class="health-tile-copy">
-                <span class="health-label">Reliability</span>
-                <strong id="decisionReliabilityState" class="health-badge bg-slate-900">Unknown</strong>
-              </div>
-            </div>
-            <div class="health-tile" data-state="neutral">
-              <div class="health-tile-copy">
-                <span class="health-label">Promotion</span>
-                <strong id="decisionPromotionState" class="health-badge bg-slate-900">Unknown</strong>
-              </div>
-            </div>
-          </div>
-          <p id="decisionValidationStatus" class="muted" style="margin: 0">Validation: --</p>
-          <p id="decisionSloStatus" class="muted" style="margin: 0">SLO gate: --</p>
-          <p id="decisionLastScan" class="muted" style="margin: 0">Last scan unavailable</p>
-          <p id="decisionSignalsFound" class="muted" style="margin: 0">0 signals</p>
-          <p id="decisionStrategyLead" class="muted" style="margin: 0">No dominant strategy</p>
-          <p id="decisionDataQuality" class="muted" style="margin: 0">Data quality: unknown</p>
-          <p id="decisionLatestPromotion" class="muted" style="margin: 0">No promotion decision recorded yet</p>
-        </div>
-      </section>
-
-      <section id="blockersAlertSection" class="card blockers-alert hidden diagnostics-surface" aria-live="polite">
-        <strong>Top Blockers</strong>
-        <ul id="blockersAlertList" class="report-bullets"></ul>
-      </section>
-
-      <section id="platformKillSwitchBanner" class="card blockers-alert hidden operations-surface" aria-live="polite" style="border-color: rgba(180, 83, 9, 0.65)">
+      <!-- Kill switch banner sits above mode-specific content so it
+           is visible on every tab (Trade/Analyze/Health/Settings)
+           when the host has globally halted trading. -->
+      <section
+        id="platformKillSwitchBanner"
+        class="card blockers-alert hidden cross-mode-banner"
+        aria-live="polite"
+        style="border-color: rgba(180, 83, 9, 0.65)"
+      >
         <strong>Operator trading halt</strong>
         <p id="platformKillSwitchBannerText" class="muted" style="margin: 0.35rem 0 0">
           The host has enabled a global kill switch. New risk-increasing orders are blocked until it is cleared.
         </p>
+        <small id="platformKillSwitchBannerFresh" class="muted" data-freshness="unknown" style="margin-top: 0.35rem">awaiting /api/me</small>
       </section>
 
+      <div id="dashboardToday" class="dashboard-today-stack">
       <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>
@@ -274,93 +208,23 @@
           <p id="actionCenterText" class="muted">Ready. Run Scan to load candidates.</p>
         </div>
       </section>
-      <section class="card command-center operations-surface" aria-label="KPI command center">
-        <div class="command-center-head">
-          <div>
-            <p class="workspace-eyebrow">Command Center</p>
-            <h3>Execution telemetry</h3>
-          </div>
-          <div class="inline-form compact">
-            <button class="btn secondary" type="button" data-forward-click="refreshBtn">Refresh now</button>
-            <button class="btn primary" type="button" data-forward-click="scanBtn">Run scan</button>
-          </div>
-        </div>
-        <div class="command-kpi-grid">
-          <article class="command-kpi-card">
-            <span class="muted">Core loop</span>
-            <strong>Scan → Evaluate → Approve</strong>
-            <small class="muted">All three lanes stay visible in the workspace below.</small>
-          </article>
-          <article class="command-kpi-card">
-            <span class="muted">Priority</span>
-            <strong>Protect downside first</strong>
-            <small class="muted">Use Trust mode for debugging, Operate mode for decisions.</small>
-          </article>
-          <article class="command-kpi-card">
-            <span class="muted">Queue posture</span>
-            <strong>Review pending continuously</strong>
-            <small class="muted">Approve only highest-conviction setups from lane 3.</small>
-          </article>
-          <article class="command-kpi-card">
-            <span class="muted">Action</span>
-            <strong>Stay in flow</strong>
-            <small class="muted">Run scan, inspect context, stage, then approve.</small>
-          </article>
-        </div>
-      </section>
       </div>
 
       <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro" aria-label="Operations workspace">
         <div>
           <p class="workspace-eyebrow">Operate</p>
-          <h2>Run the daily trade loop with minimal friction</h2>
-          <p class="muted">Start scan, inspect candidates with chart + scoring context, stage trades, then approve or reject from one workflow.</p>
+          <h2>Execution loop</h2>
+          <p class="muted">Run one scan, review candidates, stage the best setup, then approve or reject from the pending queue.</p>
         </div>
         <div class="inline-form compact">
-          <a class="btn small secondary" href="#workflowPrimary">Open scan flow</a>
-          <a class="btn small secondary" href="#scanDetailPanel">Inspect candidate</a>
-          <a class="btn small secondary" href="#pendingSection">Open approvals</a>
+          <a class="btn small secondary" href="#scanSection">Run scan</a>
+          <a class="btn small secondary" href="#pendingSection">Review pending</a>
         </div>
-      </section>
-
-      <section class="card operate-priority-bar operations-surface" aria-label="Primary operating priorities">
-        <article>
-          <span class="muted">Priority 1</span>
-          <strong>Run scan and review top candidates</strong>
-          <a href="#scanSection">Go to scan results</a>
-        </article>
-        <article>
-          <span class="muted">Priority 2</span>
-          <strong>Stage and approve only highest-conviction setups</strong>
-          <a href="#pendingSection">Open approvals</a>
-        </article>
-        <article>
-          <span class="muted">Priority 3</span>
-          <strong>Use Trust mode for troubleshooting, not execution</strong>
-          <a href="#diagnosticsWorkspaceIntro">Open trust view</a>
-        </article>
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Primary trade flow</h2>
-        <div class="workflow-toolbar operations-surface" aria-label="Primary operations actions">
-          <div class="workflow-toolbar-copy">
-            <strong>Daily execution loop</strong>
-            <p class="muted">From landing, reach scan, candidate context, and approvals in one move.</p>
-          </div>
-          <div class="inline-form compact">
-            <button class="btn secondary" type="button" id="workflowRefreshBtn" data-forward-click="refreshBtn">Refresh</button>
-            <button class="btn primary" type="button" id="workflowRunScanBtn" data-forward-click="scanBtn">Run scan</button>
-            <button class="btn secondary" type="button" id="workflowTestScanBtn" data-forward-click="scanTestBtn">Test scan (100)</button>
-            <a class="btn secondary" href="#pendingSection">Open approvals</a>
-          </div>
-        </div>
-        <nav class="flow-stepper card operations-surface" aria-label="Scan to trade flow">
-          <a href="#scanSection"><span>1</span>Run scan</a>
-          <a href="#scanDetailPanel"><span>2</span>Evaluate setup</a>
-          <a href="#pendingSection"><span>3</span>Queue trade</a>
-          <a href="#pendingSection"><span>4</span>Approve or reject</a>
-        </nav>
+        <p class="muted workflow-strapline operations-surface">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
         <article id="scanSection" class="card card--primary-task kanban-lane">
           <div class="kanban-lane-head">
@@ -372,6 +236,16 @@
             <div class="scan-title-meta">
               <small id="scanMeta" class="muted">No scan run yet.</small>
               <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
+              <button
+                type="button"
+                id="scanBlockersChip"
+                class="chip scan-blockers-chip hidden"
+                aria-expanded="false"
+                title="Open diagnostics to see why symbols were filtered"
+              >
+                <span aria-hidden="true">&#9888;</span>
+                <span id="scanBlockersChipCount">0</span> blockers
+              </button>
             </div>
           </div>
           <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
@@ -384,12 +258,15 @@
               <span class="disclosure-hint muted">why symbols were filtered out</span>
             </summary>
             <div class="scan-insights">
-              <div class="scan-block">
-                <h3>Top Blockers</h3>
-                <ul id="scanBlockers" class="report-bullets"></ul>
+              <div class="scan-block scan-block--blockers">
+                <h3>Top Blockers <span class="muted scan-block-hint">low priority context</span></h3>
+                <ul id="scanBlockers" class="blocker-chips"></ul>
               </div>
-              <div class="scan-block">
-                <h3>Pass Funnel</h3>
+              <div class="scan-block scan-block--funnel">
+                <h3>
+                  Pass Funnel
+                  <span class="muted scan-block-hint">each bar is the PASS count at that stage &middot; hover for details</span>
+                </h3>
                 <div id="scanFunnel" class="funnel-grid"></div>
               </div>
             </div>
@@ -426,19 +303,20 @@
                 <thead>
                   <tr>
                     <th>Ticker</th>
-                    <th>Days Flagged</th>
+                    <th title="Disposition: kept = made the final cut; filtered_* = dropped at that stage. Filtered rows are visible for review but not stageable.">Status</th>
+                    <th class="scan-col-advanced">Days Flagged</th>
                     <th>Strategy</th>
-                    <th>Price</th>
+                    <th class="scan-col-secondary">Price</th>
                     <th>Score</th>
-                    <th>P(up 10d)</th>
+                    <th class="scan-col-advanced">P(up 10d)</th>
                     <th>Confidence</th>
-                    <th>Conviction</th>
-                    <th>Sector</th>
+                    <th class="scan-col-advanced">Conviction</th>
+                    <th class="scan-col-advanced">Sector</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="scanTableBody">
-                  <tr><td colspan="10" class="muted">Run a scan to load candidates.</td></tr>
+                  <tr><td colspan="11" class="muted">Run a scan to load candidates.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -452,10 +330,10 @@
           </div>
           <div class="scan-detail-header">
             <h3 id="scanDetailTicker">Select a ticker</h3>
-            <p id="scanDetailStrategy" class="muted">Choose a scan row to review chart and scoring context.</p>
+            <p id="scanDetailStrategy" class="muted">Click <strong>Chart</strong> on any candidate row to load price action and scoring detail.</p>
           </div>
           <div id="scanDetailChartContainer" class="scan-detail-chart">
-            <p class="muted">Chart will appear after you select a ticker.</p>
+            <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
           </div>
           <div class="scan-detail-grid">
             <div class="scan-detail-stat">
@@ -486,6 +364,10 @@
               <span class="muted">Sector ETF</span>
               <strong id="scanDetailSector">--</strong>
             </div>
+          </div>
+          <div class="scan-detail-actions">
+            <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Stage selected trade</button>
+            <small class="muted">Pick a candidate and review chart context before staging.</small>
           </div>
         </aside>
 
@@ -562,8 +444,8 @@
       <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced" aria-label="Research workspace">
         <div>
           <p class="workspace-eyebrow">Research</p>
-          <h2>Investigate candidates and refine conviction</h2>
-          <p class="muted">Single-ticker checks, backtests, SEC compare, full reports, and strategy chat live here.</p>
+          <h2>Validate, test, and diligence</h2>
+          <p class="muted">Focus this tab on pending approvals plus deep research before sizing up.</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
@@ -574,26 +456,23 @@
       <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced" aria-label="Research workflow lanes">
         <article class="research-lane">
           <h3>Fast validation</h3>
-          <p class="muted">Quickly test one idea before deeper analysis.</p>
+          <p class="muted">Confirm baseline signal quality on one symbol.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
-            <a class="btn small secondary" href="#decisionSection">Decision card</a>
+            <a class="btn small secondary" href="#quickCheckSection">Start quick check</a>
           </div>
         </article>
         <article class="research-lane">
           <h3>Scenario testing</h3>
-          <p class="muted">Backtest assumptions and capture rationale in chat.</p>
+          <p class="muted">Backtest assumptions and capture reasoning in chat.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#backtestSection">Backtest</a>
-            <a class="btn small secondary" href="#backtestSection">Strategy chat</a>
+            <a class="btn small secondary" href="#backtestSection">Run backtest</a>
           </div>
         </article>
         <article class="research-lane">
           <h3>Deep diligence</h3>
-          <p class="muted">Use report + SEC compare before staging larger risk.</p>
+          <p class="muted">Run full report and filing compare before larger risk.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#reportSectionCard">Full report</a>
-            <a class="btn small secondary" href="#secCompareSection">SEC compare</a>
+            <a class="btn small secondary" href="#reportSectionCard">Open deep diligence</a>
           </div>
         </article>
       </section>
@@ -621,15 +500,10 @@
 
         <section id="toolsSection" class="card tools-hub section-advanced" aria-labelledby="toolsHeading">
           <div class="section-title">
-            <h2 id="toolsHeading">Research tools</h2>
-            <small class="muted">Power-user workflows and diagnostics.</small>
+            <h2 id="toolsHeading">Research toolkit</h2>
+            <small class="muted">Advanced tools when quick check or backtest needs deeper follow-up.</small>
           </div>
           <div class="tools-grid" role="list">
-            <a class="tool-card" role="listitem" href="#decisionSection">
-              <h3 class="tool-card-title">Decision card</h3>
-              <p class="tool-card-desc muted">Structured take/pass for one symbol.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
             <a class="tool-card" role="listitem" href="#backtestSection">
               <h3 class="tool-card-title">Backtest</h3>
               <p class="tool-card-desc muted">Historical replay—no live orders.</p>
@@ -645,12 +519,16 @@
               <p class="tool-card-desc muted">Filings contrast and narrative.</p>
               <span class="tool-card-cta">Go</span>
             </a>
-            <a class="tool-card" role="listitem" href="#recoverySection">
-              <h3 class="tool-card-title">Recovery mapper</h3>
-              <p class="tool-card-desc muted">Turn errors into next steps.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
           </div>
+          <details class="panel-disclosure nav-advanced">
+            <summary class="panel-disclosure-summary">
+              Secondary tools
+              <span class="disclosure-hint muted">decision and recovery helpers</span>
+            </summary>
+            <div class="inline-form compact">
+              <a class="btn small secondary" href="#recoverySection">Recovery mapper</a>
+            </div>
+          </details>
         </section>
       </div>
 
@@ -665,7 +543,7 @@
           <a class="btn small secondary" href="#settingsSection">Trading controls</a>
         </div>
       </section>
-      <section id="settingsWorkflowStrip" class="card settings-workflow-strip" aria-label="Settings workflow lanes">
+      <section id="settingsWorkflowStrip" class="card settings-workflow-strip nav-advanced" aria-label="Settings workflow lanes">
         <article class="settings-lane">
           <h3>Connect</h3>
           <p class="muted">Link Schwab account + market data and verify token health.</p>
@@ -675,14 +553,14 @@
         </article>
         <article class="settings-lane">
           <h3>Risk controls</h3>
-          <p class="muted">Manage presets, live-trading toggles, and pause controls.</p>
+          <p class="muted">Configure presets, live-trading toggles, and pause controls.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#settingsSection">Trading controls</a>
           </div>
         </article>
         <article class="settings-lane">
           <h3>Security + billing</h3>
-          <p class="muted">Use 2FA and subscription management without leaving Settings.</p>
+          <p class="muted">Complete 2FA and billing setup after connectivity is stable.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#settingsSection">Open account panel</a>
           </div>
@@ -839,21 +717,6 @@
       </section>
 
       <section class="layout-2 section-advanced">
-        <article id="decisionSection" class="card">
-          <div class="section-title">
-            <h2>Single Trade Decision Card</h2>
-            <small class="muted">Take/Pass support in under 30 seconds — opens the trade drawer.</small>
-          </div>
-          <div class="inline-form trade-drawer-launcher">
-            <label class="field-label" for="decisionTickerInput">Ticker</label>
-            <input id="decisionTickerInput" placeholder="AAPL" autocomplete="off" />
-            <button id="decisionBtn" class="btn primary" type="button">Open decision card →</button>
-          </div>
-          <p class="muted small">
-            The decision card now lives in the slide-in <strong>Trade Drawer</strong> alongside Recovery,
-            so any "look at this trade" entry point uses the same UI.
-          </p>
-        </article>
         <article id="recoverySection" class="card">
           <div class="section-title">
             <h2>Failure Recovery</h2>
@@ -878,38 +741,125 @@
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
         <div>
           <p class="workspace-eyebrow">Trust</p>
-          <h2>Trust signals, validation, and system health</h2>
-          <p class="muted">Use this view to debug API/session state without interrupting trade execution flow.</p>
+          <h2>System health, validation, and decision gates</h2>
+          <p class="muted">Use this tab to answer: can I trust scan output and execution readiness right now?</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
+          <a class="btn small secondary" href="#decisionDashboardCard">Decision dashboard</a>
           <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
         </div>
       </section>
-      <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface" aria-label="Diagnostics workflow lanes">
+
+      <section
+        id="healthRibbon"
+        class="card health-ribbon diagnostics-surface"
+        aria-label="System health ribbon"
+        data-async-state="loading"
+      >
+        <div class="health-tile" id="healthTileAuth" data-state="unknown" style="--gauge: 0">
+          <div class="health-ring" aria-hidden="true"></div>
+          <div class="health-tile-copy">
+            <span class="health-label">Auth</span>
+            <strong id="ribbonAuth" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+            <small id="ribbonAuthFresh" data-freshness="unknown">awaiting /api/status</small>
+          </div>
+        </div>
+        <div class="health-tile" id="healthTileQuotes" data-state="unknown" style="--gauge: 0">
+          <div class="health-ring" aria-hidden="true"></div>
+          <div class="health-tile-copy">
+            <span class="health-label">Quotes</span>
+            <strong id="ribbonQuotes" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+            <small id="ribbonQuotesFresh" data-freshness="unknown">awaiting /api/health/deep</small>
+          </div>
+        </div>
+        <div class="health-tile" id="healthTileApi" data-state="unknown" style="--gauge: 0">
+          <div class="health-ring" aria-hidden="true"></div>
+          <div class="health-tile-copy">
+            <span class="health-label">API errors</span>
+            <strong id="ribbonApiErrorRate" class="health-badge bg-slate-900" data-unavailable="true">—</strong>
+            <small id="ribbonApiErrorRateFresh" data-freshness="unknown">awaiting metrics</small>
+          </div>
+        </div>
+        <div class="health-tile" id="healthTileValidation" data-state="unknown" style="--gauge: 0">
+          <div class="health-ring" aria-hidden="true"></div>
+          <div class="health-tile-copy">
+            <span class="health-label">Validation</span>
+            <strong id="ribbonValidation" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+            <small id="ribbonValidationFresh" data-freshness="unknown">awaiting validation artifact</small>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="decisionDashboardCard"
+        class="card diagnostics-surface"
+        aria-label="Leadership decision dashboard"
+        data-async-state="loading"
+      >
+        <div class="section-head">
+          <h3 style="margin: 0">Decision Dashboard</h3>
+          <span class="muted">Reliability + strategy quality + promotion readiness</span>
+        </div>
+        <div class="dashboard-today-stack" style="gap: 8px">
+          <div class="health-ribbon" style="grid-template-columns: repeat(2, minmax(140px, 1fr))">
+            <div class="health-tile" data-state="unknown">
+              <div class="health-tile-copy">
+                <span class="health-label">Reliability</span>
+                <strong id="decisionReliabilityState" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+              </div>
+            </div>
+            <div class="health-tile" data-state="unknown">
+              <div class="health-tile-copy">
+                <span class="health-label">Promotion</span>
+                <strong id="decisionPromotionState" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+              </div>
+            </div>
+          </div>
+          <p id="decisionValidationStatus" class="muted" data-unavailable="true" style="margin: 0">Validation: —</p>
+          <p id="decisionSloStatus" class="muted" data-unavailable="true" style="margin: 0">SLO gate: —</p>
+          <p id="decisionLastScan" class="muted" data-unavailable="true" style="margin: 0">Last scan: —</p>
+          <p id="decisionSignalsFound" class="muted" data-unavailable="true" style="margin: 0">Signals: —</p>
+          <p id="decisionStrategyLead" class="muted" data-unavailable="true" style="margin: 0">Dominant strategy: —</p>
+          <p id="decisionDataQuality" class="muted" data-unavailable="true" style="margin: 0">Data quality: —</p>
+          <p id="decisionLatestPromotion" class="muted" data-unavailable="true" style="margin: 0">Latest promotion: —</p>
+          <small id="decisionDashboardFresh" data-freshness="unknown">awaiting /api/decision-dashboard</small>
+        </div>
+      </section>
+
+      <section
+        id="blockersAlertSection"
+        class="card blockers-alert hidden diagnostics-surface"
+        aria-live="polite"
+      >
+        <strong>Top Blockers</strong>
+        <ul id="blockersAlertList" class="report-bullets"></ul>
+      </section>
+
+      <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface nav-advanced" aria-label="Diagnostics workflow lanes">
         <article class="diagnostics-lane">
           <h3>Live health</h3>
-          <p class="muted">Monitor auth, quotes, API error rate, and blockers in real time.</p>
+          <p class="muted">Check auth, quotes, and error-rate signals first.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
           </div>
         </article>
         <article class="diagnostics-lane">
           <h3>System status</h3>
-          <p class="muted">Inspect token/session state and validation age before troubleshooting.</p>
+          <p class="muted">Inspect token/session state and validation freshness.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
           </div>
         </article>
         <article class="diagnostics-lane">
           <h3>Calibration</h3>
-          <p class="muted">Review model drift, self-study output, and halt settings context.</p>
+          <p class="muted">Review model drift and self-study outputs only when needed.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#calibrationSection">Calibration panel</a>
           </div>
         </article>
       </section>
-      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced status-details-wrap">
+      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced diagnostics-surface status-details-wrap">
         <summary class="panel-disclosure-summary">
           Detailed system status
           <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
@@ -917,33 +867,38 @@
         <section id="statusSection" class="stats stats-in-disclosure">
         <article id="statusMarketToken" class="card stat">
           <span class="stat-label">Market Token</span>
-          <strong id="marketToken" class="pill neutral">Checking...</strong>
+          <strong id="marketToken" class="pill neutral" data-unavailable="true">—</strong>
         </article>
         <article id="statusAccountToken" class="card stat">
           <span class="stat-label">Account Token</span>
-          <strong id="accountToken" class="pill neutral">Checking...</strong>
+          <strong id="accountToken" class="pill neutral" data-unavailable="true">—</strong>
+        </article>
+        <article id="statusTokenAge" class="card stat" title="Schwab refresh tokens have a 7-day TTL. This shows time until you must re-OAuth.">
+          <span class="stat-label">Token Refresh</span>
+          <strong id="tokenAgeBadge" class="pill neutral" data-unavailable="true">—</strong>
+          <small id="tokenAgeDetail" class="muted" data-freshness="unknown">no token age recorded yet</small>
         </article>
         <article id="statusLastScan" class="card stat">
           <span class="stat-label">Last Scan</span>
-          <strong id="lastScan" class="pill neutral">Never</strong>
+          <strong id="lastScan" class="pill neutral" data-unavailable="true">—</strong>
         </article>
         <article id="statusPendingTrades" class="card stat">
           <span class="stat-label">Pending Trades</span>
-          <strong id="pendingCount" class="pill neutral">0</strong>
+          <strong id="pendingCount" class="pill neutral" data-unavailable="true">—</strong>
         </article>
         <article id="statusQuoteHealth" class="card stat">
           <span class="stat-label">Quote Health</span>
-          <strong id="quoteHealth" class="pill neutral">Checking...</strong>
+          <strong id="quoteHealth" class="pill neutral" data-unavailable="true">—</strong>
         </article>
         <article id="statusApiErrors" class="card stat">
           <span class="stat-label">API Error Rate</span>
-          <strong id="apiErrorRate" class="pill neutral">--</strong>
+          <strong id="apiErrorRate" class="pill neutral" data-unavailable="true">—</strong>
         </article>
         <article id="statusValidation" class="card stat">
           <span class="stat-label">Validation Health</span>
-          <strong id="validationHealth" class="pill neutral">Unknown</strong>
-          <small id="validationAge" class="muted">No validation artifact yet.</small>
-          <small id="validationProgress" class="muted">Progress: --</small>
+          <strong id="validationHealth" class="pill neutral" data-unavailable="true">—</strong>
+          <small id="validationAge" class="muted" data-freshness="unknown">awaiting validation artifact</small>
+          <small id="validationProgress" class="muted" data-unavailable="true">Progress: —</small>
           <details id="validationRecentWrap" class="validation-steps">
             <summary>Recent validation steps</summary>
             <ul id="validationRecentSteps" class="validation-steps-list">
@@ -1245,6 +1200,20 @@
             <button id="reportBtn" class="btn secondary">Run Report</button>
             <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
           </div>
+          <div class="inline-form compact">
+            <button id="dossierBtn" class="btn secondary" type="button">Generate Dossier</button>
+            <button id="dossierDownloadJsonBtn" class="btn small secondary" type="button">Download JSON</button>
+            <button id="dossierDownloadMdBtn" class="btn small secondary" type="button">Download Markdown</button>
+            <button id="dossierDownloadPdfBtn" class="btn small secondary" type="button">Download PDF</button>
+            <small id="dossierMeta" class="muted">Generate a dossier to enable export preview.</small>
+          </div>
+          <div id="dossierWriteup" class="report-visual hidden">
+            <div class="report-empty">Generate a dossier to view the narrative write-up.</div>
+          </div>
+          <details id="dossierDetails" class="details-raw hidden">
+            <summary>Raw dossier JSON</summary>
+            <pre id="dossierOutput" class="code-block">No dossier run yet.</pre>
+          </details>
           <div id="reportTabs" class="report-tabs"></div>
           <div id="reportVisual" class="report-visual">
             <div class="report-empty">No report run yet. Enter a ticker and run report.</div>

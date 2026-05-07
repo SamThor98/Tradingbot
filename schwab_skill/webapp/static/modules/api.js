@@ -82,6 +82,18 @@ function classifyApiError(status, rawError) {
 }
 
 export const api = {
+  async _authHeaders(extraHeaders = {}) {
+    const headers = { ...extraHeaders };
+    if (!headers["X-Request-ID"]) {
+      headers["X-Request-ID"] = `ui-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    }
+    const token = await getApiAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const apiKey = state.publicConfig?.api_key_required ? (localStorage.getItem("tradingbot.api_key") || "") : "";
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    return headers;
+  },
+
   async request(path, options = {}) {
     const timeoutMs = Number(options.timeoutMs || 90000);
     const fetchOptions = { ...options };
@@ -92,21 +104,13 @@ export const api = {
       "Content-Type": "application/json",
       ...(fetchOptions.headers || {}),
     };
-    if (!headers["X-Request-ID"]) {
-      headers["X-Request-ID"] = `ui-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-    }
-
-    const token = await getApiAccessToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    const apiKey = state.publicConfig?.api_key_required ? (localStorage.getItem("tradingbot.api_key") || "") : "";
-    if (apiKey) headers["X-API-Key"] = apiKey;
+    const authed = await this._authHeaders(headers);
 
     try {
       const res = await fetch(path, {
         ...fetchOptions,
         credentials: fetchOptions.credentials ?? "same-origin",
-        headers,
+        headers: authed,
         signal: controller.signal,
       });
       const text = await res.text();
@@ -167,6 +171,54 @@ export const api = {
     return this.request(path, { method: "PATCH", body: JSON.stringify(body), ...options });
   },
 
+  async download(path, options = {}) {
+    const timeoutMs = Number(options.timeoutMs || 120000);
+    const fetchOptions = { ...options };
+    delete fetchOptions.timeoutMs;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = await this._authHeaders(fetchOptions.headers || {});
+    try {
+      const res = await fetch(path, {
+        ...fetchOptions,
+        method: fetchOptions.method || "GET",
+        credentials: fetchOptions.credentials ?? "same-origin",
+        headers,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let parsed;
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          parsed = null;
+        }
+        const mapped = classifyApiError(res.status, parsed?.error || parsed?.detail || text || `HTTP ${res.status}`);
+        return {
+          ok: false,
+          error: parsed?.error || parsed?.detail || text || `HTTP ${res.status}`,
+          user_message: mapped.userMessage,
+          hint: mapped.hint,
+          retryable: mapped.retryable,
+          status: res.status,
+        };
+      }
+      const disposition = String(res.headers.get("content-disposition") || "");
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] || "download.bin";
+      const blob = await res.blob();
+      return { ok: true, data: { blob, filename, contentType: res.headers.get("content-type") || "" } };
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        return { ok: false, error: "Download timed out. Please retry." };
+      }
+      return { ok: false, error: err?.message || "Download failed." };
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
   /**
    * Typed SEC analyzer fetch used by integrity scoring.
    * @param {string} ticker
@@ -209,5 +261,19 @@ export const api = {
     if (params.skipEdgar) qs.set("skip_edgar", "true");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return this.get(`/api/report/${encodeURIComponent(safeTicker)}${suffix}`, options);
+  },
+
+  getResearchDossier(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}`, options);
+  },
+
+  downloadResearchDossier(ticker, format = "json", options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    const safeFormat = String(format || "json").trim().toLowerCase();
+    return this.download(
+      `/api/research/dossier/${encodeURIComponent(safeTicker)}/export?format=${encodeURIComponent(safeFormat)}`,
+      options,
+    );
   },
 };

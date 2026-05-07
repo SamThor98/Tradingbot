@@ -231,6 +231,10 @@ _scan_job: dict[str, Any] = {
     "diagnostics_summary": None,
     "strategy_summary": None,
     "signals": [],
+    # Full Stage-B shortlist with disposition tags. Always populated when the
+    # scanner is run via core.scan_service.run_scan; the dashboard surfaces
+    # this so operators can see filtered candidates alongside survivors.
+    "shortlist_signals": [],
     "error": None,
 }
 
@@ -470,6 +474,7 @@ def _scan_snapshot() -> dict[str, Any]:
             "diagnostics_summary": _scan_job.get("diagnostics_summary"),
             "strategy_summary": _scan_job.get("strategy_summary"),
             "signals": _scan_job.get("signals") or [],
+            "shortlist_signals": _scan_job.get("shortlist_signals") or [],
             "error": _scan_job.get("error"),
         }
 
@@ -730,10 +735,8 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
             }
         )
     ranked.sort(key=lambda x: int(x.get("value") or 0), reverse=True)
-    watchlist = int(diagnostics.get("watchlist_size", 0) or 0)
-    stage2_fail = int(diagnostics.get("stage2_fail", 0) or 0)
-    vcp_fail = int(diagnostics.get("vcp_fail", 0) or 0)
     final_count = len(signals or [])
+    funnel = _build_funnel_stages(diagnostics, final_count)
     return {
         "scan_blocked": bool(diagnostics.get("scan_blocked")),
         "scan_blocked_reason": blocked_reason,
@@ -741,12 +744,181 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
         "top_blockers": ranked[:5],
         "data_quality": diagnostics.get("data_quality"),
         "data_quality_reasons": list(diagnostics.get("data_quality_reasons") or []),
-        "funnel": {
-            "watchlist": watchlist,
-            "stage2_pass": max(0, watchlist - stage2_fail),
-            "vcp_pass": max(0, watchlist - stage2_fail - vcp_fail),
-            "final": final_count,
+        "funnel": funnel,
+    }
+
+
+def _safe_int(raw: Any, default: int = 0) -> int:
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[str, Any]:
+    """Build a richer pass-funnel that exposes Stage B drop-off.
+
+    Returns a dict with both legacy keys (``watchlist``, ``stage2_pass``,
+    ``vcp_pass``, ``final``) for backward-compat, and a ``stages`` array of
+    structured nodes for the dashboard funnel chart.
+
+    Each stage carries:
+      - ``key``: stable identifier
+      - ``label``: short display label
+      - ``value``: pass count *at* this stage
+      - ``filtered``: count removed since the previous stage (best-effort)
+      - ``mode``: optional gate mode (``hard`` / ``shadow`` / ``soft`` / ``off``)
+      - ``shadow_filtered``: count that *would* have been filtered in hard mode
+      - ``tooltip``: human-readable explanation
+    """
+
+    watchlist = _safe_int(diagnostics.get("watchlist_size"))
+    stage2_fail = _safe_int(diagnostics.get("stage2_fail"))
+    vcp_fail = _safe_int(diagnostics.get("vcp_fail"))
+    no_sector_etf = _safe_int(diagnostics.get("no_sector_etf"))
+    sector_not_winning = _safe_int(diagnostics.get("sector_not_winning"))
+    breakout_not_confirmed = _safe_int(diagnostics.get("breakout_not_confirmed"))
+    exceptions = _safe_int(diagnostics.get("exceptions"))
+
+    stage_a_candidates_raw = _safe_int(diagnostics.get("stage_a_candidates"))
+    stage_a_shortlisted_raw = _safe_int(diagnostics.get("stage_a_shortlisted"))
+    stage_a_pruned = _safe_int(diagnostics.get("stage_a_pruned"))
+
+    primary_provider_filtered = _safe_int(diagnostics.get("primary_provider_filtered"))
+    stage_b_exceptions = _safe_int(diagnostics.get("stage_b_exceptions"))
+    stage_b_timeouts = _safe_int(diagnostics.get("stage_b_timeouts"))
+    self_study_filtered = _safe_int(diagnostics.get("self_study_filtered"))
+    quality_gates_filtered = _safe_int(diagnostics.get("quality_gates_filtered"))
+
+    vcp_would_filter = _safe_int(diagnostics.get("stage_a_vcp_would_filter"))
+    sector_would_filter = _safe_int(diagnostics.get("stage_a_sector_would_filter"))
+    no_sector_would_filter = _safe_int(diagnostics.get("stage_a_no_sector_would_filter"))
+
+    vcp_gate_mode = str(diagnostics.get("scan_vcp_gate_mode") or "").strip().lower() or None
+    sector_gate_mode = str(diagnostics.get("scan_sector_gate_mode") or "").strip().lower() or None
+    primary_provider_mode = str(diagnostics.get("scan_primary_provider_mode") or "").strip().lower() or None
+    quality_gates_mode = str(diagnostics.get("quality_gates_mode") or "").strip().lower() or None
+
+    n_watchlist = watchlist
+    n_stage2 = max(0, n_watchlist - stage2_fail)
+    n_vcp = max(0, n_stage2 - vcp_fail)
+    sector_filtered = no_sector_etf + sector_not_winning
+    n_sector = max(0, n_vcp - sector_filtered)
+    n_breakout = max(0, n_sector - breakout_not_confirmed - exceptions)
+
+    # ``stage_a_candidates`` is the authoritative count of tickers that
+    # passed every Stage A gate. Fall back to the chain-derived estimate
+    # only when the counter is missing.
+    n_stage_a = stage_a_candidates_raw if stage_a_candidates_raw > 0 else n_breakout
+    n_after_provider = max(0, n_stage_a - primary_provider_filtered)
+    n_shortlist = stage_a_shortlisted_raw if stage_a_shortlisted_raw > 0 else max(0, n_after_provider - stage_a_pruned)
+    quality_filtered_total = stage_b_exceptions + stage_b_timeouts + self_study_filtered + quality_gates_filtered
+    n_quality = max(0, n_shortlist - quality_filtered_total)
+    # Anything remaining after quality gates that did not make the final
+    # ranked list was trimmed by the top-N cap.
+    top_n_trimmed = max(0, n_quality - final_count)
+
+    stages: list[dict[str, Any]] = [
+        {
+            "key": "watchlist",
+            "label": "Watchlist",
+            "value": n_watchlist,
+            "filtered": 0,
+            "tooltip": "Total tickers in the scan universe (e.g. SP1500 or your custom list).",
         },
+        {
+            "key": "stage2",
+            "label": "Passed Stage 2",
+            "value": n_stage2,
+            "filtered": stage2_fail,
+            "tooltip": (
+                "Tickers in a Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail."
+            ),
+        },
+        {
+            "key": "vcp",
+            "label": "Passed VCP",
+            "value": n_vcp,
+            "filtered": vcp_fail,
+            "shadow_filtered": vcp_would_filter,
+            "mode": vcp_gate_mode,
+            "tooltip": (
+                "Tickers showing volatility-contraction-pattern volume signature. "
+                "In shadow mode the VCP gate observes but does not filter; the "
+                "would-filter count shows how many it would have removed."
+            ),
+        },
+        {
+            "key": "sector",
+            "label": "Sector OK",
+            "value": n_sector,
+            "filtered": sector_filtered,
+            "shadow_filtered": sector_would_filter + no_sector_would_filter,
+            "mode": sector_gate_mode,
+            "tooltip": (
+                "Tickers in a winning sector ETF. Filtered by no_sector_etf + "
+                "sector_not_winning when the sector gate is hard."
+            ),
+        },
+        {
+            "key": "stage_a",
+            "label": "Stage A Candidates",
+            "value": n_stage_a,
+            "filtered": max(0, n_sector - n_stage_a),
+            "tooltip": (
+                "Final Stage A pass count after breakout confirmation, exceptions, "
+                "and any timed gates. Sourced from stage_a_candidates."
+            ),
+        },
+        {
+            "key": "shortlist",
+            "label": "Shortlist (top-scored)",
+            "value": n_shortlist,
+            "filtered": max(0, n_stage_a - n_shortlist),
+            "mode": primary_provider_mode,
+            "tooltip": (
+                "Top-scored Stage A candidates picked for expensive Stage B "
+                "enrichment (forensic, PEAD, advisory, MiroFish). Lower-scored "
+                "tickers are pruned by the shortlist cap."
+            ),
+        },
+        {
+            "key": "quality",
+            "label": "Quality Gates",
+            "value": n_quality,
+            "filtered": quality_filtered_total,
+            "mode": quality_gates_mode,
+            "tooltip": (
+                "Survivors of Stage B exceptions/timeouts, self-study min "
+                "conviction, and quality gates (forensic, weak breakout volume, "
+                "etc.)."
+            ),
+        },
+        {
+            "key": "final",
+            "label": "Final Signals",
+            "value": final_count,
+            "filtered": top_n_trimmed,
+            "tooltip": (
+                "Tradeable signals returned by the scan after the top-N rank cap. "
+                "If this is much smaller than Quality Gates, the cap (TOP_N) is "
+                "trimming output."
+            ),
+        },
+    ]
+
+    return {
+        # Legacy keys preserved for any external consumer that still reads them.
+        "watchlist": n_watchlist,
+        "stage2_pass": n_stage2,
+        "vcp_pass": n_vcp,
+        "final": final_count,
+        # New, richer payload consumed by the dashboard funnel chart.
+        "stages": stages,
+        "vcp_gate_mode": vcp_gate_mode,
+        "sector_gate_mode": sector_gate_mode,
+        "primary_provider_mode": primary_provider_mode,
+        "quality_gates_mode": quality_gates_mode,
     }
 
 
@@ -815,12 +987,8 @@ def _sec_analysis_settings() -> dict[str, Any]:
 
 # Retention window for the local ScanResult table — keeps `flagged_days` queries cheap
 # and stops the SQLite file from growing unbounded across repeated scans.
-_LOCAL_SCAN_RESULT_RETENTION_DAYS = max(
-    7, int(os.getenv("WEB_LOCAL_SCAN_RESULT_RETENTION_DAYS", "30") or 30)
-)
-_LOCAL_FLAGGED_DAYS_LOOKBACK = max(
-    1, int(os.getenv("WEB_LOCAL_FLAGGED_DAYS_LOOKBACK", "30") or 30)
-)
+_LOCAL_SCAN_RESULT_RETENTION_DAYS = max(7, int(os.getenv("WEB_LOCAL_SCAN_RESULT_RETENTION_DAYS", "30") or 30))
+_LOCAL_FLAGGED_DAYS_LOOKBACK = max(1, int(os.getenv("WEB_LOCAL_FLAGGED_DAYS_LOOKBACK", "30") or 30))
 
 
 def _scan_result_signal_score(signal: dict[str, Any]) -> float | None:
@@ -922,9 +1090,7 @@ def _enrich_signals_with_flagged_days(
             .all()
         )
         flagged_days_map = {
-            str(ticker or "").upper(): int(days or 0)
-            for ticker, days in day_counts
-            if str(ticker or "").strip()
+            str(ticker or "").upper(): int(days or 0) for ticker, days in day_counts if str(ticker or "").strip()
         }
     except Exception as exc:
         LOG.debug("flagged_days enrichment skipped: %s", exc)
@@ -970,6 +1136,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
         scan_out = run_scan(skill_dir=SKILL_DIR, **skw)
         signals = scan_out.signals
         diagnostics = scan_out.diagnostics
+        shortlist_signals = scan_out.shortlist_signals
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         finished_at = datetime.now(timezone.utc).isoformat()
@@ -979,10 +1146,12 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
             _enrich_signals_with_flagged_days(db, signals)
             _prune_local_scan_results(db)
             signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
+            shortlist_persist = shortlist_signals[:_LAST_SCAN_SIGNALS_CAP]
             last_scan = {
                 "at": finished_at,
                 "signals_found": len(signals),
                 "signals": signals_persist,
+                "shortlist_signals": shortlist_persist,
                 "diagnostics": diagnostics,
                 "diagnostics_summary": diagnostics_summary,
                 "strategy_summary": strategy_summary,
@@ -1001,6 +1170,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                         "diagnostics_summary": diagnostics_summary,
                         "strategy_summary": strategy_summary,
                         "signals": signals,
+                        "shortlist_signals": shortlist_signals,
                         "error": None,
                     }
                 )
@@ -1470,6 +1640,19 @@ def status(
         account_token_ok = bool(auth.get_account_token())
         market_state = "Connected" if market_token_ok else "Disconnected"
         account_state = "Connected" if account_token_ok else "Disconnected"
+        # Refresh-token age health (per session + roll-up). Pure read from
+        # the encrypted token file — never triggers a network refresh.
+        # Wrapped in try/except so a malformed token file or new field
+        # rollout never breaks /api/status (which the dashboard polls).
+        try:
+            schwab_token_health = auth.get_token_health()
+        except Exception as exc:
+            schwab_token_health = {
+                "status": "unknown",
+                "market": {"status": "unknown"},
+                "account": {"status": "unknown"},
+                "error": str(exc)[:200],
+            }
         last_scan = _load_state(
             db,
             key="last_scan",
@@ -1491,6 +1674,7 @@ def status(
                 "checked_at": checked_at,
                 "last_scan": last_scan,
                 "validation_status": _latest_validation_status(),
+                "schwab_token_health": schwab_token_health,
             }
         )
     except Exception as e:
@@ -1551,6 +1735,7 @@ def scan(
                             "diagnostics_summary": None,
                             "strategy_summary": None,
                             "signals": [],
+                            "shortlist_signals": [],
                             "error": None,
                         }
                     )
@@ -1569,6 +1754,7 @@ def scan(
         scan_out = run_scan(skill_dir=SKILL_DIR, **skw)
         signals = scan_out.signals
         diagnostics = scan_out.diagnostics
+        shortlist_signals = scan_out.shortlist_signals
         diagnostics_summary = _diagnostics_summary(diagnostics, signals)
         strategy_summary = _strategy_summary(signals)
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -1577,10 +1763,12 @@ def scan(
         _enrich_signals_with_flagged_days(db, signals)
         _prune_local_scan_results(db)
         signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
+        shortlist_persist = shortlist_signals[:_LAST_SCAN_SIGNALS_CAP]
         last_scan = {
             "at": now_iso,
             "signals_found": len(signals),
             "signals": signals_persist,
+            "shortlist_signals": shortlist_persist,
             "diagnostics": diagnostics,
             "diagnostics_summary": diagnostics_summary,
             "strategy_summary": strategy_summary,
@@ -1590,6 +1778,7 @@ def scan(
             {
                 "signals_found": len(signals),
                 "signals": signals,
+                "shortlist_signals": shortlist_signals,
                 "diagnostics": diagnostics,
                 "diagnostics_summary": diagnostics_summary,
                 "strategy_summary": strategy_summary,

@@ -369,12 +369,18 @@ export function renderEvolvePanel(rootEl, data) {
 
 export async function refreshPerformance({ getDisplayMode = () => "balanced" } = {}) {
   const panel = document.getElementById("performancePanel");
+  const card = document.getElementById("performanceSection");
   const evolveBtn = document.getElementById("evolveBtn");
   const challengerBtn = document.getElementById("challengerBtn");
   if (!panel) return;
-  panel.innerHTML = `<div class="report-empty">Loading performance snapshot...</div>`;
+  if (card) card.setAttribute("data-async-state", "loading");
+  panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
+    <span class="async-spinner" aria-hidden="true"></span>
+    <span>Loading performance snapshot…</span>
+  </div>`;
   const out = await api.get("/api/performance");
   if (!out.ok) {
+    if (card) card.setAttribute("data-async-state", "error");
     renderPerformancePanel(panel, null, {
       error: `Performance load failed: ${safeText(out.user_message || out.error)}`,
       getDisplayMode,
@@ -390,6 +396,7 @@ export async function refreshPerformance({ getDisplayMode = () => "balanced" } =
     return;
   }
   state.performance = out.data;
+  if (card) card.setAttribute("data-async-state", "success");
   renderPerformancePanel(panel, out.data, { getDisplayMode });
   const outcomeCount = Number(out.data?.live?.recorded_outcomes || 0);
   if (evolveBtn) {

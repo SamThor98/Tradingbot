@@ -95,7 +95,7 @@ def _apply_universe_focus(skill_dir: Path, watchlist: list[str]) -> list[str]:
         return watchlist
 
 
-def _load_watchlist(_skill_dir: Path) -> list[str]:
+def _load_watchlist(skill_dir: Path) -> list[str]:
     """
     Load the canonical scan universe.
 
@@ -103,17 +103,31 @@ def _load_watchlist(_skill_dir: Path) -> list[str]:
     watchlist_loader and refreshed daily. Static/custom env watchlist paths are
     intentionally ignored for normal scan runs.
 
-    To scan a non-SP1500 universe, callers must provide an explicit
+    When SIGNAL_UNIVERSE_MODE=focused (set in .env or via API
+    strategy_overrides), the SP1500 list is narrowed to
+    SIGNAL_UNIVERSE_TARGET_SIZE tickers via prefilter_watchlist for a fast
+    backtest / smoke-test. Default mode "broad" returns the full universe
+    untouched and is what the dashboard's Run Scan button uses.
+
+    To scan an entirely different universe, callers must provide an explicit
     watchlist_override (for example, API universe_mode="tickers").
     """
     from watchlist_loader import load_full_watchlist
 
     wl = load_full_watchlist()
-    LOG.info(
-        "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
-        len(wl),
-    )
-    return wl
+    focused = _apply_universe_focus(skill_dir, wl)
+    if len(focused) == len(wl):
+        LOG.info(
+            "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
+            len(wl),
+        )
+    else:
+        LOG.info(
+            "Watchlist mode=sp1500_focused (SIGNAL_UNIVERSE_MODE=focused) tickers=%d (from %d)",
+            len(focused),
+            len(wl),
+        )
+    return focused
 
 
 def _quality_metrics_path(skill_dir: Path) -> Path:
@@ -468,12 +482,18 @@ def _compute_stage_a_shortlist_limit(
     top_n: int,
     multiplier: float,
     cap: int,
+    nocap_limit: int = 0,
 ) -> int:
     if total_candidates <= 0:
         return 0
-    # When top_n <= 0 we are in "return all ranked signals" mode; do not cap
-    # Stage A shortlist because it would silently drop valid candidates.
+    # When top_n <= 0 we are in "return all ranked signals" mode; bypass the
+    # explicit-top-N cap because it would silently drop valid candidates.
+    # `nocap_limit` (>0) acts as an operator-tunable ceiling so a runaway scan
+    # cannot dispatch unbounded Stage B work; 0/negative disables the ceiling
+    # entirely.
     if top_n <= 0:
+        if nocap_limit > 0:
+            return min(int(total_candidates), int(nocap_limit))
         return int(total_candidates)
     base = top_n if top_n > 0 else total_candidates
     widened = max(base, int(round(float(base) * max(1.0, float(multiplier)))))
@@ -1092,6 +1112,8 @@ def scan_for_signals_detailed(
     skill_dir: Path | None = None,
     env_overrides: dict[str, str] | None = None,
     watchlist_override: list[str] | None = None,
+    *,
+    capture_shortlist: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Like scan_for_signals, but also returns lightweight diagnostics counters.
@@ -1101,6 +1123,15 @@ def scan_for_signals_detailed(
 
     env_overrides: applied for this scan only (same keys as backtest StrategyOverrides).
     watchlist_override: if set, scan these tickers instead of _load_watchlist.
+    capture_shortlist: optional opt-in mutable list. When provided, the
+        post-Stage-B-enriched shortlist is appended to it, with each signal
+        tagged with `_filter_status` describing how it was disposed:
+        ``kept`` (made the final cut), ``filtered_self_study``,
+        ``filtered_quality_gates`` (with ``_filter_reasons``),
+        ``filtered_event_risk``, ``filtered_meta_policy``, ``trimmed_top_n``.
+        The dashboard uses this to render the full shortlist with disposition
+        badges instead of just the post-filter survivors. Existing callers
+        that only use the 2-tuple return are unaffected.
     """
     if env_overrides:
         from env_overrides import temporary_env
@@ -1110,6 +1141,7 @@ def scan_for_signals_detailed(
                 skill_dir=skill_dir,
                 env_overrides=None,
                 watchlist_override=watchlist_override,
+                capture_shortlist=capture_shortlist,
             )
 
     from notifier import send_alert
@@ -1366,6 +1398,7 @@ def scan_for_signals_detailed(
         get_scan_sector_penalty_points,
         get_scan_sector_unresolved_penalty_points,
         get_scan_stage_a_max_workers,
+        get_scan_stage_a_nocap_limit,
         get_scan_stage_a_shortlist_cap,
         get_scan_stage_a_shortlist_multiplier,
         get_scan_stage_b_max_workers,
@@ -1467,7 +1500,15 @@ def scan_for_signals_detailed(
         diagnostics["watchlist_source"] = "explicit_tickers_override"
     else:
         watchlist = _load_watchlist(skill_dir)
-        diagnostics["watchlist_source"] = "sp1500_default"
+        try:
+            from config import get_signal_universe_mode
+
+            universe_mode = get_signal_universe_mode(skill_dir)
+        except Exception:
+            universe_mode = "broad"
+        diagnostics["watchlist_source"] = (
+            "sp1500_focused" if universe_mode == "focused" else "sp1500_default"
+        )
     diagnostics["watchlist_size"] = len(watchlist)
     top_n = get_signal_top_n(skill_dir)
     stage_a_workers = get_scan_stage_a_max_workers(skill_dir)
@@ -1478,6 +1519,7 @@ def scan_for_signals_detailed(
     }
     shortlist_multiplier = get_scan_stage_a_shortlist_multiplier(skill_dir)
     shortlist_cap = get_scan_stage_a_shortlist_cap(skill_dir)
+    shortlist_nocap_limit = get_scan_stage_a_nocap_limit(skill_dir)
     task_timeout_sec = max(5.0, float(get_scan_stage_task_timeout_sec(skill_dir)))
     vcp_gate_mode = get_scan_vcp_gate_mode(skill_dir)
     sector_gate_mode = get_scan_sector_gate_mode(skill_dir)
@@ -1633,6 +1675,7 @@ def scan_for_signals_detailed(
         top_n=top_n,
         multiplier=shortlist_multiplier,
         cap=shortlist_cap,
+        nocap_limit=shortlist_nocap_limit,
     )
     shortlist = stage_a_candidates[:shortlist_limit]
     diagnostics["stage_a_shortlisted"] = len(shortlist)
@@ -1750,20 +1793,68 @@ def scan_for_signals_detailed(
     except Exception:
         pass
 
+    # ────────────────────────────────────────────────────────────────────────
+    # Shortlist snapshot for the dashboard.
+    #
+    # When the caller passes `capture_shortlist=[...]`, we build a parallel
+    # list of post-Stage-B-enriched signals and tag each with `_filter_status`
+    # describing what happened to it through the remaining filter chain
+    # (self-study, quality gates, event risk, meta-policy, top-N). The
+    # dashboard renders this list so operators can see *all* candidates that
+    # made it to Stage B — including those eliminated by quality gates — with
+    # disposition badges, instead of just the post-filter survivors.
+    #
+    # Trading behavior is unchanged: only the survivors in `signals` are
+    # ranked, top-N capped, persisted as ScanResult, and surfaced for trade
+    # staging. The shortlist is purely a UI/analytics view.
+    # ────────────────────────────────────────────────────────────────────────
+    _shortlist_snapshot: list[dict[str, Any]] = []
+    _shortlist_index_by_ticker: dict[str, int] = {}
+    if capture_shortlist is not None:
+        _shortlist_snapshot = [dict(s) for s in signals]
+        for i, snap in enumerate(_shortlist_snapshot):
+            snap["_shortlist_index"] = i
+            snap["_filter_status"] = "kept"
+        _shortlist_index_by_ticker = {
+            str(s.get("ticker", "")): i for i, s in enumerate(_shortlist_snapshot) if s.get("ticker")
+        }
+
+    def _tag_shortlist_drop(
+        prev: list[dict[str, Any]],
+        current: list[dict[str, Any]],
+        status: str,
+        reasons_by_ticker: dict[str, list[str]] | None = None,
+    ) -> None:
+        if capture_shortlist is None or not _shortlist_snapshot:
+            return
+        prev_tickers = {str(s.get("ticker", "")) for s in prev if s.get("ticker")}
+        current_tickers = {str(s.get("ticker", "")) for s in current if s.get("ticker")}
+        for ticker in prev_tickers - current_tickers:
+            idx = _shortlist_index_by_ticker.get(ticker)
+            if idx is None:
+                continue
+            snap = _shortlist_snapshot[idx]
+            if snap.get("_filter_status") != "kept":
+                continue
+            snap["_filter_status"] = status
+            if reasons_by_ticker and ticker in reasons_by_ticker:
+                snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
+
     # Self-study: optionally filter by learned min conviction
     try:
         from self_study import get_learned_min_conviction
         min_conv = get_learned_min_conviction(skill_dir)
         if min_conv is not None:
-            before = len(signals)
+            before = list(signals)
             signals = [s for s in signals if (s.get("mirofish_conviction") or 0) >= min_conv]
-            if before > len(signals):
-                diagnostics["self_study_filtered"] = before - len(signals)
+            if len(before) > len(signals):
+                diagnostics["self_study_filtered"] = len(before) - len(signals)
                 LOG.info(
                     "Self-study: filtered %d signals (min_conviction=%d)",
                     diagnostics["self_study_filtered"],
                     min_conv,
                 )
+                _tag_shortlist_drop(before, signals, "filtered_self_study")
     except Exception as e:
         LOG.debug("Self-study filter skipped: %s", e)
 
@@ -1798,6 +1889,15 @@ def scan_for_signals_detailed(
                 diagnostics["quality_gates_filtered"] += 1
                 if has_forensic_reason:
                     diagnostics["forensic_filtered"] += 1
+                # Tag the matching shortlist entry with disposition + per-signal reasons.
+                if capture_shortlist is not None:
+                    ticker = str(s.get("ticker", ""))
+                    idx = _shortlist_index_by_ticker.get(ticker)
+                    if idx is not None:
+                        snap = _shortlist_snapshot[idx]
+                        if snap.get("_filter_status") == "kept":
+                            snap["_filter_status"] = "filtered_quality_gates"
+                            snap["_filter_reasons"] = list(reasons)
                 try:
                     from agent_intelligence import log_counterfactual_event
 
@@ -1824,7 +1924,9 @@ def scan_for_signals_detailed(
 
     # Event-risk policy: can tag, suppress, or mark downsize intent.
     try:
+        before_event_risk = list(signals)
         signals = _apply_event_risk_policy_to_signals(signals, diagnostics, skill_dir)
+        _tag_shortlist_drop(before_event_risk, signals, "filtered_event_risk")
     except Exception as e:
         LOG.debug("Event-risk policy evaluation skipped: %s", e)
 
@@ -1832,12 +1934,15 @@ def scan_for_signals_detailed(
     try:
         from strategy_plugins import apply_strategy_ensemble
 
+        before_ensemble = list(signals)
         signals = apply_strategy_ensemble(
             signals=signals,
             diagnostics=diagnostics,
             regime_v2_snapshot=regime_v2_snapshot,
             skill_dir=skill_dir,
         )
+        # Ensemble is documented as enrich-only, but defensively tag any drops.
+        _tag_shortlist_drop(before_ensemble, signals, "filtered_ensemble")
     except Exception as e:
         LOG.debug("Strategy ensemble evaluation skipped: %s", e)
 
@@ -1845,6 +1950,7 @@ def scan_for_signals_detailed(
     try:
         from agent_intelligence import apply_meta_policy_to_signal, log_counterfactual_event
 
+        before_meta = list(signals)
         next_signals: list[dict[str, Any]] = []
         for s in signals:
             enriched, keep = apply_meta_policy_to_signal(signal=s, diagnostics=diagnostics, skill_dir=skill_dir)
@@ -1854,6 +1960,7 @@ def scan_for_signals_detailed(
                 continue
             next_signals.append(enriched)
         signals = next_signals
+        _tag_shortlist_drop(before_meta, signals, "filtered_meta_policy")
     except Exception as e:
         LOG.debug("Meta-policy evaluation skipped: %s", e)
 
@@ -1862,7 +1969,9 @@ def scan_for_signals_detailed(
     signals.sort(key=lambda s: s.get("ensemble_score", s.get("signal_score", 0)), reverse=True)
     if top_n > 0 and len(signals) > top_n:
         diagnostics["top_n_applied"] = len(signals) - top_n
+        before_top_n = list(signals)
         signals = signals[:top_n]
+        _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
 
     if regime_v2_snapshot is not None:
         for s in signals:
@@ -1888,6 +1997,34 @@ def scan_for_signals_detailed(
         _record_quality_snapshot(skill_dir, diagnostics, signals)
     except Exception as e:
         LOG.debug("Quality metrics snapshot skipped: %s", e)
+
+    # Finalise the shortlist snapshot for the caller. Survivors keep their
+    # default `_filter_status="kept"`; everything else has already been
+    # tagged at the filter step that dropped it.
+    if capture_shortlist is not None and _shortlist_snapshot:
+        # Refresh the surviving shortlist entries with the post-enrichment
+        # versions of `signals` so any score updates from the strategy
+        # ensemble / meta-policy steps reach the dashboard payload.
+        survivors_by_ticker: dict[str, dict[str, Any]] = {}
+        for s in signals:
+            t = str(s.get("ticker", ""))
+            if t:
+                survivors_by_ticker[t] = s
+        for snap in _shortlist_snapshot:
+            t = str(snap.get("ticker", ""))
+            survivor = survivors_by_ticker.get(t)
+            if survivor is not None and snap.get("_filter_status") == "kept":
+                preserved_status = snap.get("_filter_status")
+                preserved_index = snap.get("_shortlist_index")
+                preserved_reasons = snap.get("_filter_reasons")
+                snap.clear()
+                snap.update(survivor)
+                snap["_filter_status"] = preserved_status
+                if preserved_index is not None:
+                    snap["_shortlist_index"] = preserved_index
+                if preserved_reasons is not None:
+                    snap["_filter_reasons"] = preserved_reasons
+        capture_shortlist[:] = _shortlist_snapshot
 
     return signals, diagnostics
 
