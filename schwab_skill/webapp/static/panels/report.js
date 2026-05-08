@@ -8,7 +8,7 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatMoney, pct, verdictFromScore } from "../modules/format.js";
+import { safeText, safeNum, formatMoney, pct, verdictFromScore, escapeHtml } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { normalizeReportPayload, runReportNormalizationSmokeChecks } from "../modules/reportNormalization.js";
 
@@ -23,6 +23,124 @@ function unavailable(value) {
     return `<span class="muted">Unavailable</span>`;
   }
   return safeText(value);
+}
+
+function fmtNumberOrDash(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `<span class='muted'>n/a</span>`;
+  return n.toFixed(digits);
+}
+
+function fmtPctValue(value, digits = 1) {
+  if (value === null || value === undefined || value === "") {
+    return `<span class='muted'>n/a</span>`;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `<span class='muted'>n/a</span>`;
+  const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
+  return `${pctVal.toFixed(digits)}%`;
+}
+
+function fmtMoneyOrDash(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `<span class='muted'>n/a</span>`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+function fmtMoneyScaled(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `<span class='muted'>n/a</span>`;
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
+function makeInstitutionalSection({ id, eyebrow, title, subtitle, body }) {
+  const eyebrowText = eyebrow ? `<div class="ir-section-eyebrow">${escapeHtml(eyebrow)}</div>` : "";
+  const subtitleText = subtitle
+    ? `<div class="ir-section-subtitle">${escapeHtml(subtitle)}</div>`
+    : "";
+  const idAttr = id ? ` id="ir-section-${id}"` : "";
+  return `
+    <section class="ir-section"${idAttr}>
+      <header class="ir-section-header">
+        ${eyebrowText}
+        <h3 class="ir-section-title">${escapeHtml(title)}</h3>
+        ${subtitleText}
+      </header>
+      <div class="ir-section-body">${body}</div>
+    </section>
+  `;
+}
+
+function buildKeyValueTable(rows, opts = {}) {
+  const className = opts.compact ? "ir-kv-table compact" : "ir-kv-table";
+  const rowsHtml = rows
+    .map(
+      (row) => `
+        <tr>
+          <th scope="row">${escapeHtml(row.label)}</th>
+          <td class="mono-nums">${row.value}</td>
+          ${row.note ? `<td class="ir-kv-note">${escapeHtml(row.note)}</td>` : ""}
+        </tr>
+      `,
+    )
+    .join("");
+  const colCount = rows.some((r) => r.note) ? 3 : 2;
+  return `
+    <div class="table-wrap report-table-wrap">
+      <table class="${className}" data-cols="${colCount}">
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildDataTable({ headers, rows, emptyMessage = "No data available." }) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return `<div class="report-callout">${escapeHtml(emptyMessage)}</div>`;
+  }
+  const head = `<tr>${headers.map((h) => `<th>${escapeHtml(h.label)}</th>`).join("")}</tr>`;
+  const body = rows
+    .map((row) => {
+      const cells = headers
+        .map((h, idx) => {
+          const cell = row[idx];
+          const cellHtml = cell == null
+            ? `<span class='muted'>n/a</span>`
+            : (typeof cell === "object" && cell.html ? cell.html : escapeHtml(String(cell)));
+          const align = h.align === "right" ? " class=\"mono-nums right\"" : (h.align === "center" ? " class=\"center\"" : "");
+          return `<td${align}>${cellHtml}</td>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+  return `
+    <div class="table-wrap report-table-wrap">
+      <table class="ir-data-table report-scenario-table">
+        <thead>${head}</thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function paragraph(text) {
+  return `<p class="ir-paragraph">${escapeHtml(String(text || ""))}</p>`;
+}
+
+function bulletList(items, opts = {}) {
+  const list = (items || []).filter((x) => x !== null && x !== undefined && String(x).trim() !== "");
+  if (!list.length) {
+    return `<ul class="report-bullets"><li class="muted">${escapeHtml(opts.empty || "Unavailable")}</li></ul>`;
+  }
+  const liClass = opts.numbered ? "" : "";
+  const tag = opts.numbered ? "ol" : "ul";
+  return `<${tag} class="report-bullets">${list.map((item) => `<li${liClass ? ` class=\"${liClass}\"` : ""}>${escapeHtml(String(item))}</li>`).join("")}</${tag}>`;
 }
 
 function confidenceText(ic) {
@@ -161,73 +279,508 @@ function renderScenarioRow(row) {
   `;
 }
 
-function fmtPctSmart(value, digits = 1) {
-  if (value === null || value === undefined || value === "") return "<span class='muted'>n/a</span>";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "<span class='muted'>n/a</span>";
-  const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
-  return `${safeNum(pctVal).toFixed(digits)}%`;
-}
-
-function renderInstitutionalWriteup(rawData, normalized) {
+function buildCoverHeader(rawData, normalized) {
   const snap = rawData?.finnhub_snapshot || {};
   const profile = snap?.profile || {};
   const quote = snap?.quote || {};
   const metrics = snap?.metrics || {};
-  const earnings = Array.isArray(snap?.earnings) ? snap.earnings.slice(0, 4) : [];
-  const sec = rawData?.edgar?.filing_analysis || {};
-  const valuation = rawData?.dcf || {};
-  const technical = rawData?.technical || {};
-  const recommendation = normalized?.ic_snapshot?.recommendation || "Pass";
-  const confidence = normalized?.ic_snapshot?.confidence_score;
-  const confidenceTextValue = Number.isFinite(Number(confidence)) ? `${confidence}/100` : "n/a";
-  const summaryHeadline = sec?.summary_headline || sec?.high_level_takeaway || "SEC filing summary unavailable.";
-  const businessName = profile?.name || normalized?.ticker || "This issuer";
+  const ic = normalized?.ic_snapshot || {};
+  const ticker = normalized?.ticker || "—";
+  const companyName = profile?.name || ticker;
+  const industry = profile?.finnhub_industry || profile?.industry || "Equity Research";
+  const exchange = profile?.exchange || "—";
+  const country = profile?.country || "Global";
+  const generatedAt = rawData?.generated_at || "";
+  const recommendation = ic.recommendation || "Pass";
+  const confidence = ic.confidence_label
+    ? `${ic.confidence_label}${Number.isFinite(Number(ic.confidence_score)) ? ` (${ic.confidence_score}/100)` : ""}`
+    : "Unavailable";
+  const horizon = ic.time_horizon || "3-12 months";
+  const expectedReturn = ic.expected_return_base_case != null
+    ? `${safeNum(ic.expected_return_base_case).toFixed(1)}%`
+    : "n/a";
+  const recClass = String(recommendation).toLowerCase().includes("long") || String(recommendation).toLowerCase().includes("buy")
+    ? "ir-rec-long"
+    : (String(recommendation).toLowerCase().includes("short") || String(recommendation).toLowerCase().includes("sell") ? "ir-rec-short" : "ir-rec-pass");
 
   return `
-    <div class="report-section">
-      <h4>Formal Write-Up</h4>
-      <div class="subtle">Institutional-style synthesis across technicals, fundamentals, SEC, and risk context.</div>
-      <div class="report-text">
-        ${safeText(businessName)} is evaluated with a blended framework: market structure, valuation underwriting, filing intelligence, and scenario-based risk control.
-        Current framing is <strong>${safeText(recommendation)}</strong> with confidence <strong>${safeText(confidenceTextValue)}</strong>.
+    <header class="ir-cover">
+      <div class="ir-cover-eyebrow">Institutional Research Report · ${escapeHtml(industry)}</div>
+      <h2 class="ir-cover-title">${escapeHtml(companyName)} <span class="ir-cover-ticker">(${escapeHtml(ticker)})</span></h2>
+      <div class="ir-cover-meta">
+        <span>Exchange: <strong>${escapeHtml(exchange)}</strong></span>
+        <span>Region: <strong>${escapeHtml(country)}</strong></span>
+        <span>Prepared: <strong>${escapeHtml(generatedAt || "—")}</strong></span>
       </div>
-      <div class="report-text">
-        Market snapshot: price ${formatMoney(quote?.current)}, day move ${fmtPctSmart(quote?.change_percent)},
-        52-week range ${formatMoney(metrics?.["52week_low"])} to ${formatMoney(metrics?.["52week_high"])}.
-        Technical score is ${safeText(technical?.signal_score)} with Stage 2 = ${technical?.stage_2 ? "YES" : "NO"} and VCP = ${technical?.vcp ? "YES" : "NO"}.
+      <div class="ir-cover-strip">
+        <div class="ir-cover-cell"><span class="ir-cover-cell-label">Recommendation</span><span class="ir-cover-cell-value ${recClass}">${escapeHtml(recommendation)}</span></div>
+        <div class="ir-cover-cell"><span class="ir-cover-cell-label">Confidence</span><span class="ir-cover-cell-value">${escapeHtml(confidence)}</span></div>
+        <div class="ir-cover-cell"><span class="ir-cover-cell-label">Expected Return (Base)</span><span class="ir-cover-cell-value mono-nums">${escapeHtml(expectedReturn)}</span></div>
+        <div class="ir-cover-cell"><span class="ir-cover-cell-label">Horizon</span><span class="ir-cover-cell-value">${escapeHtml(horizon)}</span></div>
       </div>
-      <div class="report-text">
-        Fundamental lens: DCF margin of safety ${fmtPctSmart(valuation?.margin_of_safety)}, P/E ${safeText(metrics?.pe_ttm ?? "n/a")},
-        operating margin ${fmtPctSmart(metrics?.operating_margin_ttm)}, net margin ${fmtPctSmart(metrics?.net_margin_ttm)},
-        and revenue growth ${fmtPctSmart(metrics?.revenue_growth_ttm_yoy)}.
+      <div class="ir-cover-quote">
+        <span>Current Price: <strong class="mono-nums">${fmtMoneyOrDash(quote?.current)}</strong></span>
+        <span>52-Week Range: <strong class="mono-nums">${fmtMoneyOrDash(metrics?.["52week_low"])} – ${fmtMoneyOrDash(metrics?.["52week_high"])}</strong></span>
       </div>
-      <div class="report-text">
-        SEC narrative signal: ${safeText(summaryHeadline)}
+    </header>
+  `;
+}
+
+function buildExecutiveSummarySection(rawData, normalized) {
+  const ic = normalized?.ic_snapshot || {};
+  const thesis = normalized?.thesis || {};
+  const technical = rawData?.technical || {};
+  const dcf = rawData?.dcf || {};
+  const snap = rawData?.finnhub_snapshot || {};
+  const trends = snap?.recommendation_trends || {};
+  const profile = snap?.profile || {};
+  const businessName = profile?.name || normalized?.ticker || "This issuer";
+
+  const signalScore = technical?.signal_score;
+  const mos = dcf?.margin_of_safety;
+  const buyVotes = (Number(trends?.buy) || 0) + (Number(trends?.strong_buy) || 0);
+  const sellVotes = (Number(trends?.sell) || 0) + (Number(trends?.strong_sell) || 0);
+
+  const headlineParagraph = thesis.claim
+    ? thesis.claim
+    : `${businessName} is currently framed as ${ic.recommendation || "Pass"} with ${ic.confidence_label || "unknown"} confidence over a ${ic.time_horizon || "3-12 month"} horizon.`;
+
+  const supportingParagraph = (
+    `${normalized.ticker || "The issuer"} screens with technical signal ${Number.isFinite(Number(signalScore)) ? `${safeNum(signalScore).toFixed(0)}/100` : "n/a"} ` +
+    `and DCF margin of safety ${Number.isFinite(Number(mos)) ? `${safeNum(mos).toFixed(1)}%` : "n/a"}. ` +
+    `Street positioning shows ${buyVotes} bullish vs ${sellVotes} bearish recommendation votes from Finnhub. ` +
+    `Portfolio risk-budget impact reads ${normalized?.portfolio_fit?.risk_budget_impact || "Unavailable"}.`
+  );
+
+  const claimEvidence = `
+    <div class="report-claim-grid">
+      <div><span class="subtle">Claim</span><div>${unavailable(thesis.claim)}</div></div>
+      <div><span class="subtle">Evidence</span><div>${unavailable(thesis.evidence)}</div></div>
+      <div><span class="subtle">Confidence</span><div>${unavailable(thesis.confidence)}</div></div>
+      <div><span class="subtle">Falsifier</span><div>${unavailable(thesis.falsifier)}</div></div>
+    </div>
+  `;
+
+  const thesisAndRisks = `
+    <div class="report-split-grid">
+      <div>
+        <div class="ir-subhead">Top Thesis Points</div>
+        ${bulletList(ic.top_thesis_points, { empty: "Unavailable" })}
       </div>
-      <div class="table-wrap report-table-wrap">
-        <table class="report-scenario-table">
-          <thead>
-            <tr><th>Recent Earnings</th><th>Actual</th><th>Estimate</th><th>Surprise %</th></tr>
-          </thead>
-          <tbody>
-            ${
-              earnings.length
-                ? earnings.map((row) => `
-                  <tr>
-                    <td>${safeText(row?.period || "n/a")}</td>
-                    <td class="mono-nums">${safeText(row?.actual ?? "n/a")}</td>
-                    <td class="mono-nums">${safeText(row?.estimate ?? "n/a")}</td>
-                    <td class="mono-nums">${fmtPctSmart(row?.surprise_percent, 1)}</td>
-                  </tr>
-                `).join("")
-                : "<tr><td colspan='4' class='muted'>No earnings series returned from Finnhub.</td></tr>"
-            }
-          </tbody>
-        </table>
+      <div>
+        <div class="ir-subhead">Top Risks</div>
+        ${bulletList(ic.top_risks, { empty: "Unavailable" })}
       </div>
     </div>
   `;
+
+  const body = `
+    ${paragraph(headlineParagraph)}
+    ${paragraph(supportingParagraph)}
+    ${claimEvidence}
+    ${thesisAndRisks}
+  `;
+
+  return makeInstitutionalSection({
+    id: "executive_summary",
+    eyebrow: "Investment Summary",
+    title: "Executive Investment Summary",
+    subtitle: "Decision-first synthesis for IC review and position expression.",
+    body,
+  });
+}
+
+function buildBusinessModelSection(rawData, normalized) {
+  const snap = rawData?.finnhub_snapshot || {};
+  const profile = snap?.profile || {};
+  const ticker = normalized?.ticker || "—";
+  const technical = rawData?.technical || {};
+
+  const rows = [
+    { label: "Issuer", value: escapeHtml(profile?.name || ticker) },
+    { label: "Industry", value: escapeHtml(profile?.finnhub_industry || profile?.industry || "n/a") },
+    { label: "Exchange", value: escapeHtml(profile?.exchange || "n/a") },
+    { label: "Country / Currency", value: escapeHtml(`${profile?.country || "n/a"} / ${profile?.currency || "n/a"}`) },
+    { label: "Market Cap", value: fmtMoneyScaled(profile?.market_cap) },
+    { label: "IPO Date", value: escapeHtml(profile?.ipo || "n/a") },
+    { label: "Sector ETF Proxy", value: escapeHtml(technical?.sector_etf || "Unknown") },
+  ];
+
+  const narrative = (
+    `${profile?.name || ticker} operates in ${profile?.finnhub_industry || "its core market"} ` +
+    `and is referenced against the ${technical?.sector_etf || "sector"} ETF for relative-strength context. ` +
+    `Operating geography is ${profile?.country || "global"}; reporting currency is ${profile?.currency || "USD"}.`
+  );
+
+  const body = `
+    ${paragraph(narrative)}
+    ${buildKeyValueTable(rows)}
+  `;
+
+  return makeInstitutionalSection({
+    id: "business_model",
+    eyebrow: "Part I",
+    title: "Company and Business Model",
+    subtitle: "Issuer profile, geography, and operating context.",
+    body,
+  });
+}
+
+function buildFundamentalsSection(rawData) {
+  const snap = rawData?.finnhub_snapshot || {};
+  const metrics = snap?.metrics || {};
+  const earnings = Array.isArray(snap?.earnings) ? snap.earnings.slice(0, 6) : [];
+
+  const fundamentalsTable = buildDataTable({
+    headers: [
+      { label: "Metric" },
+      { label: "Value", align: "right" },
+      { label: "Commentary" },
+    ],
+    rows: [
+      ["Revenue Growth (TTM YoY)", { html: fmtPctValue(metrics?.revenue_growth_ttm_yoy) }, "Top-line growth momentum"],
+      ["EPS Growth (TTM YoY)", { html: fmtPctValue(metrics?.eps_growth_ttm_yoy) }, "Earnings trajectory"],
+      ["Operating Margin (TTM)", { html: fmtPctValue(metrics?.operating_margin_ttm) }, "Operating efficiency"],
+      ["Net Margin (TTM)", { html: fmtPctValue(metrics?.net_margin_ttm) }, "Bottom-line profitability"],
+      ["Return on Equity (TTM)", { html: fmtPctValue(metrics?.roe_ttm) }, "Capital efficiency"],
+      ["Return on Assets (TTM)", { html: fmtPctValue(metrics?.roa_ttm) }, "Asset productivity"],
+      ["Current Ratio (Q)", { html: fmtNumberOrDash(metrics?.current_ratio_quarterly, 2) }, "Short-term liquidity"],
+      ["Debt / Equity (Q)", { html: fmtNumberOrDash(metrics?.debt_to_equity_quarterly, 2) }, "Leverage posture"],
+    ],
+    emptyMessage: "Fundamental metrics unavailable.",
+  });
+
+  const earningsTable = buildDataTable({
+    headers: [
+      { label: "Period" },
+      { label: "Actual EPS", align: "right" },
+      { label: "Estimate EPS", align: "right" },
+      { label: "Surprise %", align: "right" },
+    ],
+    rows: earnings.map((row) => [
+      row?.period || "n/a",
+      { html: fmtNumberOrDash(row?.actual, 2) },
+      { html: fmtNumberOrDash(row?.estimate, 2) },
+      { html: fmtPctValue(row?.surprise_percent, 1) },
+    ]),
+    emptyMessage: "No recent earnings prints from Finnhub.",
+  });
+
+  const narrative = (
+    "Earnings dispersion and margin trajectory remain central to near-term re-rating potential. " +
+    "Read these metrics together with valuation context: profitable growth at expanding margins typically supports multiple expansion, " +
+    "while declining margins or earnings misses can compress multiples even when growth is intact."
+  );
+
+  const body = `
+    ${paragraph(narrative)}
+    <div class="ir-subhead">Headline Fundamental Metrics</div>
+    ${fundamentalsTable}
+    <div class="ir-subhead">Recent Earnings Cadence</div>
+    ${earningsTable}
+  `;
+
+  return makeInstitutionalSection({
+    id: "fundamentals",
+    eyebrow: "Part II",
+    title: "Fundamental Performance",
+    subtitle: "Growth, margins, capital efficiency, and earnings cadence.",
+    body,
+  });
+}
+
+function buildValuationTechnicalSection(rawData) {
+  const snap = rawData?.finnhub_snapshot || {};
+  const metrics = snap?.metrics || {};
+  const dcf = rawData?.dcf || {};
+  const technical = rawData?.technical || {};
+  const comps = rawData?.comps || {};
+
+  const valuationTable = buildDataTable({
+    headers: [
+      { label: "Metric" },
+      { label: "Value", align: "right" },
+    ],
+    rows: [
+      ["DCF Intrinsic Value", { html: fmtMoneyOrDash(dcf?.intrinsic_value) }],
+      ["DCF Margin of Safety", { html: fmtPctValue(dcf?.margin_of_safety) }],
+      ["P/E (TTM)", { html: fmtNumberOrDash(metrics?.pe_ttm) }],
+      ["P/B (Annual)", { html: fmtNumberOrDash(metrics?.pb_annual) }],
+      ["P/S (TTM)", { html: fmtNumberOrDash(metrics?.ps_ttm) }],
+      ["EV / EBITDA", { html: fmtNumberOrDash(metrics?.ev_to_ebitda) }],
+      ["EV / Sales", { html: fmtNumberOrDash(metrics?.ev_to_sales) }],
+      ["Median Peer P/E", { html: fmtNumberOrDash(comps?.median_pe) }],
+      ["Implied Price (P/E)", { html: fmtMoneyOrDash(comps?.implied_price_pe) }],
+      ["Implied Price (P/S)", { html: fmtMoneyOrDash(comps?.implied_price_ps) }],
+    ],
+    emptyMessage: "Valuation metrics unavailable.",
+  });
+
+  const technicalTable = buildDataTable({
+    headers: [
+      { label: "Metric" },
+      { label: "Value", align: "right" },
+    ],
+    rows: [
+      ["Current Price", { html: fmtMoneyOrDash(technical?.current_price) }],
+      ["52w High / Low", { html: `${fmtMoneyOrDash(technical?.high_52w)} / ${fmtMoneyOrDash(technical?.low_52w)}` }],
+      ["SMA 50 / 150 / 200", { html: `${fmtMoneyOrDash(technical?.sma_50)} / ${fmtMoneyOrDash(technical?.sma_150)} / ${fmtMoneyOrDash(technical?.sma_200)}` }],
+      ["Stage 2", { html: technical?.stage_2 ? "<strong>YES</strong>" : "NO" }],
+      ["VCP Volume Pattern", { html: technical?.vcp ? "<strong>YES</strong>" : "NO" }],
+      ["Signal Score", { html: fmtNumberOrDash(technical?.signal_score, 1) + " / 100" }],
+      ["Sector ETF", { html: escapeHtml(technical?.sector_etf || "Unknown") }],
+    ],
+    emptyMessage: "Technical structure unavailable.",
+  });
+
+  const trendDescription = technical?.stage_2
+    ? "Trend structure currently sits in Stage 2, supporting constructive trend-continuation framing."
+    : "Trend structure does not currently meet Stage 2 conditions, which limits breakout reliability.";
+  const valuationDescription = Number.isFinite(Number(dcf?.margin_of_safety)) && Number(dcf.margin_of_safety) > 0
+    ? "Intrinsic-value framework points to a positive margin of safety, supporting a long-side valuation underwrite."
+    : "Intrinsic-value framework does not currently provide a clean valuation cushion, raising the bar for the trend and catalyst case.";
+
+  const narrative = `${trendDescription} ${valuationDescription}`;
+
+  const body = `
+    ${paragraph(narrative)}
+    <div class="ir-subhead">Valuation</div>
+    ${valuationTable}
+    <div class="ir-subhead">Technical Positioning</div>
+    ${technicalTable}
+  `;
+
+  return makeInstitutionalSection({
+    id: "valuation_technical",
+    eyebrow: "Part III",
+    title: "Valuation and Technical Positioning",
+    subtitle: "Intrinsic value, multiples, and trend structure.",
+    body,
+  });
+}
+
+function buildSecNarrativeSection(rawData) {
+  const edgar = rawData?.edgar || {};
+  const filing = edgar?.filing_analysis || {};
+  const summaryHeadline = filing?.summary_headline || filing?.high_level_takeaway || "";
+  const narrativeSummary = filing?.narrative_summary || "";
+  const filingsTable = buildDataTable({
+    headers: [
+      { label: "Form" },
+      { label: "Date" },
+      { label: "Description" },
+    ],
+    rows: (edgar?.recent_filings || []).slice(0, 6).map((f) => [
+      f?.form || "—",
+      f?.date || "—",
+      f?.description || "—",
+    ]),
+    emptyMessage: "No recent EDGAR filings surfaced for this issuer.",
+  });
+
+  const riskTagText = (edgar?.risk_tag || "unknown").toString().toUpperCase();
+  const recencyText = edgar?.filing_recency_days != null ? `${edgar.filing_recency_days} day(s)` : "n/a";
+
+  const narrative = summaryHeadline
+    ? `Filing intelligence headline: ${summaryHeadline}`
+    : "Filing intelligence headline is unavailable. Treat narrative interpretation with caution.";
+  const detail = narrativeSummary || "Detailed filing narrative is unavailable; rely on disclosed risk tag and filing cadence.";
+
+  const body = `
+    ${paragraph(narrative)}
+    ${paragraph(detail)}
+    <div class="ir-subhead">Filing Snapshot</div>
+    ${buildKeyValueTable([
+      { label: "Risk Tag", value: escapeHtml(riskTagText) },
+      { label: "Recent 8-K?", value: edgar?.recent_8k ? "YES" : "NO" },
+      { label: "Latest Filing Recency", value: escapeHtml(recencyText) },
+      { label: "Risk Reasons", value: edgar?.risk_reasons?.length ? escapeHtml((edgar.risk_reasons || []).slice(0, 3).join("; ")) : "<span class='muted'>None</span>" },
+    ])}
+    <div class="ir-subhead">Recent Filings</div>
+    ${filingsTable}
+  `;
+
+  return makeInstitutionalSection({
+    id: "sec_narrative",
+    eyebrow: "Part IV",
+    title: "SEC Narrative and Filing Deltas",
+    subtitle: "Filing intelligence, disclosure drift, and risk posture.",
+    body,
+  });
+}
+
+function buildPortfolioFitSection(normalized) {
+  const fit = normalized?.portfolio_fit || {};
+  const fallback = fit?.fallback_message ? `<div class="report-callout warn">${escapeHtml(fit.fallback_message)}</div>` : "";
+
+  const rows = [
+    { label: "Sector Tag", value: escapeHtml(fit?.sector || "Unknown") },
+    { label: "Sector Overlap %", value: fit?.sector_overlap_pct != null ? `${safeNum(fit.sector_overlap_pct).toFixed(2)}%` : "<span class='muted'>n/a</span>" },
+    { label: "Concentration Contribution %", value: fit?.concentration_contribution_pct != null ? `${safeNum(fit.concentration_contribution_pct).toFixed(2)}%` : "<span class='muted'>n/a</span>" },
+    { label: "Correlation / Overlap Proxy", value: escapeHtml(String(fit?.correlation_overlap_proxy || "Unavailable")) },
+    { label: "Risk Budget Impact", value: escapeHtml(String(fit?.risk_budget_impact || "Unavailable")) },
+    { label: "Exposure Budget Remaining %", value: fit?.exposure_budget_remaining_pct != null ? `${safeNum(fit.exposure_budget_remaining_pct).toFixed(2)}%` : "<span class='muted'>n/a</span>" },
+  ];
+
+  const narrative = (
+    `Portfolio fit summarizes how this position would interact with current holdings. ` +
+    `Risk budget impact is read as ${fit?.risk_budget_impact || "Unavailable"}, ` +
+    `with sector overlap ${fit?.sector_overlap_pct != null ? `at ${safeNum(fit.sector_overlap_pct).toFixed(2)}%` : "unavailable"}.`
+  );
+
+  const body = `
+    ${fallback}
+    ${paragraph(narrative)}
+    ${buildKeyValueTable(rows)}
+  `;
+
+  return makeInstitutionalSection({
+    id: "portfolio_fit",
+    eyebrow: "Part V",
+    title: "Portfolio Fit and Risk Budget",
+    subtitle: "Sector overlap, concentration, and sizing context.",
+    body,
+  });
+}
+
+function buildCatalystsRisksSection(normalized) {
+  const catalysts = normalized?.catalyst_calendar || [];
+  const risks = normalized?.risk_register || [];
+  const ic = normalized?.ic_snapshot || {};
+
+  const matrix = buildDataTable({
+    headers: [
+      { label: "Type" },
+      { label: "Item" },
+    ],
+    rows: [
+      ...catalysts.slice(0, 8).map((c) => ["Catalyst", String(c)]),
+      ...risks.slice(0, 8).map((r) => ["Risk", String(r)]),
+    ],
+    emptyMessage: "No catalysts or risks surfaced from current inputs.",
+  });
+
+  const invalidationCallout = ic?.invalidation_criteria
+    ? `<div class="report-callout"><strong>Invalidation:</strong> ${escapeHtml(ic.invalidation_criteria)}</div>`
+    : "";
+
+  const body = `
+    ${paragraph("Catalysts and risks are aggregated from filing cadence, sentiment signals, and quantitative checks. Invalidation criteria define when the thesis must be re-underwritten.")}
+    ${invalidationCallout}
+    ${matrix}
+  `;
+
+  return makeInstitutionalSection({
+    id: "catalysts_risks",
+    eyebrow: "Part VI",
+    title: "Catalyst and Risk Matrix",
+    subtitle: "Forward catalysts, risks, and invalidation triggers.",
+    body,
+  });
+}
+
+function buildScenarioSection(normalized) {
+  const scenarios = normalized?.scenarios || {};
+  const inferredBadgeHtml = scenarios.inferred ? "<span class='report-badge inferred'>inferred</span>" : "";
+  const warning = scenarios.warning ? `<div class="report-callout warn">${escapeHtml(scenarios.warning)}</div>` : "";
+  const rows = (scenarios.rows || []).map((row) => [
+    row.name || "—",
+    { html: Number.isFinite(Number(row.probability)) ? `${safeNum(row.probability).toFixed(0)}%` : "<span class='muted'>n/a</span>" },
+    { html: Number.isFinite(Number(row.return_pct)) ? `${safeNum(row.return_pct).toFixed(1)}%` : "<span class='muted'>n/a</span>" },
+    { html: row.price_target == null || row.price_target === "" ? "<span class='muted'>n/a</span>" : escapeHtml(String(row.price_target)) },
+    row.rationale || "—",
+  ]);
+
+  const scenarioTable = buildDataTable({
+    headers: [
+      { label: "Scenario" },
+      { label: "Probability", align: "right" },
+      { label: "Return Target", align: "right" },
+      { label: "Price Target", align: "right" },
+      { label: "Rationale" },
+    ],
+    rows,
+    emptyMessage: "Scenario analysis unavailable.",
+  });
+
+  const kpis = `
+    <div class="report-scenario-kpis">
+      <div><span class="subtle">Expected Value</span><div class="mono-nums">${scenarios.expected_value_pct != null ? `${safeNum(scenarios.expected_value_pct).toFixed(2)}%` : "<span class='muted'>n/a</span>"}</div></div>
+      <div><span class="subtle">Upside / Downside Ratio</span><div class="mono-nums">${scenarios.upside_downside_ratio != null ? `${safeNum(scenarios.upside_downside_ratio).toFixed(2)}x` : "<span class='muted'>n/a</span>"}</div></div>
+    </div>
+  `;
+
+  const sensitivity = `
+    <div class="ir-subhead">Sensitivity Notes</div>
+    ${bulletList(scenarios.sensitivity_bullets, { empty: "No sensitivity bullets supplied." })}
+  `;
+
+  const body = `
+    ${warning}
+    ${scenarioTable}
+    ${kpis}
+    ${sensitivity}
+  `;
+
+  return makeInstitutionalSection({
+    id: "scenarios",
+    eyebrow: "Scenario Framing",
+    title: `Scenario Analysis ${inferredBadgeHtml}`,
+    subtitle: "Probability-weighted base, bull, and bear cases with sensitivity notes.",
+    body,
+  });
+}
+
+function buildMonitoringSection(normalized) {
+  const plan = normalized?.monitoring_plan || {};
+  const body = `
+    <div class="report-claim-grid">
+      <div><span class="subtle">Position Expression</span><div>${unavailable(plan.claim)}</div></div>
+      <div><span class="subtle">Evidence</span><div>${unavailable(plan.evidence)}</div></div>
+      <div><span class="subtle">Confidence</span><div>${unavailable(plan.confidence)}</div></div>
+      <div><span class="subtle">Falsifier</span><div>${unavailable(plan.falsifier)}</div></div>
+    </div>
+    <div class="ir-subhead">Triggers</div>
+    ${bulletList(plan.triggers, { empty: "No triggers defined." })}
+    <div class="subtle">Review cadence: ${escapeHtml(plan.review_cadence || "Unavailable")}</div>
+  `;
+
+  return makeInstitutionalSection({
+    id: "monitoring",
+    eyebrow: "Monitoring",
+    title: "Monitoring Plan",
+    subtitle: "Cadence, kill switches, and review triggers.",
+    body,
+  });
+}
+
+function buildAppendixSection(normalized, tab) {
+  const blocks = buildAppendixBlocks(normalized);
+  const block = blocks[tab] || blocks.summary;
+  return makeInstitutionalSection({
+    id: "appendix",
+    eyebrow: "Appendix",
+    title: "Appendix and Section Detail",
+    subtitle: "Switch tabs above to view section-level data behind the institutional view.",
+    body: block,
+  });
+}
+
+function buildDisclaimerSection() {
+  const body = `
+    <p class="ir-paragraph">
+      This report is generated automatically for informational research workflows.
+      It is not investment advice and should not be relied upon as a sole basis for trading decisions.
+      Verify all data points against primary sources before acting on any framing presented above.
+    </p>
+  `;
+  return makeInstitutionalSection({
+    id: "disclaimer",
+    eyebrow: "Disclaimer",
+    title: "Disclaimer",
+    subtitle: "Use of this report.",
+    body,
+  });
 }
 
 export function renderReportTabs(data) {
@@ -276,119 +829,26 @@ export function renderReportVisual(data) {
     portfolioRisk: state.lastPortfolioRiskData,
     portfolioSnapshot: state.lastPortfolioData,
   });
-  const inferred = new Set(normalized.meta?.inferred_fields || []);
   const tab = state.activeReportTab || "summary";
-  const blocks = buildAppendixBlocks(normalized);
-
-  const kpis = [
-    { label: "Ticker", value: normalized.ticker || "—" },
-    { label: "Recommendation", value: normalized.ic_snapshot.recommendation || "Unavailable" },
-    {
-      label: "Expected Return",
-      value: normalized.ic_snapshot.expected_return_base_case != null
-        ? `${safeNum(normalized.ic_snapshot.expected_return_base_case).toFixed(1)}%`
-        : "Unavailable",
-    },
-    { label: "Risk Budget", value: normalized.portfolio_fit.risk_budget_impact || "Unavailable" },
-  ];
 
   root.setAttribute("role", "tabpanel");
   root.setAttribute("id", `report-panel-${tab}`);
   root.setAttribute("aria-labelledby", `report-tab-${tab}`);
   root.innerHTML = `
-    <div class="report-grid">
-      ${kpis.map((k) => `<div class="report-kpi"><div class="label">${k.label}</div><div class="value">${safeText(k.value)}</div></div>`).join("")}
-    </div>
-    ${renderInstitutionalWriteup(data, normalized)}
-    <div class="report-section">
-      <h4>IC Snapshot ${inferredBadge(inferred.has("ic_snapshot.recommendation") || inferred.has("ic_snapshot.expected_return_base_case"))}</h4>
-      <div class="subtle">Thesis-first decision frame for IC review and position expression.</div>
-      ${renderClaimEvidence({
-        claim: normalized.thesis.claim,
-        evidence: normalized.thesis.evidence,
-        confidence: normalized.thesis.confidence,
-        falsifier: normalized.thesis.falsifier,
-      })}
-      <div class="ic-snapshot-grid">
-        <div><span class="subtle">Recommendation</span><div>${unavailable(normalized.ic_snapshot.recommendation)}</div></div>
-        <div><span class="subtle">Time Horizon</span><div>${unavailable(normalized.ic_snapshot.time_horizon)}</div></div>
-        <div><span class="subtle">Expected Return (Base)</span><div>${normalized.ic_snapshot.expected_return_base_case != null ? `${safeNum(normalized.ic_snapshot.expected_return_base_case).toFixed(1)}%` : "<span class='muted'>Unavailable</span>"}</div></div>
-        <div><span class="subtle">Confidence</span><div>${confidenceText(normalized.ic_snapshot)} ${inferredBadge(inferred.has("ic_snapshot.confidence"))}</div></div>
-        <div><span class="subtle">Position Expression</span><div>${unavailable(normalized.ic_snapshot.suggested_position_size_text)} ${inferredBadge(inferred.has("ic_snapshot.suggested_position_size"))}</div></div>
-        <div><span class="subtle">Invalidation</span><div>${unavailable(normalized.ic_snapshot.invalidation_criteria)}</div></div>
-      </div>
-      <div class="report-split-grid">
-        <div>
-          <div class="subtle">Top 3 Thesis Points</div>
-          <ul class="report-bullets">${(normalized.ic_snapshot.top_thesis_points || []).map((point) => `<li>${safeText(point)}</li>`).join("") || "<li class='muted'>Unavailable</li>"}</ul>
-        </div>
-        <div>
-          <div class="subtle">Top 3 Risks</div>
-          <ul class="report-bullets">${(normalized.ic_snapshot.top_risks || []).map((risk) => `<li>${safeText(risk)}</li>`).join("") || "<li class='muted'>Unavailable</li>"}</ul>
-        </div>
-      </div>
-      <div class="subtle">Top Catalysts Timeline</div>
-      <ul class="report-bullets">${(normalized.ic_snapshot.catalysts_timeline || []).map((line) => `<li>${safeText(line)}</li>`).join("") || "<li class='muted'>Unavailable</li>"}</ul>
-    </div>
-    <div class="report-section">
-      <h4>Scenario Analysis ${normalized.scenarios.inferred ? "<span class='report-badge inferred'>inferred</span>" : ""}</h4>
-      <div class="subtle">Base/Bull/Bear scenarios with probability, EV, and asymmetry context.</div>
-      ${normalized.scenarios.warning ? `<div class="report-callout warn">${safeText(normalized.scenarios.warning)}</div>` : ""}
-      ${renderClaimEvidence({
-        claim: normalized.thesis.claim,
-        evidence: normalized.scenarios.sensitivity_bullets?.[0] || "Unavailable",
-        confidence: normalized.thesis.confidence,
-        falsifier: normalized.ic_snapshot.invalidation_criteria,
-      })}
-      <div class="table-wrap report-table-wrap">
-        <table class="report-scenario-table">
-          <thead>
-            <tr><th>Scenario</th><th>Probability</th><th>Return Target</th><th>Price Target</th></tr>
-          </thead>
-          <tbody>${(normalized.scenarios.rows || []).map(renderScenarioRow).join("")}</tbody>
-        </table>
-      </div>
-      <div class="report-scenario-kpis">
-        <div><span class="subtle">Expected Value</span><div>${normalized.scenarios.expected_value_pct != null ? `${safeNum(normalized.scenarios.expected_value_pct).toFixed(2)}%` : "<span class='muted'>Unavailable</span>"}</div></div>
-        <div><span class="subtle">Upside/Downside Ratio</span><div>${normalized.scenarios.upside_downside_ratio != null ? `${safeNum(normalized.scenarios.upside_downside_ratio).toFixed(2)}x` : "<span class='muted'>Unavailable</span>"}</div></div>
-      </div>
-      <div class="subtle">Sensitivity Bullets</div>
-      <ul class="report-bullets">${(normalized.scenarios.sensitivity_bullets || []).map((line) => `<li>${safeText(line)}</li>`).join("") || "<li class='muted'>Unavailable</li>"}</ul>
-    </div>
-    <div class="report-section">
-      <h4>Portfolio Fit</h4>
-      <div class="subtle">Sector overlap, concentration contribution, and risk budget impact.</div>
-      ${normalized.portfolio_fit.fallback_message ? `<div class="report-callout warn">${safeText(normalized.portfolio_fit.fallback_message)}</div>` : ""}
-      ${renderClaimEvidence({
-        claim: `Risk budget: ${normalized.portfolio_fit.risk_budget_impact || "Unavailable"}`,
-        evidence: normalized.portfolio_fit.correlation_overlap_proxy || "Portfolio overlap proxy unavailable.",
-        confidence: normalized.thesis.confidence,
-        falsifier: normalized.ic_snapshot.invalidation_criteria,
-      })}
-      <ul class="report-bullets">
-        <li>Sector overlap: ${normalized.portfolio_fit.sector_overlap_pct != null ? `${safeNum(normalized.portfolio_fit.sector_overlap_pct).toFixed(2)}%` : "<span class='muted'>Unavailable</span>"}</li>
-        <li>Concentration contribution: ${normalized.portfolio_fit.concentration_contribution_pct != null ? `${safeNum(normalized.portfolio_fit.concentration_contribution_pct).toFixed(2)}%` : "<span class='muted'>Unavailable</span>"}</li>
-        <li>Correlation/overlap proxy: ${unavailable(normalized.portfolio_fit.correlation_overlap_proxy)}</li>
-        <li>Risk budget impact hint: ${unavailable(normalized.portfolio_fit.risk_budget_impact)}</li>
-        <li>Exposure budget remaining: ${normalized.portfolio_fit.exposure_budget_remaining_pct != null ? `${safeNum(normalized.portfolio_fit.exposure_budget_remaining_pct).toFixed(2)}%` : "<span class='muted'>Unavailable</span>"}</li>
-      </ul>
-    </div>
-    <div class="report-section">
-      <h4>Monitoring Plan</h4>
-      <div class="subtle">Structured post-trade attribution loop and refresh cadence.</div>
-      ${renderClaimEvidence({
-        claim: normalized.monitoring_plan.claim,
-        evidence: normalized.monitoring_plan.evidence,
-        confidence: normalized.monitoring_plan.confidence,
-        falsifier: normalized.monitoring_plan.falsifier,
-      })}
-      <ul class="report-bullets">${(normalized.monitoring_plan.triggers || []).map((line) => `<li>${safeText(line)}</li>`).join("")}</ul>
-      <div class="subtle">Review cadence: ${safeText(normalized.monitoring_plan.review_cadence || "Unavailable")}</div>
-    </div>
-    <div class="report-section">
-      <h4>Appendix Section</h4>
-      ${blocks[tab] || blocks.summary}
-    </div>
+    <article class="ir-document">
+      ${buildCoverHeader(data, normalized)}
+      ${buildExecutiveSummarySection(data, normalized)}
+      ${buildBusinessModelSection(data, normalized)}
+      ${buildFundamentalsSection(data)}
+      ${buildValuationTechnicalSection(data)}
+      ${buildSecNarrativeSection(data)}
+      ${buildPortfolioFitSection(normalized)}
+      ${buildCatalystsRisksSection(normalized)}
+      ${buildScenarioSection(normalized)}
+      ${buildMonitoringSection(normalized)}
+      ${buildAppendixSection(normalized, tab)}
+      ${buildDisclaimerSection()}
+    </article>
   `;
 }
 
@@ -477,11 +937,89 @@ function setDossierMeta(message, severity = "muted") {
   else meta.classList.add("muted");
 }
 
-function escapeHtml(raw) {
-  return String(raw || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+function isMarkdownTableSeparator(line) {
+  // Matches separator rows like "|---|---:|:---:|"
+  if (!line.startsWith("|")) return false;
+  const cells = splitMarkdownTableRow(line);
+  if (!cells.length) return false;
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|")) return [];
+  const inner = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split("|").map((cell) => cell.trim());
+}
+
+function alignmentFromSeparatorCell(cell) {
+  const text = cell.trim();
+  const left = text.startsWith(":");
+  const right = text.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  return "left";
+}
+
+function applyInlineEmphasis(text) {
+  // Escape first, then re-introduce inline emphasis using bold/italic markers.
+  let out = escapeHtml(text);
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[^\\])\*([^*]+)\*/g, "$1<em>$2</em>");
+  out = out.replace(/`([^`]+)`/g, '<code class="ir-inline-code">$1</code>');
+  return out;
+}
+
+function renderMarkdownTable(rawRows) {
+  if (!Array.isArray(rawRows) || rawRows.length === 0) return "";
+  const rowCells = rawRows.map(splitMarkdownTableRow).filter((cells) => cells.length > 0);
+  if (!rowCells.length) return "";
+
+  // Detect header + separator pattern.
+  let headers = [];
+  let alignments = [];
+  let bodyRows = rowCells;
+  if (rowCells.length >= 2 && isMarkdownTableSeparator(rawRows[1])) {
+    headers = rowCells[0];
+    alignments = rowCells[1].map(alignmentFromSeparatorCell);
+    bodyRows = rowCells.slice(2);
+  } else {
+    headers = rowCells[0];
+    alignments = headers.map(() => "left");
+    bodyRows = rowCells.slice(1);
+  }
+
+  const headerHtml = `<tr>${headers
+    .map((h, i) => {
+      const align = alignments[i] || "left";
+      const alignClass = align === "right" ? " class=\"right\"" : (align === "center" ? " class=\"center\"" : "");
+      return `<th${alignClass}>${applyInlineEmphasis(h)}</th>`;
+    })
+    .join("")}</tr>`;
+
+  const bodyHtml = bodyRows
+    .map((cells) => {
+      const padded = cells.length < headers.length
+        ? cells.concat(new Array(headers.length - cells.length).fill(""))
+        : cells.slice(0, headers.length);
+      return `<tr>${padded
+        .map((cell, i) => {
+          const align = alignments[i] || "left";
+          const alignClass = align === "right" ? " class=\"right mono-nums\"" : (align === "center" ? " class=\"center\"" : "");
+          return `<td${alignClass}>${applyInlineEmphasis(cell)}</td>`;
+        })
+        .join("")}</tr>`;
+    })
+    .join("");
+
+  return `
+    <div class="table-wrap report-table-wrap">
+      <table class="ir-data-table report-scenario-table">
+        <thead>${headerHtml}</thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function markdownToPreviewHtml(markdown) {
@@ -490,12 +1028,12 @@ function markdownToPreviewHtml(markdown) {
   let listOpen = false;
   let para = [];
   let inTable = false;
-  let table = [];
+  let tableRows = [];
 
   const flushParagraph = () => {
     if (!para.length) return;
-    const text = escapeHtml(para.join(" ").trim());
-    if (text) out.push(`<p class="report-text">${text}</p>`);
+    const text = applyInlineEmphasis(para.join(" ").trim());
+    if (text) out.push(`<p class="ir-paragraph">${text}</p>`);
     para = [];
   };
 
@@ -507,9 +1045,9 @@ function markdownToPreviewHtml(markdown) {
 
   const flushTable = () => {
     if (!inTable) return;
-    out.push(`<pre class="code-block code-block--tight">${escapeHtml(table.join("\n"))}</pre>`);
+    out.push(renderMarkdownTable(tableRows));
     inTable = false;
-    table = [];
+    tableRows = [];
   };
 
   for (const line of lines) {
@@ -520,30 +1058,37 @@ function markdownToPreviewHtml(markdown) {
       flushTable();
       continue;
     }
+    if (trimmed === "---") {
+      flushParagraph();
+      flushList();
+      flushTable();
+      out.push(`<hr class="ir-divider" />`);
+      continue;
+    }
     if (trimmed.startsWith("|")) {
       flushParagraph();
       flushList();
       inTable = true;
-      table.push(trimmed);
+      tableRows.push(trimmed);
       continue;
     }
     flushTable();
     if (trimmed.startsWith("### ")) {
       flushParagraph();
       flushList();
-      out.push(`<h5>${escapeHtml(trimmed.slice(4))}</h5>`);
+      out.push(`<h5 class="ir-h5">${applyInlineEmphasis(trimmed.slice(4))}</h5>`);
       continue;
     }
     if (trimmed.startsWith("## ")) {
       flushParagraph();
       flushList();
-      out.push(`<h4>${escapeHtml(trimmed.slice(3))}</h4>`);
+      out.push(`<h4 class="ir-h4">${applyInlineEmphasis(trimmed.slice(3))}</h4>`);
       continue;
     }
     if (trimmed.startsWith("# ")) {
       flushParagraph();
       flushList();
-      out.push(`<h3>${escapeHtml(trimmed.slice(2))}</h3>`);
+      out.push(`<h3 class="ir-h3">${applyInlineEmphasis(trimmed.slice(2))}</h3>`);
       continue;
     }
     if (trimmed.startsWith("- ")) {
@@ -552,7 +1097,7 @@ function markdownToPreviewHtml(markdown) {
         out.push('<ul class="report-bullets">');
         listOpen = true;
       }
-      out.push(`<li>${escapeHtml(trimmed.slice(2))}</li>`);
+      out.push(`<li>${applyInlineEmphasis(trimmed.slice(2))}</li>`);
       continue;
     }
     para.push(trimmed);
@@ -574,7 +1119,7 @@ function setDossierPreview(data, markdownText = "") {
     const html = markdownText
       ? markdownToPreviewHtml(markdownText)
       : `<div class="report-empty">Narrative preview unavailable. Use Download Markdown as fallback.</div>`;
-    writeup.innerHTML = `<div class="report-section"><h4>Dossier Narrative Preview</h4>${html}</div>`;
+    writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${html}</article>`;
   }
   details.classList.remove("hidden");
   out.textContent = JSON.stringify(data, null, 2);

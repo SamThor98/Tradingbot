@@ -1226,13 +1226,11 @@ body[data-theme="editorial"] .hero-shell::after {
       dashboard. Drop the action-center prose tile (noise). */
 body[data-theme="editorial"] #actionCenter,
 body[data-theme="editorial"] #pendingSummaryStrip,
-body[data-theme="editorial"] #blockersAlertSection,
 body[data-theme="editorial"] #platformKillSwitchBanner {
   display: none !important;
 }
 
-body.ui-pro[data-theme="editorial"] #actionCenter,
-body.ui-pro[data-theme="editorial"] #blockersAlertSection {
+body.ui-pro[data-theme="editorial"] #actionCenter {
   display: flex !important;
 }
 
@@ -2252,4 +2250,25 @@ body[data-theme="editorial"] .workflow-primary-heading::before {
 
 .signed-out-banner strong {
   color: var(--gold, #c9a66b);
+}
+
+/* ============================================================
+   Full-screen layout: stop capping the main container at
+   ~1540px so the page actually uses the available viewport on
+   maximized / wide browser windows. Mirrors the topbar's side
+   padding so the gutter feels intentional rather than empty.
+============================================================ */
+body[data-theme="editorial"] main.container {
+  width: 100%;
+  max-width: none;
+  margin: 24px 0 56px;
+  padding-left: clamp(18px, 4vw, 36px);
+  padding-right: clamp(18px, 4vw, 36px);
+  box-sizing: border-box;
+}
+
+@media (min-width: 1600px) {
+  body[data-theme="editorial"] main.container {
+    gap: 20px;
+  }
 }

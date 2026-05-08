@@ -367,6 +367,42 @@ def _portfolio_fit_from_summary(
     }
 
 
+INSTITUTIONAL_SECTION_ORDER: tuple[str, ...] = (
+    "cover",
+    "executive_summary",
+    "business_model",
+    "fundamentals",
+    "valuation_technical",
+    "sec_narrative",
+    "portfolio_fit",
+    "catalysts_risks",
+    "monitoring",
+    "references",
+    "disclaimer",
+)
+
+
+def institutional_section_blueprint() -> list[dict[str, Any]]:
+    """Stable mapping from institutional section ids to display titles.
+
+    Used by both UI and exporters so section ordering stays canonical.
+    """
+
+    return [
+        {"id": "cover", "title": "Cover Page", "subtitle": "Document metadata and headline framing"},
+        {"id": "executive_summary", "title": "Executive Investment Summary", "subtitle": "Decision-first synthesis for IC review"},
+        {"id": "business_model", "title": "Part I: Company and Business Model", "subtitle": "Issuer profile, geography, and operating context"},
+        {"id": "fundamentals", "title": "Part II: Fundamental Performance", "subtitle": "Growth, margins, capital efficiency, and earnings cadence"},
+        {"id": "valuation_technical", "title": "Part III: Valuation and Technical Positioning", "subtitle": "Intrinsic value, multiples, and trend structure"},
+        {"id": "sec_narrative", "title": "Part IV: SEC Narrative and Filing Deltas", "subtitle": "Filing intelligence and disclosure drift"},
+        {"id": "portfolio_fit", "title": "Part V: Portfolio Fit and Risk Budget", "subtitle": "Sector overlap, concentration, and sizing context"},
+        {"id": "catalysts_risks", "title": "Part VI: Catalyst and Risk Matrix", "subtitle": "Forward catalysts, risks, and invalidation triggers"},
+        {"id": "monitoring", "title": "Monitoring Plan", "subtitle": "Cadence, kill switches, and review triggers"},
+        {"id": "references", "title": "References and Source Metadata", "subtitle": "Provenance for cited evidence"},
+        {"id": "disclaimer", "title": "Disclaimer", "subtitle": "Use of this report"},
+    ]
+
+
 def build_report_v2(
     report: dict[str, Any],
     *,
@@ -424,7 +460,10 @@ def build_report_v2(
     claim = synthesis.split("\n")[0].strip("- ").strip() if synthesis else ""
     if not claim:
         direction = {"long": "upside", "short": "downside", "pass": "unclear edge"}[recommendation]
-        claim = f"{ticker or 'This ticker'} currently presents a {direction} profile over the selected horizon."
+        article = "an" if direction[0].lower() in {"a", "e", "i", "o", "u"} else "a"
+        claim = (
+            f"{ticker or 'This ticker'} currently presents {article} {direction} profile over the selected horizon."
+        )
 
     evidence: list[str] = []
     signal_score = _safe_float(technical.get("signal_score"))
@@ -517,4 +556,6 @@ def build_report_v2(
             "evidence_mode": _evidence_mode(edgar),
             "model_version": None,
         },
+        "institutional_sections": institutional_section_blueprint(),
+        "institutional_section_order": list(INSTITUTIONAL_SECTION_ORDER),
     }

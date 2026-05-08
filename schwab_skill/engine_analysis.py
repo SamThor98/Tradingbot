@@ -523,11 +523,57 @@ class MarketSimulation:
         agent_votes: list[dict[str, Any]] = []
         parsed_agents: list[dict[str, Any]] = []
 
+        # Track how many agents returned a real LLM response. When the LLM is
+        # unavailable (no API key, network failure, exception, etc.),
+        # `_call_llm` returns "" and `_parse_agent_response("")` collapses to
+        # a neutral conviction_score=0 with bull/cont = 0.5/0.5. If we then
+        # report that 0 as a real conviction, every signal in the scan ends
+        # up showing "0.0" in the dashboard — which is misleading because
+        # the model never actually opined. Detect that case explicitly so
+        # callers can render it as "—" / "unavailable" instead.
+        llm_response_count = 0
+
         for name, system in AGENT_SYSTEMS.items():
             text = _call_llm(prompt, system, self._env)
+            if (text or "").strip():
+                llm_response_count += 1
             parsed = _parse_agent_response(text)
             parsed["name"] = name
             parsed_agents.append(parsed)
+
+        if llm_response_count == 0:
+            sim_id = f"sim_unavailable_{uuid.uuid4().hex[:12]}"
+            LOG.info(
+                "MiroFish unavailable for %s: no LLM responses (check MIROFISH_API_KEY / OPENAI_API_KEY).",
+                self.ticker,
+            )
+            # Return a structured "unavailable" payload with conviction_score=None.
+            # Downstream code (signal_scanner, UI, cache) already treats `None`
+            # as "no MiroFish opinion" and renders it as a missing value.
+            return {
+                "simulation_id": sim_id,
+                "ticker": self.ticker,
+                "conviction_score": None,
+                "summary": "MiroFish unavailable (no LLM)",
+                "agent_votes": [],
+                "mirofish_disagreement": None,
+                "agent_weighting": {
+                    "version": 1,
+                    "mode": "unavailable",
+                    "weights": {
+                        "institutional_trend": 0.0,
+                        "mean_reversion": 0.0,
+                        "retail_fomo": 0.0,
+                    },
+                    "regime_bucket": "unknown",
+                    "applied": False,
+                },
+                "continuation_probability": None,
+                "bull_trap_probability": None,
+                "seed_fingerprint": seed_fingerprint,
+                "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
+                "unavailable_reason": "no_llm_response",
+            }
 
         # Convert each agent's probabilities+alignments into a bounded conviction_score.
         # Also populate backward-compatible `score` and `reason` fields.
@@ -720,7 +766,15 @@ def _get_cache_path(skill_dir: Path | None) -> Path:
 
 
 def cache_conviction(ticker: str, result: dict, skill_dir: Path | None = None) -> None:
-    """Cache conviction score in .mirofish_cache.json (separate from watchlist cache)."""
+    """Cache conviction score in .mirofish_cache.json (separate from watchlist cache).
+
+    Skips writes when the result has no conviction score (i.e. MiroFish ran
+    in "unavailable" mode because the LLM was unreachable). Caching a
+    placeholder would mask a real run for the cache TTL even after the
+    operator fixes their API key.
+    """
+    if result is None or result.get("conviction_score") is None:
+        return
     import time
     cache_path = _get_cache_path(skill_dir)
     data: dict[str, Any] = {}

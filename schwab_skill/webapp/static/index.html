@@ -302,16 +302,16 @@
                 <caption class="visually-hidden">Signal candidates table</caption>
                 <thead>
                   <tr>
-                    <th>Ticker</th>
-                    <th title="Disposition: kept = made the final cut; filtered_* = dropped at that stage. Filtered rows are visible for review but not stageable.">Status</th>
-                    <th class="scan-col-advanced">Days Flagged</th>
-                    <th>Strategy</th>
-                    <th class="scan-col-secondary">Price</th>
-                    <th>Score</th>
-                    <th class="scan-col-advanced">P(up 10d)</th>
-                    <th>Confidence</th>
-                    <th class="scan-col-advanced">Conviction</th>
-                    <th class="scan-col-advanced">Sector</th>
+                    <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status. Disposition: kept = made the final cut; filtered_* = dropped at that stage. Filtered rows are visible for review but not stageable.">Status<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days Flagged<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by composite signal score">Score<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket (HIGH > MEDIUM > LOW)">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score (-100 to +100)">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -825,15 +825,6 @@
           <p id="decisionLatestPromotion" class="muted" data-unavailable="true" style="margin: 0">Latest promotion: —</p>
           <small id="decisionDashboardFresh" data-freshness="unknown">awaiting /api/decision-dashboard</small>
         </div>
-      </section>
-
-      <section
-        id="blockersAlertSection"
-        class="card blockers-alert hidden diagnostics-surface"
-        aria-live="polite"
-      >
-        <strong>Top Blockers</strong>
-        <ul id="blockersAlertList" class="report-bullets"></ul>
       </section>
 
       <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface nav-advanced" aria-label="Diagnostics workflow lanes">

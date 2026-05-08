@@ -773,7 +773,15 @@ def _scan_stage_b_enrich(
                     regime_is_bullish=regime_is_bullish,
                 )
                 result = sim.run()
-                cache_conviction(ticker, result, skill_dir=skill_dir)
+                # Only cache when we actually got an opinion. An "unavailable"
+                # result (no LLM key, transient network failure, etc.) returns
+                # conviction_score=None — caching that would mask a real
+                # MiroFish run for the next 12h cache window even after the
+                # operator fixes their API key. Re-running each scan in that
+                # case is cheap because the MarketSimulation will short-circuit
+                # again until the LLM is reachable.
+                if result.get("conviction_score") is not None:
+                    cache_conviction(ticker, result, skill_dir=skill_dir)
                 mirofish_result = {
                     "conviction_score": result.get("conviction_score"),
                     "summary": result.get("summary"),
@@ -1304,7 +1312,11 @@ def scan_for_signals_detailed(
             from engine_analysis import MarketSimulation, cache_conviction
             sim = MarketSimulation(demo_ticker, auth=auth, skill_dir=skill_dir)
             result = sim.run()
-            cache_conviction(demo_ticker, result, skill_dir=skill_dir)
+            # Skip cache write when MiroFish came back unavailable (None
+            # conviction). Same rationale as the Stage-B path: don't poison
+            # the 12h cache with a placeholder.
+            if result.get("conviction_score") is not None:
+                cache_conviction(demo_ticker, result, skill_dir=skill_dir)
             mirofish_result = {
                 "conviction_score": result.get("conviction_score"),
                 "summary": result.get("summary"),

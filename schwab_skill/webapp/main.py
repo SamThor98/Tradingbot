@@ -21,6 +21,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
+# Promote schwab_skill/.env values into os.environ before any module that
+# only consults os.getenv (strategy chat, SEC filing summaries, etc.) is
+# imported. Process-set vars (Render/Docker) still win because the helper
+# never overwrites a populated os.environ entry.
+from config import bootstrap_dotenv_into_environ
+
+bootstrap_dotenv_into_environ()
+
 from core.scan_service import run_scan, summarize_live_strategy
 from execution import get_account_status, get_position_size_usd, place_order
 from market_data import extract_schwab_last_price, get_current_quote, get_current_quote_with_status

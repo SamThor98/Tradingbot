@@ -22,6 +22,7 @@ from sec_filing_compare import (
 from sector_strength import get_sector_heatmap
 
 from .._shared import build_portfolio_risk_analytics, build_portfolio_summary
+from ..pdf_export import dossier_to_pdf
 from ..report_v2 import build_report_v2
 from ..schemas import ApiResponse
 
@@ -203,20 +204,100 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Wording helpers — keep institutional language consistent across surfaces.
+# ---------------------------------------------------------------------------
+
+# `report_v2.ic_snapshot.recommendation` returns the raw model verdict
+# ("long", "short", "pass"). Investment committees expect BUY/SELL/HOLD style
+# language, so we map it once at the dossier boundary.
+_RECOMMENDATION_MAP: dict[str, str] = {
+    "long": "BUY",
+    "buy": "BUY",
+    "strong_buy": "STRONG BUY",
+    "strongbuy": "STRONG BUY",
+    "short": "SELL",
+    "sell": "SELL",
+    "strong_sell": "STRONG SELL",
+    "strongsell": "STRONG SELL",
+    "pass": "HOLD",
+    "hold": "HOLD",
+    "watch": "WATCH",
+    "neutral": "HOLD",
+}
+
+
+def _format_recommendation(value: Any, *, default: str = "WATCH") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    key = text.lower().replace(" ", "_")
+    if key in _RECOMMENDATION_MAP:
+        return _RECOMMENDATION_MAP[key]
+    return text.upper()
+
+
+def _confidence_label_from_score(score: float) -> str:
+    if score >= 75:
+        return "High"
+    if score >= 55:
+        return "Moderately High"
+    if score >= 40:
+        return "Moderate"
+    if score >= 25:
+        return "Modest"
+    return "Low"
+
+
 def _pick_catalysts_and_risks(finnhub: dict[str, Any]) -> dict[str, list[str]]:
+    """Surface forward-looking catalysts and risks from the Finnhub snapshot.
+
+    Sources the catalyst/risk feed from analyst trend skew, earnings surprise
+    cadence, recent ratings actions, insider activity, upcoming earnings,
+    and news headline keywords. Output is deduplicated and capped per side.
+    """
+
+    if not isinstance(finnhub, dict):
+        finnhub = {}
     news_rows = finnhub.get("news") if isinstance(finnhub, dict) else []
     earnings_rows = finnhub.get("earnings") if isinstance(finnhub, dict) else []
     trends = finnhub.get("recommendation_trends") if isinstance(finnhub, dict) else {}
+    upgrades = finnhub.get("upgrade_downgrade") or []
+    insider_tx = finnhub.get("insider_transactions") or {}
+    insider_sent = finnhub.get("insider_sentiment") or {}
+    upcoming = finnhub.get("earnings_calendar") or []
+    news_sent = finnhub.get("news_sentiment") or {}
     catalysts: list[str] = []
     risks: list[str] = []
+    seen_c: set[str] = set()
+    seen_r: set[str] = set()
+
+    def _push(bucket: list[str], seen: set[str], item: str) -> None:
+        clean = item.strip()
+        if not clean:
+            return
+        key = clean.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        bucket.append(clean)
 
     if isinstance(trends, dict):
         buy = int(trends.get("buy", 0) or 0) + int(trends.get("strong_buy", 0) or 0)
         sell = int(trends.get("sell", 0) or 0) + int(trends.get("strong_sell", 0) or 0)
-        if buy > sell:
-            catalysts.append(f"Analyst trend skew is constructive ({buy} buy vs {sell} sell votes).")
-        elif sell > buy:
-            risks.append(f"Analyst trend skew is cautious ({sell} sell vs {buy} buy votes).")
+        if buy > sell and buy > 0:
+            _push(catalysts, seen_c, f"Analyst panel is constructive ({buy} buy vs {sell} sell votes).")
+        elif sell > buy and sell > 0:
+            _push(risks, seen_r, f"Analyst panel is cautious ({sell} sell vs {buy} buy votes).")
+
+    if isinstance(upcoming, list):
+        for row in upcoming[:2]:
+            date = str(row.get("date") or "").strip()
+            quarter = row.get("quarter") or ""
+            year = row.get("year") or ""
+            if date:
+                label = f"Upcoming earnings {f'{year} Q{quarter}'.strip() or ''} on {date}".strip()
+                _push(catalysts, seen_c, label)
 
     if isinstance(earnings_rows, list):
         for row in earnings_rows[:3]:
@@ -227,22 +308,66 @@ def _pick_catalysts_and_risks(finnhub: dict[str, Any]) -> dict[str, list[str]]:
             if surprise_pct is None:
                 continue
             if surprise_pct >= 5:
-                catalysts.append(f"Earnings surprise +{surprise_pct:.1f}% ({period or 'recent'}).")
+                _push(catalysts, seen_c, f"EPS beat {surprise_pct:+.1f}% ({period or 'recent'}).")
             elif surprise_pct <= -5:
-                risks.append(f"Earnings miss {surprise_pct:.1f}% ({period or 'recent'}).")
+                _push(risks, seen_r, f"EPS miss {surprise_pct:+.1f}% ({period or 'recent'}).")
+
+    if isinstance(upgrades, list):
+        for row in upgrades[:5]:
+            if not isinstance(row, dict):
+                continue
+            company = str(row.get("company") or "Sell-side analyst").strip() or "Sell-side analyst"
+            from_g = str(row.get("from_grade") or "").strip()
+            to_g = str(row.get("to_grade") or "").strip()
+            action = str(row.get("action") or "").strip().lower()
+            if not (from_g or to_g):
+                continue
+            transition = " → ".join(p for p in [from_g, to_g] if p) or to_g or from_g
+            label = f"{company}: {transition}".strip()
+            if action.startswith("up") or "upgrade" in action:
+                _push(catalysts, seen_c, label)
+            elif action.startswith("down") or "downgrade" in action:
+                _push(risks, seen_r, label)
+            elif action == "init" or "initiat" in action:
+                if "buy" in to_g.lower() or "outperform" in to_g.lower() or "overweight" in to_g.lower():
+                    _push(catalysts, seen_c, f"Initiation: {label}")
+                elif "sell" in to_g.lower() or "underperform" in to_g.lower() or "underweight" in to_g.lower():
+                    _push(risks, seen_r, f"Initiation: {label}")
+
+    if isinstance(insider_tx, dict):
+        net_shares = insider_tx.get("net_shares_180d") or 0
+        if isinstance(net_shares, (int, float)) and net_shares >= 25_000:
+            _push(catalysts, seen_c, f"Insiders net-bought {int(net_shares):,} shares over the trailing 180 days.")
+        elif isinstance(net_shares, (int, float)) and net_shares <= -100_000:
+            _push(risks, seen_r, f"Insiders net-sold {abs(int(net_shares)):,} shares over the trailing 180 days.")
+
+    if isinstance(insider_sent, dict):
+        mspr = insider_sent.get("net_mspr_6m") or 0
+        if isinstance(mspr, (int, float)) and mspr >= 30:
+            _push(catalysts, seen_c, f"Insider sentiment (Finnhub MSPR sum {mspr:+.1f}) is broadly positive.")
+        elif isinstance(mspr, (int, float)) and mspr <= -30:
+            _push(risks, seen_r, f"Insider sentiment (Finnhub MSPR sum {mspr:+.1f}) is broadly negative.")
+
+    if isinstance(news_sent, dict):
+        bullish_pct = _safe_float(news_sent.get("bullish_percent"))
+        bearish_pct = _safe_float(news_sent.get("bearish_percent"))
+        if bullish_pct is not None and bullish_pct >= 0.6:
+            _push(catalysts, seen_c, f"News sentiment skews bullish ({bullish_pct*100:.0f}% positive articles).")
+        if bearish_pct is not None and bearish_pct >= 0.6:
+            _push(risks, seen_r, f"News sentiment skews bearish ({bearish_pct*100:.0f}% negative articles).")
 
     if isinstance(news_rows, list):
-        for row in news_rows[:5]:
+        for row in news_rows[:6]:
             if not isinstance(row, dict):
                 continue
             headline = str(row.get("headline") or "").strip()
             if not headline:
                 continue
             low = headline.lower()
-            if any(tok in low for tok in ("upgrade", "contract", "beat", "launch", "partnership")):
-                catalysts.append(headline)
-            if any(tok in low for tok in ("downgrade", "investigation", "lawsuit", "miss", "delay", "cut")):
-                risks.append(headline)
+            if any(tok in low for tok in ("upgrade", "contract win", "beat", "launch", "partnership", "acquires", "buyback")):
+                _push(catalysts, seen_c, headline)
+            if any(tok in low for tok in ("downgrade", "investigation", "lawsuit", "miss", "delay", "cut", "recall", "warning")):
+                _push(risks, seen_r, headline)
 
     return {
         "catalysts": catalysts[:6],
@@ -360,18 +485,55 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
     report_v2 = build_report_v2(report_data, portfolio_summary=portfolio_summary or None)
     signal_score = _safe_float((report_data.get("technical") or {}).get("signal_score")) or 0.0
     margin_of_safety = _safe_float((report_data.get("dcf") or {}).get("margin_of_safety")) or 0.0
-    confidence_score = max(0.0, min(100.0, (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))))
+    raw_confidence = _safe_float((report_v2.get("ic_snapshot") or {}).get("confidence_score"))
+    if raw_confidence is None:
+        raw_confidence = (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))
+    confidence_score = max(0.0, min(100.0, raw_confidence))
     catalyst_risk = _pick_catalysts_and_risks(finnhub if isinstance(finnhub, dict) else {})
+
+    # Backfill quote/52-week range from the integrated report stack so the
+    # dossier still reads as institutional even when Finnhub is degraded.
+    technical_block = report_data.get("technical") or {}
+    finnhub_quote = (finnhub or {}).get("quote") or {}
+    finnhub_metrics = (finnhub or {}).get("metrics") or {}
+    if _safe_float(finnhub_quote.get("current")) is None:
+        backfill = _safe_float(technical_block.get("current_price"))
+        if backfill is not None:
+            finnhub_quote = dict(finnhub_quote)
+            finnhub_quote["current"] = backfill
+    if _safe_float(finnhub_metrics.get("52week_high")) is None:
+        backfill = _safe_float(technical_block.get("high_52w"))
+        if backfill is not None:
+            finnhub_metrics = dict(finnhub_metrics)
+            finnhub_metrics["52week_high"] = backfill
+    if _safe_float(finnhub_metrics.get("52week_low")) is None:
+        backfill = _safe_float(technical_block.get("low_52w"))
+        if backfill is not None:
+            finnhub_metrics = dict(finnhub_metrics)
+            finnhub_metrics["52week_low"] = backfill
+    if isinstance(finnhub, dict):
+        finnhub = dict(finnhub)
+        finnhub["quote"] = finnhub_quote
+        finnhub["metrics"] = finnhub_metrics
+
+    raw_recommendation = (report_v2.get("ic_snapshot") or {}).get("recommendation")
+    horizon = (
+        (report_v2.get("ic_snapshot") or {}).get("time_horizon")
+        or (report_v2.get("ic_snapshot") or {}).get("horizon")
+        or "3-12 months"
+    )
+    confidence_label = (report_v2.get("ic_snapshot") or {}).get("confidence_label") or _confidence_label_from_score(confidence_score)
 
     dossier = {
         "ticker": symbol,
         "generated_at": generated_at,
         "executive_pitch": {
             "thesis": str((report_v2.get("thesis") or {}).get("claim") or f"{symbol} setup requires review of report stack and SEC context."),
-            "recommendation": str((report_v2.get("ic_snapshot") or {}).get("recommendation") or "WATCH"),
-            "confidence_label": str((report_v2.get("ic_snapshot") or {}).get("confidence_label") or "Moderate"),
+            "recommendation": _format_recommendation(raw_recommendation, default="WATCH"),
+            "recommendation_raw": str(raw_recommendation or "").strip().lower(),
+            "confidence_label": str(confidence_label),
             "confidence_score": round(confidence_score, 1),
-            "time_horizon": str((report_v2.get("ic_snapshot") or {}).get("time_horizon") or "3-6 months"),
+            "time_horizon": str(horizon),
         },
         "sections": {
             "technical_valuation_fundamentals": {
@@ -414,11 +576,14 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     technical = raw_report.get("technical") or {}
     dcf = raw_report.get("dcf") or {}
     health = raw_report.get("health") or {}
+    edgar = raw_report.get("edgar") or {}
     sec_analyze = sec_narr.get("analyze") or {}
     sec_compare = ((sec_narr.get("compare") or {}).get("compare") or {})
-    quote = (fin.get("snapshot") or {}).get("quote") or {}
-    pt = (fin.get("snapshot") or {}).get("price_target") or {}
-    trends = (fin.get("snapshot") or {}).get("recommendation_trends") or {}
+    snapshot = fin.get("snapshot") or {}
+    quote = snapshot.get("quote") or {}
+    pt = snapshot.get("price_target") or {}
+    trends = snapshot.get("recommendation_trends") or {}
+    rec_history = list(trends.get("history") or [])
     catalysts = list(fin.get("catalysts") or [])
     risks = list(fin.get("risks") or [])
     source_rows = list(dossier.get("source_metadata") or [])
@@ -437,37 +602,82 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             return "n/a"
         return f"{v:.{digits}f}%"
 
-    snapshot = fin.get("snapshot") or {}
     profile = snapshot.get("profile") or {}
     metrics = snapshot.get("metrics") or {}
     earnings = list(snapshot.get("earnings") or [])
     news = list(snapshot.get("news") or [])
+    peers = list(snapshot.get("peers") or [])
+    upgrades = list(snapshot.get("upgrade_downgrade") or [])
+    insider_tx = snapshot.get("insider_transactions") or {}
+    insider_sent = snapshot.get("insider_sentiment") or {}
+    dividends = list(snapshot.get("dividends") or [])
+    splits = list(snapshot.get("splits") or [])
+    upcoming = list(snapshot.get("earnings_calendar") or [])
+    news_sent = snapshot.get("news_sentiment") or {}
+    sec_filings = list(snapshot.get("sec_filings") or [])
+
     sec_summary = str(sec_analyze.get("narrative_summary") or sec_analyze.get("error") or "SEC analysis unavailable.")
     compare_summary = str(sec_compare.get("narrative_summary") or (sec_narr.get("compare") or {}).get("error") or "SEC compare unavailable.")
     hhi_label = (((portfolio.get("portfolio_risk") or {}).get("concentration") or {}).get("hhi_label") or "Unavailable")
     positions_count = (portfolio.get("portfolio_summary") or {}).get("positions_count", "n/a")
     total_mv = (portfolio.get("portfolio_summary") or {}).get("total_market_value", "n/a")
-    recommendation = pitch.get("recommendation", "WATCH")
-    confidence_label = pitch.get("confidence_label", "Moderate")
-    confidence_score = pitch.get("confidence_score", "n/a")
+    recommendation = pitch.get("recommendation") or "WATCH"
+    confidence_label = pitch.get("confidence_label") or "Moderate"
+    confidence_score = pitch.get("confidence_score")
+    if confidence_score is None or confidence_score == "":
+        confidence_score = "n/a"
     bull_votes = int(trends.get("buy", 0) or 0) + int(trends.get("strong_buy", 0) or 0)
     bear_votes = int(trends.get("sell", 0) or 0) + int(trends.get("strong_sell", 0) or 0)
+    hold_votes = int(trends.get("hold", 0) or 0)
 
-    def _money(value: Any) -> str:
+    def _money_scaled(value: Any) -> str:
+        """Format Finnhub-style market caps (already in millions)."""
         v = _safe_float(value)
         if v is None:
             return "n/a"
-        if abs(v) >= 1000:
-            return f"${v/1000:.2f}B"
-        return f"${v:.2f}M"
+        abs_v = abs(v)
+        if abs_v >= 1_000_000:
+            return f"${v/1_000_000:.2f}T"
+        if abs_v >= 1_000:
+            return f"${v/1_000:.2f}B"
+        return f"${v:,.2f}M"
+
+    def _money_currency(value: Any) -> str:
+        v = _safe_float(value)
+        if v is None:
+            return "n/a"
+        if v < 0:
+            return f"-${abs(v):,.2f}"
+        return f"${v:,.2f}"
 
     def _ratio_pct(value: Any, digits: int = 1) -> str:
+        """Format a fractional ratio (0.0-1.0) as a percentage.
+
+        This intentionally always multiplies by 100; use ``_pct`` for values that
+        are already expressed as percentage points (e.g., Finnhub margin fields).
+        """
         v = _safe_float(value)
         if v is None:
             return "n/a"
-        if abs(v) <= 1:
-            v *= 100
+        return f"{v * 100:.{digits}f}%"
+
+    def _pct_finnhub(value: Any, digits: int = 1) -> str:
+        """Format a Finnhub metric that is already expressed in percent."""
+        v = _safe_float(value)
+        if v is None:
+            return "n/a"
         return f"{v:.{digits}f}%"
+
+    def _shares_human(value: Any) -> str:
+        v = _safe_float(value)
+        if v is None:
+            return "n/a"
+        abs_v = abs(v)
+        if abs_v >= 1_000_000:
+            return f"{v/1_000_000:.2f}M shares"
+        if abs_v >= 1_000:
+            return f"{v/1_000:.1f}K shares"
+        return f"{v:,.0f} shares"
 
     def _cite(*names: str) -> str:
         ids = [source_index.get(name) for name in names if source_index.get(name)]
@@ -475,55 +685,137 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             return ""
         return " " + "".join(f"[{idx}]" for idx in sorted(set(ids)))
 
+    industry_text = profile.get("finnhub_industry") or "Equity Research"
+    region_text = profile.get("country") or "Global"
+    issuer_name = profile.get("name") or ticker
+    horizon_text = pitch.get("time_horizon") or "3-12 months"
+
+    rec_consensus_summary = "Consensus panel data is unavailable."
+    if bull_votes or bear_votes or hold_votes:
+        rec_consensus_summary = (
+            f"Latest consensus panel: {bull_votes} bullish · {hold_votes} neutral · "
+            f"{bear_votes} bearish votes."
+        )
+
     lines: list[str] = [
         f"# {ticker} — Institutional Research Report",
         "",
         "## Cover Page",
         "",
-        f"Prepared: {generated_at} | Analyst: TradingBot Research Engine",
-        f"Coverage: {profile.get('finnhub_industry') or 'Equity Research'} | Region: {profile.get('country') or 'Global'}",
-        f"Document Type: Institutional Investment Note{_cite('report_stack', 'finnhub', 'sec_analyze')}",
+        f"**Prepared:** {generated_at}",
+        "**Analyst:** TradingBot Research Engine",
+        f"**Coverage:** {industry_text}",
+        f"**Region:** {region_text}",
+        f"**Document Type:** Institutional Investment Note{_cite('report_stack', 'finnhub', 'sec_analyze')}",
         "",
         "---",
         "",
-        f"Current Price: ${_num(quote.get('current'))} | 52-Week Range: ${_num(metrics.get('52week_low'))}–${_num(metrics.get('52week_high'))} | Consensus Target (Finnhub Mean): ${_num(pt.get('mean'))}",
+        f"**Current Price:** {_money_currency(quote.get('current'))}  ",
+        f"**52-Week Range:** {_money_currency(metrics.get('52week_low'))} – {_money_currency(metrics.get('52week_high'))}  ",
+        (
+            f"**Consensus Target (Mean):** {_money_currency(pt.get('mean'))}"
+            + (f" (n={pt.get('number_of_analysts')})" if pt.get('number_of_analysts') else "")
+            + "  "
+        ),
         "",
-        f"Recommendation: **{recommendation}** | Confidence: **{confidence_label} ({confidence_score}/100)** | Horizon: **{pitch.get('time_horizon', '3-6 months')}**",
+        f"**Recommendation:** {recommendation} | **Confidence:** {confidence_label} ({confidence_score}/100) | **Horizon:** {horizon_text}",
         "",
-        "Business Strategy & Operations · Fundamental Performance · Valuation · Risk & Catalyst Analysis",
+        "Sections covered: Business Strategy & Operations · Fundamental Performance · Valuation · SEC Narrative · Portfolio Fit · Catalysts and Risks · Insider Activity · Analyst Actions · Monitoring",
         "",
         "## Executive Investment Summary",
         "",
         str(pitch.get("thesis") or "No thesis generated."),
         "",
-        f"{ticker} currently screens with technical score {_num(technical.get('signal_score'), 0)}/100 and DCF margin of safety {_pct(dcf.get('margin_of_safety'))}. "
-        f"Street positioning from Finnhub reads {bull_votes} bullish vs {bear_votes} bearish recommendation votes, while portfolio concentration context is **{hhi_label}**.{_cite('finnhub', 'report_stack', 'portfolio')}",
+        (
+            f"{issuer_name} ({ticker}) is evaluated through a blended institutional framework that integrates "
+            f"market structure, valuation underwriting, filing intelligence, and scenario-based risk control. "
+            f"At a high level, the technical signal score reads {_num(technical.get('signal_score'), 0)}/100 "
+            f"and DCF margin of safety is {_pct(dcf.get('margin_of_safety'))}, while sell-side positioning reads "
+            f"{bull_votes} bullish vs {bear_votes} bearish votes (with {hold_votes} on hold). "
+            f"Portfolio concentration context is {hhi_label}, which informs sizing and risk-budget interpretation."
+            f"{_cite('finnhub', 'report_stack', 'portfolio')}"
+        ),
+        "",
+        (
+            f"The framing here is **{recommendation}** with **{confidence_label}** confidence over a "
+            f"**{horizon_text}** horizon. Treat this as a structured starting point — any execution decision "
+            f"should follow position-sizing rules and the explicit invalidation criteria listed in the Catalyst and Risk Matrix."
+        ),
         "",
         "## Part I: Company and Business Model",
         "",
-        f"- Issuer: {profile.get('name') or ticker} | Industry: {profile.get('finnhub_industry') or 'n/a'} | Exchange: {profile.get('exchange') or 'n/a'}",
-        f"- Geography/Currency: {profile.get('country') or 'n/a'} / {profile.get('currency') or 'n/a'}",
-        f"- Market Cap (Finnhub): {_money(profile.get('market_cap'))} | IPO: {profile.get('ipo') or 'n/a'}{_cite('finnhub')}",
+        (
+            f"{issuer_name} operates within the {industry_text or 'sector'} segment, "
+            f"with primary exchange listing on {profile.get('exchange') or 'n/a'} and reporting in "
+            f"{profile.get('currency') or 'USD'}. The issuer maps to sector ETF proxy "
+            f"{technical.get('sector_etf') or 'unknown'} for relative-strength reads and is benchmarked against peers "
+            f"using both fundamental multiples and tape structure."
+            f"{_cite('finnhub', 'report_stack')}"
+        ),
+        "",
+        "**Issuer Snapshot**",
+        "",
+        f"- Issuer: {issuer_name} | Industry: {industry_text or 'n/a'} | Exchange: {profile.get('exchange') or 'n/a'}",
+        f"- Geography / Currency: {profile.get('country') or 'n/a'} / {profile.get('currency') or 'n/a'}",
+        f"- Market Cap: {_money_scaled(profile.get('market_cap'))} | Shares Out: {_shares_human((_safe_float(profile.get('share_outstanding')) or 0) * 1_000_000) if _safe_float(profile.get('share_outstanding')) else 'n/a'} | IPO: {profile.get('ipo') or 'n/a'}{_cite('finnhub')}",
+        f"- Beta (5Y): {_num(metrics.get('beta'))} | YTD Return: {_pct_finnhub(metrics.get('ytd_price_return_daily'))} | 52w Return: {_pct_finnhub(metrics.get('52week_price_return_daily'))}{_cite('finnhub')}",
         f"- Core thesis context: {(report_v2.get('thesis') or {}).get('claim') or 'Derived from integrated report stack.'}{_cite('report_stack')}",
+    ]
+
+    if peers:
+        lines.extend([
+            "",
+            "**Peer Universe**",
+            "",
+            (
+                f"Comparable issuers identified by Finnhub: {', '.join(peers[:8])}. "
+                "Peer set frames relative valuation and trend comparison; differences in scale, capital intensity, "
+                "and exposure to end-markets should be considered before treating multiples as directly comparable."
+                f"{_cite('finnhub')}"
+            ),
+        ])
+
+    lines.extend([
         "",
         "## Part II: Fundamental Performance Analysis",
         "",
+        (
+            "Fundamental performance is read through a growth, margin, capital-efficiency, and balance-sheet lens. "
+            "These four dimensions together inform whether the business is in a re-rating regime or whether multiple "
+            "compression risk is elevated. The table below captures TTM trends and quarterly liquidity posture."
+            f"{_cite('finnhub')}"
+        ),
+        "",
         "| Fundamental Metric | Value | Commentary |",
         "|---|---:|---|",
-        f"| Revenue Growth (TTM YoY) | {_ratio_pct(metrics.get('revenue_growth_ttm_yoy'))} | Growth momentum from Finnhub metrics feed |",
-        f"| EPS Growth (TTM YoY) | {_ratio_pct(metrics.get('eps_growth_ttm_yoy'))} | Earnings trajectory check |",
-        f"| Operating Margin (TTM) | {_ratio_pct(metrics.get('operating_margin_ttm'))} | Operating efficiency trend |",
-        f"| Net Margin (TTM) | {_ratio_pct(metrics.get('net_margin_ttm'))} | Bottom-line profitability quality |",
-        f"| ROE / ROA (TTM) | {_ratio_pct(metrics.get('roe_ttm'))} / {_ratio_pct(metrics.get('roa_ttm'))} | Capital efficiency read-through |",
-        f"| Current Ratio / Debt-Equity | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('debt_to_equity_quarterly'))} | Liquidity and leverage posture |",
+        f"| Revenue Growth (TTM YoY) | {_pct_finnhub(metrics.get('revenue_growth_ttm_yoy'))} | Top-line momentum, TTM vs prior TTM |",
+        f"| Revenue Growth (5Y CAGR) | {_pct_finnhub(metrics.get('revenue_growth_5y'))} | Long-cycle compounding |",
+        f"| EPS Growth (TTM YoY) | {_pct_finnhub(metrics.get('eps_growth_ttm_yoy'))} | Earnings trajectory check |",
+        f"| EPS Growth (5Y CAGR) | {_pct_finnhub(metrics.get('eps_growth_5y'))} | Earnings power durability |",
+        f"| Gross Margin (TTM) | {_pct_finnhub(metrics.get('gross_margin_ttm'))} | Pricing power and unit economics |",
+        f"| Operating Margin (TTM) | {_pct_finnhub(metrics.get('operating_margin_ttm'))} | Operating efficiency trend |",
+        f"| Net Margin (TTM) | {_pct_finnhub(metrics.get('net_margin_ttm'))} | Bottom-line profitability quality |",
+        f"| Free Cash Flow Margin (TTM) | {_pct_finnhub(metrics.get('fcf_margin_ttm'))} | Cash conversion quality |",
+        f"| ROE / ROA (TTM) | {_pct_finnhub(metrics.get('roe_ttm'))} / {_pct_finnhub(metrics.get('roa_ttm'))} | Capital efficiency read-through |",
+        f"| ROIC (TTM) | {_pct_finnhub(metrics.get('roic_ttm'))} | Return vs cost of capital |",
+        f"| Current Ratio / Quick Ratio | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('quick_ratio_quarterly'))} | Liquidity posture |",
+        f"| Debt / Equity (Q) | {_num(metrics.get('debt_to_equity_quarterly'))} | Leverage profile |",
+        f"| Interest Coverage (TTM) | {_num(metrics.get('interest_coverage_ttm'))} | Solvency cushion |",
+        f"| Dividend Yield (TTM) | {_pct_finnhub(metrics.get('dividend_yield_ttm'))} | Total-return income contribution |",
+        f"| Payout Ratio (TTM) | {_pct_finnhub(metrics.get('payout_ratio_ttm'))} | Dividend coverage |",
         "",
         "### Earnings Quality (Recent Prints)",
         "",
-            f"Earnings dispersion and surprise cadence remain central to near-term rerating potential and should be read with valuation compression/expansion risk in mind.{_cite('finnhub')}",
-            "",
+        (
+            "Earnings dispersion and surprise cadence remain central to near-term re-rating potential. "
+            "Read these prints alongside valuation multiples; profitable growth at expanding margins typically "
+            "supports multiple expansion, while declining margins or earnings misses can compress multiples even "
+            f"when revenue growth is intact.{_cite('finnhub')}"
+        ),
+        "",
         "| Period | Actual EPS | Estimate EPS | Surprise % |",
         "|---|---:|---:|---:|",
-    ]
+    ])
 
     if earnings:
         for row in earnings[:6]:
@@ -533,45 +825,132 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     else:
         lines.append("| n/a | n/a | n/a | n/a |")
 
+    if upcoming:
+        lines.extend([
+            "",
+            "### Upcoming Earnings Calendar",
+            "",
+            "| Date | Quarter | EPS Estimate | Revenue Estimate |",
+            "|---|---|---:|---:|",
+        ])
+        for row in upcoming[:4]:
+            quarter_str = ""
+            if row.get("year") and row.get("quarter"):
+                quarter_str = f"{row.get('year')} Q{row.get('quarter')}"
+            rev_est = _safe_float(row.get("revenue_estimate"))
+            rev_text = f"${rev_est/1_000_000_000:.2f}B" if rev_est else "n/a"
+            lines.append(
+                f"| {row.get('date') or 'n/a'} | {quarter_str or 'n/a'} | {_num(row.get('eps_estimate'))} | {rev_text} |"
+            )
+
     lines.extend(
         [
             "",
             "## Part III: Valuation and Technical Positioning",
             "",
+            (
+                "Valuation and technical positioning are read jointly. Intrinsic-value framing (DCF) is anchored "
+                "by the assumed growth, discount rate, and terminal growth combination, while the multiples table "
+                "provides cross-section context against history and peers. Technical positioning is summarized through "
+                "trend regime, breakout structure, and signal scoring."
+                f"{_cite('report_stack', 'finnhub')}"
+            ),
+            "",
             "| Valuation / Technical | Value |",
             "|---|---:|",
+            f"| DCF Intrinsic Value | {_money_currency(dcf.get('intrinsic_value'))} |",
             f"| DCF Margin of Safety | {_pct(dcf.get('margin_of_safety'))} |",
+            f"| Consensus Target (Mean / Median) | {_money_currency(pt.get('mean'))} / {_money_currency(pt.get('median'))} |",
+            f"| Consensus Target Range (Low / High) | {_money_currency(pt.get('low'))} / {_money_currency(pt.get('high'))} |",
             f"| P/E (TTM) | {_num(metrics.get('pe_ttm'))} |",
+            f"| P/E (Annual) | {_num(metrics.get('pe_annual'))} |",
             f"| P/B (Annual) | {_num(metrics.get('pb_annual'))} |",
             f"| P/S (TTM) | {_num(metrics.get('ps_ttm'))} |",
             f"| EV / EBITDA | {_num(metrics.get('ev_to_ebitda'))} |",
             f"| EV / Sales | {_num(metrics.get('ev_to_sales'))} |",
-            f"| Technical Signal Score | {_num(technical.get('signal_score'), 0)} |",
-            f"| Stage 2 / VCP | {bool(technical.get('stage_2'))} / {bool(technical.get('vcp'))} |",
+            f"| EPS (TTM / Annual) | {_num(metrics.get('eps_ttm'))} / {_num(metrics.get('eps_annual'))} |",
+            f"| Book Value / Share (Annual) | {_money_currency(metrics.get('book_value_per_share_annual'))} |",
+            f"| Technical Signal Score | {_num(technical.get('signal_score'), 0)} / 100 |",
+            f"| Stage 2 / VCP | {'YES' if technical.get('stage_2') else 'NO'} / {'YES' if technical.get('vcp') else 'NO'} |",
             "",
-            f"Technical structure implies {'constructive trend continuation' if technical.get('stage_2') else 'non-trending or transitional tape'} with sector monitor {technical.get('sector_etf') or 'n/a'}. "
-            f"From a valuation perspective, margin-of-safety and multiple profile should be read together with SEC and catalyst evidence, not in isolation.{_cite('report_stack', 'finnhub', 'sec_analyze')}",
+            (
+                f"Technical structure implies {'constructive trend continuation' if technical.get('stage_2') else 'a non-trending or transitional tape'} "
+                f"with sector monitor {technical.get('sector_etf') or 'n/a'}. From a valuation perspective, margin-of-safety "
+                "and multiple profile should be read together with SEC and catalyst evidence, not in isolation. "
+                "If the trend is constructive but multiples are stretched, prefer reduced size and explicit invalidation; "
+                "if both are constructive, scale only against documented catalysts and risk budget capacity."
+                f"{_cite('report_stack', 'finnhub', 'sec_analyze')}"
+            ),
             "",
             "## Part IV: SEC Narrative and Comparative Filing Deltas",
             "",
-            f"- Analyze Headline: {sec_analyze.get('summary_headline') or sec_analyze.get('error') or 'Unavailable'}{_cite('sec_analyze')}",
-            f"- Analyze Narrative: {sec_summary}{_cite('sec_analyze')}",
-            f"- Compare Headline: {sec_compare.get('summary_headline') or (sec_narr.get('compare') or {}).get('error') or 'Unavailable'}{_cite('sec_compare')}",
-            f"- Compare Narrative: {compare_summary}{_cite('sec_compare')}",
+            (
+                "SEC narrative and comparative filing deltas surface qualitative changes that quantitative metrics often miss: "
+                "shifts in risk-factor language, evolving guidance posture, and incremental management commentary. "
+                "Treat this as forward-looking corroboration or contradiction of the quantitative framing above."
+                f"{_cite('sec_analyze', 'sec_compare')}"
+            ),
             "",
-            "## Part V: Portfolio Fit and Risk Budget Context",
+            "**Filing Analyze**",
             "",
-            f"- Open positions: {positions_count}",
-            f"- Total market value: {total_mv}",
-            f"- Concentration label: {hhi_label}",
-            f"- Risk budget impact: {(report_v2.get('portfolio_fit') or {}).get('risk_budget_impact') or 'Unavailable'}{_cite('portfolio', 'report_stack')}",
+            f"- Headline: {sec_analyze.get('summary_headline') or sec_analyze.get('error') or 'Unavailable'}{_cite('sec_analyze')}",
+            f"- Narrative: {sec_summary}{_cite('sec_analyze')}",
             "",
-            "## Part VI: Catalyst and Risk Matrix",
+            "**Filing Compare (Over Time)**",
             "",
-            "| Type | Item |",
-            "|---|---|",
+            f"- Headline: {sec_compare.get('summary_headline') or (sec_narr.get('compare') or {}).get('error') or 'Unavailable'}{_cite('sec_compare')}",
+            f"- Narrative: {compare_summary}{_cite('sec_compare')}",
         ]
     )
+
+    if sec_filings:
+        lines.extend([
+            "",
+            "**Recent SEC Filings (Finnhub)**",
+            "",
+            "| Form | Filed | Accepted | Report |",
+            "|---|---|---|---|",
+        ])
+        for row in sec_filings[:5]:
+            url = row.get("report_url") or row.get("filing_url") or ""
+            link = f"[link]({url})" if url else "n/a"
+            lines.append(
+                f"| {row.get('form') or 'n/a'} | {row.get('filed_date') or 'n/a'} | {row.get('accepted_date') or 'n/a'} | {link} |"
+            )
+
+    lines.extend([
+        "",
+        "## Part V: Portfolio Fit and Risk Budget Context",
+        "",
+        (
+            "Portfolio fit converts a standalone idea into a position decision. Sector overlap, concentration "
+            "contribution, and risk-budget impact dictate sizing rather than the headline thesis alone. "
+            f"Concentration here reads as **{hhi_label}**, with {positions_count} open positions across "
+            f"a total market value of {total_mv}."
+            f"{_cite('portfolio', 'report_stack')}"
+        ),
+        "",
+        "| Portfolio Lens | Value |",
+        "|---|---|",
+        f"| Open positions | {positions_count} |",
+        f"| Total market value | {total_mv} |",
+        f"| Concentration label | {hhi_label} |",
+        f"| Risk budget impact | {(report_v2.get('portfolio_fit') or {}).get('risk_budget_impact') or 'Unavailable'} |",
+        f"| Sector overlap (%) | {_pct_finnhub((report_v2.get('portfolio_fit') or {}).get('sector_overlap_pct'))} |",
+        f"| Correlation proxy | {_num((report_v2.get('portfolio_fit') or {}).get('correlation_proxy'), 3)} |",
+        "",
+        "## Part VI: Catalyst and Risk Matrix",
+        "",
+        (
+            "Catalysts and risks are aggregated across filing cadence, sentiment surfaces, and quantitative "
+            "checks. Treat this as a forward-event map: catalysts can re-rate price quickly in either direction, "
+            "and explicit risk lines define when the thesis must be re-underwritten or unwound."
+            f"{_cite('finnhub', 'sec_analyze', 'report_stack')}"
+        ),
+        "",
+        "| Type | Item |",
+        "|---|---|",
+    ])
 
     if catalysts:
         lines.extend([f"| Catalyst | {item} |" for item in catalysts[:8]])
@@ -583,30 +962,200 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     else:
         lines.append("| Risk | No clear risks extracted from available feeds. |")
 
-    lines.extend(["", "### Newsflow Digest (Finnhub)", ""])
-    if news:
-        for item in news[:8]:
-            headline = str(item.get("headline") or "").strip()
-            summary = str(item.get("summary") or "").strip()
-            source = str(item.get("source") or "").strip()
-            if headline:
-                lines.append(f"- {headline} ({source or 'source n/a'})")
-                if summary:
-                    lines.append(f"  - {summary[:220]}")
-    else:
-        lines.append("- No recent Finnhub news items were returned.")
+    invalidation = (report_v2.get("ic_snapshot") or {}).get("invalidation") or []
+    if invalidation:
+        lines.extend(["", "### Invalidation Criteria", ""])
+        lines.extend([f"- {item}" for item in invalidation[:5]])
+
+    # --- Insider Activity -------------------------------------------------
+    has_insider_data = (insider_tx.get("rows") or insider_sent.get("rows"))
+    if has_insider_data:
+        lines.extend([
+            "",
+            "## Part VII: Insider Activity (Trailing 180 Days)",
+            "",
+            (
+                "Form-4 insider transactions and Finnhub's Monthly Share Purchase Ratio (MSPR) capture "
+                "executive and director conviction. The scoring below counts only open-market activity "
+                "(SEC Form-4 codes **P** and **S**); stock-based compensation grants (A), option exercises (M), "
+                "tax-withholding sales (F), and dispositions to the issuer (D) are excluded because they are "
+                "non-discretionary and do not represent a market signal. Concentrated open-market buying or "
+                "persistent net-positive MSPR frequently precedes positive re-rating; sustained net-selling can "
+                "be an early signal of decelerating fundamentals or governance stress — though planned 10b5-1 "
+                "sales should still be discounted."
+                f"{_cite('finnhub')}"
+            ),
+            "",
+            "| Insider Lens (Open-Market Only) | Value |",
+            "|---|---:|",
+            f"| Net Shares (Buys − Sells, 180d) | {_shares_human(insider_tx.get('net_shares_180d'))} |",
+            f"| Net Dollars (Approx., 180d) | {_money_currency(insider_tx.get('net_dollars_180d'))} |",
+            f"| Open-Market Buys (P) | {insider_tx.get('buy_count_180d') or 0} |",
+            f"| Open-Market Sells (S) | {insider_tx.get('sell_count_180d') or 0} |",
+            f"| Insider Sentiment (MSPR Sum, 6m) | {_num(insider_sent.get('net_mspr_6m'))} |",
+            f"| Insider Net Share Change (6m) | {_num(insider_sent.get('net_change_6m'), 0)} |",
+        ])
+        ins_rows = insider_tx.get("rows") or []
+        if ins_rows:
+            lines.extend([
+                "",
+                "**Recent Form-4 Activity**",
+                "",
+                "_Code legend: **P** open-market purchase · **S** open-market sale · **A** grant/award · **M** option exercise · **F** shares withheld for taxes · **D** disposition to issuer · **G** gift_",
+                "",
+                "| Date | Insider | Code | Type | Shares | Price |",
+                "|---|---|:--:|:--:|---:|---:|",
+            ])
+            code_label = {
+                "P": "Buy",
+                "S": "Sell",
+                "A": "Award",
+                "M": "Exercise",
+                "F": "Tax",
+                "D": "Disposition",
+                "G": "Gift",
+            }
+            for row in ins_rows[:8]:
+                code = (row.get("transaction_code") or "").upper()
+                kind = code_label.get(code, "Other")
+                lines.append(
+                    f"| {row.get('transaction_date') or 'n/a'} | {row.get('name') or 'n/a'} | {code or '-'} | {kind} | {_num(row.get('share'), 0)} | {_money_currency(row.get('transaction_price'))} |"
+                )
+
+    # --- Analyst Actions --------------------------------------------------
+    if upgrades or rec_history:
+        lines.extend([
+            "",
+            "## Part VIII: Sell-Side Analyst Activity",
+            "",
+            (
+                "Sell-side ratings actions and consensus drift surface how the analyst community is "
+                "repricing the issuer in real time. Upgrades clustered near earnings or guidance often "
+                "co-incide with revisions cycles, while persistent downgrade flow tends to lead price "
+                f"weakness on a multi-week basis. {rec_consensus_summary}{_cite('finnhub')}"
+            ),
+        ])
+        if rec_history:
+            lines.extend([
+                "",
+                "**Consensus History**",
+                "",
+                "| Period | Strong Buy | Buy | Hold | Sell | Strong Sell |",
+                "|---|---:|---:|---:|---:|---:|",
+            ])
+            for row in rec_history[:6]:
+                lines.append(
+                    f"| {row.get('period') or 'n/a'} | {row.get('strong_buy', 0)} | {row.get('buy', 0)} | {row.get('hold', 0)} | {row.get('sell', 0)} | {row.get('strong_sell', 0)} |"
+                )
+        if upgrades:
+            lines.extend([
+                "",
+                "**Recent Ratings Actions**",
+                "",
+                "| Date | Firm | From | To | Action |",
+                "|---|---|---|---|---|",
+            ])
+            for row in upgrades[:6]:
+                date_str = row.get("grade_time") or "n/a"
+                if isinstance(date_str, str) and "T" in date_str:
+                    date_str = date_str.split("T")[0]
+                lines.append(
+                    f"| {date_str} | {row.get('company') or 'n/a'} | {row.get('from_grade') or '-'} | {row.get('to_grade') or '-'} | {(row.get('action') or '-').title()} |"
+                )
+
+    # --- Capital Returns --------------------------------------------------
+    if dividends or splits:
+        lines.extend([
+            "",
+            "## Part IX: Capital Returns and Corporate Actions",
+            "",
+            (
+                "Dividend cadence, payout cover, and share-action history (splits, special distributions) "
+                "are part of the total-return picture. Read the dividend yield in Part II alongside the "
+                "schedule below — declining or skipped dividends materially change the income leg of the "
+                f"thesis.{_cite('finnhub')}"
+            ),
+        ])
+        if dividends:
+            lines.extend([
+                "",
+                "**Recent Dividends**",
+                "",
+                "| Ex-Date | Pay Date | Amount | Currency | Frequency |",
+                "|---|---|---:|---|---|",
+            ])
+            freq_map = {1: "Annual", 2: "Semi-annual", 4: "Quarterly", 12: "Monthly"}
+            for row in dividends[:6]:
+                freq_text = freq_map.get(int(row.get("frequency") or 0), "n/a")
+                lines.append(
+                    f"| {row.get('ex_date') or 'n/a'} | {row.get('pay_date') or 'n/a'} | {_money_currency(row.get('amount'))} | {row.get('currency') or 'USD'} | {freq_text} |"
+                )
+        if splits:
+            lines.extend([
+                "",
+                "**Stock Splits**",
+                "",
+                "| Date | Ratio (To : From) |",
+                "|---|---|",
+            ])
+            for row in splits[:4]:
+                ratio = "n/a"
+                tf = _safe_float(row.get("to_factor"))
+                ff = _safe_float(row.get("from_factor"))
+                if tf and ff:
+                    ratio = f"{tf:.0f} : {ff:.0f}"
+                lines.append(f"| {row.get('date') or 'n/a'} | {ratio} |")
+
+    # --- News Sentiment ---------------------------------------------------
+    sent_buzz = _safe_float(news_sent.get("buzz_articles_in_last_week"))
+    sent_score = _safe_float(news_sent.get("company_news_score"))
+    if sent_buzz is not None or sent_score is not None or news:
+        lines.extend(["", "## Part X: News and Sentiment Pulse", ""])
+        if sent_score is not None or sent_buzz is not None:
+            sector_score = _safe_float(news_sent.get("sector_avg_news_score"))
+            score_delta = ""
+            if sent_score is not None and sector_score is not None:
+                if sent_score > sector_score:
+                    score_delta = f" ({(sent_score - sector_score)*100:+.0f}bp vs sector)"
+                else:
+                    score_delta = f" ({(sent_score - sector_score)*100:+.0f}bp vs sector)"
+            lines.append(
+                (
+                    f"Finnhub measures a {(_num(sent_score, 2) if sent_score is not None else 'n/a')}"
+                    f" composite news score{score_delta} with "
+                    f"{int(sent_buzz) if sent_buzz is not None else 'n/a'} articles in the trailing week. "
+                    f"Bullish vs bearish article share: {_ratio_pct(news_sent.get('bullish_percent'))} / "
+                    f"{_ratio_pct(news_sent.get('bearish_percent'))}."
+                    f"{_cite('finnhub')}"
+                )
+            )
+        if news:
+            lines.extend(["", "**Newsflow Digest**", ""])
+            for item in news[:8]:
+                headline = str(item.get("headline") or "").strip()
+                summary = str(item.get("summary") or "").strip()
+                source = str(item.get("source") or "").strip()
+                date_str = str(item.get("datetime") or "").split("T")[0] if item.get("datetime") else ""
+                if headline:
+                    badge = f"{date_str} · {source}" if date_str and source else (source or "source n/a")
+                    lines.append(f"- **{headline}** _({badge})_")
+                    if summary:
+                        lines.append(f"  - {summary[:240]}")
+        else:
+            lines.append("- No recent Finnhub news items were returned.")
 
     lines.extend(["", "## Key Metrics at a Glance", ""])
     lines.extend(
         [
             "| Metric | Value | Source |",
             "|---|---:|---|",
-            f"| Current Price | ${_num(quote.get('current'))} | Finnhub quote |",
-            f"| 52-Week High | ${_num(metrics.get('52week_high'))} | Finnhub metrics |",
-            f"| 52-Week Low | ${_num(metrics.get('52week_low'))} | Finnhub metrics |",
+            f"| Current Price | {_money_currency(quote.get('current'))} | Quote feed |",
+            f"| 52-Week High / Low | {_money_currency(metrics.get('52week_high'))} / {_money_currency(metrics.get('52week_low'))} | Finnhub metrics |",
+            f"| Consensus Target (Mean) | {_money_currency(pt.get('mean'))} | Finnhub consensus |",
             f"| DCF Margin of Safety | {_pct(dcf.get('margin_of_safety'))} | Full report DCF |",
             f"| Health Flag Count | {len(health.get('flags') or [])} | Full report health |",
             f"| Portfolio Concentration | {hhi_label} | Portfolio risk analytics |",
+            f"| Recommendation | {recommendation} ({confidence_label}, {confidence_score}/100) | TradingBot Research Engine |",
         ]
     )
 
@@ -624,6 +1173,18 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         lines.extend([f"- {item}" for item in fallback_notes])
     else:
         lines.append("- None")
+
+    if "finnhub_api_key_missing" in {(row.get("detail") or "").lower() for row in source_rows} or any(
+        "finnhub_api_key_missing" in str(note) for note in fallback_notes
+    ):
+        lines.extend([
+            "",
+            "_Finnhub data is unavailable because no API key is configured. Set `FINNHUB_API_KEY` in your "
+            "environment to populate insider activity, analyst ratings, news sentiment, peers, and consensus "
+            "targets. Sign up for a free key at https://finnhub.io/ — the dossier respects the free-tier "
+            "60 calls/minute limit automatically._",
+        ])
+
     lines.extend(
         [
             "",
@@ -964,8 +1525,12 @@ def research_dossier_export(
             filename = f"{safe_symbol.lower()}_research_dossier.md"
             media_type = "text/markdown; charset=utf-8"
         else:
-            markdown = _dossier_to_markdown(dossier)
-            body = _text_to_simple_pdf(markdown)
+            try:
+                body = dossier_to_pdf(dossier)
+            except Exception:
+                # Defensive: if the rich renderer fails for any reason, fall
+                # back to the legacy text-based PDF so callers still get a file.
+                body = _text_to_simple_pdf(_dossier_to_markdown(dossier))
             filename = f"{safe_symbol.lower()}_research_dossier.pdf"
             media_type = "application/pdf"
         headers = {"Content-Disposition": f'attachment; filename="{filename}"'}

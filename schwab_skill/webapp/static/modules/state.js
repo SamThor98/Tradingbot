@@ -74,6 +74,13 @@ export const state = {
   selectedScanTicker: "",
   /** Optional scan body: strategy_overrides, universe_mode, tickers (see /api/scan). */
   scanRunOptions: null,
+  /** Active sort for the scan candidates table. `field` is one of the
+   *  `data-sort-key` values declared on the scan table headers (e.g.
+   *  "ticker", "score", "p_up_10d", "conviction"); `dir` is "asc" or
+   *  "desc". `field=null` means use natural backend ordering. Sort state
+   *  is intentionally session-scoped — it survives re-renders within the
+   *  same session but is not persisted to localStorage. */
+  scanSort: { field: null, dir: "desc" },
   sseEnabled: false,
   funnelMilestonesSent: {},
   retainedSessionSent: false,

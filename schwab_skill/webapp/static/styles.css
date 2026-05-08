@@ -1082,6 +1082,286 @@ select:focus-visible,
   background: rgba(14, 22, 45, 0.45);
   padding: 8px;
 }
+
+/* ------------------------------------------------------------------
+ * Institutional Report (IR) document layout
+ * Used by the Full Report visual renderer and the dossier preview.
+ * ------------------------------------------------------------------ */
+.ir-document {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 8px 4px 14px;
+  color: #e8eefb;
+  font-family: var(--font-sans);
+  line-height: 1.55;
+}
+.ir-cover {
+  border-radius: 14px;
+  border: 1px solid rgba(130, 153, 221, 0.32);
+  background: linear-gradient(160deg, rgba(20, 30, 64, 0.82), rgba(10, 16, 36, 0.82));
+  padding: 18px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ir-cover-eyebrow {
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8aa1d6;
+}
+.ir-cover-title {
+  font-size: 1.55rem;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.005em;
+  color: #f4f7ff;
+}
+.ir-cover-ticker {
+  color: #c4d0eb;
+  font-weight: 500;
+  font-size: 1.1rem;
+  margin-left: 4px;
+}
+.ir-cover-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  font-size: 0.85rem;
+  color: #cbd6f0;
+}
+.ir-cover-meta strong {
+  color: #f4f7ff;
+}
+.ir-cover-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+.ir-cover-cell {
+  border-radius: 10px;
+  border: 1px solid rgba(130, 153, 221, 0.28);
+  background: rgba(8, 14, 32, 0.72);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ir-cover-cell-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #8aa1d6;
+}
+.ir-cover-cell-value {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #f4f7ff;
+}
+.ir-rec-long { color: #4ade80; }
+.ir-rec-short { color: #fb7185; }
+.ir-rec-pass { color: #fbbf24; }
+.ir-cover-quote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  font-size: 0.86rem;
+  color: #cbd6f0;
+  border-top: 1px dashed rgba(130, 153, 221, 0.28);
+  padding-top: 10px;
+}
+
+.ir-section {
+  border-radius: 14px;
+  border: 1px solid rgba(130, 153, 221, 0.28);
+  background: rgba(10, 16, 36, 0.72);
+  padding: 16px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ir-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid rgba(130, 153, 221, 0.18);
+  padding-bottom: 8px;
+}
+.ir-section-eyebrow {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #8aa1d6;
+}
+.ir-section-title {
+  margin: 0;
+  font-size: 1.18rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: #f4f7ff;
+}
+.ir-section-subtitle {
+  font-size: 0.83rem;
+  color: #95a4c5;
+}
+.ir-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ir-paragraph {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 0;
+  color: #dfe6f7;
+}
+.ir-subhead {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #95a4c5;
+  margin-top: 6px;
+}
+
+.ir-kv-table,
+.ir-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(130, 153, 221, 0.22);
+  background: rgba(8, 14, 32, 0.5);
+  font-size: 0.86rem;
+}
+.ir-kv-table th,
+.ir-kv-table td,
+.ir-data-table th,
+.ir-data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(130, 153, 221, 0.14);
+}
+.ir-kv-table tr:last-child th,
+.ir-kv-table tr:last-child td,
+.ir-data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.ir-kv-table th {
+  width: 38%;
+  color: #b6c2e3;
+  font-weight: 500;
+  background: rgba(14, 22, 45, 0.55);
+}
+.ir-kv-table td {
+  color: #f0f4ff;
+  font-variant-numeric: tabular-nums;
+}
+.ir-kv-table.compact th,
+.ir-kv-table.compact td {
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+.ir-data-table th {
+  background: rgba(14, 22, 45, 0.6);
+  color: #b6c2e3;
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ir-data-table td {
+  color: #e8eefb;
+}
+.ir-data-table td.right,
+.ir-data-table th.right {
+  text-align: right;
+}
+.ir-data-table td.center,
+.ir-data-table th.center {
+  text-align: center;
+}
+.ir-data-table tbody tr:nth-child(even) td {
+  background: rgba(10, 16, 36, 0.4);
+}
+
+/* Dossier preview: reuses document layout with relaxed spacing */
+.ir-dossier-preview {
+  padding: 12px 12px 18px;
+}
+.ir-dossier-preview .ir-h3 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #f4f7ff;
+  margin: 4px 0 6px;
+  border-bottom: 1px solid rgba(130, 153, 221, 0.25);
+  padding-bottom: 6px;
+}
+.ir-dossier-preview .ir-h4 {
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: #f4f7ff;
+  margin: 16px 0 4px;
+  letter-spacing: -0.005em;
+  border-left: 3px solid rgba(56, 189, 248, 0.55);
+  padding-left: 10px;
+}
+.ir-dossier-preview .ir-h5 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #c9d4f0;
+  margin: 12px 0 4px;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+.ir-dossier-preview .ir-paragraph {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #dfe6f7;
+  margin: 6px 0;
+}
+.ir-dossier-preview .report-bullets {
+  margin: 4px 0 8px 18px;
+}
+.ir-dossier-preview .ir-divider {
+  border: none;
+  border-top: 1px solid rgba(130, 153, 221, 0.2);
+  margin: 12px 0;
+}
+.ir-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  padding: 0.05em 0.35em;
+  border-radius: 5px;
+  background: rgba(8, 14, 32, 0.6);
+  border: 1px solid rgba(130, 153, 221, 0.2);
+  color: #d4e1ff;
+}
+
+@media (max-width: 1120px) {
+  .ir-cover-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .ir-cover { padding: 14px 16px; }
+  .ir-section { padding: 14px 14px 16px; }
+  .ir-cover-strip {
+    grid-template-columns: 1fr;
+  }
+  .ir-cover-title { font-size: 1.3rem; }
+  .ir-data-table th,
+  .ir-data-table td,
+  .ir-kv-table th,
+  .ir-kv-table td {
+    padding: 6px 9px;
+    font-size: 0.8rem;
+  }
+}
+
 .compare-meta {
   padding: 0 18px 8px;
   font-size: 0.85rem;
@@ -4738,6 +5018,45 @@ html, body {
 #scanSection table thead th {
   background: rgba(15, 23, 42, 0.88);
   color: #dbe7ff;
+}
+
+/* Sortable column headers used in the scan candidates table.
+   Header cells get a small caret on the right that brightens when the
+   column is the active sort target. Keeping the indicator inside the
+   <th> (rather than a separate column) avoids any layout shift when
+   the sort target changes. */
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+.sortable-th:hover {
+  color: #ffffff;
+  background: rgba(56, 189, 248, 0.10);
+}
+.sortable-th:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sortable-th .sort-indicator {
+  display: inline-block;
+  width: 12px;
+  margin-left: 6px;
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.sortable-th .sort-indicator::before { content: "\2195"; } /* up-down arrow */
+.sortable-th.is-sorted-asc .sort-indicator::before { content: "\25B2"; } /* ▲ */
+.sortable-th.is-sorted-desc .sort-indicator::before { content: "\25BC"; } /* ▼ */
+.sortable-th.is-sorted .sort-indicator {
+  opacity: 1;
+  color: var(--accent);
+}
+.sortable-th.is-sorted {
+  color: #ffffff;
 }
 
 #scanSection table tbody tr {

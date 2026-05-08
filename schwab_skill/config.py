@@ -62,6 +62,31 @@ def clear_env_cache() -> None:
         _ENV_CACHE.clear()
 
 
+def bootstrap_dotenv_into_environ(skill_dir: Path | None = None) -> list[str]:
+    """Copy parsed `.env` values into ``os.environ`` for callers that only
+    consult ``os.getenv`` (e.g. ``sec_filing_analysis._call_llm_summary``,
+    ``webapp.strategy_chat.run_strategy_chat``).
+
+    Existing process-environment values (Render/Docker injected, or
+    deliberately set via shell ``set``/``export``) always win — we only
+    populate keys that are unset or empty in ``os.environ`` so live deploys
+    keep their authoritative secrets.
+
+    Returns the list of keys actually promoted, mostly for logging/tests.
+    """
+    env = _load_env(skill_dir)
+    promoted: list[str] = []
+    for key, value in env.items():
+        if not key or value is None:
+            continue
+        existing = os.environ.get(key)
+        if existing is not None and existing.strip() != "":
+            continue
+        os.environ[key] = value
+        promoted.append(key)
+    return promoted
+
+
 def _env_value(key: str, env: dict[str, str]) -> str:
     """
     Resolve config with process override precedence.

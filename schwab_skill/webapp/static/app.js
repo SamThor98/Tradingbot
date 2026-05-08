@@ -285,7 +285,6 @@ const SCREEN_SECTIONS = Object.freeze({
     "diagnosticsWorkflowStrip",
     "healthRibbon",
     "decisionDashboardCard",
-    "blockersAlertSection",
     "statusDetailsPanel",
     "calibrationSection",
   ],
@@ -496,8 +495,6 @@ function applyDisplayMode(mode) {
   if (scanDiag) scanDiag.open = pro;
   if (statusDet) statusDet.open = pro;
   if (secDeep) secDeep.open = pro;
-  const blockerAlert = document.getElementById("blockersAlertSection");
-  if (blockerAlert && !pro) blockerAlert.classList.add("hidden");
   const perfRaw = document.getElementById("performanceRawDetails");
   if (perfRaw && !pro) perfRaw.open = false;
 }
@@ -1317,12 +1314,9 @@ function renderDiagnostics(diag = {}) {
   const chipWrap = document.getElementById("scanDiagnostics");
   const blockersEl = document.getElementById("scanBlockers");
   const funnelEl = document.getElementById("scanFunnel");
-  const alertWrap = document.getElementById("blockersAlertSection");
-  const alertList = document.getElementById("blockersAlertList");
   chipWrap.innerHTML = "";
   blockersEl.innerHTML = "";
   funnelEl.innerHTML = "";
-  if (alertList) alertList.innerHTML = "";
 
   const dq = safeText(diag.data_quality || "").trim();
   if (dq) {
@@ -1337,7 +1331,6 @@ function renderDiagnostics(diag = {}) {
   }
 
   const summary = buildDiagnosticsSummary(diag);
-  const showBlockerAlert = getDisplayMode() === "pro";
   const headerChip = document.getElementById("scanBlockersChip");
   const headerChipCount = document.getElementById("scanBlockersChipCount");
   if (!summary.blockers.length) {
@@ -1345,7 +1338,6 @@ function renderDiagnostics(diag = {}) {
     empty.className = "empty";
     empty.textContent = "No major blockers detected.";
     blockersEl.appendChild(empty);
-    if (alertWrap) alertWrap.classList.add("hidden");
     if (headerChip) headerChip.classList.add("hidden");
     if (headerChipCount) headerChipCount.textContent = "0";
   } else {
@@ -1353,13 +1345,7 @@ function renderDiagnostics(diag = {}) {
       const li = document.createElement("li");
       li.innerHTML = `${b.label}: <strong>${b.value}</strong> <span class="${statusClass(b.severity)}">${b.severity}</span>`;
       blockersEl.appendChild(li);
-      if (showBlockerAlert && alertList) {
-        const alertLi = document.createElement("li");
-        alertLi.innerHTML = `${b.label}: <strong>${b.value}</strong>`;
-        alertList.appendChild(alertLi);
-      }
     });
-    if (alertWrap) alertWrap.classList.toggle("hidden", !showBlockerAlert);
     if (headerChip) headerChip.classList.remove("hidden");
     if (headerChipCount) headerChipCount.textContent = String(summary.blockers.length);
   }
@@ -1646,9 +1632,199 @@ function formatScanStatusBadge(status, reasons) {
   }
 }
 
-function renderScanRows(signals = []) {
+// Sortable scan table -------------------------------------------------------
+//
+// Each header in the scan candidates table carries a `data-sort-key` attribute
+// (see `index.html`). Clicking a header toggles the sort direction; clicking a
+// different header switches to that field with a sensible default direction
+// (descending for numeric/score-like columns, ascending for text/labels).
+// The active sort lives on `state.scanSort` and is applied during
+// `renderScanRows`, so any subsequent re-render (filter changes, new scan
+// payload, etc.) keeps the operator's chosen order until they pick a
+// different one.
+
+const SCAN_SORT_DEFAULT_DIRECTION = {
+  ticker: "asc",
+  status: "asc",
+  flagged_days: "desc",
+  strategy: "asc",
+  price: "desc",
+  score: "desc",
+  p_up_10d: "desc",
+  confidence: "desc",
+  conviction: "desc",
+  sector: "asc",
+};
+
+// Confidence is a label, not a number — give each bucket a numeric rank so
+// "HIGH" sorts above "MEDIUM" above "LOW" regardless of the input casing.
+// Unknown buckets sort to the bottom.
+const CONFIDENCE_RANK = {
+  HIGH: 3,
+  MEDIUM: 2,
+  MED: 2,
+  LOW: 1,
+};
+
+// Status pill order: keep the actionable "kept" rows on top by default, with
+// trimmed/filtered rows beneath in a stable order.
+const SCAN_STATUS_RANK = {
+  kept: 0,
+  trimmed_top_n: 1,
+  filtered_meta_policy: 2,
+  filtered_ensemble: 3,
+  filtered_self_study: 4,
+  filtered_event_risk: 5,
+  filtered_quality_gates: 6,
+};
+
+function getScanSortValue(rawSig, field) {
+  // Returns either a finite Number (for numeric sort) or a lowercase string
+  // (for text/label sort). Returning `null` means "missing"; missing values
+  // are pushed to the bottom regardless of direction so empty cells never
+  // crowd the top of the table.
+  if (!rawSig || typeof rawSig !== "object") return null;
+  const row = normalizeScanSignal(rawSig);
+  const advisory = row.advisory || {};
+  switch (field) {
+    case "ticker":
+      return safeText(row.ticker || row.symbol || "").toUpperCase() || null;
+    case "status": {
+      const status = safeText(rawSig._filter_status || "kept").toLowerCase();
+      const rank = SCAN_STATUS_RANK[status];
+      return Number.isFinite(rank) ? rank : 99;
+    }
+    case "flagged_days":
+      return optionalNum(row.flagged_days ?? row.days_flagged);
+    case "strategy":
+      return safeText(formatStrategyLabel(row?.strategy_attribution?.top_live || "")).toLowerCase() || null;
+    case "price":
+      return optionalNum(row.price ?? row.current_price);
+    case "score":
+      return optionalNum(row.signal_score ?? row.score);
+    case "p_up_10d": {
+      const p = normalizeProbability(
+        advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up,
+      );
+      return p === null ? null : p;
+    }
+    case "confidence": {
+      const label = formatConfidenceLabel(
+        advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence,
+      );
+      if (!label || label === "—") return null;
+      const rank = CONFIDENCE_RANK[label];
+      return Number.isFinite(rank) ? rank : 0;
+    }
+    case "conviction":
+      return optionalNum(
+        row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score,
+      );
+    case "sector":
+      return safeText(row.sector_etf || "").toUpperCase() || null;
+    default:
+      return null;
+  }
+}
+
+function compareScanSignals(a, b, field, dir) {
+  const va = getScanSortValue(a, field);
+  const vb = getScanSortValue(b, field);
+  // Always push missing values to the bottom regardless of direction.
+  if (va === null && vb === null) return 0;
+  if (va === null) return 1;
+  if (vb === null) return -1;
+  let cmp;
+  if (typeof va === "number" && typeof vb === "number") {
+    cmp = va - vb;
+  } else {
+    // Coerce to string so mixed numeric/text edge cases (e.g. ticker "001")
+    // still produce a deterministic order.
+    cmp = String(va).localeCompare(String(vb), undefined, { numeric: true });
+  }
+  return dir === "asc" ? cmp : -cmp;
+}
+
+function sortScanSignalsForRender(signals) {
+  const sort = state.scanSort || { field: null, dir: "desc" };
+  if (!sort.field || !Array.isArray(signals) || signals.length < 2) return signals;
+  // Decorate-sort-undecorate keeps the original index as a stable tiebreaker
+  // so equal-keyed rows keep their backend ordering after sorting.
+  const decorated = signals.map((sig, idx) => ({ sig, idx }));
+  decorated.sort((x, y) => {
+    const cmp = compareScanSignals(x.sig, y.sig, sort.field, sort.dir);
+    return cmp !== 0 ? cmp : x.idx - y.idx;
+  });
+  return decorated.map((d) => d.sig);
+}
+
+function applyScanSortIndicators() {
+  const sort = state.scanSort || { field: null, dir: "desc" };
+  document.querySelectorAll("#scanSection thead th.sortable-th").forEach((th) => {
+    const field = th.getAttribute("data-sort-key");
+    const isActive = field && field === sort.field;
+    th.classList.toggle("is-sorted", Boolean(isActive));
+    th.classList.toggle("is-sorted-asc", Boolean(isActive) && sort.dir === "asc");
+    th.classList.toggle("is-sorted-desc", Boolean(isActive) && sort.dir === "desc");
+    if (isActive) {
+      th.setAttribute("aria-sort", sort.dir === "asc" ? "ascending" : "descending");
+    } else {
+      th.setAttribute("aria-sort", "none");
+    }
+  });
+}
+
+function setScanSortField(field) {
+  if (!field) return;
+  const current = state.scanSort || { field: null, dir: "desc" };
+  let nextDir;
+  if (current.field === field) {
+    // Toggle direction; allow a third click to clear back to backend order
+    // so power users can recover the natural ranking without reloading.
+    if (current.dir === "asc") {
+      nextDir = "desc";
+    } else if (current.dir === "desc") {
+      state.scanSort = { field: null, dir: "desc" };
+      const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+      renderScanRows(Array.isArray(rows) ? rows : []);
+      return;
+    } else {
+      nextDir = SCAN_SORT_DEFAULT_DIRECTION[field] || "desc";
+    }
+  } else {
+    nextDir = SCAN_SORT_DEFAULT_DIRECTION[field] || "desc";
+  }
+  state.scanSort = { field, dir: nextDir };
+  const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+  renderScanRows(Array.isArray(rows) ? rows : []);
+}
+
+function bindScanSortHandlers() {
+  const headers = document.querySelectorAll("#scanSection thead th.sortable-th");
+  if (!headers.length) return;
+  headers.forEach((th) => {
+    if (th.dataset.sortBound === "1") return;
+    th.dataset.sortBound = "1";
+    const field = th.getAttribute("data-sort-key");
+    if (!field) return;
+    th.addEventListener("click", () => setScanSortField(field));
+    th.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setScanSortField(field);
+      }
+    });
+  });
+  applyScanSortIndicators();
+}
+
+function renderScanRows(signalsInput = []) {
   const body = document.getElementById("scanTableBody");
+  // Always honour the active sort before rendering so re-renders triggered by
+  // SSE / poll updates don't snap the operator back to backend order.
+  const signals = sortScanSignalsForRender(Array.isArray(signalsInput) ? signalsInput : []);
   body.innerHTML = "";
+  applyScanSortIndicators();
   if (!signals.length) {
     body.innerHTML = `
       <tr>
@@ -3660,6 +3836,7 @@ function wireEvents() {
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   bindEvent("scanBtn", "click", runScan);
+  bindScanSortHandlers();
   document.querySelectorAll("[data-forward-click]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const targetId = safeText(btn.getAttribute("data-forward-click"));
