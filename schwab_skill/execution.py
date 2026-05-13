@@ -13,13 +13,19 @@ import json
 import logging
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import requests
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
+from execution_persistence import (
+    _load_exit_manager_state,
+    _record_execution_metric,
+    _save_exit_manager_state,
+    get_execution_safety_summary,  # noqa: F401
+)
 from market_data import extract_schwab_last_price, get_current_quote
 from notifier import send_alert
 from schwab_auth import DualSchwabAuth
@@ -27,110 +33,12 @@ from schwab_auth import DualSchwabAuth
 SCHWAB_BASE = "https://api.schwabapi.com"
 SKILL_DIR = Path(__file__).resolve().parent
 
+LOG = logging.getLogger(__name__)
+
 _DEFAULT_MAX_TOTAL = 500_000.0
 _DEFAULT_MAX_POSITION = 50_000.0
 _DEFAULT_MAX_TRADES = 20
-_METRICS_FILE = "execution_safety_metrics.json"
-_EXIT_MANAGER_STATE_FILE = ".exit_manager_state.json"
 _EXIT_MANAGER_LOCK = threading.Lock()
-
-
-def _metrics_path(skill_dir: Path) -> Path:
-    return skill_dir / _METRICS_FILE
-
-
-def _load_execution_metrics(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {"days": {}}
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict) and isinstance(data.get("days"), dict):
-            return data
-    except Exception:
-        pass
-    return {"days": {}}
-
-
-def _save_execution_metrics(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
-
-
-def _record_execution_metric(
-    skill_dir: Path,
-    event: str,
-    reason: str | None = None,
-) -> None:
-    today = date.today().isoformat()
-    path = _metrics_path(skill_dir)
-    data = _load_execution_metrics(path)
-    days = data.setdefault("days", {})
-    day_bucket = days.setdefault(today, {"events": {}, "reasons": {}})
-    events = day_bucket.setdefault("events", {})
-    events[event] = int(events.get(event, 0) or 0) + 1
-    if reason:
-        reasons = day_bucket.setdefault("reasons", {})
-        key = reason.strip()[:120] or "unknown"
-        reasons[key] = int(reasons.get(key, 0) or 0) + 1
-
-    # Keep a rolling 45-day window so the metrics file stays compact.
-    cutoff = date.today() - timedelta(days=45)
-    stale = [k for k in days.keys() if k < cutoff.isoformat()]
-    for k in stale:
-        days.pop(k, None)
-    _save_execution_metrics(path, data)
-
-
-def get_execution_safety_summary(
-    skill_dir: Path | str | None = None,
-    days: int = 1,
-) -> dict[str, Any]:
-    skill_dir = Path(skill_dir or SKILL_DIR)
-    path = _metrics_path(skill_dir)
-    data = _load_execution_metrics(path)
-    all_days = data.get("days", {})
-    day_keys = sorted(all_days.keys())
-    take = day_keys[-max(1, int(days)) :] if day_keys else []
-
-    events: dict[str, int] = {}
-    reasons: dict[str, int] = {}
-    for d in take:
-        bucket = all_days.get(d, {})
-        for ev, cnt in (bucket.get("events", {}) or {}).items():
-            events[ev] = events.get(ev, 0) + int(cnt or 0)
-        for rsn, cnt in (bucket.get("reasons", {}) or {}).items():
-            reasons[rsn] = reasons.get(rsn, 0) + int(cnt or 0)
-
-    top_reasons = sorted(reasons.items(), key=lambda kv: kv[1], reverse=True)[:5]
-    return {
-        "window_days": max(1, int(days)),
-        "days_present": len(take),
-        "events": events,
-        "top_reasons": [{"reason": r, "count": c} for r, c in top_reasons],
-    }
-
-
-def _exit_manager_state_path(skill_dir: Path) -> Path:
-    return skill_dir / _EXIT_MANAGER_STATE_FILE
-
-
-def _load_exit_manager_state(skill_dir: Path) -> dict[str, Any]:
-    path = _exit_manager_state_path(skill_dir)
-    if not path.exists():
-        return {"positions": {}}
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict) and isinstance(data.get("positions"), dict):
-            return data
-    except Exception:
-        pass
-    return {"positions": {}}
-
-
-def _save_exit_manager_state(skill_dir: Path, state: dict[str, Any]) -> None:
-    path = _exit_manager_state_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2))
 
 
 def _exit_position_key(ticker: str, entry_order_id: str) -> str:
@@ -193,8 +101,8 @@ def get_position_size_usd(
                         shares = base_usd / risk_per_share
                         position_usd = shares * price
                         return max(100, int(position_usd))
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.debug("Volatility sizing failed for %s: %s", ticker, exc)
     env_path = skill_dir / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -310,7 +218,7 @@ class GuardrailWrapper:
                 "date": date.today().isoformat(),
                 "ticker": ticker,
                 "order_id": order_id,
-                "ts": datetime.utcnow().isoformat(),
+                "ts": datetime.now(timezone.utc).isoformat(),
             })
             _save_trade_log(self._trade_log_path, log)
 
@@ -322,17 +230,21 @@ class GuardrailWrapper:
         # Fallback: yfinance when Schwab quote fails (e.g. DTE, rate limits)
         try:
             import yfinance as yf
-            t = yf.Ticker(ticker.upper())
-            fi = getattr(t, "fast_info", None)
-            last = None
-            if fi is not None:
-                last = getattr(fi, "lastPrice", None) or getattr(fi, "last_price", None)
-                if last is None and isinstance(fi, dict):
-                    last = fi.get("lastPrice") or fi.get("last_price")
+
+            from _io_utils import yfinance_call
+
+            with yfinance_call():
+                t = yf.Ticker(ticker.upper())
+                fi = getattr(t, "fast_info", None)
+                last = None
+                if fi is not None:
+                    last = getattr(fi, "lastPrice", None) or getattr(fi, "last_price", None)
+                    if last is None and isinstance(fi, dict):
+                        last = fi.get("lastPrice") or fi.get("last_price")
             if last is not None and float(last) > 0:
                 return float(last)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug("yfinance guardrail quote fallback failed for %s: %s", ticker, exc)
         return None
 
     def _order_instruction(self, order: dict) -> str:
@@ -593,8 +505,8 @@ def _get_exit_manager_settings(skill_dir: Path) -> dict[str, Any]:
         partial_fraction = float(get_exit_partial_tp_fraction(skill_dir))
         breakeven_after_partial = bool(get_exit_breakeven_after_partial(skill_dir))
         max_hold_days = int(get_exit_max_hold_days(skill_dir))
-    except Exception:
-        pass
+    except Exception as exc:
+        LOG.debug("Exit manager settings load failed; using defaults: %s", exc)
     return {
         "mode": mode,
         "partial_r_mult": max(0.1, partial_r),
@@ -631,7 +543,7 @@ def register_exit_manager_entry(
         existing = positions.get(key) or {}
         if existing.get("status") == "closed":
             return
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         pos = {
             "position_key": key,
             "ticker": ticker.upper(),
@@ -723,7 +635,7 @@ def on_exit_manager_sell_fill(
         action = (link or {}).get("action") if isinstance(link, dict) else "sell_fill"
         remaining = max(0, int(pos.get("remaining_qty") or 0) - max(0, int(qty)))
         pos["remaining_qty"] = remaining
-        pos["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        pos["updated_at"] = datetime.now(timezone.utc).isoformat()
         if action == "partial_tp":
             pos["partial_tp_done"] = True
             if settings["breakeven_after_partial"]:
@@ -732,7 +644,7 @@ def on_exit_manager_sell_fill(
             pos["time_stop_done"] = True
         if remaining <= 0:
             pos["status"] = "closed"
-            pos["closed_at"] = datetime.utcnow().isoformat() + "Z"
+            pos["closed_at"] = datetime.now(timezone.utc).isoformat()
         positions[position_key] = pos
         _save_exit_manager_state(skill_dir_p, state)
     _record_execution_metric(skill_dir_p, "exit_manager_sell_fill_processed", reason=action or "sell_fill")
@@ -953,7 +865,7 @@ def run_exit_manager_sweep(
                     except Exception as e:
                         _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=str(e))
 
-        pos["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        pos["updated_at"] = datetime.now(timezone.utc).isoformat()
         positions[key] = pos
 
     if changed:
@@ -1037,8 +949,8 @@ def _parse_trader_error(resp: requests.Response) -> str:
                     "3) Contact traderapi@schwab.com if approved but still failing."
                 )
             return detail or title or resp.text[:200]
-    except Exception:
-        pass
+    except Exception as exc:
+        LOG.debug("Trader error JSON parse failed (status=%s): %s", getattr(resp, "status_code", "?"), exc)
     return resp.text[:200] if resp.text else str(resp.status_code)
 
 
@@ -2021,8 +1933,13 @@ def place_order(
                             stop_order_id=None,
                             stop_pct=exit_stop_pct,
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOG.warning(
+                            "Exit manager staging failed after stop protection error ticker=%s order_id=%s: %s",
+                            ticker_n,
+                            order_id,
+                            exc,
+                        )
                 _record_execution_metric(skill_dir, "stop_protection_failed", reason=f"{err_code}: {err_text}")
                 send_alert(
                     f"BUY placed but trailing stop FAILED: {err_code} {err_text}. "

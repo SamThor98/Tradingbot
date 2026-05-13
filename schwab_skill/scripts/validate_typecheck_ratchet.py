@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -11,17 +12,29 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 BASELINE = SKILL_DIR / ".quality" / "mypy_baseline.json"
 
+LOG = logging.getLogger(__name__)
+
 
 def _load_max_errors() -> int:
     if not BASELINE.exists():
         return 0
     try:
         payload = json.loads(BASELINE.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        LOG.warning(
+            "Could not read mypy ratchet baseline %s (%s); using max_errors=0",
+            BASELINE,
+            exc,
+        )
         return 0
     try:
         return max(0, int(payload.get("max_errors", 0)))
-    except Exception:
+    except Exception as exc:
+        LOG.warning(
+            "Invalid max_errors field in %s (%s); using max_errors=0",
+            BASELINE,
+            exc,
+        )
         return 0
 
 

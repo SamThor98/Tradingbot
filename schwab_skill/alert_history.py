@@ -6,8 +6,11 @@ Uses a JSON file to persist last-alert dates. Repeat = alerted within COOLDOWN_D
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from pathlib import Path
+
+LOG = logging.getLogger(__name__)
 
 SKILL_DIR = Path(__file__).resolve().parent
 HISTORY_FILE = SKILL_DIR / ".signal_alert_history.json"
@@ -29,9 +32,11 @@ def _load_history(skill_dir: Path | None = None) -> dict[str, str]:
 def _save_history(data: dict[str, str], skill_dir: Path | None = None) -> None:
     path = (skill_dir or SKILL_DIR) / ".signal_alert_history.json"
     try:
-        path.write_text(json.dumps(data, indent=0))
-    except Exception:
-        pass
+        from _io_utils import atomic_write_json
+
+        atomic_write_json(path, data, indent=0)
+    except Exception as exc:
+        LOG.warning("Could not persist signal alert history to %s: %s", path, exc)
 
 
 def get_alert_label(ticker: str, skill_dir: Path | None = None) -> str:

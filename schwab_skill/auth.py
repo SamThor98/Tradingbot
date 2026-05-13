@@ -10,6 +10,7 @@ Handles:
 
 import base64
 import json
+import logging
 import os
 import threading
 import urllib.parse
@@ -21,6 +22,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
+
+LOG = logging.getLogger(__name__)
 
 # Schwab OAuth endpoints
 AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
@@ -267,8 +270,8 @@ class SchwabAuth:
             with self._lock:
                 self._tokens = merged
             self._save_tokens(merged)
-        except Exception:
-            pass  # Log in production
+        except Exception as exc:
+            LOG.warning("Background token refresh failed: %s", exc)
 
     def _refresh_loop(self) -> None:
         """Background loop: refresh every 25 minutes."""

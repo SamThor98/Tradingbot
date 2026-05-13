@@ -4,12 +4,15 @@ Market data pipeline using Market Session (Schwab OHLCV) with yfinance fallback.
 Fetches daily historical data with exponential backoff on HTTP 429.
 When PREFER_SCHWAB_DATA=true (default), logs warning when yfinance fallback is used.
 Set SCHWAB_ONLY_DATA=true to disable all non-Schwab fallbacks.
+
+Yahoo history honors ``HISTORY_YFINANCE_ADJUSTED`` (default true) so fallback bars
+stay on a split/dividend-adjusted basis comparable to typical TA workflows.
 """
 
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,7 @@ import pandas as pd
 import requests
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
+from config import get_schwab_only_data
 from schwab_auth import DualSchwabAuth
 
 LOG = logging.getLogger(__name__)
@@ -33,11 +37,6 @@ SKILL_DIR = Path(__file__).resolve().parent
 
 def _empty_ohlcv() -> pd.DataFrame:
     return pd.DataFrame(columns=OHLCV_COLUMNS).rename_axis("date")
-
-
-def _schwab_only_data() -> bool:
-    raw = (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
 
 
 def _get_headers(access_token: str) -> dict:
@@ -124,24 +123,33 @@ def _get_polygon_quote_fallback(ticker: str) -> tuple[dict | None, dict[str, Any
 
 
 def _maybe_polygon_quote_fallback(ticker: str) -> tuple[dict | None, dict[str, Any]]:
-    if _schwab_only_data():
+    if get_schwab_only_data():
         return None, {"provider": "schwab", "reason": "schwab_only_data_mode"}
     return _get_polygon_quote_fallback(ticker)
 
 
-def _get_daily_history_yfinance(ticker: str, days: int) -> pd.DataFrame:
+def _get_daily_history_yfinance(ticker: str, days: int, skill_dir: Path | None = None) -> pd.DataFrame:
     """Fallback when Schwab fails (401, etc.). Returns same format as get_daily_history."""
-    df, _reason = _get_daily_history_yfinance_with_reason(ticker, days)
+    df, _reason = _get_daily_history_yfinance_with_reason(ticker, days, skill_dir=skill_dir)
     return df
 
 
-def _get_daily_history_yfinance_with_reason(ticker: str, days: int) -> tuple[pd.DataFrame, str]:
+def _get_daily_history_yfinance_with_reason(
+    ticker: str, days: int, *, skill_dir: Path | None = None
+) -> tuple[pd.DataFrame, str]:
     """Like _get_daily_history_yfinance, but returns explicit reason for empty/missing output."""
     try:
         import yfinance as yf
-        t = yf.Ticker(ticker.upper())
-        period = "2y" if days > 365 else "1y"
-        raw = t.history(period=period, auto_adjust=True)
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(ticker.upper())
+            period = "2y" if days > 365 else "1y"
+            from config import get_history_yfinance_adjusted
+
+            auto_adj = bool(get_history_yfinance_adjusted(skill_dir))
+            raw = t.history(period=period, auto_adjust=auto_adj)
         if raw is None:
             return _empty_ohlcv(), "yfinance_history_none"
         if not isinstance(raw, pd.DataFrame):
@@ -163,6 +171,46 @@ def _get_daily_history_yfinance_with_reason(ticker: str, days: int) -> tuple[pd.
         return _empty_ohlcv(), f"yfinance_exception:{type(exc).__name__}"
 
 
+def _yf_meta_adjusted_flag(skill_dir: Path | str | None) -> bool:
+    try:
+        from config import get_history_yfinance_adjusted
+
+        return bool(get_history_yfinance_adjusted(skill_dir))
+    except Exception:
+        return True
+
+
+def _yfinance_adjusted_raw_close_gap_pct(ticker: str, *, skill_dir: Path | str | None = None) -> float | None:
+    """Diagnostic: on the latest overlapping Yahoo daily bar, |adj−raw|/raw close."""
+    try:
+        import yfinance as yf
+
+        from _io_utils import yfinance_call
+
+        sym = str(ticker or "").upper().strip()
+        if not sym:
+            return None
+        with yfinance_call():
+            t = yf.Ticker(sym)
+            adj_df = t.history(period="10d", auto_adjust=True)
+            raw_df = t.history(period="10d", auto_adjust=False)
+        if adj_df is None or raw_df is None or adj_df.empty or raw_df.empty:
+            return None
+        adj_c = adj_df["Close"].dropna()
+        raw_c = raw_df["Close"].dropna()
+        common = adj_c.index.intersection(raw_c.index)
+        if len(common) == 0:
+            return None
+        d = common.max()
+        a = float(adj_c.loc[d])
+        r = float(raw_c.loc[d])
+        if r <= 0 or a != a or r != r:
+            return None
+        return abs(a - r) / r
+    except Exception:
+        return None
+
+
 def get_daily_history_with_meta(
     ticker: str,
     days: int = 300,
@@ -177,11 +225,13 @@ def get_daily_history_with_meta(
     - used_fallback: bool
     - fallback_reason: short reason when fallback is used
     - rows: number of rows returned
+    - history_price_basis: lineage tag (schwab_vendor_daily / yfinance_adjusted / …)
+    - adjusted_vs_raw_close_gap_pct: optional Yahoo QA metric when cross-check is on
     """
     auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
     ticker = ticker.upper().strip()
     skill_dir = Path(skill_dir or SKILL_DIR)
-    end_dt = datetime.utcnow()
+    end_dt = datetime.now(timezone.utc)
     start_dt = end_dt - timedelta(days=days)
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
@@ -222,10 +272,28 @@ def get_daily_history_with_meta(
         df.index.name = "date"
         out = df[OHLCV_COLUMNS].sort_index().drop_duplicates()
         meta["rows"] = int(len(out))
+        meta["history_price_basis"] = "schwab_vendor_daily"
+        try:
+            from config import get_data_crosscheck_enabled, get_history_yfinance_adjusted
+
+            if (
+                get_data_crosscheck_enabled(skill_dir)
+                and get_history_yfinance_adjusted(skill_dir)
+                and not get_schwab_only_data()
+            ):
+                gap = _yfinance_adjusted_raw_close_gap_pct(ticker, skill_dir=skill_dir)
+                if gap is not None:
+                    meta["adjusted_vs_raw_close_gap_pct"] = gap
+        except Exception as exc:
+            LOG.debug(
+                "adjusted-vs-raw crosscheck metadata unavailable for %s: %s",
+                ticker,
+                exc,
+            )
         return out, meta
     except Exception as e:
         meta["fallback_reason"] = f"{type(e).__name__}"
-        if _schwab_only_data():
+        if get_schwab_only_data():
             LOG.warning("Schwab data failed for %s (%s); SCHWAB_ONLY_DATA enabled, no fallback", ticker, e)
             meta["provider"] = "schwab"
             meta["used_fallback"] = False
@@ -241,9 +309,12 @@ def get_daily_history_with_meta(
                 LOG.warning("Schwab data failed for %s (%s), using yfinance fallback", ticker, e)
         except ImportError:
             pass
-        out, yf_reason = _get_daily_history_yfinance_with_reason(ticker, days)
+        out, yf_reason = _get_daily_history_yfinance_with_reason(ticker, days, skill_dir=skill_dir)
         meta["rows"] = int(len(out))
         meta["fallback_reason"] = f"{meta['fallback_reason']}|{yf_reason}"
+        meta["history_price_basis"] = (
+            "yfinance_adjusted" if _yf_meta_adjusted_flag(skill_dir) else "yfinance_raw_close"
+        )
         return out, meta
 
 
@@ -267,19 +338,28 @@ def get_daily_history(
     return df
 
 
-def extract_schwab_last_price(quote: dict[str, Any] | None) -> float | None:
-    """Best-effort last trade / mark / prior close from a Schwab quote object (flat or nested)."""
+# Quote payload keys we consider "live" (today's print) vs "stale" (prior
+# close). Keeping `extract_schwab_last_price` permissive preserves the
+# existing call sites that explicitly want a best-effort price for display
+# / position marking. New code that drives **decisions** (breakout confirm,
+# stop placement, sizing) should use ``extract_schwab_live_price`` so a
+# stale ``closePrice`` substitution can't silently anchor a fresh trade.
+_LIVE_QUOTE_PATHS: tuple[tuple[str, ...], ...] = (
+    ("lastPrice",),
+    ("quote", "lastPrice"),
+    ("quote", "mark"),
+    ("regular", "regularMarketLastPrice"),
+    ("extended", "lastPrice"),
+    ("extended", "mark"),
+)
+_PRIOR_CLOSE_QUOTE_PATHS: tuple[tuple[str, ...], ...] = (
+    ("quote", "closePrice"),
+)
+
+
+def _extract_quote_path(quote: dict[str, Any] | None, paths: tuple[tuple[str, ...], ...]) -> float | None:
     if not isinstance(quote, dict):
         return None
-    paths: tuple[tuple[str, ...], ...] = (
-        ("lastPrice",),
-        ("quote", "lastPrice"),
-        ("quote", "mark"),
-        ("quote", "closePrice"),
-        ("regular", "regularMarketLastPrice"),
-        ("extended", "lastPrice"),
-        ("extended", "mark"),
-    )
     for path in paths:
         ptr: Any = quote
         ok = True
@@ -296,6 +376,30 @@ def extract_schwab_last_price(quote: dict[str, Any] | None) -> float | None:
             except (TypeError, ValueError):
                 pass
     return None
+
+
+def extract_schwab_live_price(quote: dict[str, Any] | None) -> float | None:
+    """Return ONLY a fresh print (last/mark/regular). Never substitutes prior close.
+
+    Use this on any code path where a stale anchor would corrupt a decision:
+    breakout confirmation, stop placement, entry sizing, etc. After-hours
+    when no fresh print exists, this returns ``None`` and callers should
+    treat the data as stale.
+    """
+    return _extract_quote_path(quote, _LIVE_QUOTE_PATHS)
+
+
+def extract_schwab_last_price(quote: dict[str, Any] | None) -> float | None:
+    """Best-effort last trade / mark / prior close (flat or nested).
+
+    Falls through to ``closePrice`` (yesterday's close) when no live print is
+    available. Acceptable for display, marking-to-market, and position
+    monitoring — **not** for decision logic (use ``extract_schwab_live_price``).
+    """
+    live = _extract_quote_path(quote, _LIVE_QUOTE_PATHS)
+    if live is not None:
+        return live
+    return _extract_quote_path(quote, _PRIOR_CLOSE_QUOTE_PATHS)
 
 
 def _select_schwab_quote_payload(data: Any, ticker: str) -> dict | None:

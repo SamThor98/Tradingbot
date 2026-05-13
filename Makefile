@@ -17,17 +17,18 @@
 #   make scan                -- one-off scan via the CLI
 #   make wiki-lint           -- audit /wiki for broken links and orphans
 #   make prune-artifacts     -- enforce retention on validation_artifacts/
+#   make check               -- quick gate: ruff + pytest + typecheck ratchet
 #
 # All Python invocations assume `python` is the current venv interpreter.
 
 PY ?= python
 PIP ?= $(PY) -m pip
 
-.PHONY: help install lint fmt typecheck test validate validate-fast webapp saas-web scan wiki-lint prune-artifacts
+.PHONY: help install lint fmt typecheck test validate validate-fast webapp saas-web scan wiki-lint prune-artifacts check
 
 help:
 	@echo "TradingBot make targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk 'BEGIN{FS=":.*?## "}{printf "  %-20s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk 'BEGIN{FS=":.*?## "}{printf "  %-22s %s\n", $$1, $$2}' || true
 
 install: ## Install python deps
 	cd schwab_skill && $(PIP) install -r requirements.txt
@@ -44,7 +45,7 @@ typecheck: ## Run mypy (best effort, non-blocking)
 test: ## pytest -q
 	cd schwab_skill && $(PY) -m pytest -q
 
-validate: ## Strict full validation pipeline
+validate: ## Strict full validation (single command of record for releases)
 	cd schwab_skill && $(PY) scripts/validate_all.py --profile local --strict
 
 validate-fast: ## Parallel validation pipeline with baseline-delta report
@@ -83,5 +84,10 @@ wiki-lint: ## Lint the wiki for broken links and orphans
 	    print(f"  {o}")
 	PY
 
-prune-artifacts: ## Apply retention to validation_artifacts/
+prune-artifacts: ## Trim validation_artifacts/ retention
 	cd schwab_skill && $(PY) scripts/prune_validation_artifacts.py --keep 5
+
+check: ## Quick gate: ruff + pytest + mypy ratchet (from schwab_skill)
+	cd schwab_skill && $(PY) -m ruff check .
+	cd schwab_skill && $(PY) -m pytest -q
+	cd schwab_skill && $(PY) scripts/validate_typecheck_ratchet.py

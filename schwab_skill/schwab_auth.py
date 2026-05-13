@@ -15,6 +15,7 @@ lives alongside the OAuth fields but is never sent back to Schwab.
 
 import base64
 import json
+import logging
 import os
 import threading
 import time
@@ -29,6 +30,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
+
+LOG = logging.getLogger(__name__)
 
 AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
@@ -326,7 +329,8 @@ class SchwabSession:
                     decrypted = _decrypt(f.read(), key)
                 if decrypted and "access_token" in decrypted:
                     cached = decrypted
-            except Exception:
+            except Exception as exc:
+                LOG.debug("Token health read failed for %s (%s): %s", self.session_name, self.token_path, exc)
                 cached = None
         return compute_token_health(cached)
 
@@ -375,8 +379,8 @@ class SchwabSession:
         """Signal the background refresh thread to exit. Safe to call multiple times."""
         try:
             self._stop.set()
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug("stop_refresh signal failed (%s): %s", self.session_name, exc)
 
     def get_access_token(self) -> str | None:
         with self._lock:
@@ -408,8 +412,8 @@ class SchwabSession:
             # If we fail due to unstable connectivity, mark the circuit.
             try:
                 maybe_trip_breaker(e, schwab_circuit)
-            except Exception:
-                pass
+            except Exception as inner:
+                LOG.debug("Circuit breaker hook failed during force_refresh: %s", inner)
             return False
 
     def ensure_authenticated(self) -> str:
@@ -466,12 +470,12 @@ class DualSchwabAuth:
         """Stop background refresh threads on both sessions. Idempotent."""
         try:
             self.market_session.stop_refresh()
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug("market_session.stop_refresh cleanup: %s", exc)
         try:
             self.account_session.stop_refresh()
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug("account_session.stop_refresh cleanup: %s", exc)
 
     def __enter__(self) -> "DualSchwabAuth":
         return self

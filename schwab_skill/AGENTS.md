@@ -35,8 +35,9 @@ This file defines how autonomous coding agents should operate in this repository
 - Lint: `python -m ruff check .`
 - Format: `python -m ruff format .`
 - Test: `python -m pytest -q`
-- Typecheck: `python -m mypy .`
+- Typecheck: `python -m mypy` (see `pyproject.toml`)
 - Type ratchet: `python scripts/validate_typecheck_ratchet.py`
+- Shortcut from repo root: `make check` or `just check` (ruff + pytest + ratchet)
 - Docs/rules governance: `python scripts/validate_docs_governance.py`
 - Fixture chain smoke: `python scripts/validate_hypothesis_chain.py`
 

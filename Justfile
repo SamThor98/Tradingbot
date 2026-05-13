@@ -35,6 +35,12 @@ test:
 validate:
     cd {{skill}}; {{py}} scripts/validate_all.py --profile local --strict
 
+# Quick pre-push gate (ruff + pytest + mypy error-count ratchet)
+check:
+    cd {{skill}}; {{py}} -m ruff check .
+    cd {{skill}}; {{py}} -m pytest -q
+    cd {{skill}}; {{py}} scripts/validate_typecheck_ratchet.py
+
 # Parallel validation with baseline-delta report
 validate-fast:
     cd {{skill}}; {{py}} scripts/validate_all.py --profile local --max-parallel 4 --baseline validation_artifacts/baseline.json

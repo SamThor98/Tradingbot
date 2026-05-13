@@ -200,8 +200,8 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
         from logger_setup import request_id_var
 
         ctx_token = request_id_var.set(rid)
-    except Exception:
-        pass
+    except Exception as exc:
+        LOG.debug("request_id context not set: %s", exc)
     try:
         response = await call_next(request)
         response.headers["X-Request-ID"] = rid
@@ -212,8 +212,8 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
             if int(getattr(response, "status_code", 200)) >= 500:
                 inc("http_5xx_total")
             observe("http_request_duration", time.perf_counter() - t0)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug("HTTP telemetry increment failed: %s", exc)
         return response
     finally:
         if ctx_token is not None:
@@ -221,8 +221,8 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
                 from logger_setup import request_id_var
 
                 request_id_var.reset(ctx_token)
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.debug("request_id context reset failed: %s", exc)
 
 
 def _request_id(request: Request) -> str | None:

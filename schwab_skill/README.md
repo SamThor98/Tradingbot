@@ -196,11 +196,23 @@ Empty Postgres: run once `python scripts/saas_bootstrap.py` or set `SAAS_BOOTSTR
 
 ## Validation
 
-Unified validation pipeline:
+**Single command of record (full strict pipeline, from `schwab_skill/`):**
 
 ```
 python scripts/validate_all.py --profile local --strict
 ```
+
+From the repository root you can run the same via `make validate` or `just validate` (see root `Makefile` / `Justfile`).
+
+**Quick pre-push gate (ruff + unit tests + mypy error-count ratchet):**
+
+```
+python -m ruff check .
+python -m pytest -q
+python scripts/validate_typecheck_ratchet.py
+```
+
+Or from the repo root: `make check` / `just check`.
 
 Hardening pipeline (includes plugin-mode checks, execution quality, exit manager, event risk, regime v2):
 
@@ -460,12 +472,15 @@ Review these every week before increasing rollout scope:
 
 ## Engineering Baseline
 
-This repository now includes a standard local quality toolchain:
+Standard local tooling (run from **`schwab_skill/`** unless noted):
 
 - Lint: `python -m ruff check .`
 - Format: `python -m ruff format .`
 - Test: `python -m pytest -q`
-- Typecheck: `python -m mypy .`
+- Typecheck: `python -m mypy` (behavior is pinned in `pyproject.toml`; use **`python scripts/validate_typecheck_ratchet.py`** to enforce the repo’s error budget)
+- Quick gate from repo root: `make check` or `just check` (ruff + pytest + ratchet)
+
+On **Windows**, use `just`/PowerShell or your venv’s `python`; GNU `make` may require a separate install (see root `Makefile` commentary).
 
 Install dependencies:
 
