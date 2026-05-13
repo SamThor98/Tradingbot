@@ -17,10 +17,28 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_DIR / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+# Keys read by evaluate_hybrid_alpha_policy / config getters. Process env wins
+# over skill_dir/.env (see config._env_value); clear so temp .env is authoritative.
+_HYBRID_POLICY_ENV_KEYS = (
+    "QUALITY_MIN_SIGNAL_SCORE",
+    "REGIME_V2_SIZE_MULT_LOW",
+    "REGIME_V2_SIZE_MULT_MED",
+    "REGIME_V2_SIZE_MULT_HIGH",
+    "SIGNAL_TOP_N",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_hybrid_policy_process_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _HYBRID_POLICY_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
 
 def _make_skill_dir(tmp_path: Path, env_lines: list[str]) -> Path:
