@@ -25,8 +25,8 @@ from .._shared import build_portfolio_risk_analytics, build_portfolio_summary
 from ..dossier_style import polish_dossier_markdown
 from ..management_dashboard import PROFILE_WEIGHTS, build_management_dashboard
 from ..pdf_export import dossier_to_pdf
-from ..report_v2 import build_report_v2
 from ..report_trust import build_report_trust_payload
+from ..report_v2 import build_report_v2
 from ..schemas import ApiResponse
 
 router = APIRouter(tags=["research"])
@@ -590,7 +590,6 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     dcf = raw_report.get("dcf") or {}
     comps = raw_report.get("comps") or {}
     health = raw_report.get("health") or {}
-    edgar = raw_report.get("edgar") or {}
     sec_analyze = sec_narr.get("analyze") or {}
     sec_compare = ((sec_narr.get("compare") or {}).get("compare") or {})
     snapshot = fin.get("snapshot") or {}

@@ -86,8 +86,8 @@ from .oauth_schwab import (
 from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
 from .recovery_map import map_failure
 from .redaction import safe_exception_message
-from .report_v2 import build_report_v2
 from .report_trust import build_report_trust_payload
+from .report_v2 import build_report_v2
 from .route_helpers import (
     apply_profile_to_runtime as _shared_apply_profile_to_runtime,
 )
@@ -1020,6 +1020,7 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
     confidence_label = pitch.get("confidence_label", "Moderate")
     confidence_score = pitch.get("confidence_score", "n/a")
     bull_votes = int(trends.get("buy", 0) or 0) + int(trends.get("strong_buy", 0) or 0)
+    hold_votes = int(trends.get("hold", 0) or 0)
     bear_votes = int(trends.get("sell", 0) or 0) + int(trends.get("strong_sell", 0) or 0)
 
     def _money(value: Any) -> str:

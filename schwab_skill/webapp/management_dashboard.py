@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 from typing import Any
-
 
 PROFILE_WEIGHTS: dict[str, dict[str, float]] = {
     "early_growth": {
