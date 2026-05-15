@@ -1656,9 +1656,7 @@ def local_schwab_market_authorize_url(request: Request, redirect: bool = False) 
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Configure SCHWAB_MARKET_APP_KEY for market OAuth.")
-    # Reuse the account callback URL so one registered Schwab redirect can
-    # serve both OAuth flows. State still separates account vs market writes.
-    redirect_uri = _single_schwab_callback_uri(request)
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
     state = _new_local_oauth_state("market")
     url = schwab_authorize_url(client_id, redirect_uri, state)
     if _oauth_wants_browser_redirect(request, redirect):
@@ -1698,7 +1696,7 @@ def local_schwab_oauth_callback(
     else:
         client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
         client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = _single_schwab_callback_uri(request)
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=(kind == "market"))
     if not client_id or not client_secret:
         code_name = "server_market_oauth_not_configured" if kind == "market" else "server_oauth_not_configured"
         return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(code_name))
