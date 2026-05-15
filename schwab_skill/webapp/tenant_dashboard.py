@@ -2760,22 +2760,17 @@ def schwab_oauth_callback(
     if kind not in {SCHWAB_OAUTH_KIND_ACCOUNT, SCHWAB_OAUTH_KIND_MARKET}:
         return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
-    if kind == SCHWAB_OAUTH_KIND_MARKET:
-        client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
-    else:
-        client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-        client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(
-        request,
-        market=(kind == SCHWAB_OAUTH_KIND_MARKET),
-    )
-    if not client_id or not client_secret:
-        code_name = (
-            "server_market_oauth_not_configured"
-            if kind == SCHWAB_OAUTH_KIND_MARKET
-            else "server_oauth_not_configured"
+    if kind != SCHWAB_OAUTH_KIND_ACCOUNT:
+        return red(
+            "schwab_oauth=error&message="
+            + urllib.parse.quote("wrong_oauth_flow_use_account_authorize_link")
         )
+
+    client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
+    client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    if not client_id or not client_secret:
+        code_name = "server_oauth_not_configured"
         return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(code_name))
 
     try:
@@ -2795,25 +2790,22 @@ def schwab_oauth_callback(
             row = UserCredential(user_id=user_id)
             db.add(row)
 
-        if kind == SCHWAB_OAUTH_KIND_MARKET:
-            row.market_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
+        row.access_token_enc = encrypt_secret(access)
+        row.refresh_token_enc = encrypt_secret(refresh)
+        row.token_type = (str(tok.get("token_type") or "Bearer").strip() or "Bearer")
+        exp_in = tok.get("expires_in")
+        if exp_in is not None:
+            try:
+                row.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(exp_in))
+            except Exception:
+                row.expires_at = None
+        scope_raw = tok.get("scope")
+        if isinstance(scope_raw, str) and scope_raw.strip():
+            parts = [p.strip() for p in scope_raw.replace(",", " ").split() if p.strip()]
+            row.scopes = parse_scopes(parts)
         else:
-            row.access_token_enc = encrypt_secret(access)
-            row.refresh_token_enc = encrypt_secret(refresh)
-            row.token_type = (str(tok.get("token_type") or "Bearer").strip() or "Bearer")
-            exp_in = tok.get("expires_in")
-            if exp_in is not None:
-                try:
-                    row.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(exp_in))
-                except Exception:
-                    row.expires_at = None
-            scope_raw = tok.get("scope")
-            if isinstance(scope_raw, str) and scope_raw.strip():
-                parts = [p.strip() for p in scope_raw.replace(",", " ").split() if p.strip()]
-                row.scopes = parse_scopes(parts)
-            else:
-                row.scopes = parse_scopes(None)
-            row.account_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
+            row.scopes = parse_scopes(None)
+        row.account_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
 
         db.commit()
         db.refresh(row)
@@ -2826,25 +2818,24 @@ def schwab_oauth_callback(
         safe_error = safe_exception_message(exc, fallback="token_storage_failed")
         return red("schwab_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
 
-    if kind == SCHWAB_OAUTH_KIND_ACCOUNT:
-        _save_state(
-            db,
-            user_id,
-            "onboarding",
-            {
-                "linked_at": utcnow_iso(),
-                "schwab_linked": True,
-                "wizard_required": False,
-            },
-        )
+    _save_state(
+        db,
+        user_id,
+        "onboarding",
+        {
+            "linked_at": utcnow_iso(),
+            "schwab_linked": True,
+            "wizard_required": False,
+        },
+    )
     log_audit(
         db,
-        action="oauth_schwab_market_callback" if kind == SCHWAB_OAUTH_KIND_MARKET else "oauth_schwab_callback",
+        action="oauth_schwab_callback",
         user_id=user_id,
         detail={},
         request_id=_request_id(request),
     )
-    return red(f"{status_key(kind)}=ok")
+    return red("schwab_oauth=ok")
 
 
 @router.get("/api/oauth/schwab/market/callback")
