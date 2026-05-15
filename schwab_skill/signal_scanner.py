@@ -728,6 +728,26 @@ def _compute_stage_a_shortlist_limit(
     return max(1, min(total_candidates, widened))
 
 
+def _shutdown_executor_safe(executor: Any, *, wait: bool, cancel_futures: bool) -> None:
+    """Best-effort executor shutdown for real and monkeypatched executors."""
+    shutdown = getattr(executor, "shutdown", None)
+    if not callable(shutdown):
+        return
+    try:
+        shutdown(wait=wait, cancel_futures=cancel_futures)
+    except TypeError:
+        shutdown(wait=wait)
+
+
+def _cancel_future_safe(fut: Any) -> None:
+    cancel = getattr(fut, "cancel", None)
+    if callable(cancel):
+        try:
+            cancel()
+        except Exception:
+            return
+
+
 def _scan_primary_provider_mode() -> str:
     """
     Controls whether fallback-provider candidates are filtered during scan.
@@ -2035,9 +2055,13 @@ def scan_for_signals_detailed(
                 data_failures.append(f"{ticker}: stage_a timeout")
             for fut in future_map_a:
                 if not fut.done():
-                    fut.cancel()
+                    _cancel_future_safe(fut)
     finally:
-        ex.shutdown(wait=not stage_a_timed_out, cancel_futures=stage_a_timed_out)
+        _shutdown_executor_safe(
+            ex,
+            wait=not stage_a_timed_out,
+            cancel_futures=stage_a_timed_out,
+        )
     diagnostics["scan_stage_a_ms"] = int((time.perf_counter() - stage_a_start) * 1000)
 
     diagnostics["stage_a_candidates"] = len(stage_a_candidates)
@@ -2136,9 +2160,13 @@ def scan_for_signals_detailed(
                 data_failures.append(f"{ticker}: stage_b timeout")
             for fut in future_map_b:
                 if not fut.done():
-                    fut.cancel()
+                    _cancel_future_safe(fut)
     finally:
-        ex.shutdown(wait=not stage_b_timed_out, cancel_futures=stage_b_timed_out)
+        _shutdown_executor_safe(
+            ex,
+            wait=not stage_b_timed_out,
+            cancel_futures=stage_b_timed_out,
+        )
     diagnostics["scan_stage_b_ms"] = int((time.perf_counter() - stage_b_start) * 1000)
     diagnostics["prediction_market"] = {
         "enabled": bool((diagnostics.get("prediction_market") or {}).get("enabled", False)),
