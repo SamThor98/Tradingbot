@@ -66,10 +66,21 @@ export function restoreBacktestFormFromStorage() {
     setVal("btFeeShare", o.feeShare);
     setVal("btMinFee", o.minFee);
     setVal("btMaxAdv", o.maxAdv);
+    setVal("btStartEquity", o.startEquity);
+    setVal("btMaxPositions", o.maxPositions);
+    setVal("btRiskPerTradePct", o.riskPerTradePct);
+    setVal("btPositionSizePct", o.positionSizePct);
     setVal("btQualityGates", o.qualityGates);
     setVal("btBreakoutConfirm", o.breakoutConfirm);
     setVal("btForensicMode", o.forensicMode);
     setVal("btPead", o.pead);
+    setVal("btAdaptiveStopEnabled", o.adaptiveStopEnabled);
+    setVal("btAdaptiveStopBasePct", o.adaptiveStopBasePct);
+    setVal("btAdaptiveGuardrailsEnabled", o.adaptiveGuardrailsEnabled);
+    setVal("btMetaPolicyMode", o.metaPolicyMode);
+    setVal("btEventRiskMode", o.eventRiskMode);
+    setVal("btExitManagerMode", o.exitManagerMode);
+    setVal("btExecQualityMode", o.execQualityMode);
     const skip = document.getElementById("btSkipMirofish");
     if (skip && typeof o.skipMirofish === "boolean") skip.checked = o.skipMirofish;
     return true;
@@ -89,10 +100,21 @@ export function snapshotBacktestFormForStorage() {
     feeShare: document.getElementById("btFeeShare")?.value ?? "",
     minFee: document.getElementById("btMinFee")?.value ?? "",
     maxAdv: document.getElementById("btMaxAdv")?.value ?? "",
+    startEquity: document.getElementById("btStartEquity")?.value ?? "",
+    maxPositions: document.getElementById("btMaxPositions")?.value ?? "",
+    riskPerTradePct: document.getElementById("btRiskPerTradePct")?.value ?? "",
+    positionSizePct: document.getElementById("btPositionSizePct")?.value ?? "",
     qualityGates: document.getElementById("btQualityGates")?.value ?? "",
     breakoutConfirm: document.getElementById("btBreakoutConfirm")?.value ?? "",
     forensicMode: document.getElementById("btForensicMode")?.value ?? "",
     pead: document.getElementById("btPead")?.value ?? "",
+    adaptiveStopEnabled: document.getElementById("btAdaptiveStopEnabled")?.value ?? "",
+    adaptiveStopBasePct: document.getElementById("btAdaptiveStopBasePct")?.value ?? "",
+    adaptiveGuardrailsEnabled: document.getElementById("btAdaptiveGuardrailsEnabled")?.value ?? "",
+    metaPolicyMode: document.getElementById("btMetaPolicyMode")?.value ?? "",
+    eventRiskMode: document.getElementById("btEventRiskMode")?.value ?? "",
+    exitManagerMode: document.getElementById("btExitManagerMode")?.value ?? "",
+    execQualityMode: document.getElementById("btExecQualityMode")?.value ?? "",
     skipMirofish: Boolean(document.getElementById("btSkipMirofish")?.checked),
   };
 }
@@ -138,7 +160,28 @@ export function resetBacktestFormToDefaults() {
   if (minf) minf.value = "1";
   const adv = document.getElementById("btMaxAdv");
   if (adv) adv.value = "0.02";
+  const startEq = document.getElementById("btStartEquity");
+  if (startEq) startEq.value = "100000";
+  const maxPos = document.getElementById("btMaxPositions");
+  if (maxPos) maxPos.value = "10";
+  const riskPct = document.getElementById("btRiskPerTradePct");
+  if (riskPct) riskPct.value = "0.0075";
+  const sizePct = document.getElementById("btPositionSizePct");
+  if (sizePct) sizePct.value = "0.05";
+  const asBase = document.getElementById("btAdaptiveStopBasePct");
+  if (asBase) asBase.value = "0.07";
   ["btQualityGates", "btBreakoutConfirm", "btForensicMode", "btPead"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  [
+    "btAdaptiveStopEnabled",
+    "btAdaptiveGuardrailsEnabled",
+    "btMetaPolicyMode",
+    "btEventRiskMode",
+    "btExitManagerMode",
+    "btExecQualityMode",
+  ].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
@@ -190,14 +233,36 @@ export function applyBacktestPresetYears(years) {
 
 export function collectBacktestOverrides() {
   const o = {};
+  const setOnOffBool = (id, key) => {
+    const raw = document.getElementById(id)?.value || "";
+    if (raw === "on") o[key] = true;
+    if (raw === "off") o[key] = false;
+  };
+  const setMode = (id, key) => {
+    const raw = document.getElementById(id)?.value || "";
+    if (raw) o[key] = raw;
+  };
+  const setNumber = (id, key) => {
+    const raw = document.getElementById(id)?.value;
+    if (raw === undefined || raw === null || raw === "") return;
+    const num = Number(raw);
+    if (Number.isFinite(num)) o[key] = num;
+  };
   const q = document.getElementById("btQualityGates")?.value || "";
   if (q) o.quality_gates_mode = q;
-  const bo = document.getElementById("btBreakoutConfirm")?.value || "";
-  if (bo === "on") o.breakout_confirm_enabled = true;
-  if (bo === "off") o.breakout_confirm_enabled = false;
-  const pead = document.getElementById("btPead")?.value || "";
-  if (pead === "on") o.pead_enabled = true;
-  if (pead === "off") o.pead_enabled = false;
+  setOnOffBool("btBreakoutConfirm", "breakout_confirm_enabled");
+  setOnOffBool("btPead", "pead_enabled");
+  setOnOffBool("btAdaptiveStopEnabled", "adaptive_stop_enabled");
+  setOnOffBool("btAdaptiveGuardrailsEnabled", "backtest_adaptive_guardrails_enabled");
+  setMode("btMetaPolicyMode", "meta_policy_mode");
+  setMode("btEventRiskMode", "event_risk_mode");
+  setMode("btExitManagerMode", "exit_manager_mode");
+  setMode("btExecQualityMode", "exec_quality_mode");
+  setNumber("btStartEquity", "backtest_portfolio_starting_equity");
+  setNumber("btMaxPositions", "backtest_portfolio_max_positions");
+  setNumber("btRiskPerTradePct", "backtest_risk_per_trade_pct");
+  setNumber("btPositionSizePct", "backtest_position_size_pct");
+  setNumber("btAdaptiveStopBasePct", "adaptive_stop_base_pct");
   if (document.getElementById("btSkipMirofish")?.checked) o.skip_mirofish = true;
   const fm = document.getElementById("btForensicMode")?.value || "";
   if (fm === "disabled") o.forensic_enabled = false;

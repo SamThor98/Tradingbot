@@ -61,6 +61,7 @@ from ._shared import (
 from .audit import log_audit
 from .billing_stripe import user_has_paid_entitlement
 from .checklist_language import with_plain_language
+from .dossier_style import polish_dossier_markdown
 from .learning_state import (
     LEARNING_LAST_RUN_KEY,
     append_challenger_result,
@@ -72,6 +73,7 @@ from .learning_state import (
     save_strategy_update,
     upsert_trade_outcome,
 )
+from .management_dashboard import PROFILE_WEIGHTS, build_management_dashboard
 from .models import AppState, BacktestRun, Order, PendingTrade, ScanResult, User, UserCredential
 from .oauth_schwab import (
     SCHWAB_OAUTH_KIND_ACCOUNT,
@@ -85,6 +87,7 @@ from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
 from .recovery_map import map_failure
 from .redaction import safe_exception_message
 from .report_v2 import build_report_v2
+from .report_trust import build_report_trust_payload
 from .route_helpers import (
     apply_profile_to_runtime as _shared_apply_profile_to_runtime,
 )
@@ -132,6 +135,7 @@ DEFAULT_PROFILE = "balanced"
 _TWO_FA_STATE_KEY = "security_2fa"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 VALIDATION_ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
+SEC_MGMT_PROFILE_STATE_KEY = "sec_management_profile_override"
 
 
 def _db() -> OrmSession:
@@ -470,6 +474,20 @@ def _request_origin(request: Request) -> str:
 
 def _resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
     return _shared_resolve_schwab_redirect_uri(request, market=market)
+
+
+def _single_schwab_callback_uri(request: Request) -> str:
+    uri = _resolve_schwab_redirect_uri(request, market=False)
+    return uri.replace("/api/oauth/schwab/market/callback", "/api/oauth/schwab/callback")
+
+
+def _oauth_wants_browser_redirect(request: Request, redirect: bool) -> bool:
+    if redirect:
+        return True
+    accept = (request.headers.get("accept") or "").lower()
+    sec_fetch_mode = (request.headers.get("sec-fetch-mode") or "").lower()
+    sec_fetch_dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    return "text/html" in accept or sec_fetch_mode == "navigate" or sec_fetch_dest == "document"
 
 
 def _global_live_trading_kill_switch_on() -> bool:
@@ -906,6 +924,13 @@ def _compose_research_dossier_sd(
     margin_of_safety = _safe_float((report_data.get("dcf") or {}).get("margin_of_safety")) or 0.0
     confidence_score = max(0.0, min(100.0, (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))))
     catalyst_risk = _pick_catalysts_and_risks_sd(finnhub if isinstance(finnhub, dict) else {})
+    report_trust = build_report_trust_payload(
+        {
+            **report_data,
+            "report_v2": report_v2,
+            "generated_at": generated_at,
+        }
+    )
 
     return {
         "ticker": symbol,
@@ -940,6 +965,7 @@ def _compose_research_dossier_sd(
         },
         "source_metadata": source_metadata,
         "fallback_notes": [entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")],
+        "report_trust": report_trust,
     }
 
 
@@ -1039,8 +1065,23 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         "",
         str(pitch.get("thesis") or "No thesis generated."),
         "",
-        f"{ticker} currently screens with technical score {_num(technical.get('signal_score'), 0)}/100 and DCF margin of safety {_pct(dcf.get('margin_of_safety'))}. "
-        f"Street positioning from Finnhub reads {bull_votes} bullish vs {bear_votes} bearish recommendation votes, while portfolio concentration context is **{hhi_label}**.{_cite('finnhub', 'report_stack', 'portfolio')}",
+        (
+            f"Current setup: technical signal {_num(technical.get('signal_score'), 0)}/100, "
+            f"DCF margin of safety {_pct(dcf.get('margin_of_safety'))}, and Street panel "
+            f"{bull_votes} bullish / {hold_votes} neutral / {bear_votes} bearish."
+            f"{_cite('finnhub', 'report_stack')}"
+        ),
+        "",
+        (
+            f"Portfolio context is {hhi_label}; this drives risk budget and sizing."
+            f"{_cite('portfolio')}"
+        ),
+        "",
+        (
+            f"Desk stance: **{recommendation}** with **{confidence_label} ({confidence_score}/100)** confidence over "
+            f"**{pitch.get('time_horizon', '3-6 months')}**. Execute only if invalidation triggers remain explicit "
+            "and position size stays within policy."
+        ),
         "",
         "## Part I: Company and Business Model",
         "",
@@ -1172,7 +1213,11 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         ]
     )
     lines.append("")
-    return "\n".join(lines)
+    return polish_dossier_markdown(
+        "\n".join(lines),
+        trust_payload=dossier.get("report_trust") if isinstance(dossier, dict) else None,
+        source_rows=source_rows,
+    )
 
 
 def _escape_pdf_text_sd(text: str) -> str:
@@ -1808,6 +1853,7 @@ def tenant_report_ticker(
             except Exception:  # noqa: BLE001
                 data["finnhub_snapshot"] = {"enabled": False, "ok": False, "errors": ["finnhub_snapshot_failed"]}
             data["report_v2"] = build_report_v2(data, portfolio_summary=portfolio_summary)
+            data["report_trust"] = build_report_trust_payload(data)
             section_verdicts = _build_report_verdicts(data)
             if section_key:
                 section_data = data.get(section_key)
@@ -1818,6 +1864,7 @@ def tenant_report_ticker(
                         "section": section_key,
                         "data": section_data,
                         "report_v2": data.get("report_v2"),
+                        "report_trust": data.get("report_trust"),
                         "section_verdicts": section_verdicts,
                         "section_quick_verdict": section_verdicts.get(section_key, {}),
                     }
@@ -1889,6 +1936,140 @@ def tenant_sec_compare(
             return _ok(_normalize_sec_compare_payload_sd(out))
     except Exception as exc:
         return _saas_error_response(exc, source="sec_compare", fallback="SEC compare failed.")
+
+
+@router.get("/api/sec/management-dashboard", response_model=ApiResponse)
+def tenant_sec_management_dashboard(
+    mode: str = "ticker_over_time",
+    ticker: str = "",
+    ticker_b: str = "",
+    form_type: str = "10-K",
+    highlight_changes_only: bool = True,
+    ruthless_mode: bool = False,
+    profile_override: str = "",
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before SEC management dashboard.")
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            cfg = _sec_analysis_settings_sd(skill_dir)
+            if not cfg["analysis_enabled"]:
+                return ApiResponse(ok=False, error="SEC filing analysis is disabled by configuration.")
+            if not cfg["compare_enabled"]:
+                return ApiResponse(ok=False, error="SEC filing compare is disabled by configuration.")
+            safe_mode = mode.strip().lower()
+            safe_form = form_type.upper().strip()
+            safe_ticker = ticker.upper().strip()
+            safe_ticker_b = ticker_b.upper().strip()
+            persisted = _load_state(db, user.id, SEC_MGMT_PROFILE_STATE_KEY, {})
+            persisted_override = str(persisted.get("profile_override") or "").strip().lower()
+            history = persisted.get("history") if isinstance(persisted.get("history"), list) else []
+            last_override = history[-1] if history else None
+            safe_override = profile_override.strip().lower() or persisted_override
+            if safe_override and safe_override not in PROFILE_WEIGHTS:
+                supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+                return ApiResponse(ok=False, error=f"Invalid profile_override '{safe_override}'. Use one of: {supported}.")
+            if safe_mode not in {"ticker_vs_ticker", "ticker_over_time"}:
+                return ApiResponse(ok=False, error="Invalid mode. Use ticker_vs_ticker or ticker_over_time.")
+            if not safe_ticker:
+                return ApiResponse(ok=False, error="ticker is required.")
+            if safe_mode == "ticker_vs_ticker" and not safe_ticker_b:
+                return ApiResponse(ok=False, error="ticker_b is required for ticker_vs_ticker mode.")
+
+            if safe_mode == "ticker_vs_ticker":
+                compare_out = compare_ticker_vs_ticker(
+                    safe_ticker,
+                    safe_ticker_b,
+                    form_type=safe_form,
+                    user_agent=cfg["user_agent"],
+                    skill_dir=skill_dir,
+                    cache_hours=cfg["cache_hours"],
+                    max_chars=cfg["max_chars"],
+                    enable_llm=cfg["llm_enabled"],
+                    highlight_changes_only=bool(highlight_changes_only),
+                )
+            else:
+                compare_out = compare_ticker_over_time(
+                    safe_ticker,
+                    form_type=safe_form,
+                    user_agent=cfg["user_agent"],
+                    skill_dir=skill_dir,
+                    cache_hours=cfg["cache_hours"],
+                    max_chars=cfg["max_chars"],
+                    enable_llm=cfg["llm_enabled"],
+                    highlight_changes_only=bool(highlight_changes_only),
+                )
+            if not compare_out.get("ok"):
+                return ApiResponse(ok=False, error=str(compare_out.get("error", "SEC compare failed")))
+            compare_payload = _normalize_sec_compare_payload_sd(compare_out)
+            dashboard = build_management_dashboard(
+                compare_payload=compare_payload,
+                mode=safe_mode,
+                ticker=safe_ticker,
+                ticker_b=safe_ticker_b,
+                form_type=safe_form,
+                ruthless_mode=bool(ruthless_mode),
+                profile_override=safe_override or None,
+            )
+            dashboard["profile"]["persisted_override"] = persisted_override or None
+            dashboard["profile"]["last_override"] = last_override
+            dashboard["profile"]["history_tail"] = history[-10:]
+            return _ok({"compare": compare_payload.get("compare", {}), "management_dashboard": dashboard})
+    except Exception as exc:
+        return _saas_error_response(exc, source="sec_management_dashboard", fallback="SEC management dashboard failed.")
+
+
+@router.post("/api/sec/management-dashboard/profile", response_model=ApiResponse)
+def tenant_set_sec_management_profile_override(
+    payload: dict[str, Any] = Body(default={}),
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    raw = str((payload or {}).get("profile_override") or "").strip().lower()
+    reason = str((payload or {}).get("reason") or "").strip()
+    evidence_ref = str((payload or {}).get("evidence_ref") or "").strip()
+    if raw and raw not in PROFILE_WEIGHTS:
+        supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+        return ApiResponse(ok=False, error=f"Invalid profile_override '{raw}'. Use one of: {supported}.")
+    existing = _load_state(db, user.id, SEC_MGMT_PROFILE_STATE_KEY, {})
+    before = str(existing.get("profile_override") or "").strip().lower() or None
+    history = existing.get("history") if isinstance(existing.get("history"), list) else []
+    change = {
+        "at": utcnow_iso(),
+        "actor": user.id,
+        "before": before,
+        "after": raw or None,
+        "reason": reason or "unspecified",
+        "evidence_ref": evidence_ref or None,
+    }
+    history.append(change)
+    history = history[-50:]
+    _save_state(
+        db,
+        user.id,
+        SEC_MGMT_PROFILE_STATE_KEY,
+        {"profile_override": raw or None, "history": history},
+    )
+    try:
+        log_audit(
+            db,
+            action="sec_management_profile_override",
+            user_id=user.id,
+            detail=change,
+            request_id=None,
+        )
+    except Exception:
+        pass
+    return _ok(
+        {
+            "profile_override": raw or None,
+            "supported_profiles": sorted(PROFILE_WEIGHTS.keys()),
+            "last_override": change,
+            "history_tail": history[-10:],
+        }
+    )
 
 
 @router.get("/api/research/dossier/{ticker}", response_model=ApiResponse)
@@ -2482,9 +2663,13 @@ def tenant_onboarding_step(
 
 
 @router.get("/api/oauth/schwab/authorize-url", response_model=ApiResponse)
-def schwab_authorize_url_endpoint(request: Request, user: User = Depends(get_current_user)) -> ApiResponse:
+def schwab_authorize_url_endpoint(
+    request: Request,
+    redirect: bool = False,
+    user: User = Depends(get_current_user),
+) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    redirect_uri = _single_schwab_callback_uri(request)
     if not client_id:
         raise HTTPException(
             status_code=503,
@@ -2498,13 +2683,31 @@ def schwab_authorize_url_endpoint(request: Request, user: User = Depends(get_cur
             detail=safe_exception_message(exc, fallback="OAuth state signing is unavailable."),
         ) from exc
     url = schwab_authorize_url(client_id, redirect_uri, state)
+    if _oauth_wants_browser_redirect(request, redirect):
+        return RedirectResponse(url, status_code=302)
     return _ok({"url": url, "state": state})
 
 
+@router.get("/api/oauth/schwab/start", include_in_schema=False)
+def schwab_authorize_start(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> RedirectResponse:
+    out = schwab_authorize_url_endpoint(request=request, redirect=True, user=user)
+    assert isinstance(out, RedirectResponse)
+    return out
+
+
 @router.get("/api/oauth/schwab/market/authorize-url", response_model=ApiResponse)
-def schwab_market_authorize_url_endpoint(request: Request, user: User = Depends(get_current_user)) -> ApiResponse:
+def schwab_market_authorize_url_endpoint(
+    request: Request,
+    redirect: bool = False,
+    user: User = Depends(get_current_user),
+) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+    # Reuse the account callback URL so one registered Schwab redirect can
+    # serve both OAuth flows. State still separates account vs market writes.
+    redirect_uri = _single_schwab_callback_uri(request)
     if not client_id:
         raise HTTPException(
             status_code=503,
@@ -2518,7 +2721,19 @@ def schwab_market_authorize_url_endpoint(request: Request, user: User = Depends(
             detail=safe_exception_message(exc, fallback="OAuth state signing is unavailable."),
         ) from exc
     url = schwab_authorize_url(client_id, redirect_uri, state)
+    if _oauth_wants_browser_redirect(request, redirect):
+        return RedirectResponse(url, status_code=302)
     return _ok({"url": url, "state": state})
+
+
+@router.get("/api/oauth/schwab/market/start", include_in_schema=False)
+def schwab_market_authorize_start(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> RedirectResponse:
+    out = schwab_market_authorize_url_endpoint(request=request, redirect=True, user=user)
+    assert isinstance(out, RedirectResponse)
+    return out
 
 
 @router.get("/api/oauth/schwab/callback")
@@ -2534,34 +2749,43 @@ def schwab_oauth_callback(
     def red(qs: str) -> RedirectResponse:
         return RedirectResponse(f"{front}/?{qs}", status_code=302)
 
+    def status_key(k: str | None) -> str:
+        return "schwab_market_oauth" if k == SCHWAB_OAUTH_KIND_MARKET else "schwab_oauth"
+
     if error:
-        return red(f"schwab_oauth=error&message={urllib.parse.quote(error)}")
+        return red(f"{status_key(None)}=error&message={urllib.parse.quote(error)}")
     verified = verify_schwab_oauth_state(state)
     if not verified or not code.strip():
         return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
     user_id, kind = verified
-    if kind != SCHWAB_OAUTH_KIND_ACCOUNT:
-        return red(
-            "schwab_oauth=error&message="
-            + urllib.parse.quote("wrong_oauth_flow_use_account_authorize_link")
-        )
+    if kind not in {SCHWAB_OAUTH_KIND_ACCOUNT, SCHWAB_OAUTH_KIND_MARKET}:
+        return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
-    client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-    client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    if kind == SCHWAB_OAUTH_KIND_MARKET:
+        client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
+        client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
+    else:
+        client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
+        client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+    redirect_uri = _single_schwab_callback_uri(request)
     if not client_id or not client_secret:
-        return red("schwab_oauth=error&message=" + urllib.parse.quote("server_oauth_not_configured"))
+        code_name = (
+            "server_market_oauth_not_configured"
+            if kind == SCHWAB_OAUTH_KIND_MARKET
+            else "server_oauth_not_configured"
+        )
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(code_name))
 
     try:
         tok = exchange_schwab_code_for_tokens(client_id, client_secret, code, redirect_uri)
     except Exception as exc:
         safe_error = safe_exception_message(exc, fallback="oauth_exchange_failed")
-        return red("schwab_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(safe_error[:180]))
 
     access = str(tok.get("access_token") or "").strip()
     refresh = str(tok.get("refresh_token") or "").strip()
     if not access or not refresh:
-        return red("schwab_oauth=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
 
     try:
         row = db.query(UserCredential).filter(UserCredential.user_id == user_id).first()
@@ -2569,22 +2793,25 @@ def schwab_oauth_callback(
             row = UserCredential(user_id=user_id)
             db.add(row)
 
-        row.access_token_enc = encrypt_secret(access)
-        row.refresh_token_enc = encrypt_secret(refresh)
-        row.token_type = (str(tok.get("token_type") or "Bearer").strip() or "Bearer")
-        exp_in = tok.get("expires_in")
-        if exp_in is not None:
-            try:
-                row.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(exp_in))
-            except Exception:
-                row.expires_at = None
-        scope_raw = tok.get("scope")
-        if isinstance(scope_raw, str) and scope_raw.strip():
-            parts = [p.strip() for p in scope_raw.replace(",", " ").split() if p.strip()]
-            row.scopes = parse_scopes(parts)
+        if kind == SCHWAB_OAUTH_KIND_MARKET:
+            row.market_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
         else:
-            row.scopes = parse_scopes(None)
-        row.account_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
+            row.access_token_enc = encrypt_secret(access)
+            row.refresh_token_enc = encrypt_secret(refresh)
+            row.token_type = (str(tok.get("token_type") or "Bearer").strip() or "Bearer")
+            exp_in = tok.get("expires_in")
+            if exp_in is not None:
+                try:
+                    row.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(exp_in))
+                except Exception:
+                    row.expires_at = None
+            scope_raw = tok.get("scope")
+            if isinstance(scope_raw, str) and scope_raw.strip():
+                parts = [p.strip() for p in scope_raw.replace(",", " ").split() if p.strip()]
+                row.scopes = parse_scopes(parts)
+            else:
+                row.scopes = parse_scopes(None)
+            row.account_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
 
         db.commit()
         db.refresh(row)
@@ -2597,24 +2824,25 @@ def schwab_oauth_callback(
         safe_error = safe_exception_message(exc, fallback="token_storage_failed")
         return red("schwab_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
 
-    _save_state(
-        db,
-        user_id,
-        "onboarding",
-        {
-            "linked_at": utcnow_iso(),
-            "schwab_linked": True,
-            "wizard_required": False,
-        },
-    )
+    if kind == SCHWAB_OAUTH_KIND_ACCOUNT:
+        _save_state(
+            db,
+            user_id,
+            "onboarding",
+            {
+                "linked_at": utcnow_iso(),
+                "schwab_linked": True,
+                "wizard_required": False,
+            },
+        )
     log_audit(
         db,
-        action="oauth_schwab_callback",
+        action="oauth_schwab_market_callback" if kind == SCHWAB_OAUTH_KIND_MARKET else "oauth_schwab_callback",
         user_id=user_id,
         detail={},
         request_id=_request_id(request),
     )
-    return red("schwab_oauth=ok")
+    return red(f"{status_key(kind)}=ok")
 
 
 @router.get("/api/oauth/schwab/market/callback")

@@ -20,6 +20,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from config import get_schwab_only_data
+
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
 SIMULATIONS_DIR = SKILL_DIR / "mirofish_sims"
@@ -135,12 +137,18 @@ def _get_seed_from_df(df, ticker: str, skill_dir: Path | None = None) -> str:
     )
 
 
-def _get_news_seed(ticker: str) -> str:
+def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
     """Fetch recent news headlines via yfinance as additional seed."""
+    if get_schwab_only_data(skill_dir):
+        return "News enrichment disabled (SCHWAB_ONLY_DATA: fundamentals/news APIs unavailable)."
     try:
         import yfinance as yf
-        t = yf.Ticker(ticker)
-        news: list[dict[str, Any]] = getattr(t, "get_news", lambda **_kw: [])(count=5)
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(ticker)
+            news: list[dict[str, Any]] = getattr(t, "get_news", lambda **_kw: [])(count=5)
         if not news:
             return "No recent news available."
         lines = []
@@ -489,13 +497,17 @@ class MarketSimulation:
                 df = get_daily_history(self.ticker, days=30, auth=auth, skill_dir=self.skill_dir)
                 if df.empty:
                     import yfinance as yf
-                    t = yf.Ticker(self.ticker)
-                    df = _normalize_ohlcv_df(t.history(period="1mo", auto_adjust=True))
+
+                    from _io_utils import yfinance_call
+
+                    with yfinance_call():
+                        t = yf.Ticker(self.ticker)
+                        df = _normalize_ohlcv_df(t.history(period="1mo", auto_adjust=True))
             except Exception as e:
                 LOG.warning("Seed fetch failed for %s: %s", self.ticker, e)
                 return f"Data fetch failed: {e}", None
         price_seed = _get_seed_from_df(df, self.ticker, self.skill_dir)
-        news_seed = _get_news_seed(self.ticker)
+        news_seed = _get_news_seed(self.ticker, self.skill_dir)
         return f"{price_seed}\n\n{news_seed}", df
 
     def run(self) -> dict[str, Any]:
@@ -751,11 +763,13 @@ MIROFISH_CACHE_FILE = ".mirofish_cache.json"
 
 def _persist_simulation(sim_id: str, result: dict[str, Any], skill_dir: Path | None = None) -> None:
     """Write simulation result to mirofish_sims/{sim_id}.json for viewer consumption."""
+    from _io_utils import atomic_write_json
+
     sim_dir = (skill_dir or SKILL_DIR) / "mirofish_sims"
     try:
         sim_dir.mkdir(parents=True, exist_ok=True)
         path = sim_dir / f"{sim_id}.json"
-        path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        atomic_write_json(path, result, indent=2)
         LOG.debug("Persisted simulation %s to %s", sim_id, path)
     except Exception as e:
         LOG.warning("Failed to persist simulation %s: %s", sim_id, e)
@@ -798,7 +812,9 @@ def cache_conviction(ticker: str, result: dict, skill_dir: Path | None = None) -
     }
     data["mirofish_scores"] = scores
     try:
-        cache_path.write_text(json.dumps(data, indent=0))
+        from _io_utils import atomic_write_json
+
+        atomic_write_json(cache_path, data, indent=0)
     except Exception as e:
         LOG.warning("Conviction cache write failed: %s", e)
 

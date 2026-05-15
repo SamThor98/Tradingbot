@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -218,29 +219,103 @@ def run_validation(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pre-run data integrity validator for PM A/B pipeline")
-    parser.add_argument("--start-date", required=True, help="Backtest start date YYYY-MM-DD")
-    parser.add_argument("--end-date", required=True, help="Backtest end date YYYY-MM-DD")
-    parser.add_argument("--universe-file", required=True, help="Frozen universe JSON path")
-    parser.add_argument("--pm-historical-file", required=True, help="Historical PM snapshots JSON path")
+    parser.add_argument("--start-date", default="", help="Backtest start date YYYY-MM-DD")
+    parser.add_argument("--end-date", default="", help="Backtest end date YYYY-MM-DD")
+    parser.add_argument("--universe-file", default="", help="Frozen universe JSON path")
+    parser.add_argument("--pm-historical-file", default="", help="Historical PM snapshots JSON path")
     parser.add_argument("--output-prefix", default="data_integrity", help="Artifact filename prefix")
+    parser.add_argument(
+        "--allow-skip",
+        action="store_true",
+        help=(
+            "Emit a skipped artifact and exit 0 when required PM fixture inputs "
+            "are unavailable (used by validate_all in environments without PM data)."
+        ),
+    )
     args = parser.parse_args()
 
-    universe_path = Path(args.universe_file)
-    pm_hist_path = Path(args.pm_historical_file)
-    if not universe_path.exists():
-        raise SystemExit(f"Universe file missing: {universe_path}")
-    if not pm_hist_path.exists():
-        raise SystemExit(f"PM historical file missing: {pm_hist_path}")
-    _ = _iso_dt(args.start_date)
-    _ = _iso_dt(args.end_date)
-
-    report = run_validation(
-        start_date=args.start_date,
-        end_date=args.end_date,
-        universe_file=universe_path,
-        pm_historical_file=pm_hist_path,
-        skill_dir=SKILL_DIR,
+    default_end = datetime.now(timezone.utc).date()
+    default_start = default_end - timedelta(days=365)
+    start_date = (args.start_date or "").strip() or str(
+        os.environ.get("DATA_INTEGRITY_START_DATE", default_start.isoformat())
     )
+    end_date = (args.end_date or "").strip() or str(
+        os.environ.get("DATA_INTEGRITY_END_DATE", default_end.isoformat())
+    )
+    universe_raw = (args.universe_file or "").strip() or str(os.environ.get("DATA_INTEGRITY_UNIVERSE_FILE", "")).strip()
+    pm_hist_raw = (args.pm_historical_file or "").strip() or str(
+        os.environ.get("DATA_INTEGRITY_PM_HISTORICAL_FILE", "")
+    ).strip()
+
+    _ = _iso_dt(start_date)
+    _ = _iso_dt(end_date)
+
+    universe_path = Path(universe_raw) if universe_raw else None
+    pm_hist_path = Path(pm_hist_raw) if pm_hist_raw else None
+    has_inputs = (
+        universe_path is not None
+        and pm_hist_path is not None
+        and universe_path.exists()
+        and pm_hist_path.exists()
+    )
+
+    if has_inputs:
+        report = run_validation(
+            start_date=start_date,
+            end_date=end_date,
+            universe_file=universe_path,
+            pm_historical_file=pm_hist_path,
+            skill_dir=SKILL_DIR,
+        )
+    else:
+        if not args.allow_skip:
+            missing = []
+            if universe_path is None or not universe_path.exists():
+                missing.append("universe_file")
+            if pm_hist_path is None or not pm_hist_path.exists():
+                missing.append("pm_historical_file")
+            raise SystemExit(
+                "Missing data-integrity inputs: "
+                + ", ".join(missing)
+                + ". Provide --universe-file/--pm-historical-file "
+                + "(or DATA_INTEGRITY_UNIVERSE_FILE / DATA_INTEGRITY_PM_HISTORICAL_FILE)."
+            )
+        report = {
+            "run_at": datetime.now(timezone.utc).isoformat(),
+            "start_date": start_date,
+            "end_date": end_date,
+            "passed": True,
+            "skipped": True,
+            "gate_failures": [],
+            "skip_reason": "missing_data_integrity_inputs",
+            "gate_config": {
+                "min_history_coverage_pct": None,
+                "min_history_bars": None,
+                "min_pm_coverage_pct": None,
+                "fail_on_silent_fallback": None,
+                "max_fallback_unknown_count": None,
+            },
+            "history_coverage": {
+                "symbols_total": 0,
+                "covered_symbols": 0,
+                "coverage_pct": 0.0,
+                "missing_symbols": [],
+            },
+            "pm_coverage": {
+                "points_total": 0,
+                "matched_points": 0,
+                "coverage_pct": 0.0,
+                "exclusion_reasons": {"skipped": 1},
+            },
+            "fallback_accounting": {
+                "provider_counts": {},
+                "fallback_reason_counts": {},
+                "unknown_provider_count": 0,
+                "missing_fallback_reason_count": 0,
+                "silent_fallback_count": 0,
+            },
+        }
+
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     out_json = ARTIFACT_DIR / f"{args.output_prefix}_{run_id}.json"

@@ -36,6 +36,51 @@ HIGH_RISK_8K_TERMS = (
     "litigation",
 )
 
+# SEC 8-K item codes that materially affect risk. Sourced from
+# https://www.sec.gov/about/forms/form8-k.pdf. Keyword matching against the
+# filing `description` field misses almost everything because EDGAR usually
+# stores `description="FORM 8-K"`; item codes are deterministic and free.
+HIGH_RISK_8K_ITEMS: dict[str, str] = {
+    "1.02": "Termination of Material Definitive Agreement",
+    "1.03": "Bankruptcy or Receivership",
+    "2.04": "Triggering Events Accelerating a Direct Financial Obligation",
+    "2.06": "Material Impairments",
+    "3.01": "Notice of Delisting / Failure to Satisfy Listing Rule",
+    "4.01": "Changes in Registrant's Certifying Accountant",
+    "4.02": "Non-Reliance on Previously Issued Financial Statements (restatement)",
+    "5.02": "Departure of Directors or Principal Officers",
+    "5.03": "Amendments to Articles of Incorporation or Bylaws",
+    "8.01": "Other Events",  # often used for material litigation / investigation announcements
+}
+MEDIUM_RISK_8K_ITEMS: dict[str, str] = {
+    "1.01": "Entry into a Material Definitive Agreement",
+    "2.02": "Results of Operations and Financial Condition (earnings)",
+    "2.03": "Creation of Material Direct Financial Obligation",
+    "5.01": "Changes in Control of Registrant",
+    "7.01": "Regulation FD Disclosure",
+}
+
+
+def _parse_items_field(raw: Any) -> list[str]:
+    """Normalize the EDGAR `items` field, which can be a string or list per filing."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        items_raw = ",".join(str(x) for x in raw)
+    else:
+        items_raw = str(raw)
+    out: list[str] = []
+    for token in items_raw.replace(";", ",").split(","):
+        t = token.strip()
+        # EDGAR formats vary: "1.02", "Item 1.02", "1.02 - Termination ..."
+        if t.lower().startswith("item"):
+            t = t[4:].strip()
+        # Strip trailing description text, keep just the leading code.
+        t = t.split(" ")[0].split("-")[0].strip()
+        if t:
+            out.append(t)
+    return out
+
 
 def _cache_path(skill_dir: Path | None = None) -> Path:
     return (skill_dir or SKILL_DIR) / SEC_CACHE_FILE
@@ -55,9 +100,16 @@ def _load_cache(skill_dir: Path | None = None) -> dict[str, Any]:
 
 
 def _save_cache(cache: dict[str, Any], skill_dir: Path | None = None) -> None:
-    path = _cache_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cache, indent=2))
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_cache_path(skill_dir), cache, indent=2)
+
+
+# Failed SEC payloads (`ok=False`) cache for at most 15 minutes so a transient
+# EDGAR rate-limit / network hiccup doesn't pin the ticker's risk_tag to
+# "unknown" for the full `cache_hours` window. Successful payloads keep the
+# operator-configured TTL.
+_FAILED_PAYLOAD_TTL_HOURS = 0.25
 
 
 def _is_fresh(entry: dict[str, Any] | None, cache_hours: float) -> bool:
@@ -66,8 +118,11 @@ def _is_fresh(entry: dict[str, Any] | None, cache_hours: float) -> bool:
     ts = float(entry.get("timestamp", 0) or 0)
     if ts <= 0:
         return False
+    payload = entry.get("payload") if isinstance(entry, dict) else None
+    payload_ok = isinstance(payload, dict) and bool(payload.get("ok"))
+    effective_ttl = float(cache_hours) if payload_ok else min(float(cache_hours), _FAILED_PAYLOAD_TTL_HOURS)
     age_h = (time.time() - ts) / 3600.0
-    return age_h <= float(cache_hours)
+    return age_h <= effective_ttl
 
 
 def _clamp_recent_filings(filings: list[dict[str, Any]], max_items: int = 6) -> list[dict[str, Any]]:
@@ -79,36 +134,75 @@ def _clamp_recent_filings(filings: list[dict[str, Any]], max_items: int = 6) -> 
                 "date": str(f.get("date", "")),
                 "description": str(f.get("description", ""))[:160],
                 "url": str(f.get("url", "")),
+                "items": list(f.get("items") or []),
             }
         )
     return out
 
 
 def _risk_tag_from_filings(filings: list[dict[str, Any]]) -> tuple[str, list[str]]:
-    # High risk if recent 8-K contains known risk terms.
+    """Classify risk using SEC 8-K item codes (primary) and description keywords (fallback).
+
+    Item codes are deterministic and exhaustive for materiality (this is what
+    SEC requires the filer to declare); description-keyword matching used to
+    miss nearly everything because EDGAR usually stores `description="FORM
+    8-K"`. We still keep the keyword check as a belt-and-suspenders fallback.
+    """
     reasons: list[str] = []
+    has_high_item = False
+    has_medium_item = False
     for f in filings:
         form = (f.get("form") or "").upper()
+        if form != "8-K":
+            continue
+        items = list(f.get("items") or [])
+        for code in items:
+            code_str = str(code).strip()
+            if code_str in HIGH_RISK_8K_ITEMS:
+                reasons.append(f"8-K item {code_str}: {HIGH_RISK_8K_ITEMS[code_str]}")
+                has_high_item = True
+            elif code_str in MEDIUM_RISK_8K_ITEMS:
+                has_medium_item = True
+        # Keyword fallback (catches the rare cases where the filer surfaces
+        # risk-relevant text in `description`).
         desc = (f.get("description") or "").lower()
-        if form == "8-K":
+        if desc:
             for term in HIGH_RISK_8K_TERMS:
                 if term in desc:
-                    reasons.append(f"8-K keyword: {term}")
+                    reason = f"8-K keyword: {term}"
+                    if reason not in reasons:
+                        reasons.append(reason)
+                    has_high_item = True
                     break
-    if reasons:
-        return "high", reasons
+    if has_high_item:
+        return "high", reasons[:3]
+    if has_medium_item:
+        return "medium", ["recent 8-K with material item code"]
     if any((f.get("form") or "").upper() == "8-K" for f in filings):
         return "medium", ["recent 8-K present"]
     return "low", []
 
 
-def _safe_user_agent(user_agent: str | None) -> str:
-    ua = (user_agent or "").strip()
-    if len(ua) < 12:
-        return DEFAULT_USER_AGENT
-    if "@" not in ua:
-        return DEFAULT_USER_AGENT
-    return ua
+def _safe_user_agent(user_agent: str | None) -> str | None:
+    """Return a usable EDGAR User-Agent or ``None`` if the operator hasn't set one.
+
+    Previously this silently substituted a placeholder ``contact@example.com``
+    address when the env var was missing or malformed. SEC's fair-access
+    policy explicitly forbids that — see
+    https://www.sec.gov/os/accessing-edgar-data — and SEC will rate-limit /
+    IP-ban requests using fake contact info, silently breaking enrichment for
+    every ticker. We now refuse to send the request at all when the UA isn't
+    real, and let callers downgrade SEC enrichment to "unavailable" so the
+    rest of the pipeline keeps working.
+    """
+    try:
+        from config import is_real_edgar_user_agent
+    except ImportError:
+        ua = (user_agent or "").strip()
+        return ua if (len(ua) >= 12 and "@" in ua and "example.com" not in ua.lower()) else None
+    if is_real_edgar_user_agent(user_agent):
+        return str(user_agent).strip()
+    return None
 
 
 def fetch_sec_snapshot(
@@ -161,6 +255,14 @@ def fetch_sec_snapshot(
         "from_cache": False,
         "error": "",
     }
+    if ua is None:
+        payload["error"] = (
+            "EDGAR_USER_AGENT missing or contains placeholder/example contact; "
+            "SEC requires a real operator email and will IP-ban fake UAs. "
+            "Set EDGAR_USER_AGENT='YourCompanyName real-contact@yourdomain' in .env."
+        )
+        LOG.warning("SEC enrichment refused for %s: %s", tkr, payload["error"])
+        return payload
 
     try:
         idx = requests.get(SEC_INDEX_URL, headers={"User-Agent": ua}, timeout=20)
@@ -185,6 +287,7 @@ def fetch_sec_snapshot(
         accessions = recent.get("accessionNumber", []) or []
         docs = recent.get("primaryDocument", []) or []
         descriptions = recent.get("primaryDocDescription", []) or []
+        items_per_filing = recent.get("items", []) or []
 
         filings: list[dict[str, Any]] = []
         for i in range(min(len(forms), 80)):
@@ -195,6 +298,7 @@ def fetch_sec_snapshot(
             doc = str(docs[i])
             filing_date = str(dates[i]) if i < len(dates) else ""
             desc = str(descriptions[i]) if i < len(descriptions) else ""
+            items_field = items_per_filing[i] if i < len(items_per_filing) else None
             url = f"https://www.sec.gov/Archives/edgar/data/{cik.lstrip('0')}/{accession}/{doc}"
             filings.append(
                 {
@@ -202,6 +306,7 @@ def fetch_sec_snapshot(
                     "date": filing_date,
                     "description": desc,
                     "url": url,
+                    "items": _parse_items_field(items_field),
                 }
             )
             if len(filings) >= 8:

@@ -12,6 +12,7 @@ Use this to execute the same validation flow in each environment.
 Expected:
 - All steps `PASS`
 - Summary artifact written under `validation_artifacts/`
+- Includes `validate_data_integrity` (skip artifact when PM fixture files are not configured).
 
 ## Headless Linux Server
 
@@ -21,6 +22,7 @@ Expected:
 Expected:
 - Healthcheck and observability gates pass.
 - No circuit instability.
+- Includes `validate_data_integrity` in the server profile.
 
 ## Container Runtime
 
@@ -39,6 +41,7 @@ Expected:
 Expected:
 - No secret-dependent checks required by default.
 - Fast deterministic checks pass before merge.
+- Includes `validate_data_integrity` in CI profile.
 
 ## Continuous Improvement Cadence (Hybrid)
 
@@ -84,4 +87,23 @@ Use this split to keep PR feedback fast while still running heavy improvement lo
 - If `healthcheck.py` fails: refresh tokens via OAuth flow.
 - If observability gate fails: inspect `execution_safety_metrics.json` and web deep health metrics.
 - If smoke fails in web health: verify dependencies (`fastapi`, `uvicorn`, `sqlalchemy`) and local DB access.
+- If `validate_data_integrity` is skipped: set `DATA_INTEGRITY_UNIVERSE_FILE` and `DATA_INTEGRITY_PM_HISTORICAL_FILE` (optional date overrides: `DATA_INTEGRITY_START_DATE`, `DATA_INTEGRITY_END_DATE`).
+
+## Parameter Ablation (Manifest-Driven)
+
+1. Tune `scripts/ablation_manifest_v1.json` (splits, parameter ranges, promotion thresholds).
+2. Run raw sweeps:
+   - `python scripts/run_param_ablation.py --manifest scripts/ablation_manifest_v1.json`
+   - Optional interactions: add `--include-interactions`
+3. Score report:
+   - `python scripts/score_ablation_report.py --raw-artifact validation_artifacts/ablation_raw_<run_id>.json`
+4. Review leaderboard outputs:
+   - `validation_artifacts/ablation_report_<run_id>.json`
+   - `validation_artifacts/ablation_report_<run_id>.md`
+
+Companion docs:
+
+- `docs/PARAM_ABLATION_WORKFLOW.md`
+- `docs/ABLATION_REPORT_SCHEMA.md`
+- `docs/ablation_report.schema.json`
 

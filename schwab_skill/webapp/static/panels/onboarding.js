@@ -3,8 +3,8 @@
  *
  * Surfaces the five-step "connect account → connect market → verify
  * tokens → test scan → paper order" sequence as a horizontal stepper
- * with a single "Next step" CTA, plus a card grid of past attempts and
- * an advanced row of per-step buttons. Status is stored on
+ * with a single "Connect Schwab" CTA and a card grid of past attempts.
+ * Status is stored on
  * `state.onboarding`; `refreshOnboarding` pulls fresh data from
  * `/api/onboarding/status` and renders the connection meta line, the
  * stepper, the CTA, and the retrospective cards.
@@ -45,44 +45,38 @@ const STEPPER_ORDER = [
 const STEPPER_COPY = {
   account: {
     title: "Connect your Schwab brokerage account",
-    desc: "Approve access for trading (balances, positions, orders). Opens Schwab in this tab.",
-    cta: "Connect Schwab account",
+    desc: "We will open Schwab so you can approve account access.",
   },
   market: {
     title: "Connect Schwab market data",
-    desc: "Second approval for quotes and historical data. Required for scans.",
-    cta: "Connect Schwab market",
+    desc: "We will open Schwab so you can approve market data access.",
   },
   verify_token_health: {
     title: "Verify your tokens are live",
     desc: "Quick API probe to confirm both Schwab tokens accept requests right now.",
-    cta: "Verify tokens",
   },
   test_scan: {
     title: "Run a test scan",
     desc: "Scans the universe end-to-end and confirms no fatal errors.",
-    cta: "Run test scan",
   },
   test_paper_order: {
     title: "Place a paper order",
     desc: "Shadow-mode order so we know the execution path is wired correctly.",
-    cta: "Place paper order",
   },
   done: {
     title: "Setup complete — you're cleared to scan and trade.",
-    desc: "All five steps passed. You can re-run any step from the “All steps” drawer below.",
-    cta: "Re-verify tokens",
+    desc: "All five steps passed. Your Schwab connection is ready.",
   },
 };
 
 /** Maps a derived current step → the action that completes it. */
 function actionForStep(step, deps) {
-  const { runLazyApi, runStep, oauthAccount, oauthMarket } = deps;
+  const { runLazyApi, runStep, triggerAccountConnect, triggerMarketConnect } = deps;
   switch (step) {
     case "account":
-      return oauthAccount;
+      return triggerAccountConnect;
     case "market":
-      return oauthMarket;
+      return triggerMarketConnect;
     case "verify_token_health":
     case "test_scan":
     case "test_paper_order":
@@ -153,16 +147,17 @@ function renderNextCta(data, currentStep, deps) {
   const copy = STEPPER_COPY[currentStep] || STEPPER_COPY.account;
   titleEl.textContent = copy.title;
   descEl.textContent = copy.desc;
-  btn.textContent = copy.cta;
+  btn.textContent = currentStep === "done" ? "Connected" : "Connect Schwab";
 
   const handler = actionForStep(currentStep, deps);
   // Replace listener (clone trick) so re-renders don't pile up listeners.
   const fresh = btn.cloneNode(true);
   btn.parentNode.replaceChild(fresh, btn);
   if (handler) {
-    fresh.disabled = false;
+    fresh.disabled = currentStep === "done";
     fresh.addEventListener("click", async (e) => {
       e.preventDefault();
+      if (currentStep === "done") return;
       fresh.disabled = true;
       try {
         await handler();
@@ -234,15 +229,28 @@ export async function triggerSchwabAccountOAuth() {
     );
     return;
   }
-  const out = await api.get("/api/oauth/schwab/authorize-url");
-  if (!out.ok || !out.data?.url) {
-    _flashOAuthError(
-      "Could not start Schwab account OAuth",
-      out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
-    );
-    return;
+  const redirectPath = "/api/oauth/schwab/start";
+  try {
+    // Redirect-first path avoids fragile fetch-only startup failures.
+    window.location.assign(redirectPath);
+  } catch {
+    try {
+      const out = await api.get("/api/oauth/schwab/authorize-url");
+      if (!out.ok || !out.data?.url) {
+        _flashOAuthError(
+          "Could not start Schwab account OAuth",
+          out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
+        );
+        return;
+      }
+      window.location.href = out.data.url;
+    } catch (err) {
+      _flashOAuthError(
+        "Could not start Schwab account OAuth",
+        `OAuth start failed: ${err?.message || err || "unknown error"}`,
+      );
+    }
   }
-  window.location.href = out.data.url;
 }
 
 export async function triggerSchwabMarketOAuth() {
@@ -253,15 +261,28 @@ export async function triggerSchwabMarketOAuth() {
     );
     return;
   }
-  const out = await api.get("/api/oauth/schwab/market/authorize-url");
-  if (!out.ok || !out.data?.url) {
-    _flashOAuthError(
-      "Could not start Schwab market OAuth",
-      out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
-    );
-    return;
+  const redirectPath = "/api/oauth/schwab/market/start";
+  try {
+    // Redirect-first path avoids fragile fetch-only startup failures.
+    window.location.assign(redirectPath);
+  } catch {
+    try {
+      const out = await api.get("/api/oauth/schwab/market/authorize-url");
+      if (!out.ok || !out.data?.url) {
+        _flashOAuthError(
+          "Could not start Schwab market OAuth",
+          out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
+        );
+        return;
+      }
+      window.location.href = out.data.url;
+    } catch (err) {
+      _flashOAuthError(
+        "Could not start Schwab market OAuth",
+        `OAuth start failed: ${err?.message || err || "unknown error"}`,
+      );
+    }
   }
-  window.location.href = out.data.url;
 }
 
 export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
@@ -276,8 +297,8 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
     renderNextCta({}, "account", {
       runLazyApi,
       runStep: runOnboardingStep,
-      oauthAccount: triggerSchwabAccountOAuth,
-      oauthMarket: triggerSchwabMarketOAuth,
+      triggerAccountConnect: triggerSchwabAccountOAuth,
+      triggerMarketConnect: triggerSchwabMarketOAuth,
     });
     meta.textContent = `Onboarding status failed: ${out.user_message || out.error}`;
     return;
@@ -297,8 +318,8 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
   renderNextCta(out.data, currentStep, {
     runLazyApi,
     runStep: runOnboardingStep,
-    oauthAccount: triggerSchwabAccountOAuth,
-    oauthMarket: triggerSchwabMarketOAuth,
+    triggerAccountConnect: triggerSchwabAccountOAuth,
+    triggerMarketConnect: triggerSchwabMarketOAuth,
   });
   renderOnboardingCards(out.data);
 }

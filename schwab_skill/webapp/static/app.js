@@ -91,10 +91,6 @@ import {
 import {
   renderOnboardingCards,
   refreshOnboarding as _refreshOnboardingPanel,
-  startOnboarding as _startOnboardingPanel,
-  runOnboardingStep as _runOnboardingStepPanel,
-  triggerSchwabAccountOAuth,
-  triggerSchwabMarketOAuth,
 } from "./panels/onboarding.js";
 import {
   renderCalibrationPanel,
@@ -128,6 +124,7 @@ import {
   renderSecCompareVisual as _renderSecCompareVisualPanel,
   buildFallbackSecCompare,
   runSecCompare as _runSecComparePanel,
+  resetSecCompareProfileOverride,
 } from "./panels/sec.js";
 import {
   renderReportTabs,
@@ -187,8 +184,6 @@ import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
 const submitEnableLiveTrading = () =>
   _submitEnableLiveTradingPanel({ refreshAccountMe, refreshPending });
 const refreshOnboarding = () => _refreshOnboardingPanel({ runLazyApi });
-const startOnboarding = () => _startOnboardingPanel({ runLazyApi });
-const runOnboardingStep = (step) => _runOnboardingStepPanel(step, { runLazyApi });
 const submitTradingHaltSave = () =>
   _submitTradingHaltSavePanel({ refreshAccountMe });
 const refreshPortfolio = () => _refreshPortfolioPanel({ runScan });
@@ -218,6 +213,8 @@ const lazyLoaded = {
   profiles: false,
   calibration: false,
 };
+let _ablationCyclePollTimer = null;
+let _lastAblationRunStatus = "idle";
 
 const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
@@ -838,6 +835,104 @@ function normalizeProbability(value) {
   return Math.max(0, Math.min(1, ratio));
 }
 
+function getCompositeScore(row = {}) {
+  return optionalNum(row.composite_score ?? row.signal_score ?? row.score);
+}
+
+function getConvictionScore(row = {}) {
+  return optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
+}
+
+function getCalibratedPUp(row = {}) {
+  const advisory = row.advisory || {};
+  return normalizeProbability(
+    row.p_up_calibrated ?? advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up,
+  );
+}
+
+function getReliabilityScore(row = {}) {
+  const direct = optionalNum(row.reliability_score);
+  if (direct !== null) return direct;
+  const advisory = row.advisory || {};
+  const bucket = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
+  if (bucket === "HIGH") return 82;
+  if (bucket === "MEDIUM") return 64;
+  if (bucket === "LOW") return 46;
+  return 35;
+}
+
+function getEdgeScore(row = {}) {
+  const direct = optionalNum(row.edge_score);
+  if (direct !== null) return direct;
+  return getCompositeScore(row);
+}
+
+function getExecutionScore(row = {}) {
+  const direct = optionalNum(row.execution_score);
+  if (direct !== null) return direct;
+  return 60;
+}
+
+function getEv10d(row = {}) {
+  return optionalNum(row.ev_10d);
+}
+
+function buildRankWhyText(row = {}) {
+  const rank = optionalNum(row.rank_score);
+  const basis = safeText(row.rank_basis || "legacy");
+  const comp = optionalNum(getCompositeScore(row));
+  const edge = optionalNum(getEdgeScore(row));
+  const reliability = optionalNum(getReliabilityScore(row));
+  const execution = optionalNum(getExecutionScore(row));
+  const pUp = optionalNum(getCalibratedPUp(row));
+  const ev10d = optionalNum(getEv10d(row));
+  const reasons = Array.isArray(row.reliability_reasons) ? row.reliability_reasons : [];
+  const capReasons = reasons
+    .filter((r) => String(r || "").startsWith("composite_capped"))
+    .map((r) => String(r || "").replace(/^composite_capped_/, "").replaceAll("_", " "));
+  const segments = [];
+  segments.push(`basis ${basis}`);
+  if (rank !== null) segments.push(`rank ${rank.toFixed(1)}`);
+  if (comp !== null) segments.push(`composite ${comp.toFixed(1)}`);
+  if (edge !== null) segments.push(`edge ${edge.toFixed(1)}`);
+  if (reliability !== null) segments.push(`reliability ${reliability.toFixed(1)}`);
+  if (execution !== null) segments.push(`execution ${execution.toFixed(1)}`);
+  if (pUp !== null) segments.push(`p(up) ${pct(pUp, 1)}`);
+  if (ev10d !== null) segments.push(`EV10d ${(ev10d * 100).toFixed(2)}%`);
+  if (capReasons.length) segments.push(`caps ${capReasons.join(", ")}`);
+  return segments.join(" · ");
+}
+
+function buildRankWhyInlineText(row = {}) {
+  const rank = optionalNum(row.rank_score);
+  const reliability = optionalNum(getReliabilityScore(row));
+  const execution = optionalNum(getExecutionScore(row));
+  const pUp = optionalNum(getCalibratedPUp(row));
+  const reasons = Array.isArray(row.reliability_reasons) ? row.reliability_reasons : [];
+  const hasCap = reasons.some((r) => String(r || "").includes("capped"));
+  const segments = [];
+  if (rank !== null) segments.push(`rank ${rank.toFixed(1)}`);
+  if (reliability !== null) segments.push(`rel ${reliability.toFixed(0)}`);
+  if (execution !== null) segments.push(`exec ${execution.toFixed(0)}`);
+  if (pUp !== null) segments.push(`P(up) ${pct(pUp, 1)}`);
+  if (hasCap) segments.push("cap applied");
+  return segments.join(" · ");
+}
+
+function renderRankScoreCell(row = {}) {
+  const score = getCompositeScore(row);
+  const shown = score !== null ? `${score.toFixed(1)}` : "—";
+  const mode = getRankExplainMode();
+  if (mode === "inline") {
+    const inlineWhy = buildRankWhyInlineText(row);
+    if (!inlineWhy) return shown;
+    return `<span class="scan-rank-cell scan-rank-cell--inline"><span class="scan-rank-score">${shown}</span><span class="scan-rank-inline">${escapeHtml(inlineWhy)}</span></span>`;
+  }
+  const why = buildRankWhyText(row);
+  if (!why) return shown;
+  return `<span class="scan-rank-cell"><span class="scan-rank-score">${shown}</span><span class="scan-rank-why" data-tooltip="${escapeHtml(why)}" aria-label="Why this rank">?</span></span>`;
+}
+
 function formatConfidenceLabel(value) {
   const raw = safeText(value || "").trim();
   if (!raw || raw === "—") return "—";
@@ -1449,6 +1544,206 @@ function renderScanDetailChartMessage(message) {
   container.innerHTML = `<p class="muted">${safeText(message || "Chart unavailable.")}</p>`;
 }
 
+function buildScanBriefNoteText(row, sections) {
+  const ticker = safeText(row?.ticker || row?.symbol || "?");
+  const lines = [
+    `${ticker} decision brief`,
+    "",
+    `Setup summary: ${safeText(sections.setupSummary)}`,
+    `Expected move window: ${safeText(sections.expectedMoveWindow)}`,
+    "",
+    "Key risks:",
+    ...(sections.keyRisks || []).map((x) => `- ${safeText(x)}`),
+    "",
+    "Catalyst notes:",
+    ...(sections.catalystNotes || []).map((x) => `- ${safeText(x)}`),
+    "",
+    "Forensic flags:",
+    ...(sections.forensicFlags || []).map((x) => `- ${safeText(x)}`),
+    "",
+    "SEC notes:",
+    ...(sections.secNotes || []).map((x) => `- ${safeText(x)}`),
+    "",
+    "Entry/stop ideas:",
+    ...(sections.entryStopIdeas || []).map((x) => `- ${safeText(x)}`),
+  ];
+  return lines.join("\n");
+}
+
+function briefPillClassForScore(score) {
+  const n = optionalNum(score);
+  if (n === null) return "neutral";
+  if (n >= 70) return "good";
+  if (n >= 55) return "warn";
+  return "bad";
+}
+
+function briefPillClassForConfidence(label) {
+  const v = safeText(label).toUpperCase();
+  if (v === "HIGH") return "good";
+  if (v === "MEDIUM" || v === "MED") return "warn";
+  if (v === "LOW") return "bad";
+  return "neutral";
+}
+
+function briefPillClassForConviction(conviction) {
+  const n = optionalNum(conviction);
+  if (n === null) return "neutral";
+  if (n >= 35) return "good";
+  if (n >= 10) return "warn";
+  return "bad";
+}
+
+function briefPillClassForPup(pUp) {
+  const n = optionalNum(pUp);
+  if (n === null) return "neutral";
+  if (n >= 0.6) return "good";
+  if (n >= 0.52) return "warn";
+  return "bad";
+}
+
+function summarizeBriefRiskSeverity(items) {
+  const rows = Array.isArray(items) ? items.map((x) => safeText(x).toLowerCase()) : [];
+  if (!rows.length) return { label: "Risk low", cls: "good" };
+  const highWords = ["blocked", "high", "distress", "manipulator", "negative surprise", "event risk"];
+  const medWords = ["medium", "watch", "unknown", "low/unknown"];
+  const hasHigh = rows.some((r) => highWords.some((w) => r.includes(w)));
+  if (hasHigh || rows.length >= 3) return { label: "Risk high", cls: "bad" };
+  const hasMed = rows.some((r) => medWords.some((w) => r.includes(w)));
+  if (hasMed || rows.length === 2) return { label: "Risk medium", cls: "warn" };
+  return { label: "Risk low", cls: "good" };
+}
+
+function renderScanDetailBrief(row, brief) {
+  const container = document.getElementById("scanDetailBrief");
+  if (!container) return;
+  if (!row) {
+    container.innerHTML = `<p class="muted">Select a candidate to load the bullet decision card.</p>`;
+    return;
+  }
+  const fallbackSetup =
+    `Score ${getCompositeScore(row) === null ? "—" : formatDecimal(getCompositeScore(row), 1)}, ` +
+    `confidence ${formatConfidenceLabel((row.advisory || {}).confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence)}, ` +
+    `strategy ${safeText((row.strategy_attribution || {}).top_live || "unknown")}.`;
+  const setupSummary = safeText(brief?.setup_summary || fallbackSetup);
+  const keyRisks =
+    Array.isArray(brief?.key_risks) && brief.key_risks.length
+      ? brief.key_risks
+      : ["No hard risk blockers returned by the scanner."];
+  const catalystNotes =
+    Array.isArray(brief?.catalyst_notes) && brief.catalyst_notes.length
+      ? brief.catalyst_notes
+      : ["No explicit catalyst note returned."];
+  const forensicFlags =
+    Array.isArray(brief?.forensic_flags) && brief.forensic_flags.length
+      ? brief.forensic_flags
+      : ["No forensic flags returned."];
+  const secNotes =
+    Array.isArray(brief?.sec_notes) && brief.sec_notes.length
+      ? brief.sec_notes
+      : ["No SEC notes returned."];
+  const expectedMoveWindow = safeText(brief?.expected_move_window || "10 trading days");
+  const entryStopIdeas =
+    Array.isArray(brief?.entry_stop_ideas) && brief.entry_stop_ideas.length
+      ? brief.entry_stop_ideas
+      : ["Entry/stop ideas not returned."];
+  const confidenceLabel = formatConfidenceLabel((row.advisory || {}).confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
+  const conviction = getConvictionScore(row);
+  const pUp = getCalibratedPUp(row);
+  const score = getCompositeScore(row);
+  const riskSeverity = summarizeBriefRiskSeverity(keyRisks);
+  const sections = {
+    setupSummary,
+    keyRisks,
+    catalystNotes,
+    forensicFlags,
+    secNotes,
+    expectedMoveWindow,
+    entryStopIdeas,
+  };
+  const noteText = buildScanBriefNoteText(row, sections);
+  const asList = (items) => `<ul>${items.map((x) => `<li>${escapeHtml(safeText(x))}</li>`).join("")}</ul>`;
+  const detailBlock = (title, items, open = false) => `
+    <details class="scan-brief-detail"${open ? " open" : ""}>
+      <summary>${escapeHtml(title)}</summary>
+      ${asList(items)}
+    </details>
+  `;
+  container.innerHTML = `
+    <div class="scan-brief-header">
+      <strong>Setup summary</strong>
+      <div class="scan-brief-badges">
+        <span class="pill ${briefPillClassForScore(score)}">Score ${score === null ? "—" : formatDecimal(score, 1)}</span>
+        <span class="pill ${briefPillClassForConfidence(confidenceLabel)}">Confidence ${escapeHtml(confidenceLabel || "—")}</span>
+        <span class="pill ${briefPillClassForConviction(conviction)}">Conviction ${conviction === null ? "—" : formatDecimal(conviction, 1)}</span>
+        <span class="pill ${briefPillClassForPup(pUp)}">P(up) ${pUp === null ? "—" : pct(pUp, 1)}</span>
+        <span class="pill ${riskSeverity.cls}">${escapeHtml(riskSeverity.label)}</span>
+      </div>
+    </div>
+    <p class="scan-brief-setup">${escapeHtml(setupSummary)}</p>
+    <div class="scan-brief-actions">
+      <button id="scanDetailBriefCopyBtn" type="button" class="btn small secondary">Copy brief</button>
+      <button id="scanDetailBriefStageNoteBtn" type="button" class="btn small secondary">Use as stage note</button>
+    </div>
+    <div class="scan-brief-sections">
+      ${detailBlock("Key risks", keyRisks, true)}
+      ${detailBlock("Catalyst notes", catalystNotes)}
+      ${detailBlock("Forensic flags", forensicFlags)}
+      ${detailBlock("SEC notes", secNotes)}
+      <details class="scan-brief-detail">
+        <summary>Expected move window</summary>
+        <p>${escapeHtml(expectedMoveWindow)}</p>
+      </details>
+      ${detailBlock("Entry/stop ideas", entryStopIdeas)}
+    </div>
+  `;
+  const copyBtn = document.getElementById("scanDetailBriefCopyBtn");
+  copyBtn?.addEventListener("click", async () => {
+    const ok = await copyTextToClipboard(noteText);
+    if (ok) {
+      updateActionCenter({
+        title: "Brief copied",
+        message: "Decision brief copied to clipboard.",
+        severity: "success",
+      });
+    } else {
+      updateActionCenter({
+        title: "Copy failed",
+        message: "Could not copy brief to clipboard.",
+        severity: "warn",
+      });
+    }
+  });
+  const stageNoteBtn = document.getElementById("scanDetailBriefStageNoteBtn");
+  const isStageable = safeText(row?._filter_status || "kept").toLowerCase() === "kept";
+  if (stageNoteBtn) {
+    stageNoteBtn.disabled = !isStageable;
+    stageNoteBtn.title = isStageable
+      ? "Open stage dialog with this brief prefilled as note."
+      : "Only qualified rows can be staged in current mode.";
+    stageNoteBtn.addEventListener("click", () => {
+      if (!isStageable) return;
+      openQueueScanDialog(row);
+      const noteInput = document.getElementById("queueScanNote");
+      if (noteInput) noteInput.value = noteText;
+    });
+  }
+}
+
+async function loadScanDetailBrief(row) {
+  if (!row || !row.ticker) {
+    renderScanDetailBrief(null, null);
+    return;
+  }
+  renderScanDetailBrief(row, { setup_summary: "Loading decision brief..." });
+  const out = await api.get(`/api/decision-card/${encodeURIComponent(row.ticker)}`);
+  if (!out.ok) {
+    renderScanDetailBrief(row, null);
+    return;
+  }
+  renderScanDetailBrief(row, out.data?.brief || null);
+}
+
 function getScanDetailChartWidth(container) {
   if (!container) return 320;
   const measured = Math.round(container.getBoundingClientRect().width || container.clientWidth || 0);
@@ -1528,11 +1823,15 @@ async function renderScanDetail(sig) {
   state.selectedScanTicker = ticker;
   highlightSelectedScanRow(ticker);
   const advisory = row.advisory || {};
-  const score = optionalNum(row.signal_score ?? row.score);
-  const conviction = optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
-  const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up);
+  const score = getCompositeScore(row);
+  const conviction = getConvictionScore(row);
+  const pUp = getCalibratedPUp(row);
   const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
   const strategy = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
+  const reliability = getReliabilityScore(row);
+  const edge = getEdgeScore(row);
+  const execution = getExecutionScore(row);
+  const ev10d = getEv10d(row);
 
   const setText = (id, value) => {
     const el = document.getElementById(id);
@@ -1546,7 +1845,12 @@ async function renderScanDetail(sig) {
   setText("scanDetailConfidence", confidence || "—");
   setText("scanDetailConviction", conviction === null ? "—" : formatDecimal(conviction, 1));
   setText("scanDetailSector", safeText(row.sector_etf || "—"));
+  setText("scanDetailEdge", edge === null ? "—" : formatDecimal(edge, 1));
+  setText("scanDetailReliability", reliability === null ? "—" : formatDecimal(reliability, 1));
+  setText("scanDetailExecution", execution === null ? "—" : formatDecimal(execution, 1));
+  setText("scanDetailEv10d", ev10d === null ? "—" : pct(ev10d, 2));
   syncScanDetailStageButton(_scanDetailSignal);
+  await loadScanDetailBrief(row);
   await renderScanDetailChart(ticker);
 }
 
@@ -1574,6 +1878,107 @@ function applyScanResponseSignals(payload = {}) {
   return shortlist.length > 0 ? shortlist : signals;
 }
 
+const SCAN_MODE_DEFAULT = "balanced";
+const SCAN_MODE_PROFILES = {
+  balanced: {
+    label: "Balanced",
+    minScore: 50,
+    minVolumeRatio: 1.1,
+  },
+  strict: {
+    label: "Strict",
+    minScore: 60,
+    minVolumeRatio: 1.2,
+  },
+};
+const QUALIFIED_ROWS_DEFAULT_LIMIT = 20;
+const NEAR_MISS_DEFAULT_LIMIT = 10;
+const AUTO_SCAN_COOLDOWN_MS = 20 * 60 * 1000;
+const AUTO_SCAN_STORAGE_KEY = "tradingbot.scan.auto_run_at";
+const RANK_EXPLAIN_MODE_KEY = "tradingbot.scan.rank_explain_mode";
+
+function getScanMode() {
+  const raw = safeText(document.getElementById("scanModeSelect")?.value || SCAN_MODE_DEFAULT).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(SCAN_MODE_PROFILES, raw) ? raw : SCAN_MODE_DEFAULT;
+}
+
+function getScanModeProfile(mode = getScanMode()) {
+  return SCAN_MODE_PROFILES[mode] || SCAN_MODE_PROFILES[SCAN_MODE_DEFAULT];
+}
+
+function updateScanModeHelperText() {
+  const helperEl = document.getElementById("scanModeHelperText");
+  if (!helperEl) return;
+  const mode = getScanMode();
+  const profile = getScanModeProfile(mode);
+  const otherMode = mode === "strict" ? "balanced" : "strict";
+  const other = getScanModeProfile(otherMode);
+  helperEl.textContent =
+    `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}.` +
+    ` ${other.label} uses score >= ${other.minScore}, volume ratio >= ${other.minVolumeRatio.toFixed(1)}.`;
+}
+
+function mergeScanRunOptionsWithMode(baseOptions) {
+  const body = baseOptions && typeof baseOptions === "object" ? { ...baseOptions } : {};
+  const mode = getScanMode();
+  const profile = getScanModeProfile(mode);
+  const rawOverrides = body.strategy_overrides;
+  const strategyOverrides =
+    rawOverrides && typeof rawOverrides === "object" && !Array.isArray(rawOverrides)
+      ? { ...rawOverrides }
+      : {};
+  strategyOverrides.quality_gates_mode = "soft";
+  strategyOverrides.quality_min_signal_score = profile.minScore;
+  strategyOverrides.quality_require_breakout_volume = true;
+  strategyOverrides.quality_breakout_volume_min_ratio = profile.minVolumeRatio;
+  body.strategy_overrides = strategyOverrides;
+  return body;
+}
+
+function getRankExplainMode() {
+  const fromState = safeText(state.scanRankExplainMode || "").toLowerCase();
+  if (fromState === "tooltip" || fromState === "inline") return fromState;
+  let stored = "";
+  try {
+    stored = safeText(localStorage.getItem(RANK_EXPLAIN_MODE_KEY) || "").toLowerCase();
+  } catch {
+    stored = "";
+  }
+  return stored === "inline" ? "inline" : "tooltip";
+}
+
+function applyRankExplainModeSelection() {
+  const mode = getRankExplainMode();
+  state.scanRankExplainMode = mode;
+  const el = document.getElementById("rankExplainModeSelect");
+  if (el && el.value !== mode) el.value = mode;
+  updateRankExplainModeHelperText();
+}
+
+function setRankExplainMode(rawMode) {
+  const mode = safeText(rawMode || "").toLowerCase() === "inline" ? "inline" : "tooltip";
+  state.scanRankExplainMode = mode;
+  try {
+    localStorage.setItem(RANK_EXPLAIN_MODE_KEY, mode);
+  } catch {
+    // Ignore storage write failures.
+  }
+  updateRankExplainModeHelperText();
+  const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+  renderScanRows(Array.isArray(rows) ? rows : []);
+}
+
+function updateRankExplainModeHelperText() {
+  const helperEl = document.getElementById("rankExplainModeHelperText");
+  if (!helperEl) return;
+  const mode = getRankExplainMode();
+  if (mode === "inline") {
+    helperEl.textContent = "Inline shows rank rationale directly in each score cell (best for deep review).";
+  } else {
+    helperEl.textContent = "Tooltip keeps rows compact and shows rank rationale on hover.";
+  }
+}
+
 // Map a raw `_filter_status` value from the scanner shortlist into a
 // human-readable label, a CSS pill class, and a tooltip explaining the
 // disposition. Unknown values fall through as "—" so the table still
@@ -1586,13 +1991,13 @@ function formatScanStatusBadge(status, reasons) {
     case "kept":
       return {
         label: "Kept",
-        cls: "pill success",
+        cls: "pill good",
         title: "Survived all filters and is eligible for trade staging.",
       };
     case "filtered_quality_gates":
       return {
         label: "Quality gate",
-        cls: "pill warn",
+        cls: "pill bad",
         title: reasonText
           ? `Dropped by quality gates. Reasons: ${reasonText}.`
           : "Dropped by quality gates (forensic / breakout-volume / etc).",
@@ -1606,13 +2011,13 @@ function formatScanStatusBadge(status, reasons) {
     case "filtered_event_risk":
       return {
         label: "Event risk",
-        cls: "pill warn",
+        cls: "pill bad",
         title: "Suppressed by event-risk policy (earnings, FOMC, etc).",
       };
     case "filtered_meta_policy":
       return {
         label: "Meta-policy",
-        cls: "pill warn",
+        cls: "pill bad",
         title: "Suppressed by the meta-policy / uncertainty combiner.",
       };
     case "filtered_ensemble":
@@ -1624,11 +2029,11 @@ function formatScanStatusBadge(status, reasons) {
     case "trimmed_top_n":
       return {
         label: "Top-N trim",
-        cls: "pill info",
+        cls: "pill neutral",
         title: "Survived gates but ranked below SIGNAL_TOP_N — kept for review.",
       };
     default:
-      return { label: "—", cls: "pill", title: "No disposition reported." };
+      return { label: "—", cls: "pill neutral", title: "No disposition reported." };
   }
 }
 
@@ -1701,11 +2106,9 @@ function getScanSortValue(rawSig, field) {
     case "price":
       return optionalNum(row.price ?? row.current_price);
     case "score":
-      return optionalNum(row.signal_score ?? row.score);
+      return getCompositeScore(row);
     case "p_up_10d": {
-      const p = normalizeProbability(
-        advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up,
-      );
+      const p = getCalibratedPUp(row);
       return p === null ? null : p;
     }
     case "confidence": {
@@ -1717,9 +2120,7 @@ function getScanSortValue(rawSig, field) {
       return Number.isFinite(rank) ? rank : 0;
     }
     case "conviction":
-      return optionalNum(
-        row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score,
-      );
+      return getConvictionScore(row);
     case "sector":
       return safeText(row.sector_etf || "").toUpperCase() || null;
     default:
@@ -1745,9 +2146,41 @@ function compareScanSignals(a, b, field, dir) {
   return dir === "asc" ? cmp : -cmp;
 }
 
+function getDefaultBreakoutRankValue(rawSig) {
+  const row = normalizeScanSignal(rawSig);
+  const backendRank = optionalNum(row.rank_score);
+  if (backendRank !== null) {
+    return Math.min(Math.max(backendRank / 100, 0), 1);
+  }
+  const score = optionalNum(getCompositeScore(row)) ?? 0;
+  const pUp = optionalNum(getCalibratedPUp(row)) ?? 0;
+  const conviction = optionalNum(getConvictionScore(row)) ?? 0;
+  const flagged = optionalNum(row.flagged_days ?? row.days_flagged) ?? 0;
+  const latestVol = optionalNum(row.latest_volume);
+  const avgVol = optionalNum(row.avg_vol_50);
+  const volumeRatio =
+    latestVol !== null && avgVol !== null && avgVol > 0 ? latestVol / avgVol : 0;
+  // Default blend prioritizes freshness + volume confirmation, then model strength.
+  return (
+    (Math.min(flagged, 7) / 7) * 0.32 +
+    Math.min(volumeRatio / 2.0, 1.0) * 0.33 +
+    Math.min(score / 100, 1.0) * 0.2 +
+    Math.min(pUp, 1.0) * 0.1 +
+    Math.min((conviction + 100) / 200, 1.0) * 0.05
+  );
+}
+
 function sortScanSignalsForRender(signals) {
   const sort = state.scanSort || { field: null, dir: "desc" };
-  if (!sort.field || !Array.isArray(signals) || signals.length < 2) return signals;
+  if (!Array.isArray(signals) || signals.length < 2) return signals;
+  if (!sort.field) {
+    const decorated = signals.map((sig, idx) => ({ sig, idx, rank: getDefaultBreakoutRankValue(sig) }));
+    decorated.sort((x, y) => {
+      if (y.rank !== x.rank) return y.rank - x.rank;
+      return x.idx - y.idx;
+    });
+    return decorated.map((d) => d.sig);
+  }
   // Decorate-sort-undecorate keeps the original index as a stable tiebreaker
   // so equal-keyed rows keep their backend ordering after sorting.
   const decorated = signals.map((sig, idx) => ({ sig, idx }));
@@ -1820,11 +2253,100 @@ function bindScanSortHandlers() {
 
 function renderScanRows(signalsInput = []) {
   const body = document.getElementById("scanTableBody");
+  const nearMissBody = document.getElementById("nearMissTableBody");
+  const showMoreBtn = document.getElementById("scanShowMoreBtn");
+  const qualifiedMetaEl = document.getElementById("scanQualifiedMeta");
+  const nearMissCountEl = document.getElementById("nearMissSummaryCount");
+  if (!body) return;
   // Always honour the active sort before rendering so re-renders triggered by
   // SSE / poll updates don't snap the operator back to backend order.
-  const signals = sortScanSignalsForRender(Array.isArray(signalsInput) ? signalsInput : []);
+  const allSignals = sortScanSignalsForRender(Array.isArray(signalsInput) ? signalsInput : []);
+  const qualifiedSignals = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() === "kept");
+  const nearMissSignals = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() !== "kept");
+  const expanded = Boolean(state.scanRowsExpanded);
+  const signals = expanded
+    ? qualifiedSignals
+    : qualifiedSignals.slice(0, QUALIFIED_ROWS_DEFAULT_LIMIT);
   body.innerHTML = "";
   applyScanSortIndicators();
+  if (qualifiedMetaEl) {
+    const shown = signals.length;
+    const total = qualifiedSignals.length;
+    const suffix = total > shown ? ` (showing ${shown})` : "";
+    qualifiedMetaEl.textContent = `${total} qualified breakout${total === 1 ? "" : "s"}${suffix}`;
+  }
+  if (nearMissCountEl) {
+    nearMissCountEl.textContent = `(${nearMissSignals.length})`;
+  }
+  if (showMoreBtn) {
+    if (qualifiedSignals.length > QUALIFIED_ROWS_DEFAULT_LIMIT) {
+      showMoreBtn.classList.remove("hidden");
+      showMoreBtn.textContent = expanded
+        ? `Show top ${QUALIFIED_ROWS_DEFAULT_LIMIT}`
+        : `Show all ${qualifiedSignals.length}`;
+      showMoreBtn.onclick = () => {
+        state.scanRowsExpanded = !Boolean(state.scanRowsExpanded);
+        const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+        renderScanRows(Array.isArray(rows) ? rows : []);
+      };
+    } else {
+      showMoreBtn.classList.add("hidden");
+      showMoreBtn.onclick = null;
+    }
+  }
+  if (nearMissBody) {
+    nearMissBody.innerHTML = "";
+    const nearMissRows = nearMissSignals.slice(0, NEAR_MISS_DEFAULT_LIMIT);
+    if (!nearMissRows.length) {
+      nearMissBody.innerHTML = `<tr><td colspan="11" class="muted">No near-miss candidates for this scan mode.</td></tr>`;
+    } else {
+      nearMissRows.forEach((sig, idx) => {
+        const row = normalizeScanSignal(sig);
+        const ticker = row.ticker || row.symbol || "?";
+        const flaggedDaysRaw = optionalNum(row.flagged_days ?? row.days_flagged);
+        const flaggedDays = flaggedDaysRaw === null ? null : Math.max(0, Math.trunc(flaggedDaysRaw));
+        const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
+        const advisory = row.advisory;
+        const conviction = getConvictionScore(row);
+        const pUp = getCalibratedPUp(row);
+        const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
+        const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
+        const filterStatus = safeText(sig?._filter_status || "kept");
+        const filterReasons = Array.isArray(sig?._filter_reasons) ? sig._filter_reasons : null;
+        const badge = formatScanStatusBadge(filterStatus, filterReasons);
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-scan-ticker", ticker);
+        tr.setAttribute("data-scan-row-index", String(idx));
+        tr.setAttribute("data-filter-status", filterStatus);
+        tr.classList.add("scan-row--filtered");
+        tr.innerHTML = `
+          <td><strong>${safeText(ticker)}</strong></td>
+          <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
+          <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
+          <td><span class="pill info strategy-badge">${topLive}</span></td>
+          <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
+          <td>${renderRankScoreCell(row)}</td>
+          <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
+          <td>${conf}</td>
+          <td class="scan-col-advanced">${convictionText}</td>
+          <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
+          <td class="scan-actions-cell">
+            <button type="button" class="btn small secondary" data-near-miss-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
+            <button type="button" class="btn small secondary" disabled title="Near-miss candidates cannot be staged in this mode.">Stage</button>
+            <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
+            <details class="scan-actions-menu">
+              <summary class="btn small secondary">More</summary>
+              <div class="scan-actions-menu-items">
+                <button type="button" class="btn small secondary" data-near-miss-view="${idx}">Chart</button>
+                <button type="button" class="btn small secondary" data-scan-brief="${idx}">Brief</button>
+              </div>
+            </details>
+          </td>
+        `;
+        nearMissBody.appendChild(tr);
+      });
+    }
+  }
   if (!signals.length) {
     body.innerHTML = `
       <tr>
@@ -1834,7 +2356,8 @@ function renderScanRows(signalsInput = []) {
               <path d="M4 8h16M6 12h12M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
             </svg>
-            <div>No signal candidates yet.</div>
+            <div>No qualified breakout candidates in this mode.</div>
+            <div class="muted small">${nearMissSignals.length ? `${nearMissSignals.length} near-miss candidate(s) available below.` : "Run scan or try Balanced mode."}</div>
             <button id="scanEmptyCtaBtn" class="btn small secondary" type="button">Run Scan to Begin</button>
           </div>
         </td>
@@ -1853,12 +2376,12 @@ function renderScanRows(signalsInput = []) {
   signals.forEach((sig, idx) => {
     const row = normalizeScanSignal(sig);
     const ticker = row.ticker || row.symbol || "?";
-    const flaggedDays = Math.max(0, safeNum(row.flagged_days ?? row.days_flagged, 0));
+    const flaggedDaysRaw = optionalNum(row.flagged_days ?? row.days_flagged);
+    const flaggedDays = flaggedDaysRaw === null ? null : Math.max(0, Math.trunc(flaggedDaysRaw));
     const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
-    const score = safeNum(row.signal_score ?? row.score, null);
     const advisory = row.advisory;
-    const conviction = optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
-    const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up);
+    const conviction = getConvictionScore(row);
+    const pUp = getCalibratedPUp(row);
     const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
     const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
     // `_filter_status` is set by the scanner shortlist; falls back to "kept"
@@ -1882,10 +2405,10 @@ function renderScanRows(signalsInput = []) {
     tr.innerHTML = `
       <td><strong>${safeText(ticker)}</strong></td>
       <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
-      <td class="scan-col-advanced">${flaggedDays || "—"}</td>
+      <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
       <td><span class="pill info strategy-badge">${topLive}</span></td>
       <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
-      <td>${score !== null ? `${score.toFixed(1)}` : "—"}</td>
+      <td>${renderRankScoreCell(row)}</td>
       <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
       <td>${conf}</td>
       <td class="scan-col-advanced">${convictionText}</td>
@@ -1893,6 +2416,15 @@ function renderScanRows(signalsInput = []) {
       <td class="scan-actions-cell">
         <button type="button" class="btn small secondary" data-scan-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
         ${stageBtn}
+        <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
+        <details class="scan-actions-menu">
+          <summary class="btn small secondary">More</summary>
+          <div class="scan-actions-menu-items">
+            <button type="button" class="btn small secondary" data-scan-view="${idx}">Chart</button>
+            ${isKept ? `<button type="button" class="btn small secondary" data-idx="${idx}">Stage</button>` : ""}
+            <button type="button" class="btn small secondary" data-scan-brief="${idx}">Brief</button>
+          </div>
+        </details>
       </td>
     `;
     body.appendChild(tr);
@@ -1968,6 +2500,36 @@ function renderScanRows(signalsInput = []) {
       void renderScanDetail(normalizeScanSignal(raw));
     });
   });
+  const nearMissLookup = (idx) => nearMissSignals[idx] || null;
+  nearMissBody?.querySelectorAll("button[data-near-miss-view]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const idx = Number(e.currentTarget.getAttribute("data-near-miss-view"));
+      const raw = nearMissLookup(idx);
+      if (!raw) return;
+      void renderScanDetail(normalizeScanSignal(raw));
+    });
+  });
+  const openBriefForTicker = (tickerRaw) => {
+    const ticker = safeText(tickerRaw || "").toUpperCase();
+    if (!ticker) return;
+    openTradeDrawer({ tab: "decision", ticker });
+  };
+  body.querySelectorAll("button[data-scan-brief]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const idx = Number(e.currentTarget.getAttribute("data-scan-brief"));
+      const raw = lookupRowSignal(idx, e.currentTarget);
+      if (!raw) return;
+      openBriefForTicker(raw?.ticker || raw?.symbol);
+    });
+  });
+  nearMissBody?.querySelectorAll("button[data-scan-brief]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const idx = Number(e.currentTarget.getAttribute("data-scan-brief"));
+      const raw = nearMissLookup(idx);
+      if (!raw) return;
+      openBriefForTicker(raw?.ticker || raw?.symbol);
+    });
+  });
   body.querySelectorAll("tr[data-scan-row-index]").forEach((rowEl) => {
     const idx = Number(rowEl.getAttribute("data-scan-row-index"));
     // Pressing Enter / Space on a focused row is treated as the explicit
@@ -2026,28 +2588,37 @@ function meterFromConviction(conviction) {
   return clampPct((safeNum(conviction, 0) + 100) / 2);
 }
 
+function meterFromReliability(reliability) {
+  return clampPct(safeNum(reliability, 0));
+}
+
 function renderPendingContext(row) {
   const sig = row.signal || {};
-  const score = sig.signal_score ?? sig.score;
+  const score = getCompositeScore(sig);
+  const reliability = getReliabilityScore(sig);
+  const edge = getEdgeScore(sig);
+  const execution = getExecutionScore(sig);
   const sector = sig.sector_etf;
-  const conviction = sig.mirofish_conviction;
+  const conviction = getConvictionScore(sig);
   const advisory = sig.advisory || {};
-  const pUp = normalizeProbability(advisory.p_up_10d ?? advisory.p_up_10d_raw ?? sig.p_up_10d ?? sig.advisory_p_up);
+  const pUp = getCalibratedPUp(sig);
   const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
-  return `score: ${score !== undefined ? safeNum(score).toFixed(0) : "—"}<br/>
+  return `score: ${score !== null ? safeNum(score).toFixed(0) : "—"} (edge ${edge !== null ? safeNum(edge).toFixed(0) : "—"})<br/>
+    reliability: ${reliability !== null ? safeNum(reliability).toFixed(0) : "—"} · execution: ${execution !== null ? safeNum(execution).toFixed(0) : "—"}<br/>
     sector: ${safeText(sector || "—")}<br/>
     confidence: ${safeText(confidence || "—")} · P(up 10d): ${pUp === null ? "—" : pct(pUp, 1)}<br/>
-    conviction: ${conviction !== undefined ? safeText(conviction) : "—"}`;
+    conviction: ${conviction !== null ? safeText(conviction) : "—"}`;
 }
 
 function getPendingRiskProfile(row) {
   const sig = row?.signal || {};
-  const score = safeNum(sig.signal_score ?? sig.score, 0);
+  const score = safeNum(getCompositeScore(sig), 0);
+  const reliability = safeNum(getReliabilityScore(sig), 0);
   const advisory = sig.advisory || {};
   const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
   const hasSector = Boolean(safeText(sig.sector_etf || "").trim());
   const lowConfidence = ["low", "unknown", "—"].includes(String(confidence || "—").toLowerCase());
-  if (!hasSector || score < 60 || lowConfidence) return { label: "Requires extra review", severity: "high" };
+  if (!hasSector || score < 60 || lowConfidence || reliability < 45) return { label: "Requires extra review", severity: "high" };
   if (score < 72) return { label: "Moderate confidence", severity: "medium" };
   return { label: "Ready to review", severity: "low" };
 }
@@ -2092,7 +2663,7 @@ async function openApproveDialog(row) {
   const sig = row.signal || {};
   const expectedTicker = safeText(row.ticker).toUpperCase();
   state.approvingExpectedTicker = expectedTicker;
-  const riskHint = (!sig.sector_etf || safeNum(sig.signal_score, 0) < 60)
+  const riskHint = (!sig.sector_etf || safeNum(getCompositeScore(sig), 0) < 60 || safeNum(getReliabilityScore(sig), 0) < 45)
     ? "Caution: missing sector or lower-confidence setup."
     : "Setup context looks complete.";
   let checklistText = "";
@@ -2154,11 +2725,7 @@ function syncApproveDialogGuardrails() {
 }
 
 function applySchwabConnectButtonVisibility() {
-  const pc = state.publicConfig || {};
-  document.getElementById("onboardingSchwabBtn")?.classList.toggle("hidden", !pc.schwab_oauth);
-  document.getElementById("onboardingSchwabMarketBtn")?.classList.toggle("hidden", !pc.schwab_market_oauth);
-  document.getElementById("onboardingSchwabLink")?.classList.toggle("hidden", !pc.schwab_oauth);
-  document.getElementById("onboardingSchwabMarketLink")?.classList.toggle("hidden", !pc.schwab_market_oauth);
+  // Single-path onboarding keeps one CTA visible; availability checks happen on click.
 }
 
 async function copyTextToClipboard(text) {
@@ -2861,7 +3428,14 @@ async function refreshDecisionDashboard() {
       "decisionStrategyLead",
       "decisionDataQuality",
       "decisionLatestPromotion",
+      "decisionAblationStatus",
+      "decisionAblationLift",
+      "decisionAblationSummary",
     ].forEach((id) => markUnavailable(document.getElementById(id), msg));
+    const ablationList = document.getElementById("decisionAblationTopList");
+    if (ablationList) {
+      ablationList.innerHTML = '<li class="muted">Ablation report unavailable.</li>';
+    }
     applyFreshness(freshEl, {
       asOf: null,
       source: "/api/decision-dashboard",
@@ -2882,6 +3456,9 @@ async function refreshDecisionDashboard() {
     "decisionStrategyLead",
     "decisionDataQuality",
     "decisionLatestPromotion",
+    "decisionAblationStatus",
+    "decisionAblationLift",
+    "decisionAblationSummary",
   ].forEach((id) => clearUnavailable(document.getElementById(id)));
   state.lastDecisionDashboardAt = new Date().toISOString();
   renderDecisionDashboard(out.data || {});
@@ -2890,6 +3467,114 @@ async function refreshDecisionDashboard() {
     source: "/api/decision-dashboard",
     surface: "decision_dashboard",
   });
+}
+
+function _setAblationStatusUi(statusText, metaText) {
+  const statusEl = document.getElementById("ablationCycleStatus");
+  const metaEl = document.getElementById("ablationCycleMeta");
+  if (statusEl) statusEl.textContent = statusText;
+  if (metaEl) metaEl.textContent = metaText;
+}
+
+function _syncAblationButtons(running) {
+  const runBtn = document.getElementById("ablationCycleBtn");
+  if (!runBtn) return;
+  runBtn.disabled = Boolean(running);
+  runBtn.textContent = running ? "Ablation running..." : "Run ablation cycle";
+}
+
+async function refreshAblationCycleStatus({ quiet = false } = {}) {
+  const out = await api.get("/api/ablation/status");
+  if (!out.ok) {
+    _setAblationStatusUi("Status: unknown", safeText(out.error || "Ablation status unavailable."));
+    if (!quiet) {
+      updateActionCenter({
+        title: "Ablation status unavailable",
+        message: safeText(out.error || "Could not fetch /api/ablation/status."),
+        severity: "warn",
+      });
+    }
+    _syncAblationButtons(false);
+    return;
+  }
+  const data = out.data || {};
+  const runStatus = safeText(data.run_status || "idle").toLowerCase();
+  const running = Boolean(data.running) || runStatus === "running";
+  const report = data.latest_report || {};
+  const summary = report.summary || {};
+  const passCount = Number(summary.pass_count ?? 0);
+  const failCount = Number(summary.fail_count ?? 0);
+  const best = report.best || {};
+  const bestId = safeText(best.variant_id || "—");
+  const bestLiftRaw = Number(best.relative_lift_vs_baseline);
+  const bestLift = Number.isFinite(bestLiftRaw) ? `${bestLiftRaw >= 0 ? "+" : ""}${(bestLiftRaw * 100).toFixed(1)}%` : "—";
+  const startedAt = safeText(data.started_at || "");
+  const finishedAt = safeText(data.finished_at || "");
+  const stamp = running ? startedAt : finishedAt;
+  const when = stamp ? ` (${timeAgo(stamp)})` : "";
+  _setAblationStatusUi(
+    `Status: ${runStatus}${when}`,
+    report.exists
+      ? `Best ${bestId} ${bestLift} | pass ${passCount}, fail ${failCount}`
+      : "No ablation report artifact yet."
+  );
+  _syncAblationButtons(running);
+  if (running) {
+    if (!_ablationCyclePollTimer) {
+      _ablationCyclePollTimer = window.setInterval(() => {
+        void refreshAblationCycleStatus({ quiet: true });
+      }, 5000);
+    }
+  } else if (_ablationCyclePollTimer) {
+    window.clearInterval(_ablationCyclePollTimer);
+    _ablationCyclePollTimer = null;
+  }
+  if (_lastAblationRunStatus === "running" && runStatus !== "running") {
+    void refreshDecisionDashboard();
+    if (!quiet) {
+      const msg = runStatus === "completed" ? "Ablation cycle completed." : "Ablation cycle finished with issues.";
+      updateActionCenter({ title: "Ablation cycle", message: msg, severity: runStatus === "completed" ? "success" : "warn" });
+    }
+  }
+  _lastAblationRunStatus = runStatus;
+}
+
+async function runAblationCycle() {
+  const btn = document.getElementById("ablationCycleBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Starting...";
+  }
+  try {
+    const out = await api.post("/api/ablation/run", {});
+    if (!out.ok) {
+      const msg = safeText(out.error || "Could not start ablation cycle.");
+      _setAblationStatusUi("Status: failed_to_start", msg);
+      updateActionCenter({ title: "Ablation cycle failed to start", message: msg, severity: "error" });
+      return;
+    }
+    const d = out.data || {};
+    if (d.already_running) {
+      updateActionCenter({
+        title: "Ablation already running",
+        message: "A previous run is still in progress.",
+        severity: "info",
+      });
+    } else {
+      updateActionCenter({
+        title: "Ablation cycle started",
+        message: "Running parameter sweep and report scoring in the background.",
+        severity: "success",
+      });
+    }
+    await refreshAblationCycleStatus({ quiet: true });
+  } catch (e) {
+    const msg = safeText(String(e));
+    _setAblationStatusUi("Status: error", msg);
+    updateActionCenter({ title: "Ablation cycle error", message: msg, severity: "error" });
+  } finally {
+    _syncAblationButtons(_lastAblationRunStatus === "running");
+  }
 }
 
 const SCAN_START_META = "Scanning SP1500 market candidates...";
@@ -3201,21 +3886,25 @@ async function waitForSaaScanCompletion(taskId) {
 async function runScan() {
   const btn = document.getElementById("scanBtn");
   const scanMetaEl = document.getElementById("scanMeta");
+  const mode = getScanMode();
+  const profile = getScanModeProfile(mode);
   btn.disabled = true;
   btn.textContent = "Scanning...";
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
   updateActionCenter({
     title: "Scan Running",
-    message: "SP1500 default scan is running. Results will stream into this page.",
+    message: `${profile.label} scan running (score >= ${profile.minScore}, vol ratio >= ${profile.minVolumeRatio.toFixed(1)}).`,
     severity: "info",
   });
   try {
     if (!readScanOptionsFromForm()) return;
-    const scanBody =
+    const baseScanBody =
       state.scanRunOptions && typeof state.scanRunOptions === "object"
         ? state.scanRunOptions
         : {};
+    const scanBody = mergeScanRunOptionsWithMode(baseScanBody);
+    state.scanRowsExpanded = false;
     const out = await api.post("/api/scan?async_mode=true", scanBody);
     if (!out.ok) {
       scanMetaEl.textContent = "Scan failed.";
@@ -3473,8 +4162,12 @@ async function refreshPending() {
     section.className = "task-group";
     section.innerHTML = `<h3>${sector}</h3>`;
     groups[sector].forEach((row) => {
-      const score = meterFromScore(row?.signal?.signal_score ?? row?.signal?.score);
-      const conviction = meterFromConviction(row?.signal?.mirofish_conviction);
+      const composite = getCompositeScore(row?.signal || {});
+      const reliabilityValue = getReliabilityScore(row?.signal || {});
+      const convictionValue = getConvictionScore(row?.signal || {});
+      const score = meterFromScore(composite);
+      const reliabilityMeter = meterFromReliability(reliabilityValue);
+      const conviction = meterFromConviction(convictionValue);
       const liveBlocked =
         state.publicConfig.saas_mode &&
         (!state.accountMe || !state.accountMe.live_execution_enabled);
@@ -3497,11 +4190,15 @@ async function refreshPending() {
         </div>
         <div class="task-meters">
           <div>
-            <span class="meter-label">Score ${safeNum(row?.signal?.signal_score ?? row?.signal?.score, 0).toFixed(0)}</span>
+            <span class="meter-label">Score ${safeNum(composite, 0).toFixed(0)}</span>
             <div class="meter"><span style="width:${score}%"></span></div>
           </div>
           <div>
-            <span class="meter-label">Conviction ${safeNum(row?.signal?.mirofish_conviction, 0).toFixed(0)}</span>
+            <span class="meter-label">Reliability ${safeNum(reliabilityValue, 0).toFixed(0)}</span>
+            <div class="meter info"><span style="width:${reliabilityMeter}%"></span></div>
+          </div>
+          <div>
+            <span class="meter-label">Conviction ${safeNum(convictionValue, 0).toFixed(0)}</span>
             <div class="meter conviction"><span style="width:${conviction}%"></span></div>
           </div>
         </div>
@@ -3757,6 +4454,7 @@ async function refreshAll() {
     ["performance", refreshPerformance()],
     ["calibration", refreshCalibration()],
     ["backtest", refreshBacktestRuns()],
+    ["ablation_cycle", refreshAblationCycleStatus({ quiet: true })],
   ];
   const results = await Promise.allSettled(jobs.map(([, promise]) => promise));
   results.forEach((result, idx) => {
@@ -3768,6 +4466,40 @@ async function refreshAll() {
   Object.keys(lazyLoaded).forEach((k) => {
     lazyLoaded[k] = true;
   });
+}
+
+function shouldAutoRunScanNow() {
+  try {
+    const lastRaw = Number(localStorage.getItem(AUTO_SCAN_STORAGE_KEY) || 0);
+    if (Number.isFinite(lastRaw) && lastRaw > 0 && Date.now() - lastRaw < AUTO_SCAN_COOLDOWN_MS) {
+      return false;
+    }
+  } catch {
+    // Ignore storage read failures; fall through to runtime checks.
+  }
+  const scanBtn = document.getElementById("scanBtn");
+  if (!scanBtn || scanBtn.disabled) return false;
+  if (state.latestSignals?.length) return false;
+  return true;
+}
+
+function markAutoScanTriggered() {
+  try {
+    localStorage.setItem(AUTO_SCAN_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
+async function maybeAutoRunScanOnLoad() {
+  if (!shouldAutoRunScanNow()) return;
+  markAutoScanTriggered();
+  updateActionCenter({
+    title: "Auto Scan",
+    message: "Running scan automatically on load. You can rerun anytime with Run Scan.",
+    severity: "info",
+  });
+  await runScan();
 }
 
 /**
@@ -3836,6 +4568,12 @@ function wireEvents() {
   });
   document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
   bindEvent("scanBtn", "click", runScan);
+  document.getElementById("scanModeSelect")?.addEventListener("change", () => {
+    state.scanRowsExpanded = false;
+    updateScanModeHelperText();
+    const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+    renderScanRows(Array.isArray(rows) ? rows : []);
+  });
   bindScanSortHandlers();
   document.querySelectorAll("[data-forward-click]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3851,21 +4589,6 @@ function wireEvents() {
     state.scanRunOptions = null;
   });
   bindEvent("refreshBtn", "click", refreshAll);
-  document.getElementById("onboardingStartBtn")?.addEventListener("click", startOnboarding);
-  document.getElementById("onboardingConnectBtn")?.addEventListener("click", () => runOnboardingStep("connect"));
-  document.getElementById("onboardingVerifyBtn")?.addEventListener("click", () => runOnboardingStep("verify_token_health"));
-  document.getElementById("onboardingScanBtn")?.addEventListener("click", () => runOnboardingStep("test_scan"));
-  document.getElementById("onboardingPaperBtn")?.addEventListener("click", () => runOnboardingStep("test_paper_order"));
-  document.getElementById("onboardingSchwabBtn")?.addEventListener("click", () => triggerSchwabAccountOAuth());
-  document.getElementById("onboardingSchwabMarketBtn")?.addEventListener("click", () => triggerSchwabMarketOAuth());
-  document.getElementById("onboardingSchwabLink")?.addEventListener("click", (e) => {
-    e.preventDefault();
-    void triggerSchwabAccountOAuth();
-  });
-  document.getElementById("onboardingSchwabMarketLink")?.addEventListener("click", (e) => {
-    e.preventDefault();
-    void triggerSchwabMarketOAuth();
-  });
   bindEvent("applyProfileBtn", "click", applyProfile);
   document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
   document.getElementById("saveTradingHaltBtn")?.addEventListener("click", () => void submitTradingHaltSave());
@@ -3876,6 +4599,9 @@ function wireEvents() {
     if (e.target.open) void loadPortfolioRisk();
   });
   bindEvent("settingsModeSelect", "change", loadProfiles);
+  document.getElementById("rankExplainModeSelect")?.addEventListener("change", (e) => {
+    setRankExplainMode(e.currentTarget?.value);
+  });
   document.getElementById("profileSelect")?.addEventListener("change", renderPresetApplyPreview);
   document.getElementById("automationOptIn")?.addEventListener("change", renderPresetApplyPreview);
   bindEvent("decisionBtn", "click", loadDecisionCard);
@@ -3915,6 +4641,8 @@ function wireEvents() {
       if (btn) { btn.disabled = false; btn.textContent = "Run Challenger Scan"; }
     }
   });
+  document.getElementById("ablationCycleBtn")?.addEventListener("click", () => void runAblationCycle());
+  document.getElementById("ablationStatusRefreshBtn")?.addEventListener("click", () => void refreshAblationCycleStatus());
   // Close button + Esc + backdrop are wired inside panels/tradeDrawer.js.
   bindEvent("activityDrawerToggle", "click", () => {
     const body = document.getElementById("activityDrawerBody");
@@ -3950,6 +4678,7 @@ function wireEvents() {
   bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
   bindEvent("secCompareBtn", "click", runSecCompare);
   bindEvent("secCompareMode", "change", applySecCompareMode);
+  bindEvent("secCompareResetProfileBtn", "click", resetSecCompareProfileOverride);
   bindEvent("secCompareRuthlessMode", "change", () => {
     state.secRuthlessMode = Boolean(document.getElementById("secCompareRuthlessMode")?.checked);
     if (state.secCompareResult) renderSecCompareVisual(state.secCompareResult);
@@ -4221,6 +4950,8 @@ function connectSSE() {
   safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
   safeInit("applyReportViewMode", applyReportViewMode);
   safeInit("applySecCompareMode", applySecCompareMode);
+  safeInit("updateScanModeHelperText", updateScanModeHelperText);
+  safeInit("applyRankExplainModeSelection", applyRankExplainModeSelection);
   await safeInit("loadConfig", loadConfig);
   if (state.sseEnabled) safeInit("connectSSE", connectSSE);
   await authSessionReady;
@@ -4228,6 +4959,7 @@ function connectSSE() {
   if (token) {
     scheduleRetainedSessionTracking();
     await safeInit("refreshCritical", refreshCritical);
+    await safeInit("maybeAutoRunScanOnLoad", maybeAutoRunScanOnLoad);
     safeInit("markDeferredDataPlaceholders", markDeferredDataPlaceholders);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else if (state.config?.auth_mode === "supabase") {
@@ -4239,6 +4971,7 @@ function connectSSE() {
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else {
     await safeInit("refreshAll", refreshAll);
+    await safeInit("maybeAutoRunScanOnLoad", maybeAutoRunScanOnLoad);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   }
   safeInit("installRouter", installRouter);

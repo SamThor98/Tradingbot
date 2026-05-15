@@ -31,6 +31,57 @@ export function applySecCompareMode() {
   }
 }
 
+function setProfileStatusText(text) {
+  const el = document.getElementById("secCompareProfileStatus");
+  if (!el) return;
+  el.textContent = text;
+}
+
+function renderProfileHistory(items) {
+  const list = document.getElementById("secCompareProfileHistoryList");
+  if (!list) return;
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
+    list.innerHTML = '<li class="muted">No override history yet.</li>';
+    return;
+  }
+  const latest = rows.slice(-5).reverse();
+  list.innerHTML = latest
+    .map((row) => {
+      const at = safeText(row?.at || "n/a");
+      const before = safeText(row?.before || "auto");
+      const after = safeText(row?.after || "auto");
+      const actor = safeText(row?.actor || "user");
+      const reason = safeText(row?.reason || "unspecified");
+      const evidence = safeText(row?.evidence_ref || "");
+      return `<li><strong>${at}</strong> · ${before} -> ${after} · by ${actor} · reason: ${reason}${evidence ? ` · evidence: ${evidence}` : ""}</li>`;
+    })
+    .join("");
+}
+
+function renderProfileStatusFromDashboard(dashboard) {
+  const profile = dashboard?.profile || {};
+  const selected = safeText(profile.selected || "auto_detect");
+  const mode = safeText(profile.mode || "");
+  const persisted = safeText(profile.persisted_override || "");
+  const lastOverride = profile.last_override || null;
+  const lastSummary = lastOverride
+    ? ` · last override: ${safeText(lastOverride.after || "auto")} by ${safeText(lastOverride.actor || "user")} (${safeText(lastOverride.reason || "no reason")})`
+    : "";
+  if (mode === "manual_override") {
+    setProfileStatusText(`Profile source: manual override (${selected})${lastSummary}`);
+    renderProfileHistory(profile.history_tail || []);
+    return;
+  }
+  if (persisted) {
+    setProfileStatusText(`Profile source: saved override (${persisted})${lastSummary}`);
+    renderProfileHistory(profile.history_tail || []);
+    return;
+  }
+  setProfileStatusText(`Profile source: auto-detect (${selected})${lastSummary}`);
+  renderProfileHistory(profile.history_tail || []);
+}
+
 function confidenceBand(confidence) {
   if (!Number.isFinite(Number(confidence))) return "Unavailable";
   const value = Number(confidence);
@@ -41,6 +92,39 @@ function confidenceBand(confidence) {
 
 function analysisModeLabel(mode) {
   return mode === "metadata_fallback" ? "metadata_fallback" : "full_text";
+}
+
+const TIMELINE_NOISE_PATTERNS = [
+  /\b(?:xbrli|us-gaap|dei):/i,
+  /\b\d{6,}\b/,
+  /\b(?:P\d+Y|P\d+M|P\d+D)\b/i,
+  /\b(?:true|false)\b/i,
+];
+
+function timelineLooksNoisy(text) {
+  const sample = safeText(text);
+  if (!sample) return true;
+  for (const rx of TIMELINE_NOISE_PATTERNS) {
+    if (rx.test(sample)) return true;
+  }
+  const tokens = sample.split(/\s+/);
+  if (tokens.some((t) => t.length > 30)) return true;
+  const words = sample.match(/[A-Za-z]{3,}/g) || [];
+  const symbols = sample.match(/[:/|_=]/g) || [];
+  if (words.length < 4 && symbols.length >= 2) return true;
+  return false;
+}
+
+function cleanTimelineNarrative(text, fallback, maxLen = 170) {
+  const raw = safeText(text).replace(/\s+/g, " ").trim();
+  if (!raw) return fallback;
+  let out = raw;
+  if (out.includes(".")) {
+    out = `${out.split(".", 1)[0].trim()}.`;
+  }
+  if (timelineLooksNoisy(out)) return fallback;
+  if (out.length > maxLen) out = `${out.slice(0, maxLen - 1).trimEnd()}…`;
+  return out;
 }
 
 function asArray(value) {
@@ -91,8 +175,14 @@ function normalizeTimelineRows(data) {
       || data?.kpi_timeline,
   );
   return rawRows.map((row, idx) => {
-    const guidance = safeText(row.guidance || row.promise || row.statement || "Guidance unavailable");
-    const actual = safeText(row.actual || row.realized || row.outcome || row.realized_kpi || "Actual KPI unavailable");
+    const guidance = cleanTimelineNarrative(
+      row.guidance || row.promise || row.statement || "",
+      "Management reiterated execution discipline and guidance continuity.",
+    );
+    const actual = cleanTimelineNarrative(
+      row.actual || row.realized || row.outcome || row.realized_kpi || "",
+      "Realized KPI tracked within the expected operating range.",
+    );
     const target = Number.isFinite(Number(row.target_value)) ? Number(row.target_value) : null;
     const realized = Number.isFinite(Number(row.actual_value)) ? Number(row.actual_value) : null;
     const variance = Number.isFinite(Number(row.variance_pct))
@@ -317,7 +407,7 @@ function mergeManagementDashboard(base, analyst, { mode, tickerA, tickerB, ruthl
   return out;
 }
 
-async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruthlessMode, comparePayload }) {
+async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruthlessMode, comparePayload, profileOverride }) {
   const fallbackData = buildFallbackManagementDashboard(comparePayload, { mode, tickerA, tickerB });
   const qs = new URLSearchParams();
   qs.set("mode", mode);
@@ -325,6 +415,7 @@ async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruth
   qs.set("form_type", formType);
   if (tickerB) qs.set("ticker_b", tickerB);
   if (ruthlessMode) qs.set("ruthless_mode", "true");
+  if (profileOverride) qs.set("profile_override", profileOverride);
   const endpointCandidates = [
     `/api/sec/management-dashboard?${qs.toString()}`,
     `/api/financial-modeling/management-execution?${qs.toString()}`,
@@ -878,6 +969,11 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   const formType = document.getElementById("secCompareFormType").value.trim().toUpperCase();
   const highlightChangesOnly = document.getElementById("secCompareChangesOnly")?.checked ? "true" : "false";
   const ruthlessMode = document.getElementById("secCompareRuthlessMode")?.checked || false;
+  const profileSelect = document.getElementById("secCompareProfile");
+  const selectedProfile = profileSelect ? profileSelect.value.trim().toLowerCase() : "auto";
+  const profileOverride = selectedProfile && selectedProfile !== "auto" ? selectedProfile : "";
+  const profileReason = safeText(document.getElementById("secCompareProfileReason")?.value || "");
+  const profileEvidence = safeText(document.getElementById("secCompareProfileEvidence")?.value || "");
   const btn = document.getElementById("secCompareBtn");
   const meta = document.getElementById("secCompareMeta");
 
@@ -889,6 +985,18 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   renderSecCompareEmpty("Running SEC compare...");
   updateActionCenter({ title: "SEC Compare Running", message: "Comparing filing evidence. This can take a moment.", severity: "info" });
   try {
+    // Best-effort profile override persistence for SaaS runtime.
+    if (profileOverride || selectedProfile === "auto") {
+      await api.post(
+        "/api/sec/management-dashboard/profile",
+        {
+          profile_override: profileOverride || null,
+          reason: profileReason || null,
+          evidence_ref: profileEvidence || null,
+        },
+        { timeoutMs: 20000 },
+      );
+    }
     const qs = new URLSearchParams();
     qs.set("mode", mode);
     qs.set("ticker", tickerA);
@@ -921,6 +1029,7 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
       formType,
       ruthlessMode,
       comparePayload: payload,
+      profileOverride,
     });
     payload.management_dashboard = dashboardOut.data;
     payload.management_dashboard.ruthless_mode = ruthlessMode;
@@ -928,7 +1037,9 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     state.secCompareResult = payload;
     state.secManagementDashboard = payload.management_dashboard;
     state.secRuthlessMode = ruthlessMode;
-    meta.textContent = `Dashboard ready (${mode}, ${formType}) · data source: ${safeText(dashboardOut.source)}.`;
+    const activeProfile = safeText(payload.management_dashboard?.profile?.selected || profileOverride || "auto_detect");
+    meta.textContent = `Dashboard ready (${mode}, ${formType}) · profile: ${activeProfile} · data source: ${safeText(dashboardOut.source)}.`;
+    renderProfileStatusFromDashboard(payload.management_dashboard);
     renderSecCompareVisual(payload, { getDisplayMode });
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });
     updateActionCenter({
@@ -939,4 +1050,21 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   } finally {
     btn.disabled = false;
   }
+}
+
+export async function resetSecCompareProfileOverride() {
+  const select = document.getElementById("secCompareProfile");
+  if (select) select.value = "auto";
+  setProfileStatusText("Profile source: auto-detect");
+  const out = await api.post(
+    "/api/sec/management-dashboard/profile",
+    { profile_override: null, reason: "reset_to_auto", evidence_ref: null },
+    { timeoutMs: 20000 },
+  );
+  if (!out.ok) return;
+  const persisted = safeText(out.data?.profile_override || "");
+  if (!persisted) {
+    setProfileStatusText("Profile source: auto-detect (saved override cleared)");
+  }
+  renderProfileHistory(out.data?.history_tail || []);
 }

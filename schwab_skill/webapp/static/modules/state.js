@@ -74,6 +74,8 @@ export const state = {
   selectedScanTicker: "",
   /** Optional scan body: strategy_overrides, universe_mode, tickers (see /api/scan). */
   scanRunOptions: null,
+  /** UI-only expanded/collapsed state for Qualified breakouts table. */
+  scanRowsExpanded: false,
   /** Active sort for the scan candidates table. `field` is one of the
    *  `data-sort-key` values declared on the scan table headers (e.g.
    *  "ticker", "score", "p_up_10d", "conviction"); `dir` is "asc" or
@@ -81,6 +83,10 @@ export const state = {
    *  is intentionally session-scoped — it survives re-renders within the
    *  same session but is not persisted to localStorage. */
   scanSort: { field: null, dir: "desc" },
+  /** Presentation mode for rank explainers in scan tables:
+   *  - tooltip: compact score + "?" hover details
+   *  - inline: score with short inline rationale text */
+  scanRankExplainMode: "tooltip",
   sseEnabled: false,
   funnelMilestonesSent: {},
   retainedSessionSent: false,

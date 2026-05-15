@@ -963,16 +963,45 @@ def get_sec_cache_hours(skill_dir: Path | None = None) -> float:
     return _get_float("SEC_CACHE_HOURS", 12.0, skill_dir)
 
 
+_EDGAR_USER_AGENT_DEFAULT = "SchwabTradingBot contact@example.com"
+
+
 def get_edgar_user_agent(skill_dir: Path | None = None) -> str:
     """
     SEC requests should include a descriptive user-agent with contact info.
-    Falls back to a safe default when missing or invalid.
+    Falls back to a safe placeholder when missing or invalid; callers that
+    actually hit SEC EDGAR should additionally call ``is_real_edgar_user_agent``
+    and refuse to make the request when it returns False.
+
+    The placeholder is intentionally an obvious example.com address: SEC's
+    fair-access policy bans generic / fake contact info and will rate-limit
+    or IP-ban offenders. See ``is_real_edgar_user_agent``.
     """
     env = _load_env(skill_dir)
     raw = _env_value("EDGAR_USER_AGENT", env).strip()
     if len(raw) >= 12 and "@" in raw:
         return raw
-    return "SchwabTradingBot contact@example.com"
+    return _EDGAR_USER_AGENT_DEFAULT
+
+
+def is_real_edgar_user_agent(user_agent: str | None) -> bool:
+    """Return True only when ``user_agent`` looks like a real operator contact.
+
+    The placeholder string ``contact@example.com`` is rejected because SEC
+    EDGAR explicitly forbids fake contact info and may IP-ban requests using
+    it (https://www.sec.gov/os/accessing-edgar-data).
+    """
+    if not user_agent:
+        return False
+    ua = str(user_agent).strip()
+    if len(ua) < 12 or "@" not in ua:
+        return False
+    lowered = ua.lower()
+    if "example.com" in lowered or "yourdomain" in lowered or "test@" in lowered:
+        return False
+    if ua == _EDGAR_USER_AGENT_DEFAULT:
+        return False
+    return True
 
 
 def get_finnhub_api_key(skill_dir: Path | None = None) -> str:
@@ -1059,6 +1088,26 @@ def get_advisory_require_model(skill_dir: Path | None = None) -> bool:
 # --- Data quality & degraded execution (default off: no behavior change) ---
 
 
+def get_schwab_only_data(skill_dir: Path | None = None) -> bool:
+    """When true, disable Yahoo Finance / Polygon fallbacks for OHLCV and quotes.
+
+    Call sites that pull fundamentals, earnings calendars, or news exclusively
+    via yfinance must also consult this flag — ``market_data`` alone cannot
+    intercept module-local Yahoo usage inside forensic accounting, PEAD, etc.
+    """
+    return _get_bool("SCHWAB_ONLY_DATA", False, skill_dir)
+
+
+def get_history_yfinance_adjusted(skill_dir: Path | None = None) -> bool:
+    """When Yahoo Finance is used for OHLCV, True → split/dividend-adjusted closes (auto_adjust=True).
+
+    Set HISTORY_YFINANCE_ADJUSTED=false only when you intentionally want raw closes
+    for parity testing — mixing adjusted Schwab vendor series with raw Yahoo series
+    corrupts Stage 2 / moving-average logic.
+    """
+    return _get_bool("HISTORY_YFINANCE_ADJUSTED", True, skill_dir)
+
+
 def get_data_quality_exec_policy(skill_dir: Path | None = None) -> str:
     """
     How execution treats non-ok data_quality for risk-increasing orders:
@@ -1081,6 +1130,30 @@ def get_data_quote_max_age_sec(skill_dir: Path | None = None) -> float:
 def get_data_bar_max_staleness_days(skill_dir: Path | None = None) -> int:
     """Mark daily bars stale when last bar is older than this many calendar days."""
     return _get_int("DATA_BAR_MAX_STALENESS_DAYS", 7, skill_dir)
+
+
+def get_risk_fail_closed_on_data_outage(skill_dir: Path | None = None) -> bool:
+    """Whether risk gates (regime, sector filter) fail closed when data is unavailable.
+
+    True (default) — when SPY / sector data can't be fetched, treat the regime
+    as bearish and the winning-sector set as empty, blocking new entries.
+    False — preserve the legacy permissive behaviour (assume bullish, allow
+    every sector). This is dangerous in production: it means any data outage
+    silently flips the bot into "trade everything" mode.
+    """
+    return _get_bool("RISK_FAIL_CLOSED_ON_DATA_OUTAGE", True, skill_dir)
+
+
+def get_scan_stage_a_max_bar_age_days(skill_dir: Path | None = None) -> int:
+    """Reject Stage A candidates whose last daily bar is older than this many calendar days.
+
+    Tighter than DATA_BAR_MAX_STALENESS_DAYS because Stage A breakout / Stage 2
+    decisions anchor against the latest bar — comparing today's live price
+    against a stale prior-bar high silently mis-classifies setups when the
+    feed is lagging. 3 covers a Friday → Monday weekend; 4 covers a 3-day
+    holiday weekend.
+    """
+    return _get_int("SCAN_STAGE_A_MAX_BAR_AGE_DAYS", 4, skill_dir)
 
 
 def get_data_edgar_max_age_hours(skill_dir: Path | None = None) -> float:

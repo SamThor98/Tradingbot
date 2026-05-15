@@ -754,6 +754,85 @@ function buildMonitoringSection(normalized) {
   });
 }
 
+function buildTrustHeaderSection(rawData) {
+  const trust = rawData?.report_trust || {};
+  const trusted = Boolean(trust?.trusted);
+  const statusClassName = trusted ? "good" : "warn";
+  const statusText = trusted ? "Trusted" : "Needs Review";
+  const confidence = Number.isFinite(Number(trust?.data_confidence))
+    ? `${(Number(trust.data_confidence) * 100).toFixed(1)}%`
+    : "n/a";
+  const citation = Number.isFinite(Number(trust?.citation_completeness))
+    ? `${(Number(trust.citation_completeness) * 100).toFixed(1)}%`
+    : "n/a";
+  const conflicts = Number.isFinite(Number(trust?.unresolved_conflict_count))
+    ? String(trust.unresolved_conflict_count)
+    : "n/a";
+  const freshness = trust?.freshness_status?.ok ? "fresh" : "stale";
+
+  const body = `
+    <div class="report-scenario-kpis">
+      <div><span class="subtle">Trust Status</span><div class="pill ${statusClassName}">${statusText}</div></div>
+      <div><span class="subtle">Data Confidence</span><div class="mono-nums">${confidence}</div></div>
+      <div><span class="subtle">Citation Completeness</span><div class="mono-nums">${citation}</div></div>
+      <div><span class="subtle">Conflicts</span><div class="mono-nums">${conflicts}</div></div>
+      <div><span class="subtle">Freshness</span><div class="mono-nums">${freshness}</div></div>
+    </div>
+  `;
+  return makeInstitutionalSection({
+    id: "trust_header",
+    eyebrow: "Trust Gate",
+    title: "Report Trust Header",
+    subtitle: "Source-of-truth gate for this generated report.",
+    body,
+  });
+}
+
+function buildFactsTakeHypothesesSection(rawData) {
+  const trust = rawData?.report_trust || {};
+  const facts = Array.isArray(trust?.verified_facts) ? trust.verified_facts : [];
+  const analystTake = Array.isArray(trust?.analyst_take) ? trust.analyst_take : [];
+  const hypotheses = Array.isArray(trust?.hypotheses) ? trust.hypotheses : [];
+
+  const factsHtml = facts.length
+    ? `<ul class="report-bullets">${facts
+        .map((f) => `<li><strong>${escapeHtml(String(f.id || ""))}</strong>: ${escapeHtml(String(f.statement || ""))} <span class="muted">[${escapeHtml(String(f.source || "unknown"))}]</span></li>`)
+        .join("")}</ul>`
+    : `<ul class="report-bullets"><li class="muted">No verified facts provided.</li></ul>`;
+
+  const takeHtml = analystTake.length
+    ? `<ul class="report-bullets">${analystTake
+        .map((b) => {
+          const cites = Array.isArray(b.citation_ids) ? b.citation_ids : [];
+          const citeText = cites.length ? ` [cites: ${cites.map((c) => escapeHtml(String(c))).join(", ")}]` : "";
+          return `<li>${escapeHtml(String(b.text || ""))}<span class="muted">${citeText}</span></li>`;
+        })
+        .join("")}</ul>`
+    : `<ul class="report-bullets"><li class="muted">No analyst take blocks provided.</li></ul>`;
+
+  const hypoHtml = hypotheses.length
+    ? `<ul class="report-bullets">${hypotheses
+        .map((h) => `<li>${escapeHtml(String(h.text || ""))} <span class="muted">(${escapeHtml(String(h.status || "tentative"))})</span></li>`)
+        .join("")}</ul>`
+    : `<ul class="report-bullets"><li class="muted">No hypotheses currently open.</li></ul>`;
+
+  const body = `
+    <div class="ir-subhead">Verified Facts</div>
+    ${factsHtml}
+    <div class="ir-subhead">Analyst Take (claim-block citations)</div>
+    ${takeHtml}
+    <div class="ir-subhead">Hypotheses</div>
+    ${hypoHtml}
+  `;
+  return makeInstitutionalSection({
+    id: "facts_take_hypotheses",
+    eyebrow: "Source of Truth",
+    title: "Facts, Analyst Take, and Hypotheses",
+    subtitle: "Facts-first ordering with claim-block citation references.",
+    body,
+  });
+}
+
 function buildAppendixSection(normalized, tab) {
   const blocks = buildAppendixBlocks(normalized);
   const block = blocks[tab] || blocks.summary;
@@ -836,6 +915,8 @@ export function renderReportVisual(data) {
   root.setAttribute("aria-labelledby", `report-tab-${tab}`);
   root.innerHTML = `
     <article class="ir-document">
+      ${buildTrustHeaderSection(data)}
+      ${buildFactsTakeHypothesesSection(data)}
       ${buildCoverHeader(data, normalized)}
       ${buildExecutiveSummarySection(data, normalized)}
       ${buildBusinessModelSection(data, normalized)}
@@ -952,6 +1033,52 @@ function splitMarkdownTableRow(line) {
   return inner.split("|").map((cell) => cell.trim());
 }
 
+function polishDossierMarkdownForPreview(markdown) {
+  const phraseRewrites = [
+    [
+      "is evaluated through a blended institutional framework that integrates market structure, valuation underwriting, filing intelligence, and scenario-based risk control.",
+      "is assessed across market structure, valuation, filing signals, and scenario risk.",
+    ],
+    [
+      "The objective is not to defend a side, but to rank the probability distribution and identify whether reward-to-risk is improving or deteriorating.",
+      "The objective is to rank probabilities and determine whether reward-to-risk is improving.",
+    ],
+  ];
+  const lines = String(markdown || "").split(/\r?\n/);
+  const out = [];
+  for (let line of lines) {
+    const trimmed = line.trim();
+    const lower = trimmed.toLowerCase();
+    if (
+      trimmed.includes(" | ")
+      && (
+        lower.startsWith("prepared:")
+        || lower.startsWith("analyst:")
+        || lower.startsWith("coverage:")
+        || lower.startsWith("region:")
+        || lower.startsWith("document type:")
+        || lower.startsWith("current price:")
+        || lower.startsWith("recommendation:")
+      )
+    ) {
+      trimmed.split("|").map((p) => p.trim()).filter(Boolean).forEach((part) => out.push(`- ${part}`));
+      continue;
+    }
+    for (const [before, after] of phraseRewrites) {
+      line = line.replace(before, after);
+    }
+    if (!trimmed.startsWith("|") && trimmed.length > 240) {
+      const bits = trimmed.split(/(?<=[.!?])\s+/).filter(Boolean);
+      let compact = bits.slice(0, 2).join(" ");
+      if (!compact || compact.length > 240) compact = `${trimmed.slice(0, 239).trimEnd()}…`;
+      out.push(compact);
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function alignmentFromSeparatorCell(cell) {
   const text = cell.trim();
   const left = text.startsWith(":");
@@ -964,9 +1091,11 @@ function alignmentFromSeparatorCell(cell) {
 function applyInlineEmphasis(text) {
   // Escape first, then re-introduce inline emphasis using bold/italic markers.
   let out = escapeHtml(text);
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a class="ir-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/(^|[^\\])\*([^*]+)\*/g, "$1<em>$2</em>");
   out = out.replace(/`([^`]+)`/g, '<code class="ir-inline-code">$1</code>');
+  out = out.replace(/\[(\d{1,3})\]/g, '<sup class="ir-cite">[$1]</sup>');
   return out;
 }
 
@@ -1023,7 +1152,7 @@ function renderMarkdownTable(rawRows) {
 }
 
 function markdownToPreviewHtml(markdown) {
-  const lines = String(markdown || "").split(/\r?\n/);
+  const lines = polishDossierMarkdownForPreview(markdown).split(/\r?\n/);
   const out = [];
   let listOpen = false;
   let para = [];

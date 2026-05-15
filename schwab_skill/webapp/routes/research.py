@@ -22,13 +22,18 @@ from sec_filing_compare import (
 from sector_strength import get_sector_heatmap
 
 from .._shared import build_portfolio_risk_analytics, build_portfolio_summary
+from ..dossier_style import polish_dossier_markdown
+from ..management_dashboard import PROFILE_WEIGHTS, build_management_dashboard
 from ..pdf_export import dossier_to_pdf
 from ..report_v2 import build_report_v2
+from ..report_trust import build_report_trust_payload
 from ..schemas import ApiResponse
 
 router = APIRouter(tags=["research"])
 
 SKILL_DIR = Path(__file__).resolve().parent.parent.parent
+_LOCAL_SEC_MGMT_PROFILE_OVERRIDE: str | None = None
+_LOCAL_SEC_MGMT_OVERRIDE_HISTORY: list[dict[str, Any]] = []
 
 
 def _ok(data: Any = None) -> ApiResponse:
@@ -524,6 +529,13 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
     )
     confidence_label = (report_v2.get("ic_snapshot") or {}).get("confidence_label") or _confidence_label_from_score(confidence_score)
 
+    report_trust = build_report_trust_payload(
+        {
+            **report_data,
+            "report_v2": report_v2,
+            "generated_at": generated_at,
+        }
+    )
     dossier = {
         "ticker": symbol,
         "generated_at": generated_at,
@@ -558,6 +570,7 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         },
         "source_metadata": source_metadata,
         "fallback_notes": [entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")],
+        "report_trust": report_trust,
     }
     return dossier
 
@@ -575,6 +588,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     raw_report = fundamentals.get("raw_report") or {}
     technical = raw_report.get("technical") or {}
     dcf = raw_report.get("dcf") or {}
+    comps = raw_report.get("comps") or {}
     health = raw_report.get("health") or {}
     edgar = raw_report.get("edgar") or {}
     sec_analyze = sec_narr.get("analyze") or {}
@@ -697,6 +711,35 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             f"{bear_votes} bearish votes."
         )
 
+    operating_profile = "transitioning"
+    gross_margin_v = _safe_float(metrics.get("gross_margin_ttm"))
+    op_margin_v = _safe_float(metrics.get("operating_margin_ttm"))
+    if gross_margin_v is not None and gross_margin_v >= 60:
+        operating_profile = "high-gross-margin"
+    elif gross_margin_v is not None and gross_margin_v >= 40:
+        operating_profile = "mid-gross-margin"
+    if op_margin_v is not None and op_margin_v < 0:
+        operating_profile = f"{operating_profile} with negative operating leverage"
+
+    stage_label = "Stage 2 uptrend candidate" if technical.get("stage_2") else "non-Stage-2 / transitional tape"
+    vcp_label = "VCP structure present" if technical.get("vcp") else "VCP structure not confirmed"
+
+    base_return = (
+        (report_v2.get("ic_snapshot") or {}).get("expected_return_base_pct")
+        if (report_v2.get("ic_snapshot") or {}).get("expected_return_base_pct") is not None
+        else (report_v2.get("ic_snapshot") or {}).get("expected_return_base_case")
+    )
+    bull_return = (
+        (report_v2.get("ic_snapshot") or {}).get("expected_return_bull_pct")
+        if (report_v2.get("ic_snapshot") or {}).get("expected_return_bull_pct") is not None
+        else (report_v2.get("ic_snapshot") or {}).get("expected_return_bull_case")
+    )
+    bear_return = (
+        (report_v2.get("ic_snapshot") or {}).get("expected_return_bear_pct")
+        if (report_v2.get("ic_snapshot") or {}).get("expected_return_bear_pct") is not None
+        else (report_v2.get("ic_snapshot") or {}).get("expected_return_bear_case")
+    )
+
     lines: list[str] = [
         f"# {ticker} — Institutional Research Report",
         "",
@@ -707,6 +750,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         f"**Coverage:** {industry_text}",
         f"**Region:** {region_text}",
         f"**Document Type:** Institutional Investment Note{_cite('report_stack', 'finnhub', 'sec_analyze')}",
+        "**Analytical Stance:** Zero-bias, evidence-weighted underwriting framework (bull/base/bear).",
         "",
         "---",
         "",
@@ -720,27 +764,49 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         "",
         f"**Recommendation:** {recommendation} | **Confidence:** {confidence_label} ({confidence_score}/100) | **Horizon:** {horizon_text}",
         "",
-        "Sections covered: Business Strategy & Operations · Fundamental Performance · Valuation · SEC Narrative · Portfolio Fit · Catalysts and Risks · Insider Activity · Analyst Actions · Monitoring",
+        "Sections covered: Business Strategy & Operations · Fundamental Performance · Peer Relative Positioning · Valuation · Technical Stage Analysis · SEC Narrative · Portfolio Fit · Catalysts and Risks · Insider Activity · Analyst Actions · Monitoring",
         "",
         "## Executive Investment Summary",
         "",
         str(pitch.get("thesis") or "No thesis generated."),
         "",
         (
-            f"{issuer_name} ({ticker}) is evaluated through a blended institutional framework that integrates "
-            f"market structure, valuation underwriting, filing intelligence, and scenario-based risk control. "
-            f"At a high level, the technical signal score reads {_num(technical.get('signal_score'), 0)}/100 "
-            f"and DCF margin of safety is {_pct(dcf.get('margin_of_safety'))}, while sell-side positioning reads "
-            f"{bull_votes} bullish vs {bear_votes} bearish votes (with {hold_votes} on hold). "
-            f"Portfolio concentration context is {hhi_label}, which informs sizing and risk-budget interpretation."
+            f"Current setup: technical signal {_num(technical.get('signal_score'), 0)}/100, "
+            f"DCF margin of safety {_pct(dcf.get('margin_of_safety'))}, and Street panel "
+            f"{bull_votes} bullish / {hold_votes} neutral / {bear_votes} bearish."
             f"{_cite('finnhub', 'report_stack', 'portfolio')}"
         ),
         "",
         (
-            f"The framing here is **{recommendation}** with **{confidence_label}** confidence over a "
-            f"**{horizon_text}** horizon. Treat this as a structured starting point — any execution decision "
-            f"should follow position-sizing rules and the explicit invalidation criteria listed in the Catalyst and Risk Matrix."
+            f"Portfolio context is {hhi_label}; this drives risk budget and sizing."
+            f"{_cite('portfolio')}"
         ),
+        "",
+        (
+            f"Desk stance: **{recommendation}** with **{confidence_label}** confidence over a "
+            f"**{horizon_text}** horizon. Execute only if invalidation triggers remain explicit and position size stays within policy."
+        ),
+        "",
+        "### IC Quick Scorecard",
+        "",
+        "| Underwriting Lens | Current Read |",
+        "|---|---|",
+        f"| Recommendation / Confidence | {recommendation} / {confidence_label} ({confidence_score}/100) |",
+        f"| Base / Bull / Bear Return | {_pct(base_return)} / {_pct(bull_return)} / {_pct(bear_return)} |",
+        f"| Technical Stage / VCP | {stage_label} / {vcp_label} |",
+        f"| DCF Margin of Safety | {_pct(dcf.get('margin_of_safety'))} |",
+        f"| Portfolio Concentration Context | {hhi_label} |",
+        "",
+        "### Analyst Mandate and Research Method",
+        "",
+        (
+            "This dossier is written from an institutional mandate: compile the fullest practical operating, "
+            "fundamental, valuation, and tape-based evidence set; then pressure-test the thesis against explicit "
+            "counter-arguments and invalidation lines. The objective is not to defend a side, but to rank the "
+            "probability distribution and identify whether reward-to-risk is improving or deteriorating."
+        ),
+        "",
+        "---",
         "",
         "## Part I: Company and Business Model",
         "",
@@ -760,6 +826,16 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         f"- Market Cap: {_money_scaled(profile.get('market_cap'))} | Shares Out: {_shares_human((_safe_float(profile.get('share_outstanding')) or 0) * 1_000_000) if _safe_float(profile.get('share_outstanding')) else 'n/a'} | IPO: {profile.get('ipo') or 'n/a'}{_cite('finnhub')}",
         f"- Beta (5Y): {_num(metrics.get('beta'))} | YTD Return: {_pct_finnhub(metrics.get('ytd_price_return_daily'))} | 52w Return: {_pct_finnhub(metrics.get('52week_price_return_daily'))}{_cite('finnhub')}",
         f"- Core thesis context: {(report_v2.get('thesis') or {}).get('claim') or 'Derived from integrated report stack.'}{_cite('report_stack')}",
+        "",
+        "### Business Strategy & Operations Deep Dive",
+        "",
+        (
+            f"Current evidence frames the operating profile as **{operating_profile}**. For underwriting purposes, "
+            "focus on whether growth quality is broadening across customer cohorts, whether margin durability is "
+            "supported by pricing power and operating discipline, and whether management commentary and SEC deltas "
+            "confirm or challenge the current narrative."
+            f"{_cite('finnhub', 'sec_analyze', 'sec_compare')}"
+        ),
     ]
 
     if peers:
@@ -776,6 +852,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         ])
 
     lines.extend([
+        "",
+        "---",
         "",
         "## Part II: Fundamental Performance Analysis",
         "",
@@ -846,6 +924,31 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "---",
+            "",
+            "## Part II-B: Peer Relative Positioning",
+            "",
+            (
+                "Peer-relative analysis is used to separate company-specific execution from broad sector beta. "
+                "Multiples alone are insufficient: the key question is whether differential growth, margin path, "
+                "and balance-sheet quality justify premium or discount positioning versus direct comps."
+                f"{_cite('report_stack', 'finnhub')}"
+            ),
+            "",
+            "| Relative Lens | Value |",
+            "|---|---:|",
+            f"| Peer Median P/E (if available) | {_num(comps.get('median_pe'))} |",
+            f"| Implied Price from P/E Method | {_money_currency(comps.get('implied_price_pe'))} |",
+            f"| Implied Price from P/S Method | {_money_currency(comps.get('implied_price_ps'))} |",
+            f"| Consensus Panel Skew (Bull / Hold / Bear) | {bull_votes} / {hold_votes} / {bear_votes} |",
+        ]
+    )
+
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
             "## Part III: Valuation and Technical Positioning",
             "",
             (
@@ -881,6 +984,19 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
                 "if both are constructive, scale only against documented catalysts and risk budget capacity."
                 f"{_cite('report_stack', 'finnhub', 'sec_analyze')}"
             ),
+            "",
+            "### Technical Stage Analysis",
+            "",
+            (
+                f"Stage framework read: **{stage_label}** with **{vcp_label}**. "
+                "Execution discipline should prioritize asymmetric entries near defined support/pivot structure, "
+                "while avoiding thesis drift when price action invalidates the expected stage progression. "
+                "Treat momentum confirmation as necessary but not sufficient; fundamental and filing corroboration "
+                "still govern sizing confidence."
+                f"{_cite('report_stack', 'finnhub')}"
+            ),
+            "",
+            "---",
             "",
             "## Part IV: SEC Narrative and Comparative Filing Deltas",
             "",
@@ -920,6 +1036,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
 
     lines.extend([
         "",
+        "---",
+        "",
         "## Part V: Portfolio Fit and Risk Budget Context",
         "",
         (
@@ -938,6 +1056,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         f"| Risk budget impact | {(report_v2.get('portfolio_fit') or {}).get('risk_budget_impact') or 'Unavailable'} |",
         f"| Sector overlap (%) | {_pct_finnhub((report_v2.get('portfolio_fit') or {}).get('sector_overlap_pct'))} |",
         f"| Correlation proxy | {_num((report_v2.get('portfolio_fit') or {}).get('correlation_proxy'), 3)} |",
+        "",
+        "---",
         "",
         "## Part VI: Catalyst and Risk Matrix",
         "",
@@ -971,6 +1091,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     has_insider_data = (insider_tx.get("rows") or insider_sent.get("rows"))
     if has_insider_data:
         lines.extend([
+            "",
+            "---",
             "",
             "## Part VII: Insider Activity (Trailing 180 Days)",
             "",
@@ -1026,6 +1148,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     if upgrades or rec_history:
         lines.extend([
             "",
+            "---",
+            "",
             "## Part VIII: Sell-Side Analyst Activity",
             "",
             (
@@ -1066,6 +1190,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     # --- Capital Returns --------------------------------------------------
     if dividends or splits:
         lines.extend([
+            "",
+            "---",
             "",
             "## Part IX: Capital Returns and Corporate Actions",
             "",
@@ -1110,7 +1236,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     sent_buzz = _safe_float(news_sent.get("buzz_articles_in_last_week"))
     sent_score = _safe_float(news_sent.get("company_news_score"))
     if sent_buzz is not None or sent_score is not None or news:
-        lines.extend(["", "## Part X: News and Sentiment Pulse", ""])
+        lines.extend(["", "---", "", "## Part X: News and Sentiment Pulse", ""])
         if sent_score is not None or sent_buzz is not None:
             sector_score = _safe_float(news_sent.get("sector_avg_news_score"))
             score_delta = ""
@@ -1194,7 +1320,11 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         ]
     )
     lines.append("")
-    return "\n".join(lines)
+    return polish_dossier_markdown(
+        "\n".join(lines),
+        trust_payload=dossier.get("report_trust") if isinstance(dossier, dict) else None,
+        source_rows=source_rows,
+    )
 
 
 def _escape_pdf_text(text: str) -> str:
@@ -1389,6 +1519,7 @@ def report_ticker(
         except Exception:
             portfolio_summary = None
         data["report_v2"] = build_report_v2(data, portfolio_summary=portfolio_summary)
+        data["report_trust"] = build_report_trust_payload(data)
         section_verdicts = _build_report_verdicts(data)
         if section_key:
             section_data = data.get(section_key)
@@ -1398,6 +1529,7 @@ def report_ticker(
                 "section": section_key,
                 "data": section_data,
                 "report_v2": data.get("report_v2"),
+                "report_trust": data.get("report_trust"),
                 "section_verdicts": section_verdicts,
                 "section_quick_verdict": section_verdicts.get(section_key, {}),
             })
@@ -1496,6 +1628,115 @@ def sec_compare_alias(
     return sec_compare(
         mode=mode, ticker=ticker, ticker_b=ticker_b,
         form_type=form_type, highlight_changes_only=highlight_changes_only,
+    )
+
+
+@router.get("/api/sec/management-dashboard", response_model=ApiResponse)
+def sec_management_dashboard(
+    mode: str = "ticker_over_time",
+    ticker: str = "",
+    ticker_b: str = "",
+    form_type: str = "10-K",
+    highlight_changes_only: bool = True,
+    ruthless_mode: bool = False,
+    profile_override: str = "",
+) -> ApiResponse:
+    try:
+        cfg = _sec_analysis_settings()
+        if not cfg["analysis_enabled"]:
+            return ApiResponse(ok=False, error="SEC filing analysis is disabled by configuration.")
+        if not cfg["compare_enabled"]:
+            return ApiResponse(ok=False, error="SEC filing compare is disabled by configuration.")
+        safe_mode = mode.strip().lower()
+        safe_form = form_type.upper().strip()
+        safe_ticker = ticker.upper().strip()
+        safe_ticker_b = ticker_b.upper().strip()
+        persisted_override = _LOCAL_SEC_MGMT_PROFILE_OVERRIDE or ""
+        last_override = _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-1] if _LOCAL_SEC_MGMT_OVERRIDE_HISTORY else None
+        safe_override = profile_override.strip().lower() or persisted_override
+        if safe_override and safe_override not in PROFILE_WEIGHTS:
+            supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+            return ApiResponse(ok=False, error=f"Invalid profile_override '{profile_override}'. Use one of: {supported}.")
+        if safe_mode not in {"ticker_vs_ticker", "ticker_over_time"}:
+            return ApiResponse(ok=False, error="Invalid mode. Use ticker_vs_ticker or ticker_over_time.")
+        if not safe_ticker:
+            return ApiResponse(ok=False, error="ticker is required.")
+        if safe_mode == "ticker_vs_ticker" and not safe_ticker_b:
+            return ApiResponse(ok=False, error="ticker_b is required for ticker_vs_ticker mode.")
+
+        if safe_mode == "ticker_vs_ticker":
+            compare_out = compare_ticker_vs_ticker(
+                safe_ticker,
+                safe_ticker_b,
+                form_type=safe_form,
+                user_agent=cfg["user_agent"],
+                skill_dir=SKILL_DIR,
+                cache_hours=cfg["cache_hours"],
+                max_chars=cfg["max_chars"],
+                enable_llm=cfg["llm_enabled"],
+                highlight_changes_only=bool(highlight_changes_only),
+            )
+        else:
+            compare_out = compare_ticker_over_time(
+                safe_ticker,
+                form_type=safe_form,
+                user_agent=cfg["user_agent"],
+                skill_dir=SKILL_DIR,
+                cache_hours=cfg["cache_hours"],
+                max_chars=cfg["max_chars"],
+                enable_llm=cfg["llm_enabled"],
+                highlight_changes_only=bool(highlight_changes_only),
+            )
+        if not compare_out.get("ok"):
+            return ApiResponse(ok=False, error=str(compare_out.get("error", "SEC compare failed")))
+        compare_payload = _normalize_sec_compare_payload(compare_out)
+        dashboard = build_management_dashboard(
+            compare_payload=compare_payload,
+            mode=safe_mode,
+            ticker=safe_ticker,
+            ticker_b=safe_ticker_b,
+            form_type=safe_form,
+            ruthless_mode=bool(ruthless_mode),
+            profile_override=safe_override or None,
+        )
+        dashboard["profile"]["persisted_override"] = persisted_override or None
+        dashboard["profile"]["last_override"] = last_override
+        dashboard["profile"]["history_tail"] = _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-10:]
+        return _ok({"compare": compare_payload.get("compare", {}), "management_dashboard": dashboard})
+    except Exception as e:
+        return _err_response("sec_management_dashboard", e)
+
+
+@router.post("/api/sec/management-dashboard/profile", response_model=ApiResponse)
+def set_sec_management_profile_override(payload: dict[str, Any]) -> ApiResponse:
+    global _LOCAL_SEC_MGMT_PROFILE_OVERRIDE
+    global _LOCAL_SEC_MGMT_OVERRIDE_HISTORY
+    raw = str((payload or {}).get("profile_override") or "").strip().lower()
+    reason = str((payload or {}).get("reason") or "").strip()
+    evidence_ref = str((payload or {}).get("evidence_ref") or "").strip()
+    if raw and raw not in PROFILE_WEIGHTS:
+        supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+        return ApiResponse(ok=False, error=f"Invalid profile_override '{raw}'. Use one of: {supported}.")
+    before = _LOCAL_SEC_MGMT_PROFILE_OVERRIDE
+    _LOCAL_SEC_MGMT_PROFILE_OVERRIDE = raw or None
+    change = {
+        "at": datetime.now(UTC).isoformat(),
+        "actor": "local_dashboard",
+        "before": before,
+        "after": _LOCAL_SEC_MGMT_PROFILE_OVERRIDE,
+        "reason": reason or "unspecified",
+        "evidence_ref": evidence_ref or None,
+    }
+    _LOCAL_SEC_MGMT_OVERRIDE_HISTORY.append(change)
+    if len(_LOCAL_SEC_MGMT_OVERRIDE_HISTORY) > 50:
+        _LOCAL_SEC_MGMT_OVERRIDE_HISTORY = _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-50:]
+    return _ok(
+        {
+            "profile_override": _LOCAL_SEC_MGMT_PROFILE_OVERRIDE,
+            "supported_profiles": sorted(PROFILE_WEIGHTS.keys()),
+            "last_override": change,
+            "history_tail": _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-10:],
+        }
     )
 
 

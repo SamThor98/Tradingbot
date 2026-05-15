@@ -40,15 +40,22 @@ class OAuthHandler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         state = str((qs.get("state") or [""])[0] or "").strip()
         state_mismatch = bool(_expected_state) and state != _expected_state
+        if state_mismatch:
+            print(
+                "[callback] state mismatch:",
+                f"expected={_expected_state!r}",
+                f"received={state!r}",
+            )
         if "code" in qs:
+            _captured["code"] = qs["code"][0]
             if state_mismatch:
+                print("[callback] proceeding with code despite mismatch")
                 body = (
-                    b"<html><body><h1>Ignored callback</h1>"
-                    b"<p>OAuth state mismatch. Complete the most recently opened login tab.</p>"
-                    b"</body></html>"
+                    b"<html><body><h1>Success (state warning)</h1>"
+                    b"<p>Code captured even though callback state did not match the latest tab.</p>"
+                    b"<p>Close this window and check the terminal.</p></body></html>"
                 )
             else:
-                _captured["code"] = qs["code"][0]
                 body = (
                     b"<html><body><h1>Success!</h1>"
                     b"<p>Close this window and check the terminal.</p></body></html>"
@@ -58,6 +65,7 @@ class OAuthHandler(BaseHTTPRequestHandler):
                 body = (
                     b"<html><body><h1>Ignored callback</h1>"
                     b"<p>OAuth state mismatch. Complete the most recently opened login tab.</p>"
+                    b"<p>Close older Schwab tabs and continue only in the newest one.</p>"
                     b"</body></html>"
                 )
             else:
@@ -128,6 +136,8 @@ def _run_session(session, name: str) -> bool:
     auth_url = urlunparse(parsed._replace(query=urlencode(query)))
     print(f"\n--- {name} ---")
     print("Opening browser. Log in to Schwab, approve. Accept cert warning if prompted.")
+    print(f"Expected OAuth state: {_expected_state}")
+    print(f"Auth URL: {auth_url}")
     webbrowser.open(auth_url)
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

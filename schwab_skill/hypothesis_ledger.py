@@ -40,9 +40,9 @@ def _load_ledger(skill_dir: Path) -> dict[str, Any]:
 
 
 def _save_ledger(skill_dir: Path, data: dict[str, Any]) -> None:
-    path = _ledger_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_ledger_path(skill_dir), data, indent=2)
 
 
 def load_ledger_data(skill_dir: Path | str | None = None) -> dict[str, Any]:

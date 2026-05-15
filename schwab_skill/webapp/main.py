@@ -228,6 +228,7 @@ _request_metrics: dict[str, Any] = {
 
 # Cap persisted scan payloads so AppState rows stay reasonable.
 _LAST_SCAN_SIGNALS_CAP = min(200, int(os.getenv("WEB_LAST_SCAN_SIGNALS_CAP", "120") or 120))
+_SCAN_STALE_SECONDS = max(60, int(os.getenv("WEB_SCAN_STALE_SECONDS", "1800") or 1800))
 _scan_lock = threading.Lock()
 _scan_job: dict[str, Any] = {
     "job_id": None,
@@ -379,6 +380,20 @@ def _resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
     return _shared_resolve_schwab_redirect_uri(request, market=market)
 
 
+def _single_schwab_callback_uri(request: Request) -> str:
+    uri = _resolve_schwab_redirect_uri(request, market=False)
+    return uri.replace("/api/oauth/schwab/market/callback", "/api/oauth/schwab/callback")
+
+
+def _oauth_wants_browser_redirect(request: Request, redirect: bool) -> bool:
+    if redirect:
+        return True
+    accept = (request.headers.get("accept") or "").lower()
+    sec_fetch_mode = (request.headers.get("sec-fetch-mode") or "").lower()
+    sec_fetch_dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    return "text/html" in accept or sec_fetch_mode == "navigate" or sec_fetch_dest == "document"
+
+
 def _new_local_oauth_state(kind: str) -> str:
     now = int(time.time())
     token = secrets.token_urlsafe(32)
@@ -463,6 +478,7 @@ def _build_portfolio_risk_analytics(summary: dict[str, Any], *, skill_dir: Path)
 
 def _scan_snapshot() -> dict[str, Any]:
     with _scan_lock:
+        _expire_stale_scan_job_locked()
         elapsed_seconds: int | None = None
         started_at = _scan_job.get("started_at")
         if isinstance(started_at, str):
@@ -485,6 +501,38 @@ def _scan_snapshot() -> dict[str, Any]:
             "shortlist_signals": _scan_job.get("shortlist_signals") or [],
             "error": _scan_job.get("error"),
         }
+
+
+def _parse_iso_datetime(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _expire_stale_scan_job_locked() -> bool:
+    """Fail scans that exceeded watchdog runtime to avoid permanent 'running' state."""
+    if str(_scan_job.get("status") or "") != "running":
+        return False
+    started_dt = _parse_iso_datetime(_scan_job.get("started_at"))
+    if started_dt is None:
+        return False
+    elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
+    if elapsed <= float(_SCAN_STALE_SECONDS):
+        return False
+    _scan_job.update(
+        {
+            "status": "failed",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "error": (
+                "Scan watchdog timeout: exceeded "
+                f"{_SCAN_STALE_SECONDS}s runtime ({int(elapsed)}s elapsed)."
+            ),
+        }
+    )
+    return True
 
 
 def _scan_lifecycle_payload(
@@ -607,6 +655,76 @@ def _latest_validation_status() -> dict[str, Any]:
     }
 
 
+def _latest_ablation_status() -> dict[str, Any]:
+    latest_report = VALIDATION_ARTIFACT_DIR / "latest_ablation_report.json"
+    report_path: Path | None = latest_report if latest_report.exists() else None
+    source = "latest_ablation_report"
+    if report_path is None:
+        runs = sorted(VALIDATION_ARTIFACT_DIR.glob("ablation_report_*.json"))
+        if runs:
+            report_path = runs[-1]
+            source = "ablation_report_summary"
+    if report_path is None:
+        return {
+            "source": "none",
+            "exists": False,
+            "generated_at": None,
+            "summary": {"variant_count": 0, "pass_count": 0, "fail_count": 0},
+            "best": None,
+            "top_variants": [],
+            "latest_artifacts": {},
+        }
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    generated_at = payload.get("generated_at")
+    if not generated_at:
+        try:
+            generated_at = datetime.fromtimestamp(report_path.stat().st_mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            generated_at = None
+    leaderboard = payload.get("leaderboard") if isinstance(payload.get("leaderboard"), list) else []
+    summary_raw = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    variant_count = int(summary_raw.get("variant_count") or len(leaderboard))
+    pass_count = int(summary_raw.get("pass_count") or 0)
+    fail_count = int(summary_raw.get("fail_count") or max(0, variant_count - pass_count))
+    best = leaderboard[0] if leaderboard else None
+    if not isinstance(best, dict):
+        best = None
+    top_variants: list[dict[str, Any]] = []
+    for row in leaderboard[:5]:
+        if not isinstance(row, dict):
+            continue
+        top_variants.append(
+            {
+                "variant_id": row.get("variant_id"),
+                "pass": row.get("pass"),
+                "relative_lift_vs_baseline": row.get("relative_lift_vs_baseline"),
+                "ci_relative_lift_lower": row.get("ci_relative_lift_lower"),
+                "ci_relative_lift_upper": row.get("ci_relative_lift_upper"),
+                "regression_flags": list(row.get("regression_flags") or []),
+            }
+        )
+    try:
+        rel_path = str(report_path.relative_to(SKILL_DIR))
+    except ValueError:
+        rel_path = str(report_path)
+    return {
+        "source": source,
+        "exists": True,
+        "generated_at": generated_at,
+        "summary": {
+            "variant_count": variant_count,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+        },
+        "best": best,
+        "top_variants": top_variants,
+        "latest_artifacts": {"ablation_report": rel_path},
+    }
+
+
 def _latest_slo_gate_status() -> dict[str, Any]:
     path = VALIDATION_ARTIFACT_DIR / "latest_slo_gate_status.json"
     payload = _read_json_file(path, {})
@@ -652,6 +770,7 @@ def _latest_registry_decision() -> dict[str, Any] | None:
 
 def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
     validation = _latest_validation_status()
+    ablation = _latest_ablation_status()
     slo = _latest_slo_gate_status()
     last_scan = _load_state(
         db,
@@ -676,10 +795,17 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
         else {}
     )
     validation_passed = True if validation.get("passed") is True else False
+    ablation_best = ablation.get("best") if isinstance(ablation, dict) else None
+    ablation_passed = bool(
+        isinstance(ablation_best, dict)
+        and ablation.get("exists") is True
+        and ablation_best.get("pass") is True
+    )
     slo_passed = True if slo.get("passed") is True else False
-    gate_ready = bool(validation_passed and slo_passed)
+    gate_ready = bool(validation_passed and slo_passed and ablation_passed)
     readiness_checks = [
         {"name": "validation", "passed": validation.get("passed")},
+        {"name": "ablation", "passed": ablation_passed if ablation.get("exists") else None},
         {"name": "slo_gate", "passed": slo.get("passed")},
     ]
     if validation.get("run_status") == "running":
@@ -712,6 +838,7 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
             "checks": readiness_checks,
             "latest_decision": latest_decision,
         },
+        "ablation": ablation,
     }
 
 
@@ -1000,7 +1127,9 @@ _LOCAL_FLAGGED_DAYS_LOOKBACK = max(1, int(os.getenv("WEB_LOCAL_FLAGGED_DAYS_LOOK
 
 
 def _scan_result_signal_score(signal: dict[str, Any]) -> float | None:
-    raw = signal.get("signal_score")
+    raw = signal.get("composite_score")
+    if raw is None:
+        raw = signal.get("signal_score")
     if raw is None:
         raw = signal.get("score")
     if raw is None:
@@ -1152,6 +1281,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
         try:
             _persist_scan_results_local(db, job_id, signals)
             _enrich_signals_with_flagged_days(db, signals)
+            _enrich_signals_with_flagged_days(db, shortlist_signals)
             _prune_local_scan_results(db)
             signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
             shortlist_persist = shortlist_signals[:_LAST_SCAN_SIGNALS_CAP]
@@ -1498,25 +1628,45 @@ def runtime_contract() -> ApiResponse:
 
 
 @app.get("/api/oauth/schwab/authorize-url", response_model=ApiResponse)
-def local_schwab_authorize_url(request: Request) -> ApiResponse:
+def local_schwab_authorize_url(request: Request, redirect: bool = False) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Configure SCHWAB_ACCOUNT_APP_KEY for OAuth.")
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    redirect_uri = _single_schwab_callback_uri(request)
     state = _new_local_oauth_state("account")
     url = schwab_authorize_url(client_id, redirect_uri, state)
+    if _oauth_wants_browser_redirect(request, redirect):
+        return RedirectResponse(url, status_code=302)
     return _ok({"url": url, "state": state})
+
+
+@app.get("/api/oauth/schwab/start", include_in_schema=False)
+def local_schwab_authorize_start(request: Request) -> RedirectResponse:
+    out = local_schwab_authorize_url(request, redirect=True)
+    assert isinstance(out, RedirectResponse)
+    return out
 
 
 @app.get("/api/oauth/schwab/market/authorize-url", response_model=ApiResponse)
-def local_schwab_market_authorize_url(request: Request) -> ApiResponse:
+def local_schwab_market_authorize_url(request: Request, redirect: bool = False) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Configure SCHWAB_MARKET_APP_KEY for market OAuth.")
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+    # Reuse the account callback URL so one registered Schwab redirect can
+    # serve both OAuth flows. State still separates account vs market writes.
+    redirect_uri = _single_schwab_callback_uri(request)
     state = _new_local_oauth_state("market")
     url = schwab_authorize_url(client_id, redirect_uri, state)
+    if _oauth_wants_browser_redirect(request, redirect):
+        return RedirectResponse(url, status_code=302)
     return _ok({"url": url, "state": state})
+
+
+@app.get("/api/oauth/schwab/market/start", include_in_schema=False)
+def local_schwab_market_authorize_start(request: Request) -> RedirectResponse:
+    out = local_schwab_market_authorize_url(request, redirect=True)
+    assert isinstance(out, RedirectResponse)
+    return out
 
 
 @app.get("/api/oauth/schwab/callback")
@@ -1529,28 +1679,40 @@ def local_schwab_oauth_callback(
     def red(qs: str) -> RedirectResponse:
         return RedirectResponse(f"/?{qs}", status_code=302)
 
+    def status_key(k: str | None) -> str:
+        return "schwab_market_oauth" if k == "market" else "schwab_oauth"
+
     if error:
-        return red(f"schwab_oauth=error&message={urllib.parse.quote(error)}")
+        return red(f"{status_key(None)}=error&message={urllib.parse.quote(error)}")
     kind = _consume_local_oauth_state(state)
-    if kind != "account" or not code.strip():
+    if kind not in {"account", "market"} or not code.strip():
         return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
-    client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-    client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=False)
+    if kind == "market":
+        client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
+        client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
+    else:
+        client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
+        client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+    redirect_uri = _single_schwab_callback_uri(request)
     if not client_id or not client_secret:
-        return red("schwab_oauth=error&message=" + urllib.parse.quote("server_oauth_not_configured"))
+        code_name = "server_market_oauth_not_configured" if kind == "market" else "server_oauth_not_configured"
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(code_name))
     try:
         tok = exchange_schwab_code_for_tokens(client_id, client_secret, code, redirect_uri)
     except Exception as e:
-        return red("schwab_oauth=error&message=" + urllib.parse.quote(str(e)[:180]))
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(str(e)[:180]))
     access = str(tok.get("access_token") or "").strip()
     refresh = str(tok.get("refresh_token") or "").strip()
     if not access or not refresh:
-        return red("schwab_oauth=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
-    write_encrypted_token_file(TOKENS_ACCOUNT_PATH, tok, client_secret)
-    _audit_event("oauth_schwab_account_callback", "local-dashboard", {"saved": "tokens_account.enc"})
-    return red("schwab_oauth=ok")
+        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
+    if kind == "market":
+        write_encrypted_token_file(TOKENS_MARKET_PATH, tok, client_secret)
+        _audit_event("oauth_schwab_market_callback", "local-dashboard", {"saved": "tokens_market.enc"})
+    else:
+        write_encrypted_token_file(TOKENS_ACCOUNT_PATH, tok, client_secret)
+        _audit_event("oauth_schwab_account_callback", "local-dashboard", {"saved": "tokens_account.enc"})
+    return red(f"{status_key(kind)}=ok")
 
 
 @app.get("/api/oauth/schwab/market/callback")
@@ -1728,6 +1890,7 @@ def scan(
         if async_mode:
             started = False
             with _scan_lock:
+                _expire_stale_scan_job_locked()
                 if _scan_job.get("status") == "running":
                     pass
                 else:
@@ -1769,6 +1932,7 @@ def scan(
         sync_job_id = uuid.uuid4().hex[:10]
         _persist_scan_results_local(db, sync_job_id, signals)
         _enrich_signals_with_flagged_days(db, signals)
+        _enrich_signals_with_flagged_days(db, shortlist_signals)
         _prune_local_scan_results(db)
         signals_persist = signals[:_LAST_SCAN_SIGNALS_CAP]
         shortlist_persist = shortlist_signals[:_LAST_SCAN_SIGNALS_CAP]
@@ -2409,7 +2573,10 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
     symbol = ticker.upper().strip()
     signal = None
     with _scan_lock:
-        for row in _scan_job.get("signals") or []:
+        # Prefer kept/live-ranked signals, then fall back to shortlist rows so
+        # near-miss / filtered candidates can still show a decision brief.
+        all_rows = list(_scan_job.get("signals") or []) + list(_scan_job.get("shortlist_signals") or [])
+        for row in all_rows:
             if str((row or {}).get("ticker", "")).upper() == symbol:
                 signal = row
                 break
@@ -2425,13 +2592,28 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
         {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)} if price > 0 else {"low": None, "high": None}
     )
     confidence_bucket = str(((signal.get("advisory") or {}).get("confidence_bucket") or "unknown")).lower()
-    score = float(signal.get("signal_score", 0) or 0)
+    score = float(signal.get("composite_score", signal.get("signal_score", 0)) or 0)
+    reliability = signal.get("reliability_score")
+    edge = signal.get("edge_score")
+    execution = signal.get("execution_score")
+    ev_10d = signal.get("ev_10d")
+    rank_score = signal.get("rank_score")
+    rank_basis = signal.get("rank_basis")
     conviction = signal.get("mirofish_conviction")
+    try:
+        reliability_text = f"{float(reliability):.1f}" if reliability is not None else "unknown"
+    except (TypeError, ValueError):
+        reliability_text = "unknown"
     reasons = [
-        f"signal_score={score:.1f}",
+        f"composite_score={score:.1f}",
+        f"reliability={reliability_text}",
         f"confidence={confidence_bucket}",
         f"strategy={((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}",
     ]
+    if rank_score is not None:
+        reasons.append(f"rank_score={rank_score}")
+    if rank_basis:
+        reasons.append(f"rank_basis={rank_basis}")
     if conviction is not None:
         reasons.append(f"mirofish_conviction={conviction}")
     if signal.get("event_risk", {}).get("flagged"):
@@ -2441,6 +2623,70 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
         id="preview", ticker=symbol, qty=qty, price=price, status="pending", signal_json=json.dumps(signal), note=None
     )
     checklist = _build_pretrade_checklist(mock_trade, signal)
+    advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
+    p_up_10d = advisory.get("p_up_10d")
+    sec_risk_tag = str(signal.get("sec_risk_tag") or "unknown").lower()
+    sec_recency_days = signal.get("filing_recency_days")
+    event_risk = signal.get("event_risk") if isinstance(signal.get("event_risk"), dict) else {}
+    forensic_flags = [str(v) for v in list(signal.get("forensic_flags") or []) if str(v).strip()]
+    setup_summary = (
+        f"{symbol} remains a breakout candidate with score {score:.1f}, "
+        f"{confidence_bucket} confidence, and strategy "
+        f"{((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}."
+    )
+    key_risks: list[str] = []
+    for r in list(checklist.get("block_reasons_plain") or []):
+        txt = str(r).strip()
+        if txt:
+            key_risks.append(txt)
+    if sec_risk_tag in {"high", "medium"}:
+        key_risks.append(f"SEC risk tag: {sec_risk_tag}.")
+    if confidence_bucket in {"low", "unknown"}:
+        key_risks.append("Advisory confidence is low/unknown.")
+    if event_risk.get("flagged"):
+        event_reasons = ", ".join([str(x) for x in list(event_risk.get("reasons") or []) if str(x).strip()])
+        key_risks.append(f"Event risk flagged{': ' + event_reasons if event_reasons else ''}.")
+    catalyst_notes: list[str] = []
+    pead_surprise = signal.get("pead_surprise_pct")
+    pead_beat = signal.get("pead_beat")
+    if pead_surprise is not None:
+        try:
+            s = float(pead_surprise)
+            if pead_beat is True and s >= 0.05:
+                catalyst_notes.append(f"Positive earnings surprise: {round(s * 100, 1)}%.")
+            elif pead_beat is False and s <= -0.05:
+                catalyst_notes.append(f"Negative earnings surprise: {round(s * 100, 1)}%.")
+        except (TypeError, ValueError):
+            pass
+    catalyst_notes.append(
+        f"Primary strategy signal: {((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}."
+    )
+    sec_notes: list[str] = []
+    sec_notes.append(f"SEC risk tag: {sec_risk_tag}.")
+    if isinstance(sec_recency_days, int):
+        sec_notes.append(f"Most recent filing context age: {sec_recency_days} day(s).")
+    if not sec_notes:
+        sec_notes.append("No SEC enrichment notes available.")
+    forensic_note_lines: list[str] = []
+    if forensic_flags:
+        forensic_note_lines.extend(forensic_flags)
+    if signal.get("forensic_sloan") is not None:
+        forensic_note_lines.append(f"sloan={signal.get('forensic_sloan')}")
+    if signal.get("forensic_beneish") is not None:
+        forensic_note_lines.append(f"beneish={signal.get('forensic_beneish')}")
+    if signal.get("forensic_altman") is not None:
+        forensic_note_lines.append(f"altman={signal.get('forensic_altman')}")
+    expected_move_window = "10 trading days"
+    if p_up_10d is not None:
+        try:
+            expected_move_window = f"10 trading days (P(up) {round(float(p_up_10d) * 100, 1)}%)"
+        except (TypeError, ValueError):
+            pass
+    entry_stop_ideas = [
+        f"Entry zone: {entry_zone.get('low')} to {entry_zone.get('high')}.",
+        f"Stop / invalidation: {stop_level}.",
+        f"Sizing preview: {qty} shares (~${round(float(size_usd), 2)}).",
+    ]
 
     return _ok(
         {
@@ -2452,9 +2698,24 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
                 "bucket": confidence_bucket,
                 "signal_score": score,
                 "mirofish_conviction": conviction,
+                "edge_score": edge,
+                "reliability_score": reliability,
+                "execution_score": execution,
+                "ev_10d": ev_10d,
+                "rank_score": rank_score,
+                "rank_basis": rank_basis,
             },
             "key_reasons": reasons[:6],
             "block_reason": (checklist.get("block_reasons") or [None])[0],
             "checklist": checklist,
+            "brief": {
+                "setup_summary": setup_summary,
+                "key_risks": key_risks[:6],
+                "catalyst_notes": catalyst_notes[:6],
+                "forensic_flags": forensic_note_lines[:6],
+                "sec_notes": sec_notes[:6],
+                "expected_move_window": expected_move_window,
+                "entry_stop_ideas": entry_stop_ideas[:4],
+            },
         }
     )

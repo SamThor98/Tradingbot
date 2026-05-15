@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +24,21 @@ BACKTEST_RESULTS_PATH = SKILL_DIR / ".backtest_results.json"
 TRADE_OUTCOMES_PATH = SKILL_DIR / ".trade_outcomes.json"
 EXECUTION_METRICS_PATH = SKILL_DIR / "execution_safety_metrics.json"
 VALIDATION_ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
+_DATA_PROVIDER_INSTANCE: Any | None = None
+_DATA_PROVIDER_LOCK = threading.Lock()
+_ABLATION_STATUS_PATH = VALIDATION_ARTIFACT_DIR / "ablation_cycle_status.json"
+_ABLATION_LOCK = threading.Lock()
+_ABLATION_THREAD: threading.Thread | None = None
+_ABLATION_STATE: dict[str, Any] = {
+    "run_status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+    "returncode": None,
+    "raw_artifact": None,
+    "report_json": None,
+    "report_md": None,
+}
 
 
 def _ok(data: Any = None) -> ApiResponse:
@@ -44,6 +63,129 @@ def _read_json_file(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_ablation_state_locked() -> None:
+    VALIDATION_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    _ABLATION_STATUS_PATH.write_text(json.dumps(_ABLATION_STATE, indent=2), encoding="utf-8")
+
+
+def _latest_ablation_report_snapshot() -> dict[str, Any]:
+    latest = VALIDATION_ARTIFACT_DIR / "latest_ablation_report.json"
+    report_path: Path | None = latest if latest.exists() else None
+    if report_path is None:
+        runs = sorted(VALIDATION_ARTIFACT_DIR.glob("ablation_report_*.json"))
+        if runs:
+            report_path = runs[-1]
+    if report_path is None:
+        return {"exists": False}
+    payload = _read_json_file(report_path, {})
+    summary = payload.get("summary") if isinstance(payload, dict) else {}
+    leaderboard = payload.get("leaderboard") if isinstance(payload, dict) else []
+    best = leaderboard[0] if isinstance(leaderboard, list) and leaderboard else None
+    return {
+        "exists": True,
+        "path": str(report_path),
+        "generated_at": payload.get("generated_at") if isinstance(payload, dict) else None,
+        "summary": summary if isinstance(summary, dict) else {},
+        "best": best if isinstance(best, dict) else None,
+    }
+
+
+def _extract_marker_path(stdout: str, marker: str) -> str | None:
+    for line in (stdout or "").splitlines():
+        if marker in line:
+            _, _, tail = line.partition(marker)
+            out = tail.strip()
+            if out:
+                return out
+    return None
+
+
+def _run_ablation_cycle_async() -> None:
+    with _ABLATION_LOCK:
+        _ABLATION_STATE["run_status"] = "running"
+        _ABLATION_STATE["started_at"] = _utc_now_iso()
+        _ABLATION_STATE["finished_at"] = None
+        _ABLATION_STATE["last_error"] = None
+        _ABLATION_STATE["returncode"] = None
+        _ABLATION_STATE["raw_artifact"] = None
+        _ABLATION_STATE["report_json"] = None
+        _ABLATION_STATE["report_md"] = None
+        _write_ablation_state_locked()
+
+    run_cmd = [
+        sys.executable,
+        str(SKILL_DIR / "scripts" / "run_param_ablation.py"),
+        "--manifest",
+        str(SKILL_DIR / "scripts" / "ablation_manifest_v1.json"),
+    ]
+    run_proc = subprocess.run(
+        run_cmd,
+        cwd=str(SKILL_DIR),
+        capture_output=True,
+        text=True,
+    )
+    raw_path = _extract_marker_path(run_proc.stdout or "", "Ablation raw artifact:")
+    if run_proc.returncode != 0:
+        with _ABLATION_LOCK:
+            _ABLATION_STATE["run_status"] = "failed"
+            _ABLATION_STATE["finished_at"] = _utc_now_iso()
+            _ABLATION_STATE["returncode"] = int(run_proc.returncode)
+            _ABLATION_STATE["last_error"] = (
+                (run_proc.stderr or "").strip() or (run_proc.stdout or "").strip() or "ablation_raw_failed"
+            )[:400]
+            _write_ablation_state_locked()
+        return
+
+    if not raw_path:
+        with _ABLATION_LOCK:
+            _ABLATION_STATE["run_status"] = "failed"
+            _ABLATION_STATE["finished_at"] = _utc_now_iso()
+            _ABLATION_STATE["returncode"] = 3
+            _ABLATION_STATE["last_error"] = "Unable to resolve raw ablation artifact path."
+            _write_ablation_state_locked()
+        return
+
+    score_cmd = [
+        sys.executable,
+        str(SKILL_DIR / "scripts" / "score_ablation_report.py"),
+        "--raw-artifact",
+        raw_path,
+    ]
+    score_proc = subprocess.run(
+        score_cmd,
+        cwd=str(SKILL_DIR),
+        capture_output=True,
+        text=True,
+    )
+    report_json = _extract_marker_path(score_proc.stdout or "", "Ablation report JSON:")
+    report_md = _extract_marker_path(score_proc.stdout or "", "Ablation report Markdown:")
+    if score_proc.returncode != 0:
+        with _ABLATION_LOCK:
+            _ABLATION_STATE["run_status"] = "failed"
+            _ABLATION_STATE["finished_at"] = _utc_now_iso()
+            _ABLATION_STATE["returncode"] = int(score_proc.returncode)
+            _ABLATION_STATE["raw_artifact"] = raw_path
+            _ABLATION_STATE["last_error"] = (
+                (score_proc.stderr or "").strip() or (score_proc.stdout or "").strip() or "ablation_score_failed"
+            )[:400]
+            _write_ablation_state_locked()
+        return
+
+    with _ABLATION_LOCK:
+        _ABLATION_STATE["run_status"] = "completed"
+        _ABLATION_STATE["finished_at"] = _utc_now_iso()
+        _ABLATION_STATE["returncode"] = 0
+        _ABLATION_STATE["raw_artifact"] = raw_path
+        _ABLATION_STATE["report_json"] = report_json
+        _ABLATION_STATE["report_md"] = report_md
+        _ABLATION_STATE["last_error"] = None
+        _write_ablation_state_locked()
 
 
 def _require_api_key_if_set(
@@ -83,6 +225,18 @@ def _require_api_key_if_set(
 def _get_validation_status() -> dict[str, Any]:
     from ..main import _latest_validation_status
     return _latest_validation_status()
+
+
+def _get_data_provider_singleton() -> Any:
+    global _DATA_PROVIDER_INSTANCE
+    if _DATA_PROVIDER_INSTANCE is not None:
+        return _DATA_PROVIDER_INSTANCE
+    with _DATA_PROVIDER_LOCK:
+        if _DATA_PROVIDER_INSTANCE is None:
+            from data_provider import DataProvider
+
+            _DATA_PROVIDER_INSTANCE = DataProvider(skill_dir=SKILL_DIR)
+    return _DATA_PROVIDER_INSTANCE
 
 
 def _get_challenger_summary() -> dict[str, Any]:
@@ -196,9 +350,7 @@ def challenger_run(
 @router.get("/api/data-provider/status", response_model=ApiResponse)
 def data_provider_status() -> ApiResponse:
     try:
-        from data_provider import DataProvider
-
-        provider = DataProvider(skill_dir=SKILL_DIR)
+        provider = _get_data_provider_singleton()
         return _ok(provider.status())
     except Exception as e:
         return _err_response("data_provider_status", e)
@@ -216,3 +368,37 @@ def evolve_run(
         return _ok(result)
     except Exception as e:
         return _err_response("evolve_run", e)
+
+
+@router.get("/api/ablation/status", response_model=ApiResponse)
+def ablation_status() -> ApiResponse:
+    with _ABLATION_LOCK:
+        status = dict(_ABLATION_STATE)
+        running = bool(_ABLATION_THREAD is not None and _ABLATION_THREAD.is_alive())
+    if not status.get("started_at") and _ABLATION_STATUS_PATH.exists():
+        persisted = _read_json_file(_ABLATION_STATUS_PATH, {})
+        if isinstance(persisted, dict):
+            status.update(persisted)
+    status["running"] = running
+    status["latest_report"] = _latest_ablation_report_snapshot()
+    return _ok(status)
+
+
+@router.post("/api/ablation/run", response_model=ApiResponse)
+def ablation_run(
+    _auth: dict[str, str] = Depends(_require_api_key_if_set),
+) -> ApiResponse:
+    global _ABLATION_THREAD
+    with _ABLATION_LOCK:
+        if _ABLATION_THREAD is not None and _ABLATION_THREAD.is_alive():
+            return _ok(
+                {
+                    "started": False,
+                    "already_running": True,
+                    "status": dict(_ABLATION_STATE),
+                }
+            )
+        _ABLATION_THREAD = threading.Thread(target=_run_ablation_cycle_async, daemon=True)
+        _ABLATION_THREAD.start()
+        status = dict(_ABLATION_STATE)
+    return _ok({"started": True, "already_running": False, "status": status})

@@ -195,12 +195,16 @@ def _build_dcf(ticker: str) -> DCFSection:
     sec = DCFSection()
     try:
         import yfinance as yf
-        t = yf.Ticker(ticker)
-        info = t.info or {}
 
-        cashflow = t.cashflow
-        financials = t.financials
-        balance = t.balance_sheet
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(ticker)
+            info = t.info or {}
+
+            cashflow = t.cashflow
+            financials = t.financials
+            balance = t.balance_sheet
 
         if cashflow is None or cashflow.empty:
             sec.error = "No cash flow data available from yfinance."
@@ -344,8 +348,12 @@ def _build_comps(ticker: str) -> CompsSection:
     sec = CompsSection(ticker=ticker)
     try:
         import yfinance as yf
-        t = yf.Ticker(ticker)
-        info = t.info or {}
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(ticker)
+            info = t.info or {}
         sector = info.get("sector", "")
         industry = info.get("industry", "")
 
@@ -357,7 +365,8 @@ def _build_comps(ticker: str) -> CompsSection:
 
         for pt in peer_tickers[:6]:
             try:
-                pi = yf.Ticker(pt).info or {}
+                with yfinance_call():
+                    pi = yf.Ticker(pt).info or {}
                 peers.append({
                     "ticker": pt,
                     "name": pi.get("shortName", pt),
@@ -427,9 +436,13 @@ def _build_health(ticker: str) -> HealthSection:
     sec = HealthSection()
     try:
         import yfinance as yf
-        t = yf.Ticker(ticker)
-        info = t.info or {}
-        financials = t.financials
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(ticker)
+            info = t.info or {}
+            financials = t.financials
 
         sec.current_ratio = float(info.get("currentRatio", 0) or 0)
         sec.debt_to_equity = float(info.get("debtToEquity", 0) or 0) / 100.0 if info.get("debtToEquity") else 0.0
@@ -836,8 +849,12 @@ def generate_full_report(
     except Exception:
         try:
             import yfinance as yf
-            t = yf.Ticker(ticker)
-            raw = t.history(period="2y", auto_adjust=True)
+
+            from _io_utils import yfinance_call
+
+            with yfinance_call():
+                t = yf.Ticker(ticker)
+                raw = t.history(period="2y", auto_adjust=True)
             df = raw.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
             df = df[["open", "high", "low", "close", "volume"]].sort_index()
         except Exception:
@@ -1172,8 +1189,12 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
     except Exception:
         try:
             import yfinance as yf
-            t = yf.Ticker(ticker)
-            raw = t.history(period="2y", auto_adjust=True)
+
+            from _io_utils import yfinance_call
+
+            with yfinance_call():
+                t = yf.Ticker(ticker)
+                raw = t.history(period="2y", auto_adjust=True)
             df = raw.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
             df = df[["open", "high", "low", "close", "volume"]].sort_index()
         except Exception:

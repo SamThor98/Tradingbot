@@ -223,12 +223,15 @@ def assess_symbol_data_health(
         try:
             import yfinance as yf
 
-            fi = getattr(yf.Ticker(ticker.upper()), "fast_info", None)
-            if fi is not None:
-                lp = getattr(fi, "last_price", None) or getattr(fi, "lastPrice", None)
-                alt_last = _safe_float(lp)
-                if alt_last is None and isinstance(fi, dict):
-                    alt_last = _safe_float(fi.get("lastPrice") or fi.get("last_price"))
+            from _io_utils import yfinance_call
+
+            with yfinance_call():
+                fi = getattr(yf.Ticker(ticker.upper()), "fast_info", None)
+                if fi is not None:
+                    lp = getattr(fi, "last_price", None) or getattr(fi, "lastPrice", None)
+                    alt_last = _safe_float(lp)
+                    if alt_last is None and isinstance(fi, dict):
+                        alt_last = _safe_float(fi.get("lastPrice") or fi.get("last_price"))
         except Exception as e:
             LOG.debug("data_health cross-check yfinance failed: %s", e)
     details["crosscheck_alt_last"] = alt_last

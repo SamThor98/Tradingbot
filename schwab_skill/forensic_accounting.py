@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from config import get_schwab_only_data
+
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
 FORENSIC_CACHE_FILE = ".forensic_cache.json"
@@ -48,14 +50,19 @@ def compute_sloan_ratio(ticker: str) -> dict[str, Any] | None:
     Sloan accrual ratio:
       (net_income - operating_cash_flow) / total_assets
     """
+    if get_schwab_only_data():
+        return None
     try:
         import yfinance as yf
 
+        from _io_utils import yfinance_call
+
         tkr = _normalize_symbol(ticker)
-        t = yf.Ticker(tkr)
-        fin = t.quarterly_financials
-        cf = t.quarterly_cashflow
-        bs = t.quarterly_balance_sheet
+        with yfinance_call():
+            t = yf.Ticker(tkr)
+            fin = t.quarterly_financials
+            cf = t.quarterly_cashflow
+            bs = t.quarterly_balance_sheet
         if fin is None or fin.empty or cf is None or cf.empty or bs is None or bs.empty:
             return None
 
@@ -93,14 +100,19 @@ def compute_beneish_m_score(ticker: str) -> dict[str, Any] | None:
       M = -4.84 + 0.920*DSRI + 0.528*GMI + 0.404*AQI + 0.892*SGI
           + 0.115*DEPI - 0.172*SGAI + 4.679*TATA - 0.327*LVGI
     """
+    if get_schwab_only_data():
+        return None
     try:
         import yfinance as yf
 
+        from _io_utils import yfinance_call
+
         tkr = _normalize_symbol(ticker)
-        t = yf.Ticker(tkr)
-        fin = t.financials
-        bs = t.balance_sheet
-        cf = t.cashflow
+        with yfinance_call():
+            t = yf.Ticker(tkr)
+            fin = t.financials
+            bs = t.balance_sheet
+            cf = t.cashflow
         if fin is None or fin.empty or bs is None or bs.empty:
             return None
         if fin.shape[1] < 2 or bs.shape[1] < 2:
@@ -226,14 +238,19 @@ def compute_altman_z_score(ticker: str) -> dict[str, Any] | None:
     Altman Z-Score:
       Z = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0*E
     """
+    if get_schwab_only_data():
+        return None
     try:
         import yfinance as yf
 
+        from _io_utils import yfinance_call
+
         tkr = _normalize_symbol(ticker)
-        t = yf.Ticker(tkr)
-        bs = t.quarterly_balance_sheet
-        fin = t.quarterly_financials
-        info = t.info or {}
+        with yfinance_call():
+            t = yf.Ticker(tkr)
+            bs = t.quarterly_balance_sheet
+            fin = t.quarterly_financials
+            info = t.info or {}
         if bs is None or bs.empty or fin is None or fin.empty:
             return None
 
@@ -304,9 +321,25 @@ def _load_cache(skill_dir: Path | None = None) -> dict[str, Any]:
 
 
 def _save_cache(cache: dict[str, Any], skill_dir: Path | None = None) -> None:
-    path = _cache_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_cache_path(skill_dir), cache, indent=2)
+
+
+# Failed payloads (`ok=False`, all three forensic ratios None) get a much
+# shorter TTL than successes so a single transient yfinance hiccup doesn't
+# poison a ticker's forensic data for `cache_hours` (typically 24h). Set to
+# 15 minutes — long enough to absorb burst retries inside one scan, short
+# enough that the next scheduled scan re-attempts.
+_FAILED_PAYLOAD_TTL_HOURS = 0.25
+
+
+def _is_payload_failure(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return True
+    if payload.get("ok") is False:
+        return True
+    return all(payload.get(k) is None for k in ("sloan", "beneish", "altman"))
 
 
 def _is_fresh(entry: dict[str, Any] | None, cache_hours: float) -> bool:
@@ -315,8 +348,14 @@ def _is_fresh(entry: dict[str, Any] | None, cache_hours: float) -> bool:
     ts = float(entry.get("timestamp", 0) or 0)
     if ts <= 0:
         return False
+    payload = entry.get("payload") if isinstance(entry, dict) else None
+    effective_ttl = (
+        min(float(cache_hours), _FAILED_PAYLOAD_TTL_HOURS)
+        if _is_payload_failure(payload)
+        else float(cache_hours)
+    )
     age_h = (time.time() - ts) / 3600.0
-    return age_h <= float(cache_hours)
+    return age_h <= effective_ttl
 
 
 def _build_forensic_flags(
@@ -353,6 +392,18 @@ def compute_forensic_snapshot(
     altman_min: float = 1.80,
 ) -> dict[str, Any]:
     tkr = _normalize_symbol(ticker)
+    if get_schwab_only_data(skill_dir):
+        return {
+            "ok": False,
+            "ticker": tkr,
+            "sloan": None,
+            "beneish": None,
+            "altman": None,
+            "forensic_flags": [],
+            "from_cache": False,
+            "data_lineage": "schwab_only:yfinance_fundamentals_blocked",
+        }
+
     cache = _load_cache(skill_dir)
     entry = (cache.get("tickers") or {}).get(tkr)
     if _is_fresh(entry, cache_hours):

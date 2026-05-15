@@ -148,9 +148,9 @@ def _load_quality_metrics(skill_dir: Path) -> dict[str, Any]:
 
 
 def _save_quality_metrics(skill_dir: Path, data: dict[str, Any]) -> None:
-    path = _quality_metrics_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_quality_metrics_path(skill_dir), data, indent=2)
 
 
 def _record_quality_snapshot(skill_dir: Path, diagnostics: dict[str, Any], signals: list[dict[str, Any]]) -> None:
@@ -211,6 +211,225 @@ def get_signal_quality_summary(skill_dir: Path | str | None = None, days: int = 
     }
 
 
+def _clamp_float(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, float(value)))
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _resolve_calibrated_p_up(signal_row: dict[str, Any], confidence_bucket: str) -> float:
+    advisory = signal_row.get("advisory") if isinstance(signal_row.get("advisory"), dict) else {}
+    p_raw = advisory.get("p_up_10d")
+    p = None
+    if p_raw is not None:
+        try:
+            p = float(p_raw)
+        except (TypeError, ValueError):
+            p = None
+    if p is None:
+        score = _safe_float(signal_row.get("signal_score"), 50.0)
+        p = 0.5 + ((score - 50.0) / 150.0)
+
+    shrink_by_bucket = {
+        "high": 0.98,
+        "medium": 0.9,
+        "low": 0.75,
+        "unknown": 0.65,
+    }
+    shrink = shrink_by_bucket.get(str(confidence_bucket or "unknown").lower(), 0.7)
+    p = 0.5 + ((p - 0.5) * shrink)
+    # Conviction is already folded into ``signal_score`` via ``pts_mirofish`` in
+    # ``compute_signal_components`` — do not nudge p_up again here.
+    return _clamp_float(p, 0.01, 0.99)
+
+
+def _compute_high_level_rank_score(
+    *,
+    composite_score: float,
+    edge_score: float,
+    reliability_score: float,
+    execution_score: float,
+    p_up_calibrated: float,
+    ev_10d: float,
+    sec_risk_tag: str,
+    forensic_flags: list[str],
+) -> float:
+    """
+    Compute a single explainable rank score (0-100) for final ordering.
+
+    The rank intentionally prioritizes composite quality while still carrying
+    execution/reliability, calibrated probability, and a bounded EV nudge.
+    """
+    base = (
+        (composite_score * 0.55)
+        + (edge_score * 0.15)
+        + (reliability_score * 0.15)
+        + (execution_score * 0.1)
+        + ((p_up_calibrated * 100.0) * 0.05)
+    )
+
+    # Keep EV contribution informative but bounded so it cannot dominate rank.
+    ev_nudge = _clamp_float(ev_10d * 1000.0, -8.0, 8.0)
+    rank_score = base + ev_nudge
+
+    # Reliability/execution hardening so fragile setups do not float too high.
+    if reliability_score < 40.0:
+        rank_score = min(rank_score, 55.0)
+    if execution_score < 45.0:
+        rank_score = min(rank_score, 58.0)
+
+    # Hard risk cap mirrors composite risk cap semantics.
+    if sec_risk_tag == "high" or "beneish_manipulator" in forensic_flags or "altman_distress" in forensic_flags:
+        rank_score = min(rank_score, 45.0)
+    return _clamp_float(rank_score, 0.0, 100.0)
+
+
+def _apply_score_stack(signal_row: dict[str, Any]) -> dict[str, Any]:
+    """
+    Compute a reliability-aware score stack for UI + ranking:
+      - edge_score
+      - reliability_score
+      - execution_score
+      - composite_score
+      - p_up_calibrated
+      - ev_10d
+      - reliability_reasons
+
+    Crowd conviction (MiroFish) contributes exactly once — via ``pts_mirofish``
+    inside ``signal_score``. ``p_up_calibrated`` must not apply a second
+    conviction nudge; reliability diagnostics still reference conviction directly.
+    """
+    score = _safe_float(signal_row.get("signal_score"), 0.0)
+    conviction_raw = signal_row.get("mirofish_conviction")
+    conviction = None
+    try:
+        conviction = float(conviction_raw) if conviction_raw is not None else None
+    except (TypeError, ValueError):
+        conviction = None
+
+    advisory = signal_row.get("advisory") if isinstance(signal_row.get("advisory"), dict) else {}
+    confidence_bucket = str(advisory.get("confidence_bucket") or "unknown").lower()
+    p_up_calibrated = _resolve_calibrated_p_up(signal_row, confidence_bucket)
+
+    edge_score = (
+        (score * 0.65)
+        + ((p_up_calibrated * 100.0) * 0.35)
+    )
+    edge_score = _clamp_float(edge_score, 0.0, 100.0)
+
+    reliability = 82.0
+    reliability_reasons: list[str] = []
+    if confidence_bucket == "high":
+        reliability += 12.0
+    elif confidence_bucket == "medium":
+        reliability += 4.0
+    elif confidence_bucket == "low":
+        reliability -= 12.0
+        reliability_reasons.append("advisory_low_confidence")
+    else:
+        reliability -= 18.0
+        reliability_reasons.append("advisory_missing_or_unknown")
+    if not advisory:
+        reliability -= 8.0
+        reliability_reasons.append("advisory_unavailable")
+
+    if conviction is None:
+        reliability -= 10.0
+        reliability_reasons.append("mirofish_conviction_missing")
+    disagreement = _safe_float(signal_row.get("mirofish_disagreement"), 0.0)
+    if disagreement >= 55:
+        reliability -= 14.0
+        reliability_reasons.append("mirofish_high_disagreement")
+    elif disagreement >= 35:
+        reliability -= 8.0
+        reliability_reasons.append("mirofish_medium_disagreement")
+
+    used_fallback = bool(signal_row.get("used_fallback_data"))
+    if used_fallback:
+        reliability -= 15.0
+        reliability_reasons.append("fallback_data_used")
+    if not bool(signal_row.get("data_provider_primary")):
+        reliability -= 6.0
+        reliability_reasons.append("non_primary_provider")
+
+    sec_risk_tag = str(signal_row.get("sec_risk_tag") or "unknown").lower()
+    forensic_flags = list(signal_row.get("forensic_flags") or [])
+    if sec_risk_tag == "high":
+        reliability -= 8.0
+        reliability_reasons.append("high_sec_risk_tag")
+    if "beneish_manipulator" in forensic_flags:
+        reliability -= 10.0
+        reliability_reasons.append("forensic_beneish_manipulator")
+    if "altman_distress" in forensic_flags:
+        reliability -= 10.0
+        reliability_reasons.append("forensic_altman_distress")
+
+    reliability = _clamp_float(reliability, 0.0, 100.0)
+
+    execution = 100.0
+    latest_volume = _safe_float(signal_row.get("latest_volume"), 0.0)
+    avg_vol_50 = _safe_float(signal_row.get("avg_vol_50"), 0.0)
+    if avg_vol_50 > 0 and latest_volume > 0:
+        ratio = latest_volume / avg_vol_50
+        if ratio < 0.7:
+            execution -= 20.0
+        elif ratio < 0.9:
+            execution -= 10.0
+    if bool(signal_row.get("recent_8k")):
+        execution -= 12.0
+    if sec_risk_tag == "high":
+        execution -= 15.0
+    elif sec_risk_tag == "medium":
+        execution -= 7.0
+    if not bool(signal_row.get("breakout_confirmed")):
+        execution -= 8.0
+    if used_fallback:
+        execution -= 8.0
+    execution = _clamp_float(execution, 0.0, 100.0)
+
+    avg_win = 0.01 + (max(0.0, edge_score - 50.0) / 100.0) * 0.06
+    avg_loss = 0.008 + (max(0.0, 50.0 - edge_score) / 100.0) * 0.05
+    friction = 0.002 + ((100.0 - execution) / 100.0) * 0.01
+    ev_10d = (p_up_calibrated * avg_win) - ((1.0 - p_up_calibrated) * avg_loss) - friction
+
+    composite = (edge_score * 0.5) + (reliability * 0.3) + (execution * 0.2)
+    if reliability < 40.0:
+        composite = min(composite, 55.0)
+        reliability_reasons.append("composite_capped_low_reliability")
+    if sec_risk_tag == "high" or "beneish_manipulator" in forensic_flags or "altman_distress" in forensic_flags:
+        composite = min(composite, 45.0)
+        reliability_reasons.append("composite_capped_risk")
+    composite = _clamp_float(composite, 0.0, 100.0)
+
+    rank_score = _compute_high_level_rank_score(
+        composite_score=composite,
+        edge_score=edge_score,
+        reliability_score=reliability,
+        execution_score=execution,
+        p_up_calibrated=p_up_calibrated,
+        ev_10d=ev_10d,
+        sec_risk_tag=sec_risk_tag,
+        forensic_flags=forensic_flags,
+    )
+
+    signal_row["edge_score"] = round(edge_score, 2)
+    signal_row["reliability_score"] = round(reliability, 2)
+    signal_row["execution_score"] = round(execution, 2)
+    signal_row["composite_score"] = round(composite, 2)
+    signal_row["rank_score"] = round(rank_score, 2)
+    signal_row["rank_basis"] = "high_level_v1"
+    signal_row["score_stack_version"] = "v1"
+    signal_row["p_up_calibrated"] = round(p_up_calibrated, 4)
+    signal_row["ev_10d"] = round(ev_10d, 5)
+    signal_row["reliability_reasons"] = sorted(set(reliability_reasons))
+    return signal_row
+
+
 def _load_macro_blackout_dates(skill_dir: Path) -> set[str]:
     import os
 
@@ -241,10 +460,17 @@ def _load_macro_blackout_dates(skill_dir: Path) -> set[str]:
 
 def _nearest_earnings_distance_days(ticker: str) -> int | None:
     try:
+        from config import get_schwab_only_data
+
+        if get_schwab_only_data():
+            return None
         import pandas as pd
         import yfinance as yf
 
-        df = yf.Ticker(str(ticker or "").upper()).earnings_dates
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            df = yf.Ticker(str(ticker or "").upper()).earnings_dates
         if not isinstance(df, pd.DataFrame) or df.empty:
             return None
         idx = pd.to_datetime(df.index, errors="coerce")
@@ -529,7 +755,7 @@ def _scan_stage_a_one(
     sector_penalty_points: float,
     sector_unresolved_penalty_points: float,
 ) -> dict[str, Any]:
-    from market_data import extract_schwab_last_price, get_current_quote, get_daily_history_with_meta
+    from market_data import extract_schwab_live_price, get_current_quote, get_daily_history_with_meta
     from sector_strength import get_ticker_sector_etf
     from stage_analysis import (
         add_indicators,
@@ -558,6 +784,34 @@ def _scan_stage_a_one(
                 "used_fallback": used_fallback,
                 "fallback_reason": history_meta.get("fallback_reason"),
             }
+        # Stale-bar gate: reject signals when the last daily bar is too old.
+        # Stage 2 / VCP / breakout decisions anchor against the most recent
+        # bar, so a stale feed silently compares today's live price against a
+        # multi-day-old prior high.
+        try:
+            from datetime import date as _date
+
+            last_idx = df.index[-1]
+            if hasattr(last_idx, "date"):
+                last_bar_date = last_idx.date()
+            else:
+                last_bar_date = _date.fromisoformat(str(last_idx)[:10])
+            bar_age_days = (_date.today() - last_bar_date).days
+            from config import get_scan_stage_a_max_bar_age_days
+
+            max_age = int(get_scan_stage_a_max_bar_age_days(skill_dir))
+            if bar_age_days > max_age:
+                return {
+                    "ok": False,
+                    "reason": "bars_stale",
+                    "provider": provider,
+                    "used_fallback": used_fallback,
+                    "fallback_reason": (
+                        f"bars_stale_age_days_{bar_age_days}_gt_{max_age}_last_{last_bar_date.isoformat()}"
+                    ),
+                }
+        except Exception as _e:
+            LOG.debug("Stale-bar gate check failed for %s: %s", ticker, _e)
         df = add_indicators(df)
         if not is_stage_2(df, skill_dir):
             return {
@@ -599,7 +853,10 @@ def _scan_stage_a_one(
 
         quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
         price = float(df["close"].iloc[-1])
-        live = extract_schwab_last_price(quote) if isinstance(quote, dict) else None
+        # Use the strict live-only extractor so a stale `closePrice` substitution
+        # cannot anchor a fresh breakout decision (would compare today's high
+        # against yesterday's close).
+        live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
         if live is not None:
             price = live
 
@@ -624,6 +881,35 @@ def _scan_stage_a_one(
                     "used_fallback": used_fallback,
                     "fallback_reason": history_meta.get("fallback_reason"),
                 }
+
+        try:
+            from engine_analysis import compute_seed_fingerprint, get_cached_conviction
+            from self_study import get_learned_min_conviction
+
+            min_conv = get_learned_min_conviction(skill_dir)
+            if min_conv is not None and int(min_conv) > 0:
+                fp = compute_seed_fingerprint(df, ticker, skill_dir)
+                cached = get_cached_conviction(
+                    ticker,
+                    skill_dir=skill_dir,
+                    max_age_hours=12,
+                    seed_fingerprint=fp,
+                )
+                if isinstance(cached, dict) and cached.get("conviction_score") is not None:
+                    try:
+                        cv = float(cached["conviction_score"])
+                    except (TypeError, ValueError):
+                        cv = None
+                    if cv is not None and cv < float(min_conv):
+                        return {
+                            "ok": False,
+                            "reason": "self_study_low_cached_conviction",
+                            "provider": provider,
+                            "used_fallback": used_fallback,
+                            "fallback_reason": history_meta.get("fallback_reason"),
+                        }
+        except Exception as _e:
+            LOG.debug("Stage A self-study conviction gate skipped for %s: %s", ticker, _e)
 
         components = compute_signal_components(df, skill_dir=skill_dir)
         stage_a_score = float(components.get("score", 0) or 0)
@@ -1110,10 +1396,47 @@ def _scan_stage_b_enrich(
         except Exception as e:
             LOG.debug("Strategy plugin evaluation skipped for %s: %s", ticker, e)
 
+        signal_row = _apply_score_stack(signal_row)
         return {"ok": True, "signal": signal_row, "diag": diag_delta}
     except Exception as e:
         diag_delta["stage_b_exceptions"] += 1
         return {"ok": False, "error": f"{ticker}: {e}", "diag": diag_delta}
+
+
+def _accumulate_provider_fallback_diagnostics(
+    diagnostics: dict[str, Any],
+    out: dict[str, Any],
+) -> None:
+    """Track provider/fallback accounting in one place for consistency."""
+    candidate = out.get("candidate") or {}
+    provider = str(out.get("provider") or candidate.get("data_provider") or "unknown").strip().lower()
+    used_fallback = bool(out.get("used_fallback", candidate.get("used_fallback_data", False)))
+    fb_reason = str(out.get("fallback_reason") or candidate.get("fallback_reason") or "").strip()
+
+    if provider == "schwab":
+        diagnostics["data_provider_primary_count"] = int(diagnostics.get("data_provider_primary_count", 0) or 0) + 1
+        if used_fallback or fb_reason:
+            diagnostics["fallback_inconsistent_count"] = int(
+                diagnostics.get("fallback_inconsistent_count", 0) or 0
+            ) + 1
+    elif provider == "yfinance":
+        diagnostics["data_provider_fallback_count"] = int(
+            diagnostics.get("data_provider_fallback_count", 0) or 0
+        ) + 1
+        if not fb_reason:
+            diagnostics["fallback_reason_missing_count"] = int(
+                diagnostics.get("fallback_reason_missing_count", 0) or 0
+            ) + 1
+        if not used_fallback:
+            diagnostics["fallback_inconsistent_count"] = int(
+                diagnostics.get("fallback_inconsistent_count", 0) or 0
+            ) + 1
+    else:
+        diagnostics["data_provider_unknown_count"] = int(diagnostics.get("data_provider_unknown_count", 0) or 0) + 1
+        if used_fallback and not fb_reason:
+            diagnostics["fallback_reason_missing_count"] = int(
+                diagnostics.get("fallback_reason_missing_count", 0) or 0
+            ) + 1
 
 
 def scan_for_signals_detailed(
@@ -1167,6 +1490,8 @@ def scan_for_signals_detailed(
         "watchlist_size": 0,
         "df_empty": 0,
         "too_few_candles": 0,
+        "bars_stale": 0,
+        "self_study_low_cached_conviction": 0,
         "stage2_fail": 0,
         "vcp_fail": 0,
         "no_sector_etf": 0,
@@ -1238,8 +1563,15 @@ def scan_for_signals_detailed(
         "data_provider_fallback_count": 0,
         "data_provider_unknown_count": 0,
         "fallback_reason_missing_count": 0,
+        "fallback_inconsistent_count": 0,
         "silent_fallback_count": 0,
         "primary_provider_filtered": 0,
+        "regime_check_failed": 0,
+        "regime_check_error": None,
+        "regime_fail_closed_mode": None,
+        "stage_a_logging_failures": 0,
+        "stage_b_logging_failures": 0,
+        "post_scan_observability_failures": 0,
     }
     diagnostics["prediction_market"] = {
         "enabled": False,
@@ -1267,6 +1599,21 @@ def scan_for_signals_detailed(
     import uuid as _uuid_mod
     _scan_id = _uuid_mod.uuid4().hex[:12]
     diagnostics["scan_id"] = _scan_id
+
+    _bounded_warning_counts: dict[str, int] = {}
+
+    def _record_nonfatal(counter_key: str, message: str, *fmt_args: Any) -> None:
+        diagnostics[counter_key] = int(diagnostics.get(counter_key, 0) or 0) + 1
+        seen = int(_bounded_warning_counts.get(counter_key, 0) or 0) + 1
+        _bounded_warning_counts[counter_key] = seen
+        if seen <= 3:
+            LOG.warning(message, *fmt_args)
+        elif seen == 4:
+            LOG.warning(
+                "%s (further '%s' warnings suppressed this scan)",
+                message % fmt_args if fmt_args else message,
+                counter_key,
+            )
 
     try:
         from schwab_auth import DualSchwabAuth
@@ -1341,18 +1688,22 @@ def scan_for_signals_detailed(
             "signal_score": 75.0,
             "_demo": True,
         })
+        if signals:
+            signals[0] = _apply_score_stack(signals[0])
         LOG.info("DEMO_SIGNAL: injected test signal for %s", demo_ticker)
         return signals, diagnostics
 
     # Regime gate: SPY must be above 200 SMA unless explicitly overridden.
     try:
-        from config import get_scan_allow_bear_regime
+        from config import get_risk_fail_closed_on_data_outage, get_scan_allow_bear_regime
         from sector_strength import is_market_regime_bullish
 
         allow_bear_regime = bool(get_scan_allow_bear_regime(skill_dir))
+        fail_closed_on_outage = bool(get_risk_fail_closed_on_data_outage(skill_dir))
         regime_bullish, regime_ctx = is_market_regime_bullish(auth, skill_dir)
         diagnostics["regime_bullish"] = regime_bullish
         diagnostics["scan_allow_bear_regime"] = allow_bear_regime
+        diagnostics["regime_fail_closed_mode"] = fail_closed_on_outage
         diagnostics["spy_price"] = regime_ctx.get("spy_price")
         diagnostics["spy_sma_200"] = regime_ctx.get("spy_sma_200")
         if not regime_bullish and not allow_bear_regime:
@@ -1368,7 +1719,28 @@ def scan_for_signals_detailed(
         if not regime_bullish and allow_bear_regime:
             LOG.info("Regime gate override active: scan continues while SPY below 200 SMA")
     except Exception as e:
-        LOG.warning("Regime check failed, proceeding with scan: %s", e)
+        from config import get_risk_fail_closed_on_data_outage
+
+        fail_closed_on_outage = bool(get_risk_fail_closed_on_data_outage(skill_dir))
+        diagnostics["regime_check_failed"] = 1
+        diagnostics["regime_check_error"] = f"{type(e).__name__}: {e}"
+        diagnostics["regime_fail_closed_mode"] = fail_closed_on_outage
+        diagnostics["regime_bullish"] = None
+        diagnostics["scan_allow_bear_regime"] = None
+        if fail_closed_on_outage:
+            diagnostics["scan_blocked"] = 1
+            diagnostics["scan_blocked_reason"] = "regime_check_failed_data_unavailable"
+            msg = (
+                "Scan blocked: regime gate failed and fail-closed mode is enabled "
+                f"(error={type(e).__name__}: {e})."
+            )
+            send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
+            LOG.warning(msg)
+            return [], diagnostics
+        LOG.warning(
+            "Regime check failed but continuing because RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false: %s",
+            e,
+        )
 
     # Sector performance - notify on failure
     try:
@@ -1575,6 +1947,8 @@ def scan_for_signals_detailed(
     stage_a_reason_keys = {
         "df_empty",
         "too_few_candles",
+        "bars_stale",
+        "self_study_low_cached_conviction",
         "stage2_fail",
         "vcp_fail",
         "no_sector_etf",
@@ -1583,7 +1957,9 @@ def scan_for_signals_detailed(
         "exceptions",
     }
     future_map_a: dict[cf.Future[Any], str] = {}
-    with cf.ThreadPoolExecutor(max_workers=max(1, stage_a_workers)) as ex:
+    stage_a_timed_out = False
+    ex = cf.ThreadPoolExecutor(max_workers=max(1, stage_a_workers))
+    try:
         for ticker in watchlist:
             fut = ex.submit(
                 _scan_stage_a_one,
@@ -1608,28 +1984,7 @@ def scan_for_signals_detailed(
                 ticker = future_map_a[fut]
                 try:
                     out = fut.result()
-                    provider = str(out.get("provider") or (out.get("candidate") or {}).get("data_provider") or "unknown")
-                    if provider == "schwab":
-                        diagnostics["data_provider_primary_count"] = int(
-                            diagnostics.get("data_provider_primary_count", 0) or 0
-                        ) + 1
-                    elif provider == "yfinance":
-                        diagnostics["data_provider_fallback_count"] = int(
-                            diagnostics.get("data_provider_fallback_count", 0) or 0
-                        ) + 1
-                    else:
-                        diagnostics["data_provider_unknown_count"] = int(
-                            diagnostics.get("data_provider_unknown_count", 0) or 0
-                        ) + 1
-                    fb_reason = str(
-                        out.get("fallback_reason")
-                        or (out.get("candidate") or {}).get("fallback_reason")
-                        or ""
-                    ).strip()
-                    if provider == "yfinance" and not fb_reason:
-                        diagnostics["fallback_reason_missing_count"] = int(
-                            diagnostics.get("fallback_reason_missing_count", 0) or 0
-                        ) + 1
+                    _accumulate_provider_fallback_diagnostics(diagnostics, out)
                     if out.get("ok"):
                         candidate = out["candidate"]
                         stage_a_candidates.append(candidate)
@@ -1661,17 +2016,28 @@ def scan_for_signals_detailed(
                             regime_bucket=diagnostics.get("regime_v2_bucket"),
                             skill_dir=skill_dir,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _record_nonfatal(
+                            "stage_a_logging_failures",
+                            "Stage A feature-store logging failed for %s: %s",
+                            ticker,
+                            e,
+                        )
                 except Exception as e:
                     diagnostics["exceptions"] += 1
                     data_failures.append(f"{ticker}: {e}")
         except cf.TimeoutError:
+            stage_a_timed_out = True
             pending = [future_map_a[f] for f in future_map_a if not f.done()]
             diagnostics["stage_a_timeouts"] += len(pending)
             diagnostics["exceptions"] += len(pending)
             for ticker in pending[:10]:
                 data_failures.append(f"{ticker}: stage_a timeout")
+            for fut in future_map_a:
+                if not fut.done():
+                    fut.cancel()
+    finally:
+        ex.shutdown(wait=not stage_a_timed_out, cancel_futures=stage_a_timed_out)
     diagnostics["scan_stage_a_ms"] = int((time.perf_counter() - stage_a_start) * 1000)
 
     diagnostics["stage_a_candidates"] = len(stage_a_candidates)
@@ -1696,7 +2062,9 @@ def scan_for_signals_detailed(
     # Stage B: expensive enrichment/ranking on shortlist only.
     stage_b_start = time.perf_counter()
     future_map_b: dict[cf.Future[Any], str] = {}
-    with cf.ThreadPoolExecutor(max_workers=max(1, stage_b_workers)) as ex:
+    stage_b_timed_out = False
+    ex = cf.ThreadPoolExecutor(max_workers=max(1, stage_b_workers))
+    try:
         for candidate in shortlist:
             ticker = str(candidate.get("ticker") or "")
             fut = ex.submit(
@@ -1759,12 +2127,18 @@ def scan_for_signals_detailed(
                     diagnostics["stage_b_exceptions"] += 1
                     data_failures.append(f"{ticker}: {e}")
         except cf.TimeoutError:
+            stage_b_timed_out = True
             pending = [future_map_b[f] for f in future_map_b if not f.done()]
             diagnostics["stage_b_timeouts"] += len(pending)
             diagnostics["exceptions"] += len(pending)
             diagnostics["stage_b_exceptions"] += len(pending)
             for ticker in pending[:10]:
                 data_failures.append(f"{ticker}: stage_b timeout")
+            for fut in future_map_b:
+                if not fut.done():
+                    fut.cancel()
+    finally:
+        ex.shutdown(wait=not stage_b_timed_out, cancel_futures=stage_b_timed_out)
     diagnostics["scan_stage_b_ms"] = int((time.perf_counter() - stage_b_start) * 1000)
     diagnostics["prediction_market"] = {
         "enabled": bool((diagnostics.get("prediction_market") or {}).get("enabled", False)),
@@ -1790,8 +2164,10 @@ def scan_for_signals_detailed(
     }
 
     diagnostics["data_failure_count"] = len(data_failures)
-    diagnostics["silent_fallback_count"] = int(diagnostics.get("data_provider_unknown_count", 0) or 0) + int(
-        diagnostics.get("fallback_reason_missing_count", 0) or 0
+    diagnostics["silent_fallback_count"] = (
+        int(diagnostics.get("data_provider_unknown_count", 0) or 0)
+        + int(diagnostics.get("fallback_reason_missing_count", 0) or 0)
+        + int(diagnostics.get("fallback_inconsistent_count", 0) or 0)
     )
     if data_failures:
         send_alert(
@@ -1802,8 +2178,12 @@ def scan_for_signals_detailed(
     try:
         from sector_strength import get_unresolved_sector_symbols
         diagnostics["unresolved_sector_symbols"] = len(get_unresolved_sector_symbols(skill_dir=skill_dir))
-    except Exception:
-        pass
+    except Exception as e:
+        _record_nonfatal(
+            "post_scan_observability_failures",
+            "Could not fetch unresolved sector symbols for diagnostics: %s",
+            e,
+        )
 
     # ────────────────────────────────────────────────────────────────────────
     # Shortlist snapshot for the dashboard.
@@ -1915,8 +2295,13 @@ def scan_for_signals_detailed(
 
                     if log_counterfactual_event(signal=s, reason="quality_filtered", skill_dir=skill_dir):
                         diagnostics["counterfactual_logged"] = int(diagnostics.get("counterfactual_logged", 0) or 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    _record_nonfatal(
+                        "stage_b_logging_failures",
+                        "Counterfactual logging failed for %s: %s",
+                        str(s.get("ticker", "")),
+                        e,
+                    )
                 try:
                     from feature_store import log_stage_b_signal
                     log_stage_b_signal(
@@ -1925,8 +2310,13 @@ def scan_for_signals_detailed(
                         regime_bucket=diagnostics.get("regime_v2_bucket"),
                         skill_dir=skill_dir,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    _record_nonfatal(
+                        "stage_b_logging_failures",
+                        "Stage B feature-store filtered logging failed for %s: %s",
+                        str(s.get("ticker", "")),
+                        e,
+                    )
                 continue
             diagnostics["quality_gates_would_filter"] += 1
             gated.append(s)
@@ -1976,9 +2366,16 @@ def scan_for_signals_detailed(
     except Exception as e:
         LOG.debug("Meta-policy evaluation skipped: %s", e)
 
-    # Rank by score and take top N
+    # Rank by high-level score stack and take top N
     top_n = get_signal_top_n(skill_dir)
-    signals.sort(key=lambda s: s.get("ensemble_score", s.get("signal_score", 0)), reverse=True)
+    diagnostics["rank_basis"] = "rank_score"
+    signals.sort(
+        key=lambda s: s.get(
+            "rank_score",
+            s.get("ensemble_score", s.get("composite_score", s.get("signal_score", 0))),
+        ),
+        reverse=True,
+    )
     if top_n > 0 and len(signals) > top_n:
         diagnostics["top_n_applied"] = len(signals) - top_n
         before_top_n = list(signals)
@@ -2002,8 +2399,12 @@ def scan_for_signals_detailed(
                 regime_bucket=diagnostics.get("regime_v2_bucket"),
                 skill_dir=skill_dir,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        _record_nonfatal(
+            "stage_b_logging_failures",
+            "Stage B feature-store final logging failed: %s",
+            e,
+        )
 
     try:
         _record_quality_snapshot(skill_dir, diagnostics, signals)

@@ -231,13 +231,17 @@ class DataProvider:
         try:
             def _fetch() -> dict[str, Any] | None:
                 import yfinance as yf
-                t = yf.Ticker(ticker)
-                fi = getattr(t, "fast_info", None)
-                if fi is None:
-                    return None
-                last = getattr(fi, "lastPrice", None) or getattr(fi, "last_price", None)
-                if last is None and isinstance(fi, dict):
-                    last = fi.get("lastPrice") or fi.get("last_price")
+
+                from _io_utils import yfinance_call
+
+                with yfinance_call():
+                    t = yf.Ticker(ticker)
+                    fi = getattr(t, "fast_info", None)
+                    if fi is None:
+                        return None
+                    last = getattr(fi, "lastPrice", None) or getattr(fi, "last_price", None)
+                    if last is None and isinstance(fi, dict):
+                        last = fi.get("lastPrice") or fi.get("last_price")
                 if last is not None and float(last) > 0:
                     return {"symbol": ticker, "lastPrice": float(last), "source": "yahoo"}
                 return None
@@ -255,9 +259,13 @@ class DataProvider:
         try:
             def _fetch() -> pd.DataFrame:
                 import yfinance as yf
-                t = yf.Ticker(ticker)
-                period = "2y" if days > 365 else "1y"
-                df = t.history(period=period, auto_adjust=True)
+
+                from _io_utils import yfinance_call
+
+                with yfinance_call():
+                    t = yf.Ticker(ticker)
+                    period = "2y" if days > 365 else "1y"
+                    df = t.history(period=period, auto_adjust=True)
                 if df.empty or len(df) < 2:
                     return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date")
                 df = df.rename(columns={

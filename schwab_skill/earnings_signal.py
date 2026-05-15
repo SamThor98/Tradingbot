@@ -5,11 +5,13 @@ Earnings signal helpers for PEAD-style enrichment.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from config import get_schwab_only_data
 
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
@@ -53,12 +55,32 @@ def _extract_eps_cols(df: pd.DataFrame) -> tuple[str | None, str | None]:
     return rep, est
 
 
+# Smallest |estimate_eps| we'll trust as a denominator. EPS estimates of a few
+# cents are common for small/mid caps and turn a $0.03 beat into a "+150%
+# surprise," firing the large-PEAD boost incorrectly. Floor the denominator
+# at $0.10 so the surprise stays interpretable on near-zero estimates.
+_SURPRISE_DENOMINATOR_FLOOR = 0.10
+# Hard winsorization clamp on the final fractional surprise. ±300% covers
+# every legitimate beat/miss while killing pathological ratios from data-
+# entry errors or 1-cent estimates.
+_SURPRISE_CLAMP = 3.0
+
+
 def _calc_surprise(actual_eps: float | None, estimate_eps: float | None) -> float | None:
     if actual_eps is None or estimate_eps is None:
         return None
-    if abs(float(estimate_eps)) < 1e-9:
+    try:
+        actual_f = float(actual_eps)
+        est_f = float(estimate_eps)
+    except (TypeError, ValueError):
         return None
-    return (float(actual_eps) - float(estimate_eps)) / abs(float(estimate_eps))
+    if abs(est_f) < 1e-9:
+        return None
+    denom = max(abs(est_f), _SURPRISE_DENOMINATOR_FLOOR)
+    raw = (actual_f - est_f) / denom
+    if raw != raw:  # NaN guard
+        return None
+    return max(-_SURPRISE_CLAMP, min(_SURPRISE_CLAMP, raw))
 
 
 def check_recent_earnings(ticker: str, lookback_days: int = 10) -> dict[str, Any] | None:
@@ -66,15 +88,20 @@ def check_recent_earnings(ticker: str, lookback_days: int = 10) -> dict[str, Any
     Check if ticker had earnings within lookback window from now.
     Returns EPS surprise details when available.
     """
+    if get_schwab_only_data():
+        return None
     try:
         import yfinance as yf
 
+        from _io_utils import yfinance_call
+
         tkr = _normalize_ticker(ticker)
-        df = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
+        with yfinance_call():
+            df = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
         if df.empty:
             return None
 
-        now = pd.Timestamp(datetime.utcnow()).tz_localize(None)
+        now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
         window_start = now - pd.Timedelta(days=max(1, int(lookback_days)))
         recent = df[(df.index <= now) & (df.index >= window_start)]
         if recent.empty:
@@ -115,11 +142,16 @@ def check_earnings_at_date(
     """
     Historical earnings check relative to a supplied entry date.
     """
+    if get_schwab_only_data():
+        return None
     try:
         import yfinance as yf
 
+        from _io_utils import yfinance_call
+
         tkr = _normalize_ticker(ticker)
-        earnings = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
+        with yfinance_call():
+            earnings = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
         if earnings.empty:
             return None
 

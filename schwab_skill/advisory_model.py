@@ -17,7 +17,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -125,9 +125,12 @@ def _fetch_history(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     except Exception as e:
         raise RuntimeError("yfinance is required for advisory dataset generation") from e
 
+    from _io_utils import yfinance_call
+
     for attempt in range(3):
         try:
-            raw = yf.Ticker(symbol).history(start=start_date, end=end_date, auto_adjust=True)
+            with yfinance_call():
+                raw = yf.Ticker(symbol).history(start=start_date, end=end_date, auto_adjust=True)
             out = raw.rename(
                 columns={
                     "Open": "open",
@@ -783,7 +786,7 @@ def train_advisory_model(
         }
     artifact = {
         "model_type": "logistic_l2_with_bin_calibration",
-        "model_version": f"phase1-pup10d-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        "model_version": f"phase1-pup10d-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
         "training_profile": profile,
         "allow_model_upgrades": bool(allow_model_upgrades),
         "model_selected": str(chosen_final["name"]),
@@ -814,7 +817,7 @@ def train_advisory_model(
         },
         "calibration_metrics": cal_metrics,
         "acceptance_gates": acceptance_gates,
-        "trained_at_utc": datetime.utcnow().isoformat() + "Z",
+        "trained_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     return artifact
 

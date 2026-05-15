@@ -16,7 +16,17 @@ def map_failure(message: str, source: str = "unknown") -> dict[str, Any]:
         "fix_path": "Review logs, then retry the action.",
         "action": "retry",
     }
-    if any(k in msg for k in ("not authenticated", "token", "oauth", "401", "unauthorized")):
+    if "edgar_user_agent" in msg or ("user-agent" in msg and "edgar" in msg):
+        mapped.update(
+            {
+                "code": "config_error",
+                "title": "Configuration issue",
+                "summary": "SEC access requires a real EDGAR user-agent contact.",
+                "fix_path": "Set EDGAR_USER_AGENT='YourCompanyName real-contact@yourdomain' in schwab_skill/.env, then retry.",
+                "action": "update_config",
+            }
+        )
+    elif any(k in msg for k in ("not authenticated", "token", "oauth", "401", "unauthorized")):
         mapped.update(
             {
                 "code": "auth_error",

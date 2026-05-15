@@ -2272,3 +2272,111 @@ body[data-theme="editorial"] main.container {
     gap: 20px;
   }
 }
+
+/* ============================================================
+   LAYOUT FIT STABILITY PATCH
+   Final guardrails for overlap/fullscreen inconsistencies.
+============================================================ */
+body[data-theme="editorial"] {
+  --app-chrome-offset: 84px;
+}
+
+@media (max-width: 1080px) {
+  body[data-theme="editorial"] {
+    --app-chrome-offset: 122px;
+  }
+}
+
+@media (max-width: 720px) {
+  body[data-theme="editorial"] {
+    --app-chrome-offset: 136px;
+  }
+}
+
+html,
+body[data-theme="editorial"] {
+  overflow-x: clip;
+}
+
+body[data-theme="editorial"] main.container {
+  width: min(100%, 1760px);
+  max-width: 1760px;
+  margin: 18px auto 56px;
+  padding-left: clamp(14px, 2.6vw, 30px);
+  padding-right: clamp(14px, 2.6vw, 30px);
+  box-sizing: border-box;
+}
+
+body[data-theme="editorial"] .app-topbar {
+  align-items: start;
+  row-gap: 10px;
+}
+
+body[data-theme="editorial"] .app-topbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .topbar-detail {
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .topbar-detail select {
+  max-width: 140px;
+}
+
+body[data-theme="editorial"] .mode-header,
+body[data-theme="editorial"] #workflowPrimary,
+body[data-theme="editorial"] .layout-2,
+body[data-theme="editorial"] .layout-quick-tools,
+body[data-theme="editorial"] .layout-onboarding-presets {
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .mode-header-kpis {
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .section-nav,
+body[data-theme="editorial"] .health-ribbon {
+  top: calc(var(--app-chrome-offset) + 6px);
+}
+
+body[data-theme="editorial"] .table-wrap {
+  overflow-x: auto;
+}
+
+body[data-theme="editorial"] .table-wrap table {
+  width: 100%;
+  min-width: 700px;
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  min-height: clamp(380px, 46vh, 560px);
+}
+
+body[data-theme="editorial"] .toast-container {
+  top: calc(var(--app-chrome-offset) + 8px);
+}
+
+@media (max-width: 1120px) {
+  body[data-theme="editorial"] .mode-header {
+    gap: 14px;
+  }
+  body[data-theme="editorial"] .operate-kanban .kanban-lane {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  body[data-theme="editorial"] .mobile-primary-dock {
+    z-index: 60;
+  }
+  body[data-theme="editorial"] .scroll-top-btn {
+    bottom: 96px;
+  }
+  body[data-theme="editorial"] .activity-drawer {
+    padding-bottom: 72px;
+  }
+}

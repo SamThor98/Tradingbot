@@ -21,6 +21,9 @@ class StrategyOverrides(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quality_gates_mode: Literal["off", "shadow", "soft", "hard"] | None = None
+    quality_min_signal_score: int | None = Field(default=None, ge=0, le=100)
+    quality_require_breakout_volume: bool | None = None
+    quality_breakout_volume_min_ratio: float | None = Field(default=None, ge=0.5, le=5.0)
     breakout_confirm_enabled: bool | None = None
     forensic_enabled: bool | None = None
     forensic_filter_mode: Literal["off", "shadow", "soft", "hard"] | None = None
@@ -31,11 +34,30 @@ class StrategyOverrides(BaseModel):
     signal_universe_target_size: int | None = Field(default=None, ge=20, le=1600)
     quality_watchlist_prefilter_enabled: bool | None = None
     quality_watchlist_prefilter_max: int | None = Field(default=None, ge=20, le=1600)
+    backtest_portfolio_starting_equity: float | None = Field(default=None, gt=1000.0, le=5_000_000.0)
+    backtest_portfolio_max_positions: int | None = Field(default=None, ge=1, le=100)
+    backtest_position_size_pct: float | None = Field(default=None, ge=0.001, le=1.0)
+    backtest_risk_per_trade_pct: float | None = Field(default=None, ge=0.0, le=0.1)
+    adaptive_stop_enabled: bool | None = None
+    adaptive_stop_base_pct: float | None = Field(default=None, ge=0.01, le=0.3)
+    backtest_adaptive_guardrails_enabled: bool | None = None
+    meta_policy_mode: Literal["off", "shadow", "live"] | None = None
+    event_risk_mode: Literal["off", "shadow", "live"] | None = None
+    exit_manager_mode: Literal["off", "shadow", "live"] | None = None
+    exec_quality_mode: Literal["off", "shadow", "live"] | None = None
 
     def to_env_overrides(self) -> dict[str, str]:
         out: dict[str, str] = {}
         if self.quality_gates_mode is not None:
             out["QUALITY_GATES_MODE"] = self.quality_gates_mode
+        if self.quality_min_signal_score is not None:
+            out["QUALITY_MIN_SIGNAL_SCORE"] = str(int(self.quality_min_signal_score))
+        if self.quality_require_breakout_volume is not None:
+            out["QUALITY_REQUIRE_BREAKOUT_VOLUME"] = (
+                "true" if self.quality_require_breakout_volume else "false"
+            )
+        if self.quality_breakout_volume_min_ratio is not None:
+            out["QUALITY_BREAKOUT_VOLUME_MIN_RATIO"] = str(float(self.quality_breakout_volume_min_ratio))
         if self.breakout_confirm_enabled is not None:
             out["BREAKOUT_CONFIRM_ENABLED"] = "true" if self.breakout_confirm_enabled else "false"
         if self.forensic_enabled is not None:
@@ -56,6 +78,30 @@ class StrategyOverrides(BaseModel):
             )
         if self.quality_watchlist_prefilter_max is not None:
             out["QUALITY_WATCHLIST_PREFILTER_MAX"] = str(int(self.quality_watchlist_prefilter_max))
+        if self.backtest_portfolio_starting_equity is not None:
+            out["BACKTEST_PORTFOLIO_STARTING_EQUITY"] = str(float(self.backtest_portfolio_starting_equity))
+        if self.backtest_portfolio_max_positions is not None:
+            out["BACKTEST_PORTFOLIO_MAX_POSITIONS"] = str(int(self.backtest_portfolio_max_positions))
+        if self.backtest_position_size_pct is not None:
+            out["BACKTEST_POSITION_SIZE_PCT"] = str(float(self.backtest_position_size_pct))
+        if self.backtest_risk_per_trade_pct is not None:
+            out["BACKTEST_RISK_PER_TRADE_PCT"] = str(float(self.backtest_risk_per_trade_pct))
+        if self.adaptive_stop_enabled is not None:
+            out["ADAPTIVE_STOP_ENABLED"] = "true" if self.adaptive_stop_enabled else "false"
+        if self.adaptive_stop_base_pct is not None:
+            out["ADAPTIVE_STOP_BASE_PCT"] = str(float(self.adaptive_stop_base_pct))
+        if self.backtest_adaptive_guardrails_enabled is not None:
+            out["BACKTEST_ADAPTIVE_GUARDRAILS_ENABLED"] = (
+                "true" if self.backtest_adaptive_guardrails_enabled else "false"
+            )
+        if self.meta_policy_mode is not None:
+            out["META_POLICY_MODE"] = self.meta_policy_mode
+        if self.event_risk_mode is not None:
+            out["EVENT_RISK_MODE"] = self.event_risk_mode
+        if self.exit_manager_mode is not None:
+            out["EXIT_MANAGER_MODE"] = self.exit_manager_mode
+        if self.exec_quality_mode is not None:
+            out["EXEC_QUALITY_MODE"] = self.exec_quality_mode
         return out
 
 

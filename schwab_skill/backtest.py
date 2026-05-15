@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -37,8 +37,10 @@ from config import (
     get_adaptive_stop_enabled,
     get_backtest_adaptive_guardrail_policy_path,
     get_backtest_adaptive_guardrails_enabled,
+    get_backtest_position_size_pct,
     get_backtest_portfolio_max_positions,
     get_backtest_portfolio_starting_equity,
+    get_backtest_risk_per_trade_pct,
     get_breakout_confirm_enabled,
     get_forensic_altman_min,
     get_forensic_beneish_max,
@@ -50,6 +52,7 @@ from config import (
     get_pead_lookback_days,
     get_quality_gates_mode,
     get_quality_soft_min_reasons,
+    get_schwab_only_data,
 )
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
@@ -260,7 +263,7 @@ def _fetch_history_with_meta(
         "reason": "unknown",
         "rows": 0,
     }
-    if (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower() in {"1", "true", "yes", "on"}:
+    if get_schwab_only_data():
         out = _fetch_history_schwab(symbol, start_date, end_date, auth=schwab_auth)
         meta["provider"] = "schwab"
         meta["used_fallback"] = False
@@ -273,10 +276,13 @@ def _fetch_history_with_meta(
         "yes",
         "on",
     }
+    from _io_utils import yfinance_call
+
     for attempt in range(3):
         try:
-            t = yf.Ticker(symbol)
-            raw = t.history(start=start_date, end=end_date, auto_adjust=True, timeout=20)
+            with yfinance_call():
+                t = yf.Ticker(symbol)
+                raw = t.history(start=start_date, end=end_date, auto_adjust=True, timeout=20)
             if raw is None:
                 meta["provider"] = "yfinance"
                 meta["used_fallback"] = True
@@ -361,7 +367,7 @@ def _prepare_context(
     from sector_strength import SECTOR_ETFS, get_ticker_sector_etf
 
     sd = skill_dir or SKILL_DIR
-    schwab_only = (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower() in {"1", "true", "yes", "on"}
+    schwab_only = get_schwab_only_data(sd)
     schwab_auth: DualSchwabAuth | None = None
     if schwab_only:
         # Reuse one tenant-scoped auth object across the full run to avoid token
@@ -382,7 +388,46 @@ def _prepare_context(
         "history_provider_unknown": 0,
         "history_fallback_used": 0,
         "history_reason_counts": {},
+        "membership_filter_mode": "explicit_watchlist_override" if watchlist is not None else "live_watchlist",
+        "membership_as_of_date": None,
+        "membership_file_present": False,
+        "membership_input_universe": len(universe),
+        "membership_filtered_out": 0,
     }
+
+    if watchlist is None:
+        # Deterministic membership policy: freeze eligibility at backtest start
+        # date so repeated runs over the same window produce a stable universe.
+        membership_as_of: date | None = None
+        try:
+            membership_as_of = datetime.fromisoformat(start_date).date()
+        except ValueError:
+            LOG.warning("Backtest start_date is not ISO format (%s); skipping membership filter.", start_date)
+        if membership_as_of is not None:
+            try:
+                from sp1500_membership import tickers_as_of
+
+                members = tickers_as_of(membership_as_of)
+            except Exception as e:
+                LOG.warning("SP1500 membership filter unavailable; using live watchlist universe: %s", e)
+                members = None
+
+            data_integrity["membership_as_of_date"] = membership_as_of.isoformat()
+            if members is None:
+                data_integrity["membership_filter_mode"] = "membership_missing_live_fallback"
+            else:
+                before = len(universe)
+                universe = [t for t in universe if t in members]
+                filtered = max(0, before - len(universe))
+                data_integrity["membership_file_present"] = True
+                data_integrity["membership_filter_mode"] = "historical_membership_start_date"
+                data_integrity["membership_filtered_out"] = filtered
+                LOG.info(
+                    "Backtest universe membership filter applied as_of=%s: %d -> %d symbols",
+                    membership_as_of.isoformat(),
+                    before,
+                    len(universe),
+                )
 
     for ticker in universe:
         df, history_meta = _fetch_history_with_meta(ticker, start_date, end_date, schwab_auth=schwab_auth)
@@ -858,6 +903,8 @@ def _run_backtest_core(
         "adaptive_guardrail_filtered": 0,
         "adaptive_guardrail_downsized": 0,
         "adaptive_guardrail_extra_slot_entries": 0,
+        "risk_sized_entries": 0,
+        "fixed_sized_entries": 0,
         "prediction_market_processed": 0,
         "prediction_market_applied": 0,
         "prediction_market_skipped": 0,
@@ -895,6 +942,8 @@ def _run_backtest_core(
 
     starting_equity = float(get_backtest_portfolio_starting_equity(sd))
     max_concurrent_positions = max(1, int(get_backtest_portfolio_max_positions(sd)))
+    position_size_pct = max(0.001, float(get_backtest_position_size_pct(sd)))
+    risk_per_trade_pct = max(0.0, float(get_backtest_risk_per_trade_pct(sd)))
     max_position_size_pct = 0.10
     current_cash = float(starting_equity)
     active_positions: dict[str, ActivePosition] = {}
@@ -1359,9 +1408,17 @@ def _run_backtest_core(
                 continue
             if candidate.entry_price <= 0:
                 continue
+            size_by_risk = (
+                float(day_equity) * float(risk_per_trade_pct) / float(candidate.stop_pct)
+                if risk_per_trade_pct > 0.0 and candidate.stop_pct > 0.0
+                else None
+            )
+            sized_notional = float(size_by_risk) if size_by_risk is not None else float(day_equity) * float(position_size_pct)
+            sized_notional = max(0.0, min(float(sized_notional), float(max_position_notional)))
+            qty_by_size = int(sized_notional / candidate.entry_price)
             qty_by_cash = int(max(0.0, min(max_position_notional, current_cash)) / candidate.entry_price)
             qty_by_liq = int(candidate.day_volume * max_adv_participation) if candidate.day_volume > 0 else 1
-            qty = min(int(candidate.qty_hint), int(qty_by_cash), int(qty_by_liq))
+            qty = min(int(candidate.qty_hint), int(qty_by_size), int(qty_by_cash), int(qty_by_liq))
             if qty <= 0:
                 if qty_by_cash <= 0:
                     diagnostics["capital_filtered"] = int(diagnostics["capital_filtered"]) + 1
@@ -1400,6 +1457,10 @@ def _run_backtest_core(
                 telemetry=candidate.telemetry,
                 highest_close=float(candidate.entry_price),
             )
+            if size_by_risk is not None:
+                diagnostics["risk_sized_entries"] = int(diagnostics["risk_sized_entries"]) + 1
+            else:
+                diagnostics["fixed_sized_entries"] = int(diagnostics["fixed_sized_entries"]) + 1
             diagnostics["entries"] = int(diagnostics["entries"]) + 1
 
         concurrent_samples.append(len(active_positions))
@@ -1596,8 +1657,8 @@ def _run_backtest_core(
                 3,
             ),
             "peak_concurrent": int(peak_concurrent),
-            "risk_sized_count": 0,
-            "fixed_sized_count": int(diagnostics.get("entries", 0)),
+            "risk_sized_count": int(diagnostics.get("risk_sized_entries", 0)),
+            "fixed_sized_count": int(diagnostics.get("fixed_sized_entries", 0)),
             "starting_equity": float(starting_equity),
             "ending_equity": float(ending_equity),
         },
@@ -1605,6 +1666,8 @@ def _run_backtest_core(
         "trailing_stop_pct": round(100.0 * stop_pct_base, 2),
         "adaptive_stop_enabled": bool(adaptive_stop_enabled),
         "adaptive_guardrails_enabled": bool(adaptive_guardrail_policy is not None),
+        "backtest_position_size_pct": float(position_size_pct),
+        "backtest_risk_per_trade_pct": float(risk_per_trade_pct),
         "slippage_bps_per_side": float(slippage_bps_per_side),
         "fee_per_share": float(fee_per_share),
         "min_fee_per_order": float(min_fee_per_order),

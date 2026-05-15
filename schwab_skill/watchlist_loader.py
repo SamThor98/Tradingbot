@@ -95,14 +95,14 @@ def _load_cached() -> tuple[list[str], float, str | None] | None:
 def _save_cache(tickers: list[str]) -> None:
     """Save watchlist to cache (MiroFish uses separate .mirofish_cache.json)."""
     try:
-        import json
+        from _io_utils import atomic_write_json
 
         data = {
             "tickers": tickers,
             "timestamp": time.time(),
             "as_of_utc_date": _utc_calendar_date(),
         }
-        CACHE_FILE.write_text(json.dumps(data, indent=0))
+        atomic_write_json(CACHE_FILE, data, indent=0)
     except Exception as e:
         LOG.warning("Watchlist cache write failed: %s", e)
 

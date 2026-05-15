@@ -136,15 +136,11 @@ def resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
 
     1. If no env override is set, return the inferred URL based on the
        request origin and the canonical callback path.
-    2. If the env override exists but its path doesn't match the
-       canonical webapp callback suffix, prefer the inferred URL — this
-       keeps the legacy standalone loopback callback (``https://127.0.0.1:8182``)
-       from leaking into the webapp flow.
-    3. If the env override points at a loopback host but the request
+    2. If the env override points at a loopback host but the request
        arrived from a non-loopback host (typical of hosted SaaS where
        a stale local ``.env`` leaked into the deploy), prefer the
        inferred URL.
-    4. Otherwise, honour the env override.
+    3. Otherwise, honour the env override.
 
     Combines the slightly-different copies that previously lived in
     ``webapp/main.py`` and ``webapp/tenant_dashboard.py``; the local
@@ -163,9 +159,6 @@ def resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
         return inferred
 
     parsed = urllib.parse.urlparse(configured)
-    configured_path = str(parsed.path or "").rstrip("/")
-    if configured_path in {"", "/"} or not configured_path.endswith(suffix):
-        return inferred
     configured_host = str(parsed.hostname or "").strip().lower()
     inferred_host = str(
         urllib.parse.urlparse(inferred).hostname or ""

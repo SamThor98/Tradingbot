@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import statistics
 from pathlib import Path
 from typing import Any
+
+from config import get_schwab_only_data
 
 # Sector name (from yfinance) -> sector ETF
 SECTOR_TO_ETF: dict[str, str] = {
@@ -37,11 +38,6 @@ LOG = logging.getLogger(__name__)
 SECTOR_CACHE_FILE = ".sector_map_cache.json"
 
 
-def _schwab_only_data() -> bool:
-    raw = (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
 def _sector_cache_path(skill_dir: Path | None = None) -> Path:
     return (skill_dir or Path(__file__).resolve().parent) / SECTOR_CACHE_FILE
 
@@ -62,24 +58,52 @@ def _load_sector_cache(skill_dir: Path | None = None) -> dict[str, Any]:
 
 
 def _save_sector_cache(data: dict[str, Any], skill_dir: Path | None = None) -> None:
-    path = _sector_cache_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_sector_cache_path(skill_dir), data, indent=2)
+
+
+# Unresolved sector lookups (yfinance returned no `info.sector`) used to be
+# cached permanently with `mapping[t] = None`. That meant a single yfinance
+# brownout would silently disable sector-aware Stage A filtering for that
+# ticker forever. We now stamp a timestamp on unresolved entries and re-fetch
+# after `_UNRESOLVED_RETRY_HOURS` so transient outages self-heal.
+_UNRESOLVED_RETRY_HOURS = 24.0
 
 
 def _cache_sector_mapping(ticker: str, sector_etf: str | None, skill_dir: Path | None = None) -> None:
+    import time
+
     data = _load_sector_cache(skill_dir)
     mapping = data.setdefault("sector_etf_by_ticker", {})
+    unresolved_meta = data.setdefault("unresolved_meta", {})
     unresolved = set(data.setdefault("unresolved", []))
     t = ticker.upper().strip()
     if sector_etf:
         mapping[t] = sector_etf
         unresolved.discard(t)
+        unresolved_meta.pop(t, None)
     else:
         mapping[t] = None
         unresolved.add(t)
+        unresolved_meta[t] = {"timestamp": time.time()}
     data["unresolved"] = sorted(unresolved)
     _save_sector_cache(data, skill_dir)
+
+
+def _is_unresolved_entry_fresh(ticker: str, skill_dir: Path | None = None) -> bool:
+    """Return True when a previously-unresolved ticker shouldn't be retried yet."""
+    import time
+
+    data = _load_sector_cache(skill_dir)
+    meta = (data.get("unresolved_meta") or {}).get(ticker.upper().strip())
+    if not isinstance(meta, dict):
+        return False
+    ts = float(meta.get("timestamp", 0) or 0)
+    if ts <= 0:
+        return False
+    age_h = (time.time() - ts) / 3600.0
+    return age_h <= _UNRESOLVED_RETRY_HOURS
 
 
 def get_unresolved_sector_symbols(skill_dir: Path | None = None) -> list[str]:
@@ -90,12 +114,16 @@ def get_unresolved_sector_symbols(skill_dir: Path | None = None) -> list[str]:
 
 def _fetch_perf_yfinance(symbol: str, days: int) -> float | None:
     """Fallback: get return via yfinance when Schwab fails."""
-    if _schwab_only_data():
+    if get_schwab_only_data():
         return None
     try:
         import yfinance as yf
-        t = yf.Ticker(symbol)
-        df = t.history(period=f"{max(days, 30)}d", auto_adjust=True)
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(symbol)
+            df = t.history(period=f"{max(days, 30)}d", auto_adjust=True)
         if df.empty or len(df) < 2:
             return None
         df = df.tail(days + 1)
@@ -154,8 +182,23 @@ def get_winning_sector_etfs(
     auth: Any,
     skill_dir: Path,
 ) -> set[str]:
-    """Return set of sector ETF symbols that outperformed SPY."""
+    """Return set of sector ETF symbols that outperformed SPY.
+
+    On data outage we fail **closed** (return an empty set, blocking new
+    entries via the sector filter) when ``RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true``
+    (the default). Operators can opt back into the legacy "allow all sectors"
+    behaviour with ``RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false`` — but that
+    means a transient SPY/sector data hiccup silently disables the sector
+    rotation filter entirely.
+    """
     from notifier import send_alert
+
+    try:
+        from config import get_risk_fail_closed_on_data_outage
+
+        fail_closed = bool(get_risk_fail_closed_on_data_outage(skill_dir))
+    except Exception:
+        fail_closed = True
 
     perf = _get_sector_performance(auth, skill_dir)
     spy_ret = perf.get("SPY")
@@ -169,13 +212,21 @@ def get_winning_sector_etfs(
                     perf[sym] = ret
         spy_ret = perf.get("SPY")
     if spy_ret is None:
+        if fail_closed:
+            send_alert(
+                "Sector filter DATA FAILURE: Could not fetch SPY/sector performance (Schwab or yfinance). "
+                "Failing closed: blocking ALL sectors (RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true).",
+                kind="data_failure",
+                env_path=skill_dir / ".env",
+            )
+            return set()
         send_alert(
             "Sector filter DATA FAILURE: Could not fetch SPY/sector performance (Schwab or yfinance). "
-            "Allowing all sectors.",
+            "Allowing all sectors (RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false; legacy permissive mode).",
             kind="data_failure",
             env_path=skill_dir / ".env",
         )
-        return set(SECTOR_ETFS)  # Can't determine - allow all
+        return set(SECTOR_ETFS)
     failed = [s for s in (SECTOR_ETFS + ["SPY"]) if s not in perf]
     if failed:
         send_alert(
@@ -189,20 +240,34 @@ def get_winning_sector_etfs(
 
 
 def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | None:
-    """Resolve ticker to sector ETF (e.g. AAPL -> XLK). Returns None if unknown."""
+    """Resolve ticker to sector ETF (e.g. AAPL -> XLK). Returns None if unknown.
+
+    A successful resolution is cached forever; a failed resolution is cached
+    for at most ``_UNRESOLVED_RETRY_HOURS`` (24h) so transient yfinance
+    outages don't permanently disable sector-aware filtering for the ticker.
+    """
     tkr = ticker.upper().strip()
     cache = _load_sector_cache(skill_dir)
     mapping = cache.get("sector_etf_by_ticker", {})
     if tkr in mapping:
         val = mapping.get(tkr)
-        return val if isinstance(val, str) and val else None
-    if _schwab_only_data():
+        if isinstance(val, str) and val:
+            return val
+        # Cached unresolved: only honor if the failure is recent.
+        if _is_unresolved_entry_fresh(tkr, skill_dir):
+            return None
+        # Otherwise fall through and re-attempt the lookup.
+    if get_schwab_only_data():
         _cache_sector_mapping(tkr, None, skill_dir)
         return None
     try:
         import yfinance as yf
-        t = yf.Ticker(tkr)
-        info = t.info
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            t = yf.Ticker(tkr)
+            info = t.info
         sector = (info.get("sector") or "").strip().lower()
         if not sector:
             _cache_sector_mapping(tkr, None, skill_dir)
@@ -270,19 +335,43 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
     """
     Hard binary regime gate: SPY must be above its 200 SMA.
     Not tunable by design — avoids overfitting.
+
+    On data outage we **fail closed** (treat the regime as bearish and block
+    new entries) when ``RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true`` (the default).
+    Operators that prefer the legacy permissive behaviour can set the env
+    var to ``false`` — but that means any SPY data hiccup silently flips
+    the bot into bear-market exposure.
+
     Returns (is_bullish, context_dict).
     """
     from market_data import get_daily_history
     from stage_analysis import add_indicators
 
-    ctx: dict[str, Any] = {"spy_price": None, "spy_sma_200": None, "bullish": False}
+    try:
+        from config import get_risk_fail_closed_on_data_outage
+
+        fail_closed = bool(get_risk_fail_closed_on_data_outage(skill_dir))
+    except Exception:
+        fail_closed = True
+
+    ctx: dict[str, Any] = {
+        "spy_price": None,
+        "spy_sma_200": None,
+        "bullish": False,
+        "fail_closed_mode": fail_closed,
+        "data_unavailable": False,
+    }
     try:
         df = get_daily_history("SPY", days=220, auth=auth, skill_dir=skill_dir)
         if df.empty or len(df) < 200:
             yf_df = None
             try:
                 import yfinance as yf
-                yf_df = yf.Ticker("SPY").history(period="1y", auto_adjust=True)
+
+                from _io_utils import yfinance_call
+
+                with yfinance_call():
+                    yf_df = yf.Ticker("SPY").history(period="1y", auto_adjust=True)
                 if yf_df is not None and not yf_df.empty:
                     df = yf_df.rename(columns={
                         "Open": "open", "High": "high", "Low": "low",
@@ -291,7 +380,18 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
             except Exception:
                 pass
         if df.empty or len(df) < 200:
-            LOG.warning("Regime check: insufficient SPY data (%d bars), defaulting to bullish", len(df))
+            ctx["data_unavailable"] = True
+            if fail_closed:
+                LOG.error(
+                    "Regime check: insufficient SPY data (%d bars). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; treating regime as BEARISH and blocking new entries.",
+                    len(df),
+                )
+                ctx["bullish"] = False
+                return False, ctx
+            LOG.warning(
+                "Regime check: insufficient SPY data (%d bars). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false; defaulting to bullish (legacy permissive mode).",
+                len(df),
+            )
             ctx["bullish"] = True
             return True, ctx
         df = add_indicators(df)
@@ -302,7 +402,18 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
         ctx["bullish"] = price > sma_200
         return ctx["bullish"], ctx
     except Exception as e:
-        LOG.warning("Regime check failed (%s), defaulting to bullish", e)
+        ctx["data_unavailable"] = True
+        if fail_closed:
+            LOG.error(
+                "Regime check failed (%s). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; treating regime as BEARISH and blocking new entries.",
+                e,
+            )
+            ctx["bullish"] = False
+            return False, ctx
+        LOG.warning(
+            "Regime check failed (%s). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false; defaulting to bullish (legacy permissive mode).",
+            e,
+        )
         ctx["bullish"] = True
         return True, ctx
 
@@ -413,7 +524,10 @@ def get_regime_v2_snapshot(auth: Any, skill_dir: Path) -> dict[str, Any]:
         if df.empty or len(df) < 210:
             import yfinance as yf
 
-            yf_df = yf.Ticker("SPY").history(period="1y", auto_adjust=True)
+            from _io_utils import yfinance_call
+
+            with yfinance_call():
+                yf_df = yf.Ticker("SPY").history(period="1y", auto_adjust=True)
             if yf_df is not None and not yf_df.empty:
                 df = yf_df.rename(
                     columns={
@@ -453,7 +567,10 @@ def get_regime_v2_snapshot(auth: Any, skill_dir: Path) -> dict[str, Any]:
             if vix_df.empty:
                 import yfinance as yf
 
-                vix_df = yf.Ticker("^VIX").history(period="1mo", auto_adjust=True)
+                from _io_utils import yfinance_call
+
+                with yfinance_call():
+                    vix_df = yf.Ticker("^VIX").history(period="1mo", auto_adjust=True)
                 if vix_df is not None and not vix_df.empty:
                     vix_df = vix_df.rename(
                         columns={

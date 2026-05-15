@@ -16,6 +16,16 @@ Dual-API OAuth2, guardrails, Stage 2 logic, and Discord notifications.
 | `main.py` | Daily heartbeat 9:25 AM, crash alert |
 | `TradingSkill.py` | OpenClaw @tool: analyze_ticker_trend, get_account_status, execute_trade |
 
+## Documentation map
+
+Use this order to avoid duplicate/conflicting guidance:
+
+- `README.md` (this file): operator entrypoint and command quick-reference
+- `docs/README.md`: index of detailed specs/checklists in `schwab_skill/docs/`
+- `wiki/index.md`: canonical compiled architecture/strategy knowledge map
+- `Brain/`: human planning, journals, and decision notes (secondary to wiki and
+  executable runbooks)
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and fill in:
@@ -86,6 +96,7 @@ Market/SEC freshness is summarized as `data_quality` (`ok` | `degraded` | `stale
 - **Defaults:** `DATA_QUALITY_EXEC_POLICY=off` — no execution change.
 - **Strict:** set `DATA_QUALITY_EXEC_POLICY=block_risk_increasing` to block new BUY/opening risk at the **guardrail wrapper** when quality is not `ok` (exits/reducing orders still allowed). Use `warn` for log-only.
 - Tunables: `DATA_QUOTE_MAX_AGE_SEC`, `DATA_BAR_MAX_STALENESS_DAYS`, `DATA_EDGAR_MAX_AGE_HOURS`, optional `DATA_CROSSCHECK_ENABLED` (Schwab quote vs yfinance last).
+- Regime/data outage safety default is fail-closed: `RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true` blocks new entries when regime data checks fail. Set to `false` only for explicit fail-open troubleshooting.
 
 ## Guardrails
 
@@ -219,6 +230,14 @@ Hardening pipeline (includes plugin-mode checks, execution quality, exit manager
 ```
 python scripts/validate_all.py --profile local --strict --skip-backtest
 ```
+
+`validate_all.py` now includes `validate_data_integrity.py` in local/server/ci flows. Configure these when PM experiment fixtures are available:
+
+- `DATA_INTEGRITY_UNIVERSE_FILE` (frozen universe JSON)
+- `DATA_INTEGRITY_PM_HISTORICAL_FILE` (historical PM snapshots JSON)
+- optional: `DATA_INTEGRITY_START_DATE`, `DATA_INTEGRITY_END_DATE`
+
+If fixture paths are not set, the data-integrity step emits a skipped artifact (non-fatal) so the pipeline remains deterministic across environments.
 
 Additional references:
 - `VALIDATION_MATRIX.md` (environment gates and pass/fail criteria)

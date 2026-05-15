@@ -310,6 +310,22 @@ def test_baseline_delta_flags_regressions_and_recoveries(
     assert "REMOVED: c" in formatted
 
 
+def test_profile_includes_data_integrity_step(validate_all) -> None:
+    names = [
+        s[0]
+        for s in validate_all._steps_for_profile(
+            "local",
+            "",
+            False,
+            False,
+            False,
+            False,
+            {},
+        )
+    ]
+    assert "validate_data_integrity" in names
+
+
 def test_baseline_latest_alias_resolves_to_stable_artifact(
     validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

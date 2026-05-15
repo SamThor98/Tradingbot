@@ -370,6 +370,18 @@ def test_dossier_markdown_emits_finnhub_setup_hint_when_disabled(monkeypatch) ->
     assert "FINNHUB_API_KEY" in md, "Markdown should call out missing Finnhub key"
 
 
+def test_dossier_markdown_confidence_blocks_are_trust_weighted(monkeypatch) -> None:
+    """House-style confidence blocks should be dynamic, not static placeholder text."""
+
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    dossier = research._compose_research_dossier("AAPL")
+    md = research._dossier_to_markdown(dossier)
+
+    assert "### Confidence" in md
+    assert "Medium by default; elevate only when data quality and citations are complete." not in md
+    assert "data confidence" in md and "citation completeness" in md
+
+
 def test_finnhub_client_paces_requests_under_rate_limit(monkeypatch) -> None:
     """The Finnhub client should respect the configured rate limit (best-effort)."""
 

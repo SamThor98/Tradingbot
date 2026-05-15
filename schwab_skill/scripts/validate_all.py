@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -63,9 +63,31 @@ def _steps_for_profile(
     baseline_execution_events: dict[str, int] | None = None,
 ) -> list[tuple[str, list[str], dict[str, str] | None]]:
     py = sys.executable
+    today = date.today()
+    default_start = (today - timedelta(days=365)).isoformat()
+    default_end = today.isoformat()
+    data_integrity_start = str(os.environ.get("DATA_INTEGRITY_START_DATE", default_start))
+    data_integrity_end = str(os.environ.get("DATA_INTEGRITY_END_DATE", default_end))
+    data_integrity_universe = str(os.environ.get("DATA_INTEGRITY_UNIVERSE_FILE", "")).strip()
+    data_integrity_pm = str(os.environ.get("DATA_INTEGRITY_PM_HISTORICAL_FILE", "")).strip()
     advisory_cmd = [py, str(SCRIPTS_DIR / "validate_advisory_model.py")]
     if promotion:
         advisory_cmd += ["--strict", "--promotion"]
+    data_integrity_cmd = [
+        py,
+        str(SCRIPTS_DIR / "validate_data_integrity.py"),
+        "--start-date",
+        data_integrity_start,
+        "--end-date",
+        data_integrity_end,
+        "--output-prefix",
+        f"data_integrity_{profile}",
+        "--allow-skip",
+    ]
+    if data_integrity_universe:
+        data_integrity_cmd += ["--universe-file", data_integrity_universe]
+    if data_integrity_pm:
+        data_integrity_cmd += ["--pm-historical-file", data_integrity_pm]
     steps: list[tuple[str, list[str], dict[str, str] | None]] = [
         ("validate_docs_governance", [py, str(SCRIPTS_DIR / "validate_docs_governance.py")], None),
         ("validate_ops_excellence", [py, str(SCRIPTS_DIR / "validate_ops_excellence.py")], None),
@@ -77,6 +99,7 @@ def _steps_for_profile(
         ("validate_slo_mapping", [py, str(SCRIPTS_DIR / "validate_slo_mapping.py")], None),
         ("validate_typecheck_ratchet", [py, str(SCRIPTS_DIR / "validate_typecheck_ratchet.py")], None),
         ("validate_experiment_registry", [py, str(SCRIPTS_DIR / "validate_experiment_registry.py")], None),
+        ("validate_data_integrity", data_integrity_cmd, None),
         ("validate_hypothesis_chain", [py, str(SCRIPTS_DIR / "validate_hypothesis_chain.py")], None),
         ("validate_plugin_modes", [py, str(SCRIPTS_DIR / "validate_plugin_modes.py")], None),
         ("validate_execution_quality", [py, str(SCRIPTS_DIR / "validate_execution_quality.py")], None),

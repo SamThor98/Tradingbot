@@ -67,8 +67,9 @@ def _save_outcomes(entries: list[dict], skill_dir: Path | None = None) -> None:
     """Persist trade outcomes."""
     path = (skill_dir or SKILL_DIR) / ".trade_outcomes.json"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(entries, indent=2))
+        from _io_utils import atomic_write_json
+
+        atomic_write_json(path, entries, indent=2)
     except Exception as e:
         LOG.warning("Failed to save trade outcomes: %s", e)
 
@@ -263,9 +264,12 @@ def run_self_study(skill_dir: Path | None = None) -> dict[str, Any]:
         except Exception as e:
             LOG.debug("Hypothesis self-study merge skipped: %s", e)
         try:
-            from datetime import datetime
-            result["last_run"] = datetime.utcnow().isoformat() + "Z"
-            (skill_dir / ".self_study.json").write_text(json.dumps(result, indent=2))
+            from datetime import datetime, timezone
+
+            from _io_utils import atomic_write_json
+
+            result["last_run"] = datetime.now(timezone.utc).isoformat()
+            atomic_write_json(skill_dir / ".self_study.json", result, indent=2)
         except Exception as e:
             LOG.warning("Self-study write failed: %s", e)
         return result
@@ -328,10 +332,12 @@ def run_self_study(skill_dir: Path | None = None) -> dict[str, Any]:
         LOG.debug("Hypothesis self-study merge skipped: %s", e)
 
     try:
-        from datetime import datetime
-        result["last_run"] = datetime.utcnow().isoformat() + "Z"
-        study_path = skill_dir / ".self_study.json"
-        study_path.write_text(json.dumps(result, indent=2))
+        from datetime import datetime, timezone
+
+        from _io_utils import atomic_write_json
+
+        result["last_run"] = datetime.now(timezone.utc).isoformat()
+        atomic_write_json(skill_dir / ".self_study.json", result, indent=2)
         LOG.info("Self-study complete: %d round trips, win_rate=%.1f%%, suggested_min_conviction=%s",
                  len(round_trips), result["win_rate"] or 0, result["suggested_min_conviction"])
     except Exception as e:

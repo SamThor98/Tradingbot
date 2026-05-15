@@ -44,8 +44,9 @@ def _load_tracker(skill_dir: Path | None = None) -> list[dict]:
 def _save_tracker(entries: list[dict], skill_dir: Path | None = None) -> None:
     path = (skill_dir or SKILL_DIR) / ".positions_tracker.json"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(entries, indent=2))
+        from _io_utils import atomic_write_json
+
+        atomic_write_json(path, entries, indent=2)
     except Exception as e:
         LOG.warning("Failed to save positions tracker: %s", e)
 

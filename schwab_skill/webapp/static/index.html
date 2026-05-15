@@ -235,6 +235,24 @@
             <h2>Scan results</h2>
             <div class="scan-title-meta">
               <small id="scanMeta" class="muted">No scan run yet.</small>
+              <div class="scan-mode-wrap">
+                <label class="muted scan-mode-label" for="scanModeSelect">
+                  Breakout mode
+                  <span
+                    class="scan-mode-info"
+                    title="Balanced: score >= 50 and volume ratio >= 1.1. Strict: score >= 60 and volume ratio >= 1.2."
+                    aria-label="Mode threshold definitions"
+                    >&#9432;</span
+                  >
+                </label>
+                <select id="scanModeSelect" title="Balanced keeps more candidates; Strict raises score and volume requirements.">
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="strict">Strict</option>
+                </select>
+              </div>
+              <small id="scanModeHelperText" class="muted scan-mode-helper">
+                Balanced: score >= 50, volume ratio >= 1.1. Strict raises thresholds.
+              </small>
               <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
               <button
                 type="button"
@@ -297,7 +315,19 @@
             </div>
           </details>
           <div class="scan-results-layout">
-            <div class="table-wrap">
+            <div class="scan-list-header">
+              <div class="scan-list-title-wrap">
+                <h3 class="scan-list-title">Qualified breakouts</h3>
+                <small id="scanQualifiedMeta" class="muted">No scan yet.</small>
+              </div>
+              <div class="scan-severity-legend" aria-label="Status severity legend">
+                <span class="pill good">good</span>
+                <span class="pill warn">caution</span>
+                <span class="pill bad">blocked</span>
+                <span class="pill neutral">info</span>
+              </div>
+            </div>
+            <div class="table-wrap qualified-table-wrap">
               <table>
                 <caption class="visually-hidden">Signal candidates table</caption>
                 <thead>
@@ -320,6 +350,41 @@
                 </tbody>
               </table>
             </div>
+            <div class="scan-list-actions">
+              <button id="scanShowMoreBtn" class="btn small secondary hidden" type="button">Show more</button>
+            </div>
+            <details id="nearMissPanel" class="scan-near-miss-panel" aria-live="polite">
+              <summary>
+                Near-miss breakouts
+                <span id="nearMissSummaryCount" class="muted">(0)</span>
+              </summary>
+              <p class="muted scan-near-miss-copy">
+                Candidates that did not pass current mode thresholds. Top 10 shown with failure reasons.
+              </p>
+              <div class="table-wrap near-miss-table-wrap">
+                <table>
+                  <caption class="visually-hidden">Near-miss breakout candidates</caption>
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      <th>Status</th>
+                      <th class="scan-col-advanced">Days Flagged</th>
+                      <th>Strategy</th>
+                      <th class="scan-col-secondary">Price</th>
+                      <th>Score</th>
+                      <th class="scan-col-advanced">P(up 10d)</th>
+                      <th>Confidence</th>
+                      <th class="scan-col-advanced">Conviction</th>
+                      <th class="scan-col-advanced">Sector</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nearMissTableBody">
+                    <tr><td colspan="11" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         </article>
 
@@ -335,6 +400,12 @@
           <div id="scanDetailChartContainer" class="scan-detail-chart">
             <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
           </div>
+          <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
+            <h4>Decision brief</h4>
+            <div id="scanDetailBrief" class="scan-brief-content">
+              <p class="muted">Select a candidate to load the bullet decision card.</p>
+            </div>
+          </section>
           <div class="scan-detail-grid">
             <div class="scan-detail-stat">
               <span class="muted">Price</span>
@@ -343,12 +414,12 @@
             <div class="scan-detail-stat">
               <span class="muted">Signal score</span>
               <strong id="scanDetailScore">--</strong>
-              <small class="muted">Composite setup quality score.</small>
+              <small class="muted">Composite rank (edge + reliability + execution).</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">P(up 10d)</span>
               <strong id="scanDetailPup">--</strong>
-              <small class="muted">Model-estimated 10-day upside probability.</small>
+              <small class="muted">Calibrated 10-day upside probability.</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">Confidence</span>
@@ -363,6 +434,26 @@
             <div class="scan-detail-stat">
               <span class="muted">Sector ETF</span>
               <strong id="scanDetailSector">--</strong>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Edge</span>
+              <strong id="scanDetailEdge">--</strong>
+              <small class="muted">Signal strength and upside quality.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Reliability</span>
+              <strong id="scanDetailReliability">--</strong>
+              <small class="muted">How dependable this setup is right now.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">Execution</span>
+              <strong id="scanDetailExecution">--</strong>
+              <small class="muted">Tradeability given risk and liquidity context.</small>
+            </div>
+            <div class="scan-detail-stat">
+              <span class="muted">EV 10d</span>
+              <strong id="scanDetailEv10d">--</strong>
+              <small class="muted">Expected value estimate over 10 trading days.</small>
             </div>
           </div>
           <div class="scan-detail-actions">
@@ -569,8 +660,8 @@
       <section class="layout-2 layout-onboarding-presets">
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
-            <h2>Connections &amp; account setup</h2>
-            <small id="onboardingMeta" class="muted">Configure once in Settings, then return to Operations.</small>
+            <h2>Connect Schwab</h2>
+            <small id="onboardingMeta" class="muted">Use one guided flow to connect and verify your account.</small>
           </div>
 
           <ol id="onboardingStepper" class="onboarding-stepper" aria-label="Schwab setup progress">
@@ -587,20 +678,19 @@
               <p class="onboarding-next-desc muted" id="onboardingNextDesc">Loading status…</p>
             </div>
             <div class="onboarding-next-actions">
-              <button id="onboardingNextBtn" class="btn primary" type="button" disabled>Next step</button>
-              <button id="onboardingStartBtn" class="btn secondary small" type="button" title="Start (or restart) the timed setup wizard">Restart wizard</button>
+              <button id="onboardingNextBtn" class="btn primary" type="button" disabled>Connect Schwab</button>
             </div>
           </div>
 
           <details class="onboarding-help" id="onboardingHelp">
-            <summary>Need setup help?</summary>
+            <summary>Need help?</summary>
             <div class="onboarding-help-body">
-              <h3>Why two connect steps?</h3>
+              <h3>Why there are two connect steps</h3>
               <p class="muted">
-                Schwab separates <strong>market data</strong> and <strong>brokerage account</strong> permissions, so this app
-                needs both approvals.
+                Schwab uses one approval for your brokerage account and another for market data.
+                This setup flow walks you through both in order.
               </p>
-              <h3>Before you connect</h3>
+              <h3>Before you start</h3>
               <ul class="onboarding-help-list muted">
                 <li>Sign in to this dashboard first.</li>
                 <li>Allow pop-ups/redirects for Schwab approval.</li>
@@ -612,38 +702,12 @@
                 <li>Confirm both account and market approvals completed.</li>
                 <li>Copy the error banner text if you need support.</li>
               </ul>
-              <p class="muted small">
-                Need the public guide?
-                <a href="/static/connect-schwab-guide.html" target="_blank" rel="noopener noreferrer">Open setup guide</a>
-                ·
-                <a id="implementationGuideLink" class="hidden" href="#" target="_blank" rel="noopener noreferrer">Hosting-provider guide</a>
-              </p>
             </div>
-          </details>
-
-          <details class="onboarding-advanced">
-            <summary>All steps (advanced)</summary>
-            <div class="inline-form onboarding-connect-row">
-              <button id="onboardingSchwabBtn" class="btn primary small" type="button">Connect Schwab (account)</button>
-              <button id="onboardingSchwabMarketBtn" class="btn primary small" type="button">Connect Schwab (market)</button>
-              <button id="onboardingConnectBtn" class="btn small secondary" title="Records that your Schwab account session is linked">
-                1) Confirm link
-              </button>
-              <button id="onboardingVerifyBtn" class="btn small secondary">2) Verify token health</button>
-              <button id="onboardingScanBtn" class="btn small secondary">3) Test scan</button>
-              <button id="onboardingPaperBtn" class="btn small secondary">4) Test paper order</button>
-            </div>
-            <p class="muted small">
-              Direct OAuth links:
-              <a id="onboardingSchwabLink" href="#">Account</a>
-              ·
-              <a id="onboardingSchwabMarketLink" href="#">Market</a>
-            </p>
           </details>
 
           <div id="onboardingOutputHost" class="tool-output-host tool-output-padded">
             <div id="onboardingCards" aria-live="polite">
-              <p class="muted">Click Next step to continue setup.</p>
+              <p class="muted">Click Connect Schwab to continue setup.</p>
             </div>
             <details id="onboardingJsonDetails" class="tool-json-details hidden">
               <summary>Raw data</summary>
@@ -668,6 +732,12 @@
               <option value="standard" selected>Standard</option>
               <option value="expert">Expert</option>
             </select>
+            <label class="field-label" for="rankExplainModeSelect">Rank explain</label>
+            <select id="rankExplainModeSelect" title="Choose how ranking rationale is shown in scan tables.">
+              <option value="tooltip" selected>Tooltip (compact)</option>
+              <option value="inline">Inline (expanded)</option>
+            </select>
+            <small id="rankExplainModeHelperText" class="muted">Tooltip keeps rows compact. Inline shows rationale in each score cell.</small>
             <label class="muted"><input id="automationOptIn" type="checkbox" /> Allow live orders without the extra confirmation step</label>
             <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
           </div>
@@ -823,6 +893,15 @@
           <p id="decisionStrategyLead" class="muted" data-unavailable="true" style="margin: 0">Dominant strategy: —</p>
           <p id="decisionDataQuality" class="muted" data-unavailable="true" style="margin: 0">Data quality: —</p>
           <p id="decisionLatestPromotion" class="muted" data-unavailable="true" style="margin: 0">Latest promotion: —</p>
+          <p id="decisionAblationStatus" class="muted" data-unavailable="true" style="margin: 0">Ablation: —</p>
+          <p id="decisionAblationLift" class="muted" data-unavailable="true" style="margin: 0">Best lift: —</p>
+          <p id="decisionAblationSummary" class="muted" data-unavailable="true" style="margin: 0">Ablation summary: —</p>
+          <details id="decisionAblationTopWrap" class="validation-steps">
+            <summary>Top ablation variants</summary>
+            <ul id="decisionAblationTopList" class="validation-steps-list">
+              <li class="muted">No ablation report yet.</li>
+            </ul>
+          </details>
           <small id="decisionDashboardFresh" data-freshness="unknown">awaiting /api/decision-dashboard</small>
         </div>
       </section>
@@ -848,6 +927,16 @@
           <div class="inline-form compact">
             <a class="btn small secondary" href="#calibrationSection">Calibration panel</a>
           </div>
+        </article>
+        <article class="diagnostics-lane">
+          <h3>Ablation cycle</h3>
+          <p class="muted">Run parameter ablation + scoring artifacts and track progress.</p>
+          <div class="inline-form compact">
+            <button id="ablationCycleBtn" class="btn small secondary" type="button">Run ablation cycle</button>
+            <button id="ablationStatusRefreshBtn" class="btn small secondary" type="button">Refresh status</button>
+          </div>
+          <small id="ablationCycleStatus" class="muted">Status: idle</small>
+          <small id="ablationCycleMeta" class="muted">No cycle run yet.</small>
         </article>
       </section>
       <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced diagnostics-surface status-details-wrap">
@@ -1055,6 +1144,22 @@
                   <input id="btMaxAdv" type="number" min="0.001" max="0.1" step="0.001" value="0.02" />
                 </div>
                 <div class="form-row">
+                  <label class="field-label" for="btStartEquity">Starting equity ($)</label>
+                  <input id="btStartEquity" type="number" min="1000" max="5000000" step="1000" value="100000" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btMaxPositions">Max open positions</label>
+                  <input id="btMaxPositions" type="number" min="1" max="100" step="1" value="10" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btRiskPerTradePct">Risk per trade (fraction)</label>
+                  <input id="btRiskPerTradePct" type="number" min="0" max="0.1" step="0.0005" value="0.0075" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btPositionSizePct">Fallback size (fraction)</label>
+                  <input id="btPositionSizePct" type="number" min="0.001" max="1" step="0.001" value="0.05" />
+                </div>
+                <div class="form-row">
                   <label class="field-label" for="btQualityGates">Quality gates</label>
                   <select id="btQualityGates">
                     <option value="">Account default</option>
@@ -1089,6 +1194,62 @@
                     <option value="">Account default</option>
                     <option value="on">On</option>
                     <option value="off">Off</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btAdaptiveStopEnabled">Adaptive stop</label>
+                  <select id="btAdaptiveStopEnabled">
+                    <option value="">Account default</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btAdaptiveStopBasePct">Adaptive stop base (fraction)</label>
+                  <input id="btAdaptiveStopBasePct" type="number" min="0.01" max="0.3" step="0.005" value="0.07" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btAdaptiveGuardrailsEnabled">Adaptive guardrails</label>
+                  <select id="btAdaptiveGuardrailsEnabled">
+                    <option value="">Account default</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btMetaPolicyMode">Meta policy mode</label>
+                  <select id="btMetaPolicyMode">
+                    <option value="">Account default</option>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="live">Live</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btEventRiskMode">Event risk mode</label>
+                  <select id="btEventRiskMode">
+                    <option value="">Account default</option>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="live">Live</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btExitManagerMode">Exit manager mode</label>
+                  <select id="btExitManagerMode">
+                    <option value="">Account default</option>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="live">Live</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btExecQualityMode">Execution quality mode</label>
+                  <select id="btExecQualityMode">
+                    <option value="">Account default</option>
+                    <option value="off">Off</option>
+                    <option value="shadow">Shadow</option>
+                    <option value="live">Live</option>
                   </select>
                 </div>
                 <div class="form-row form-row-check">
@@ -1223,6 +1384,31 @@
               <option value="ticker_vs_ticker">ticker_vs_ticker</option>
               <option value="ticker_over_time">ticker_over_time</option>
             </select>
+            <label class="field-label" for="secCompareProfile">Profile</label>
+            <select id="secCompareProfile" title="Auto uses backend profile detection; pick a profile to override.">
+              <option value="auto" selected>auto_detect</option>
+              <option value="early_growth">early_growth</option>
+              <option value="scaled_growth">scaled_growth</option>
+              <option value="mature_compounder">mature_compounder</option>
+              <option value="cyclical">cyclical</option>
+            </select>
+            <label class="field-label" for="secCompareProfileReason">Override reason</label>
+            <input id="secCompareProfileReason" placeholder="Why override profile?" />
+            <label class="field-label" for="secCompareProfileEvidence">Evidence ref</label>
+            <input id="secCompareProfileEvidence" placeholder="Optional filing/fact reference" />
+            <button id="secCompareResetProfileBtn" class="btn small secondary" type="button" title="Reset saved profile override to auto-detect">
+              Reset profile
+            </button>
+            <small id="secCompareProfileStatus" class="muted">Profile source: auto-detect</small>
+            <details id="secCompareProfileHistoryDetails" class="panel-disclosure panel-disclosure--advanced">
+              <summary class="panel-disclosure-summary">
+                Profile override history
+                <span class="disclosure-hint muted">latest 5 changes</span>
+              </summary>
+              <ul id="secCompareProfileHistoryList" class="report-bullets">
+                <li class="muted">No override history yet.</li>
+              </ul>
+            </details>
             <label class="field-label" for="secCompareTickerA">Ticker A</label>
             <input id="secCompareTickerA" placeholder="Ticker A (AAPL)" />
             <label class="field-label" for="secCompareTickerB">Ticker B</label>

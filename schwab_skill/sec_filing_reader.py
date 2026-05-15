@@ -43,10 +43,29 @@ class FilingDocument:
 
 
 def _safe_user_agent(user_agent: str | None) -> str:
-    ua = (user_agent or "").strip()
-    if len(ua) < 12 or "@" not in ua:
-        return DEFAULT_USER_AGENT
-    return ua
+    """Validate the EDGAR User-Agent and raise on placeholder/missing values.
+
+    Previously this silently substituted ``contact@example.com`` when the env
+    var was missing or malformed. SEC's fair-access policy bans fake contact
+    info and will rate-limit or IP-ban the address, silently breaking every
+    downstream filing fetch. We now refuse to send the request at all.
+    """
+    try:
+        from config import is_real_edgar_user_agent
+    except ImportError:
+        ua = (user_agent or "").strip()
+        if len(ua) >= 12 and "@" in ua and "example.com" not in ua.lower():
+            return ua
+        raise RuntimeError(
+            "EDGAR_USER_AGENT missing or contains placeholder/example contact; "
+            "SEC requires a real operator email and will IP-ban fake UAs."
+        )
+    if is_real_edgar_user_agent(user_agent):
+        return str(user_agent).strip()
+    raise RuntimeError(
+        "EDGAR_USER_AGENT missing or contains placeholder/example contact; "
+        "set EDGAR_USER_AGENT='YourCompanyName real-contact@yourdomain' in .env."
+    )
 
 
 def _cache_path(skill_dir: Path | None = None) -> Path:
@@ -69,9 +88,9 @@ def _load_cache(skill_dir: Path | None = None) -> dict[str, Any]:
 
 
 def _save_cache(cache: dict[str, Any], skill_dir: Path | None = None) -> None:
-    path = _cache_path(skill_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    from _io_utils import atomic_write_json
+
+    atomic_write_json(_cache_path(skill_dir), cache, indent=2)
 
 
 def _cache_key(cik: str, accession_number: str, primary_document: str) -> str:
