@@ -797,16 +797,19 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
     )
     validation_passed = True if validation.get("passed") is True else False
     ablation_best = ablation.get("best") if isinstance(ablation, dict) else None
+    ablation_exists = bool(isinstance(ablation, dict) and ablation.get("exists") is True)
     ablation_passed = bool(
-        isinstance(ablation_best, dict)
-        and ablation.get("exists") is True
+        ablation_exists
+        and isinstance(ablation_best, dict)
         and ablation_best.get("pass") is True
     )
     slo_passed = True if slo.get("passed") is True else False
-    gate_ready = bool(validation_passed and slo_passed and ablation_passed)
+    # Keep release gates backward-compatible: when no ablation artifact exists yet,
+    # do not force reliability to at_risk solely due to missing optional output.
+    gate_ready = bool(validation_passed and slo_passed and (ablation_passed if ablation_exists else True))
     readiness_checks = [
         {"name": "validation", "passed": validation.get("passed")},
-        {"name": "ablation", "passed": ablation_passed if ablation.get("exists") else None},
+        {"name": "ablation", "passed": ablation_passed if ablation_exists else None},
         {"name": "slo_gate", "passed": slo.get("passed")},
     ]
     if validation.get("run_status") == "running":
