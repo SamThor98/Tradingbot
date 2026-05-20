@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="TradingBot Dashboard — scan, approve, and manage your automated trading pipeline." />
+    <meta name="description" content="Old Logan Capital workspace — operations-first scanning, research, diagnostics, and settings." />
     <meta name="theme-color" content="#0c1018" />
-    <title>TradingBot Dashboard</title>
+    <title>Old Logan Capital Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c1018'/><text x='50' y='66' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='62' fill='%23e7d9b5'>T</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -29,12 +29,12 @@
     <div class="bg-grid" aria-hidden="true"></div>
 
     <header class="app-topbar" role="banner">
-      <a href="#operationsWorkspaceIntro" class="app-topbar-brand" aria-label="TradingBot home">
+      <a href="#operationsWorkspaceIntro" class="app-topbar-brand" aria-label="Old Logan Capital home">
         <span class="brand-mark" aria-hidden="true">T</span>
-        <span class="brand-text">TradingBot</span>
+        <span class="brand-text">Old Logan Capital</span>
       </a>
 
-      <nav class="app-topbar-tabs" role="tablist" aria-label="Workflow modes">
+      <nav class="app-topbar-tabs" role="tablist" aria-label="Workspace areas">
         <button
           type="button"
           class="screen-switch-btn"
@@ -43,7 +43,7 @@
           aria-selected="true"
           aria-controls="operationsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">1</span>Trade
+          <span class="tab-num" aria-hidden="true">1</span>Operations
         </button>
         <button
           type="button"
@@ -53,7 +53,7 @@
           aria-selected="false"
           aria-controls="researchWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">2</span>Analyze
+          <span class="tab-num" aria-hidden="true">2</span>Research
         </button>
         <button
           type="button"
@@ -63,7 +63,7 @@
           aria-selected="false"
           aria-controls="diagnosticsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">3</span>Health
+          <span class="tab-num" aria-hidden="true">3</span>Diagnostics
         </button>
         <button
           type="button"
@@ -131,23 +131,23 @@
 
       <header id="screenContextCard" class="mode-header" aria-live="polite">
         <div class="mode-header-copy">
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Trade</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Analyze</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Health</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Operations</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
+          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Diagnostics</p>
           <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Settings</p>
-          <h1 id="screenContextTitle" class="mode-header-title">Today</h1>
+          <h1 id="screenContextTitle" class="mode-header-title">Operations</h1>
           <p id="screenContextText" class="muted mode-header-lead">
-            Run a scan, look over the candidates, and approve only the trades you like.
+            Run a scan, review candidates, and push only high-conviction setups into approvals.
           </p>
           <nav class="mode-header-anchors section-nav" aria-label="In-mode navigation">
             <a href="#scanSection" data-nav-screens="operations">Run scan</a>
-            <a href="#scanDetailPanel" data-nav-screens="operations">Review candidates</a>
+            <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
             <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
             <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
             <a href="#backtestSection" data-nav-screens="research">Backtest + chat</a>
-            <a href="#reportSectionCard" data-nav-screens="research">Full report + SEC compare</a>
+            <a href="#reportSectionCard" data-nav-screens="research">Dossier + SEC compare</a>
             <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
-            <a href="#decisionDashboardCard" data-nav-screens="diagnostics">Decision dashboard</a>
+            <a href="#decisionDashboardCard" data-nav-screens="diagnostics">Decision readiness</a>
             <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Detailed status</a>
             <a href="#onboardingSection" data-nav-screens="settings">Connections</a>
             <a href="#settingsSection" data-nav-screens="settings">Trading controls</a>
@@ -212,9 +212,9 @@
 
       <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro" aria-label="Operations workspace">
         <div>
-          <p class="workspace-eyebrow">Operate</p>
-          <h2>Execution loop</h2>
-          <p class="muted">Run one scan, review candidates, stage the best setup, then approve or reject from the pending queue.</p>
+          <p class="workspace-eyebrow">Operations</p>
+          <h2>Scan -> review -> approve</h2>
+          <p class="muted">Keep daily execution focused: one scan cycle, fast candidate review, then explicit approval decisions.</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#scanSection">Run scan</a>
@@ -223,7 +223,7 @@
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
-        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Primary trade flow</h2>
+        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Operations workflow</h2>
         <p class="muted workflow-strapline operations-surface">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
         <article id="scanSection" class="card card--primary-task kanban-lane">
@@ -531,12 +531,19 @@
         </article>
         </div>
       </section>
+      <article id="sectorsSection" class="card operations-surface" data-lazy-api="sectors">
+        <div class="section-title">
+          <h2>Sector Performance</h2>
+          <small class="muted">21-day relative performance vs SPY</small>
+        </div>
+        <div id="sectorGrid" class="sector-grid"></div>
+      </article>
 
       <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced" aria-label="Research workspace">
         <div>
           <p class="workspace-eyebrow">Research</p>
-          <h2>Validate, test, and diligence</h2>
-          <p class="muted">Focus this tab on pending approvals plus deep research before sizing up.</p>
+          <h2>Validate before size</h2>
+          <p class="muted">Quick-check ideas, run scenario tests, and complete deep diligence before committing risk.</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
@@ -625,9 +632,9 @@
 
       <section id="settingsWorkspaceIntro" class="card workspace-intro" aria-label="Settings workspace">
         <div>
-          <p class="workspace-eyebrow">Configure</p>
-          <h2>Configure connectivity and account controls</h2>
-          <p class="muted">Onboarding, profile presets, live-trading safety controls, 2FA, and billing.</p>
+          <p class="workspace-eyebrow">Settings</p>
+          <h2>Configure connectivity and controls</h2>
+          <p class="muted">Manage onboarding, profile presets, live-trading guardrails, 2FA, and billing in one place.</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#onboardingSection">Connections</a>
@@ -810,9 +817,9 @@
 
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
         <div>
-          <p class="workspace-eyebrow">Trust</p>
-          <h2>System health, validation, and decision gates</h2>
-          <p class="muted">Use this tab to answer: can I trust scan output and execution readiness right now?</p>
+          <p class="workspace-eyebrow">Diagnostics</p>
+          <h2>Health, validation, and readiness</h2>
+          <p class="muted">Use diagnostics to verify reliability, investigate blockers, and confirm execution safety.</p>
         </div>
         <div class="inline-form compact">
           <a class="btn small secondary" href="#healthRibbon">Health ribbon</a>
@@ -1024,13 +1031,6 @@
           </details>
         </article>
 
-        <article id="sectorsSection" class="card" data-lazy-api="sectors">
-          <div class="section-title">
-            <h2>Sectors</h2>
-            <small class="muted">21-day relative performance vs SPY</small>
-          </div>
-          <div id="sectorGrid" class="sector-grid"></div>
-        </article>
       </section>
 
       <section class="layout-2 section-advanced">
@@ -1331,34 +1331,49 @@
       <section class="layout-2 section-advanced">
         <article id="reportSectionCard" class="card">
           <div class="section-title">
-            <h2>Full Report</h2>
-            <small class="muted">/report equivalent for web</small>
+            <h2>Institutional Dossier</h2>
+            <small class="muted">Primary output: decision-ready markdown/PDF dossier with evidence trail</small>
           </div>
           <div class="inline-form">
             <label class="field-label" for="reportTickerInput">Ticker</label>
             <input id="reportTickerInput" placeholder="AAPL" />
-            <label class="field-label" for="reportSection">Section</label>
-            <select id="reportSection">
-              <option value="">All sections</option>
-              <option value="tech">tech</option>
-              <option value="dcf">dcf</option>
-              <option value="comps">comps</option>
-              <option value="health">health</option>
-              <option value="edgar">edgar</option>
-              <option value="mirofish">mirofish</option>
-            </select>
-            <label class="muted"><input id="skipMirofish" type="checkbox" /> skip_mirofish</label>
-            <label class="muted"><input id="skipEdgar" type="checkbox" /> skip_edgar</label>
-            <button id="reportBtn" class="btn secondary">Run Report</button>
-            <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
-          </div>
-          <div class="inline-form compact">
             <button id="dossierBtn" class="btn secondary" type="button">Generate Dossier</button>
             <button id="dossierDownloadJsonBtn" class="btn small secondary" type="button">Download JSON</button>
             <button id="dossierDownloadMdBtn" class="btn small secondary" type="button">Download Markdown</button>
             <button id="dossierDownloadPdfBtn" class="btn small secondary" type="button">Download PDF</button>
+            <button id="dossierDownloadModelWorkbookBtn" class="btn small secondary" type="button">Download Fundamental Model Workbook (.xlsx)</button>
             <small id="dossierMeta" class="muted">Generate a dossier to enable export preview.</small>
           </div>
+          <div id="reportTemplateButtons" class="compare-presets" aria-label="Report templates">
+            <button class="btn small secondary" type="button" data-template="institutional_quick_read" data-section="" data-skip-mirofish="false" data-skip-edgar="false">Institutional Quick Read</button>
+            <button class="btn small secondary" type="button" data-template="full_qualitative" data-section="" data-skip-mirofish="false" data-skip-edgar="false">Full Qualitative</button>
+            <button class="btn small secondary" type="button" data-template="fundamental_snapshot" data-section="dcf" data-skip-mirofish="true" data-skip-edgar="false">Fundamental Snapshot</button>
+            <button class="btn small secondary" type="button" data-template="forensic_focus" data-section="edgar" data-skip-mirofish="true" data-skip-edgar="false">Forensic Focus</button>
+          </div>
+          <div id="reportTemplateMeta" class="muted compare-meta">Pick a preset template, then generate a dossier.</div>
+          <details id="reportAdvancedOptions" class="panel-disclosure panel-disclosure--advanced">
+            <summary class="panel-disclosure-summary">
+              Advanced report controls
+              <span class="disclosure-hint muted">debug + custom section overrides</span>
+            </summary>
+            <div class="inline-form">
+              <label class="field-label" for="reportSection">Section Override</label>
+              <select id="reportSection">
+                <option value="">All sections</option>
+                <option value="tech">tech</option>
+                <option value="dcf">dcf</option>
+                <option value="comps">comps</option>
+                <option value="health">health</option>
+                <option value="edgar">edgar</option>
+                <option value="mirofish">mirofish</option>
+              </select>
+              <label class="muted"><input id="skipMirofish" type="checkbox" /> skip_mirofish</label>
+              <label class="muted"><input id="skipEdgar" type="checkbox" /> skip_edgar</label>
+              <button id="reportBtn" class="btn secondary" type="button">Run Report</button>
+              <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
+              <small id="reportRunStatus" class="muted">Status: idle</small>
+            </div>
+          </details>
           <div id="dossierWriteup" class="report-visual hidden">
             <div class="report-empty">Generate a dossier to view the narrative write-up.</div>
           </div>
@@ -1381,9 +1396,10 @@
           <div class="inline-form">
             <label class="field-label" for="secCompareMode">Mode</label>
             <select id="secCompareMode">
+              <option value="ticker_over_time" selected>ticker_over_time</option>
               <option value="ticker_vs_ticker">ticker_vs_ticker</option>
-              <option value="ticker_over_time">ticker_over_time</option>
             </select>
+            <small id="secCompareModeHelp" class="muted">ticker_over_time compares current filing language vs prior periods to surface execution drift.</small>
             <label class="field-label" for="secCompareProfile">Profile</label>
             <select id="secCompareProfile" title="Auto uses backend profile detection; pick a profile to override.">
               <option value="auto" selected>auto_detect</option>
@@ -1430,10 +1446,10 @@
             <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
           </div>
           <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="NVDA" data-b="AMD">NVDA vs AMD</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="AAPL" data-b="MSFT">AAPL vs MSFT</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="AMZN" data-b="WMT">AMZN vs WMT</button>
             <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AAPL" data-b="">AAPL over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AMZN" data-b="">AMZN over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="NVDA" data-b="AMD">NVDA vs AMD (advanced)</button>
           </div>
           <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
           <div id="secCompareDashboard" class="mgmt-dashboard">

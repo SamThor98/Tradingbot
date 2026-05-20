@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investor Portal - Old Logan Capital</title>
+    <meta name="description" content="Real-time market sentiment analysis and screening tools to guide strategic investment decisions.">
+
+    <link rel="canonical" href="https://paxthomp12.github.io/old-logan-capital/screener.html">
+
+    <!-- Favicon -->
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16x16.png">
+    <link rel="manifest" href="./site.webmanifest">
+
+    <!-- iOS Safari Integration -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Old Logan Capital">
+    <meta name="theme-color" content="#F5F1E8">
+
+    <!-- Open Graph / Social Media Meta Tags -->
+    <meta property="og:title" content="Investor Portal - Old Logan Capital">
+    <meta property="og:description" content="Real-time market sentiment analysis and screening tools to guide strategic investment decisions.">
+    <meta property="og:image" content="https://paxthomp12.github.io/old-logan-capital/assets/images/logo.png">
+    <meta property="og:image:secure_url" content="https://paxthomp12.github.io/old-logan-capital/assets/images/logo.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:alt" content="Old Logan Capital Logo">
+    <meta property="og:url" content="https://paxthomp12.github.io/old-logan-capital/screener.html">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Old Logan Capital">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Investor Portal - Old Logan Capital">
+    <meta name="twitter:description" content="Real-time market sentiment analysis and screening tools to guide strategic investment decisions.">
+    <meta name="twitter:image" content="https://paxthomp12.github.io/old-logan-capital/assets/images/logo.png">
+    <meta name="twitter:image:alt" content="Old Logan Capital Logo">
+
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --cream: #F5F1E8;
+            --cream-dark: #EBE5D6;
+            --dark: #1a1a1a;
+            --dark-alt: #2a2a2a;
+            --forest: #1A3A2E;
+            --forest-light: #2D5A4A;
+            --gold: #C9A962;
+            --text: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --border: rgba(26, 26, 26, 0.1);
+            --border-light: rgba(26, 26, 26, 0.05);
+
+            /* Fear & Greed colors */
+            --extreme-fear: #c43a31;
+            --fear: #e67e22;
+            --neutral: #C9A962;
+            --greed: #87a878;
+            --extreme-greed: #5a8f5a;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            line-height: 1.7;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 1200px;
+            height: 1200px;
+            background-image: url('./assets/images/logo-icon.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        ::selection {
+            background: var(--dark);
+            color: var(--cream);
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 2rem 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(245, 241, 232, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-light);
+            z-index: 1000;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            gap: 0.75rem;
+        }
+
+        .logo-text {
+            font-family: 'Fraunces', serif;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+            line-height: 1;
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .nav-cta {
+            padding: 0.7rem 1.8rem;
+            background: var(--dark);
+            color: var(--cream);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            border: 1px solid var(--dark);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+        }
+
+        .nav-cta::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--cream);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: -1;
+        }
+
+        .nav-cta:hover {
+            color: var(--dark);
+        }
+
+        .nav-cta:hover::before {
+            transform: translateX(0);
+        }
+
+        .nav-cta.secondary {
+            background: transparent;
+            color: var(--dark);
+            border: 1px solid var(--border);
+        }
+
+        .nav-cta.secondary::before {
+            background: var(--dark);
+        }
+
+        .nav-cta.secondary:hover {
+            color: var(--cream);
+        }
+
+        /* Main Content */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 10rem 5% 6rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .page-header {
+            margin-bottom: 4rem;
+        }
+
+        .page-title {
+            font-family: 'Fraunces', serif;
+            font-size: 4rem;
+            font-weight: 700;
+            letter-spacing: -2px;
+            margin-bottom: 1rem;
+            color: var(--dark);
+            line-height: 1.1;
+        }
+
+        .page-subtitle {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            max-width: 700px;
+        }
+
+        .section-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            font-weight: 400;
+            display: inline-block;
+        }
+
+        /* Fear & Greed Meter */
+        .meter-container {
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            padding: 4rem;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+
+        .meter-header {
+            margin-bottom: 4rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .meter-header h2 {
+            font-family: 'Fraunces', serif;
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+        }
+
+        .meter-header p {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+        }
+
+        /* Main Gauge Display */
+        .gauge-display {
+            max-width: 700px;
+            margin: 0 auto 3rem;
+        }
+
+        /* Horizontal Meter Container */
+        .gauge-wrapper {
+            position: relative;
+            width: 100%;
+            margin-bottom: 3rem;
+        }
+
+        /* Score Display Above Meter */
+        .score-display-top {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .score-value-large {
+            font-family: 'Fraunces', serif;
+            font-size: 6rem;
+            font-weight: 700;
+            letter-spacing: -3px;
+            line-height: 1;
+            color: var(--dark);
+            margin-bottom: 0.5rem;
+        }
+
+        .score-label-top {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-muted);
+        }
+
+        /* Horizontal Meter Bar */
+        .meter-container-horizontal {
+            position: relative;
+            margin: 4rem 0;
+        }
+
+        .meter-bar {
+            position: relative;
+            height: 50px;
+            background: linear-gradient(
+                to right,
+                var(--extreme-fear) 0%,
+                var(--extreme-fear) 25%,
+                var(--fear) 25%,
+                var(--fear) 45%,
+                var(--neutral) 45%,
+                var(--neutral) 55%,
+                var(--greed) 55%,
+                var(--greed) 75%,
+                var(--extreme-greed) 75%,
+                var(--extreme-greed) 100%
+            );
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Section Dividers */
+        .meter-divider {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 2px;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .meter-divider:nth-child(1) { left: 25%; }
+        .meter-divider:nth-child(2) { left: 45%; }
+        .meter-divider:nth-child(3) { left: 55%; }
+        .meter-divider:nth-child(4) { left: 75%; }
+
+        /* Logo Indicator on Bar */
+        .logo-indicator {
+            position: absolute;
+            top: 50%;
+            left: 0%;
+            transform: translate(-50%, -50%);
+            width: 70px;
+            height: 70px;
+            background-image: url('./assets/images/logo-icon.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            transition: left 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+            filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.4));
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        /* Labels Above Meter */
+        .meter-labels-top {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+
+        .meter-label-section {
+            text-align: center;
+            flex: 1;
+        }
+
+        .meter-label-section:nth-child(1) { flex: 0 0 25%; }
+        .meter-label-section:nth-child(2) { flex: 0 0 20%; }
+        .meter-label-section:nth-child(3) { flex: 0 0 10%; }
+        .meter-label-section:nth-child(4) { flex: 0 0 20%; }
+        .meter-label-section:nth-child(5) { flex: 0 0 25%; }
+
+        .meter-label-name {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--dark);
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        /* Numbers Below Meter */
+        .meter-numbers {
+            position: relative;
+            margin-top: 1rem;
+            height: 20px;
+        }
+
+        .meter-number {
+            position: absolute;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--dark);
+            font-weight: 500;
+            opacity: 0.6;
+            transform: translateX(-50%);
+        }
+
+        .meter-number:nth-child(1) { left: 0%; transform: translateX(0); }
+        .meter-number:nth-child(2) { left: 25%; }
+        .meter-number:nth-child(3) { left: 50%; }
+        .meter-number:nth-child(4) { left: 75%; }
+        .meter-number:nth-child(5) { left: 100%; transform: translateX(-100%); }
+
+
+        /* Reading Info */
+        .reading-info {
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid var(--border-light);
+            padding: 2.5rem;
+            margin-top: 3rem;
+        }
+
+        .reading-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .current-sentiment {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .sentiment-badge {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding: 0.5rem 1.2rem;
+            background: var(--dark);
+            color: var(--cream);
+            border-radius: 2px;
+            font-weight: 500;
+        }
+
+        .sentiment-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+        }
+
+        .reading-description {
+            font-size: 1.05rem;
+            color: var(--text);
+            line-height: 1.7;
+            margin-bottom: 1.5rem;
+        }
+
+        .reading-meta {
+            display: flex;
+            gap: 3rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        .meta-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .meta-label {
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            opacity: 0.6;
+        }
+
+        .meta-value {
+            font-weight: 500;
+        }
+
+        /* Tools Grid */
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .tool-card {
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            padding: 2.5rem;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: var(--text);
+            display: block;
+        }
+
+        .tool-card:hover {
+            border-color: var(--dark);
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .tool-card h3 {
+            font-family: 'Fraunces', serif;
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+        }
+
+        .tool-card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        .tool-status {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--gold);
+            margin-top: 1rem;
+            display: inline-block;
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                padding: 8rem 4% 4rem;
+            }
+
+            .page-title {
+                font-size: 3rem;
+            }
+
+            .meter-container {
+                padding: 2.5rem;
+            }
+
+            .center-score {
+                font-size: 4rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            body::after {
+                width: 600px;
+                height: 600px;
+                opacity: 0.02;
+            }
+
+            nav {
+                padding: 1rem 5%;
+            }
+
+            .logo-text {
+                font-size: 1.1rem;
+            }
+
+            .nav-cta {
+                padding: 0.65rem 1rem;
+                font-size: 0.7rem;
+            }
+
+            .container {
+                padding: 6rem 5% 3rem;
+            }
+
+            .page-title {
+                font-size: 2rem;
+                letter-spacing: -1px;
+            }
+
+            .page-subtitle {
+                font-size: 1rem;
+            }
+
+            .meter-container {
+                padding: 1.5rem;
+            }
+
+            .meter-header {
+                margin-bottom: 2rem;
+                padding-bottom: 1rem;
+            }
+
+            .meter-header h2 {
+                font-size: 1.5rem;
+            }
+
+            .meter-header p {
+                font-size: 0.7rem;
+            }
+
+            .score-value-large {
+                font-size: 3.5rem;
+                letter-spacing: -2px;
+            }
+
+            .score-label-top {
+                font-size: 0.7rem;
+            }
+
+            .meter-labels-top {
+                margin-bottom: 0.5rem;
+            }
+
+            .meter-label-name {
+                font-size: 0.55rem;
+                letter-spacing: 0.5px;
+            }
+
+            .meter-bar {
+                height: 40px;
+            }
+
+            .logo-indicator {
+                width: 50px;
+                height: 50px;
+            }
+
+            .meter-numbers {
+                margin-top: 0.75rem;
+            }
+
+            .meter-number {
+                font-size: 0.7rem;
+            }
+
+            .reading-info {
+                padding: 1.5rem;
+                margin-top: 2rem;
+            }
+
+            .reading-status {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+                margin-bottom: 1rem;
+                padding-bottom: 1rem;
+            }
+
+            .sentiment-badge {
+                font-size: 0.65rem;
+                padding: 0.4rem 1rem;
+            }
+
+            .sentiment-label {
+                font-size: 0.6rem;
+            }
+
+            .reading-description {
+                font-size: 0.95rem;
+                margin-bottom: 1rem;
+            }
+
+            .reading-meta {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+
+            .meta-label, .meta-value {
+                font-size: 0.65rem;
+            }
+
+            .tools-section h2 {
+                font-size: 2rem !important;
+                letter-spacing: -1px !important;
+            }
+
+            .tools-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .tool-card {
+                padding: 1.5rem;
+            }
+
+            .tool-card h3 {
+                font-size: 1.2rem;
+            }
+
+            .tool-card p {
+                font-size: 0.9rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            nav {
+                padding: 0.85rem 5%;
+            }
+
+            .logo-text {
+                font-size: 1rem;
+            }
+
+            .nav-cta {
+                padding: 0.55rem 0.85rem;
+                font-size: 0.65rem;
+            }
+
+            .container {
+                padding: 5rem 5% 2.5rem;
+            }
+
+            .page-title {
+                font-size: 1.75rem;
+            }
+
+            .page-subtitle {
+                font-size: 0.95rem;
+            }
+
+            .meter-container {
+                padding: 1.25rem;
+            }
+
+            .meter-header h2 {
+                font-size: 1.3rem;
+            }
+
+            .score-value-large {
+                font-size: 3rem;
+            }
+
+            .score-label-top {
+                font-size: 0.65rem;
+            }
+
+            .meter-label-name {
+                font-size: 0.5rem;
+                letter-spacing: 0.3px;
+            }
+
+            .meter-bar {
+                height: 35px;
+            }
+
+            .logo-indicator {
+                width: 45px;
+                height: 45px;
+            }
+
+            .meter-number {
+                font-size: 0.65rem;
+            }
+
+            .reading-info {
+                padding: 1.25rem;
+            }
+
+            .sentiment-badge {
+                font-size: 0.6rem;
+                padding: 0.35rem 0.9rem;
+            }
+
+            .reading-description {
+                font-size: 0.9rem;
+            }
+
+            .tools-section h2 {
+                font-size: 1.75rem !important;
+            }
+
+            .tool-card {
+                padding: 1.25rem;
+            }
+
+            .tool-card h3 {
+                font-size: 1.1rem;
+            }
+
+            .tool-card p {
+                font-size: 0.85rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="index.html" class="logo">
+            <span class="logo-text">Old Logan Capital</span>
+        </a>
+        <div class="nav-buttons">
+            <a href="index.html" class="nav-cta secondary">Back to Home</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <h1 class="page-title">Investor Portal</h1>
+            <p class="page-subtitle">Real-time market sentiment analysis and screening tools to guide strategic investment decisions.</p>
+        </div>
+
+        <!-- Fear & Greed Meter -->
+        <div class="meter-container">
+            <div class="meter-header">
+                <span class="section-label">Market Sentiment</span>
+                <h2>Fear & Greed Index</h2>
+                <p>Real-time market emotion analysis</p>
+            </div>
+
+            <div class="gauge-display">
+                <!-- Score Display at Top -->
+                <div class="score-display-top">
+                    <div class="score-value-large" id="readingValue">--</div>
+                    <div class="score-label-top">INDEX SCORE</div>
+                </div>
+
+                <!-- Horizontal Meter -->
+                <div class="meter-container-horizontal">
+                    <!-- Labels Above -->
+                    <div class="meter-labels-top">
+                        <div class="meter-label-section">
+                            <div class="meter-label-name">EXTREME FEAR</div>
+                        </div>
+                        <div class="meter-label-section">
+                            <div class="meter-label-name">FEAR</div>
+                        </div>
+                        <div class="meter-label-section">
+                            <div class="meter-label-name">NEUTRAL</div>
+                        </div>
+                        <div class="meter-label-section">
+                            <div class="meter-label-name">GREED</div>
+                        </div>
+                        <div class="meter-label-section">
+                            <div class="meter-label-name">EXTREME GREED</div>
+                        </div>
+                    </div>
+
+                    <!-- Meter Bar with Sections -->
+                    <div class="meter-bar">
+                        <div class="meter-divider"></div>
+                        <div class="meter-divider"></div>
+                        <div class="meter-divider"></div>
+                        <div class="meter-divider"></div>
+
+                        <!-- Logo Indicator -->
+                        <div class="logo-indicator" id="logoIndicator"></div>
+                    </div>
+
+                    <!-- Numbers Below -->
+                    <div class="meter-numbers">
+                        <span class="meter-number">0</span>
+                        <span class="meter-number">25</span>
+                        <span class="meter-number">50</span>
+                        <span class="meter-number">75</span>
+                        <span class="meter-number">100</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="reading-info">
+                <div class="reading-status">
+                    <div class="current-sentiment">
+                        <span class="sentiment-label">Current Market Sentiment</span>
+                        <div class="sentiment-badge" id="readingLabel">LOADING</div>
+                    </div>
+                </div>
+                <p class="reading-description" id="readingDescription">Fetching current market sentiment data...</p>
+                <div class="reading-meta">
+                    <div class="meta-item">
+                        <span class="meta-label">Last Updated</span>
+                        <span class="meta-value" id="lastUpdated">--</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Data Source</span>
+                        <span class="meta-value">CNN Business</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Refresh Rate</span>
+                        <span class="meta-value">5 Minutes</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Tools -->
+        <div class="tools-section">
+            <span class="section-label">Screening Tools</span>
+            <h2 style="font-family: 'Fraunces', serif; font-size: 3rem; font-weight: 700; letter-spacing: -2px; margin-bottom: 2rem; color: var(--dark);">Additional Resources</h2>
+
+            <div class="tools-grid">
+                <div class="tool-card">
+                    <h3>Stock Screener</h3>
+                    <p>Advanced filtering and analysis tools for identifying investment opportunities based on fundamental metrics.</p>
+                    <span class="tool-status">Coming Soon</span>
+                </div>
+
+                <div class="tool-card">
+                    <h3>Portfolio Analytics</h3>
+                    <p>Comprehensive performance tracking and risk analysis for your investment portfolio.</p>
+                    <span class="tool-status">Coming Soon</span>
+                </div>
+
+                <div class="tool-card">
+                    <h3>Market Data</h3>
+                    <p>Real-time market data, charts, and technical indicators for informed decision-making.</p>
+                    <span class="tool-status">Coming Soon</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Fear & Greed Index Data (using CNN's methodology)
+        // In production, this would fetch from CNN's API or your own backend
+
+        function updateFearGreedMeter() {
+            // This is a placeholder that simulates fetching data
+            // You'll need to replace this with actual CNN data fetching
+            // CNN provides an iframe embed at: https://money.cnn.com/data/fear-and-greed/
+
+            // For now, we'll use a simulated value
+            // In production, fetch from: https://production.dataviz.cnn.io/index/fearandgreed/graphdata
+
+            fetch('https://production.dataviz.cnn.io/index/fearandgreed/graphdata')
+                .then(response => response.json())
+                .then(data => {
+                    const currentValue = data.fear_and_greed.score;
+                    const rating = data.fear_and_greed.rating;
+                    const lastUpdate = new Date(data.fear_and_greed.timestamp).toLocaleString();
+
+                    updateGauge(currentValue, rating, lastUpdate);
+                })
+                .catch(error => {
+                    console.error('Error fetching Fear & Greed data:', error);
+                    // Fallback to a default value if fetch fails
+                    const fallbackValue = 50;
+                    const fallbackRating = "Neutral";
+                    updateGauge(fallbackValue, fallbackRating, new Date().toLocaleString());
+                });
+        }
+
+        function updateGauge(value, rating, lastUpdate) {
+            // Position the logo on the horizontal meter (0-100 maps to 0%-100%)
+            const position = value;
+            const logoIndicator = document.getElementById('logoIndicator');
+            if (logoIndicator) {
+                logoIndicator.style.left = `${position}%`;
+            }
+
+            // Update the reading display (round to whole number)
+            document.getElementById('readingValue').textContent = Math.round(value);
+            document.getElementById('readingLabel').textContent = rating.toUpperCase();
+
+            // Format the timestamp
+            const date = new Date(lastUpdate);
+            const formattedDate = date.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+            document.getElementById('lastUpdated').textContent = formattedDate;
+
+            // Update description based on rating (case-insensitive match)
+            const descriptions = {
+                'extreme fear': 'Markets are experiencing extreme fear. Historical data suggests this often presents compelling entry points for patient, long-term capital deployment. Our analysis indicates asymmetric risk-reward opportunities may be emerging.',
+                'fear': 'Market sentiment reflects elevated fear levels. We recommend careful evaluation of fundamentally sound businesses trading at attractive valuations. This environment favors disciplined value investors.',
+                'neutral': 'Market sentiment is balanced between fear and greed. Current conditions warrant continued monitoring while maintaining strategic positioning across our portfolio holdings.',
+                'greed': 'Markets are exhibiting signs of greed. We advise heightened scrutiny of valuations and risk management protocols. This environment calls for disciplined capital allocation and selective positioning.',
+                'extreme greed': 'Markets are showing extreme greed levels. Historical precedent suggests increased caution is warranted. We recommend rigorous valuation discipline and defensive positioning while preserving capital for future opportunities.'
+            };
+
+            const ratingLower = rating.toLowerCase();
+            document.getElementById('readingDescription').textContent = descriptions[ratingLower] || 'Analyzing current market sentiment data...';
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updateFearGreedMeter();
+            // Refresh every 5 minutes
+            setInterval(updateFearGreedMeter, 5 * 60 * 1000);
+        });
+
+        // Scroll to top on page load
+        if (history.scrollRestoration) {
+            history.scrollRestoration = 'manual';
+        }
+        window.addEventListener('beforeunload', function() {
+            window.scrollTo(0, 0);
+        });
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                window.scrollTo(0, 0);
+            }, 0);
+        });
+    </script>
+</body>
+</html>

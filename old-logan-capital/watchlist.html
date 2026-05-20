@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watchlist System - Old Logan Capital</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16x16.png">
+    <link rel="manifest" href="./site.webmanifest">
+
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --cream: #F5F1E8;
+            --dark: #1a1a1a;
+            --forest: #1A3A2E;
+            --forest-light: #2D5A4A;
+            --gold: #C9A962;
+            --text: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --border: rgba(26, 26, 26, 0.1);
+            --success: #2D5A4A;
+            --warning: #C9A962;
+            --danger: #c94949;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            line-height: 1.7;
+        }
+
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 1.5rem 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(245, 241, 232, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+        }
+
+        .logo-text {
+            font-family: 'Fraunces', serif;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--dark);
+            text-decoration: none;
+        }
+
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 8rem 5% 4rem;
+        }
+
+        h1 {
+            font-family: 'Fraunces', serif;
+            font-size: 3rem;
+            font-weight: 700;
+            letter-spacing: -1.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            margin-bottom: 3rem;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-block;
+            padding: 0.8rem 1.8rem;
+            background: var(--dark);
+            color: var(--cream);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+            border: 1px solid var(--dark);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border-radius: 0;
+        }
+
+        .btn:hover {
+            background: var(--forest);
+            border-color: var(--forest);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--dark);
+        }
+
+        .btn-secondary:hover {
+            background: var(--dark);
+            color: var(--cream);
+        }
+
+        .btn-success {
+            background: var(--success);
+            border-color: var(--success);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            border-color: var(--danger);
+        }
+
+        /* Cards */
+        .card {
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid var(--border);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            background: rgba(255, 255, 255, 0.9);
+            border-color: var(--dark);
+        }
+
+        .card h2 {
+            font-family: 'Fraunces', serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text);
+        }
+
+        input[type="text"],
+        input[type="password"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.8);
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.95rem;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--dark);
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .file-input-label {
+            display: block;
+            padding: 0.8rem;
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .file-input-label:hover {
+            border-color: var(--dark);
+        }
+
+        .file-list {
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            color: var(--dark);
+            border-bottom-color: var(--dark);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-radius: 2px;
+        }
+
+        .status-submitted {
+            background: var(--warning);
+            color: white;
+        }
+
+        .status-under_review {
+            background: var(--forest-light);
+            color: white;
+        }
+
+        .status-approved {
+            background: var(--success);
+            color: white;
+        }
+
+        /* Confidence stars */
+        .confidence-stars {
+            color: var(--gold);
+            font-size: 1.2rem;
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .clickable-row {
+            cursor: pointer;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 26, 26, 0.95);
+            overflow-y: auto;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .modal-content {
+            background: var(--cream);
+            padding: 3rem;
+            max-width: 900px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            font-size: 2rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+        }
+
+        .modal-close:hover {
+            color: var(--dark);
+        }
+
+        /* Error message */
+        .error-message {
+            background: #ffe6e6;
+            color: var(--danger);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--danger);
+        }
+
+        .success-message {
+            background: #e6f4ea;
+            color: var(--success);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--success);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Sort controls */
+        .sort-controls {
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .sort-controls label {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .sort-controls select {
+            width: auto;
+            padding: 0.5rem 1rem;
+        }
+
+        /* Review grid */
+        .review-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .review-card {
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+        }
+
+        .review-card h4 {
+            font-family: 'Fraunces', serif;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .attachment-list {
+            list-style: none;
+            margin-top: 1rem;
+        }
+
+        .attachment-list li {
+            padding: 0.5rem 0;
+        }
+
+        .attachment-list a {
+            color: var(--forest);
+            text-decoration: none;
+        }
+
+        .attachment-list a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <!-- Main Application -->
+    <div id="app">
+        <nav>
+            <a href="index.html" class="logo-text">Old Logan Capital</a>
+        </nav>
+
+        <div class="container">
+            <h1>Watchlist Management</h1>
+            <p class="subtitle">Collaborative investment analysis and tracking</p>
+
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('dashboard', event)">Dashboard</button>
+                <button class="tab" onclick="switchTab('submit', event)">Submit Ticker</button>
+                <button class="tab" onclick="switchTab('reviews', event)">Pending Reviews</button>
+                <button class="tab" onclick="switchTab('watchlist', event)">Watchlist</button>
+            </div>
+
+            <!-- Dashboard Tab -->
+            <div id="dashboardTab" class="tab-content active">
+                <div class="sort-controls">
+                    <label>Sort by:</label>
+                    <select id="sortSelect" onchange="loadSubmissions()">
+                        <option value="score">Avg Score (High to Low)</option>
+                        <option value="date">Date (Newest First)</option>
+                        <option value="status">Status</option>
+                        <option value="ticker">Ticker (A-Z)</option>
+                    </select>
+                </div>
+
+                <div class="card">
+                    <h2>All Submissions</h2>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Ticker</th>
+                                    <th>Company</th>
+                                    <th>Reviews</th>
+                                    <th>Avg Score</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="submissionsTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit Ticker Tab -->
+            <div id="submitTab" class="tab-content">
+                <div class="card">
+                    <h2>Submit New Ticker</h2>
+
+                    <div id="submitError" class="error-message hidden"></div>
+                    <div id="submitSuccess" class="success-message hidden"></div>
+
+                    <form id="submitForm">
+                        <div class="form-group">
+                            <label for="submitterName">Your Name *</label>
+                            <select id="submitterName" name="submitterName" required>
+                                <option value="">Select your name</option>
+                                <option value="Paxton Thompson">Paxton</option>
+                                <option value="Alex Evenson">Alex</option>
+                                <option value="Garett Lake">Garett</option>
+                                <option value="Sam Thoresen">Sam</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="ticker">Ticker Symbol *</label>
+                            <input type="text" id="ticker" name="ticker" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="companyName">Company Name *</label>
+                            <input type="text" id="companyName" name="companyName" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="reasoning">Investment Thesis / Reasoning *</label>
+                            <textarea id="reasoning" name="reasoning" required placeholder="Provide a 3-4 sentence analysis of why this ticker should be on the watchlist."></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="entryRange">Entry Range *</label>
+                            <input type="text" id="entryRange" name="entryRange" required placeholder="e.g., $45-50">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="sellRange">Sell Range *</label>
+                            <input type="text" id="sellRange" name="sellRange" required placeholder="e.g., $75-85">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="timeHorizon">Time Horizon *</label>
+                            <select id="timeHorizon" name="timeHorizon" required>
+                                <option value="">Select time horizon</option>
+                                <option value="Short">Short Term (0-6 months)</option>
+                                <option value="Medium">Medium Term (6-12 months)</option>
+                                <option value="Long">Long Term (12+ months)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="sector">Sector <small style="color: var(--text-muted);">(Auto-populated, can be edited)</small></label>
+                            <input type="text" id="sector" name="sector" placeholder="Auto-populating..." readonly style="background: rgba(201, 169, 98, 0.1);">
+                        </div>
+
+                        <h3 style="margin: 2rem 0 1rem 0; font-family: 'Fraunces', serif; font-size: 1.4rem; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem;">Scoring (All scores required)</h3>
+
+                        <!-- Core Scores -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem;">
+                            <div class="form-group">
+                                <label for="confidenceLevel">Confidence Level (1-10) *</label>
+                                <select id="confidenceLevel" name="confidenceLevel" required>
+                                    <option value="">Select</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                    <option value="6">6</option>
+                                    <option value="7">7</option>
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="technicalScore">Technical Analysis (1-10) *</label>
+                                <select id="technicalScore" name="technicalScore" required>
+                                    <option value="">Select</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                    <option value="6">6</option>
+                                    <option value="7">7</option>
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="fundamentalsScore">Fundamentals (1-10) *</label>
+                                <select id="fundamentalsScore" name="fundamentalsScore" required>
+                                    <option value="">Select</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                    <option value="6">6</option>
+                                    <option value="7">7</option>
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="themeScore">Theme (1-5) *</label>
+                                <select id="themeScore" name="themeScore" required>
+                                    <option value="">Select</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="sectorScore">Sector (1-5) *</label>
+                                <select id="sectorScore" name="sectorScore" required>
+                                    <option value="">Select</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="attachments">Attachments (Optional)</label>
+                            <div class="file-input-wrapper">
+                                <input type="file" id="attachments" name="attachments" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx,.csv">
+                                <label for="attachments" class="file-input-label">Choose files (PDF, Images, Spreadsheets)</label>
+                            </div>
+                            <div id="fileList" class="file-list"></div>
+                        </div>
+
+                        <button type="submit" class="btn">Submit for Review</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Pending Reviews Tab -->
+            <div id="reviewsTab" class="tab-content">
+                <div class="card">
+                    <h2>Pending Reviews</h2>
+                    <p style="margin-bottom: 2rem; color: var(--text-muted);">
+                        Review these submissions independently. Your review will be hidden until all team members complete theirs.
+                    </p>
+                    <div id="pendingReviewsList"></div>
+                </div>
+            </div>
+
+            <!-- Watchlist Tab -->
+            <div id="watchlistTab" class="tab-content">
+                <div class="card">
+                    <h2>Approved Watchlist</h2>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Ticker</th>
+                                    <th>Company</th>
+                                    <th>Submitted By</th>
+                                    <th>Final Score</th>
+                                    <th>Sector</th>
+                                    <th>Time Horizon</th>
+                                    <th>Added Date</th>
+                                </tr>
+                            </thead>
+                            <tbody id="watchlistTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Submission Detail Modal -->
+    <div id="submissionModal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeSubmissionModal()">&times;</button>
+            <div id="submissionDetail"></div>
+        </div>
+    </div>
+
+    <!-- Review Form Modal -->
+    <div id="reviewModal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeReviewModal()">&times;</button>
+            <div id="reviewFormContainer"></div>
+        </div>
+    </div>
+
+    <script src="watchlist-app.js"></script>
+</body>
+</html>

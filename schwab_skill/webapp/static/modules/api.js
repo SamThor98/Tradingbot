@@ -81,6 +81,40 @@ function classifyApiError(status, rawError) {
   };
 }
 
+function isApiKeyAuthFailure(status, payload) {
+  if (status !== 401) return false;
+  if (!state.publicConfig?.api_key_required) return false;
+  const msg = String(payload?.error || payload?.detail || "").toLowerCase();
+  return msg.includes("x-api-key") || msg.includes("api key");
+}
+
+function promptForApiKeyRefresh() {
+  if (typeof window === "undefined" || typeof window.prompt !== "function") return false;
+  const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
+  const message = existing
+    ? "Saved WEB_API_KEY was rejected by the server.\nEnter the correct WEB_API_KEY:"
+    : "This server requires WEB_API_KEY for write operations.\nEnter your WEB_API_KEY:";
+  const entered = window.prompt(message, existing || "");
+  if (entered == null) return false;
+  const next = String(entered || "").trim();
+  if (!next) {
+    localStorage.removeItem("tradingbot.api_key");
+    return false;
+  }
+  localStorage.setItem("tradingbot.api_key", next);
+  return true;
+}
+
+async function parseJsonResponse(res) {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: `Invalid JSON response (${res.status})` };
+  }
+}
+
 export const api = {
   async _authHeaders(extraHeaders = {}) {
     const headers = { ...extraHeaders };
@@ -107,19 +141,25 @@ export const api = {
     const authed = await this._authHeaders(headers);
 
     try {
-      const res = await fetch(path, {
+      let res = await fetch(path, {
         ...fetchOptions,
         credentials: fetchOptions.credentials ?? "same-origin",
         headers: authed,
         signal: controller.signal,
       });
-      const text = await res.text();
-      let data;
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { ok: false, error: `Invalid JSON response (${res.status})` };
+      let data = await parseJsonResponse(res);
+
+      if (!res.ok && isApiKeyAuthFailure(res.status, data) && promptForApiKeyRefresh()) {
+        const refreshedHeaders = await this._authHeaders(headers);
+        res = await fetch(path, {
+          ...fetchOptions,
+          credentials: fetchOptions.credentials ?? "same-origin",
+          headers: refreshedHeaders,
+          signal: controller.signal,
+        });
+        data = await parseJsonResponse(res);
       }
+
       if (!res.ok) {
         const mapped = classifyApiError(
           res.status,
@@ -273,6 +313,14 @@ export const api = {
     const safeFormat = String(format || "json").trim().toLowerCase();
     return this.download(
       `/api/research/dossier/${encodeURIComponent(safeTicker)}/export?format=${encodeURIComponent(safeFormat)}`,
+      options,
+    );
+  },
+
+  downloadResearchFundamentalWorkbook(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    return this.download(
+      `/api/research/dossier/${encodeURIComponent(safeTicker)}/fundamental-workbook`,
       options,
     );
   },

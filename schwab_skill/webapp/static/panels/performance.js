@@ -21,6 +21,44 @@ import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { safeText, prettyJson, formatPercentPoints, formatDecimal } from "../modules/format.js";
 
+function prettifySourceName(rawSource) {
+  if (!rawSource && rawSource !== 0) return "Unavailable";
+  const raw = String(rawSource).trim();
+  if (!raw) return "Unavailable";
+  const lastPathToken = raw.split(/[\\/]/).pop() || raw;
+  const withoutExtension = lastPathToken.replace(/\.(json|csv|txt|md)$/i, "");
+  const normalized = withoutExtension
+    .replace(/^[._-]+/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "Unavailable";
+  return normalized
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function formatRunStatus(rawStatus) {
+  const status = String(rawStatus || "").trim().toLowerCase();
+  if (!status) return "Unknown";
+  if (status === "running" || status === "in_progress") return "Running";
+  if (status === "completed" || status === "success") return "Completed";
+  if (status === "idle") return "Idle";
+  if (status === "failed" || status === "error") return "Failed";
+  return status
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatGeneratedAt(rawValue) {
+  if (!rawValue) return "";
+  const date = new Date(rawValue);
+  if (Number.isNaN(date.getTime())) return String(rawValue);
+  return date.toLocaleString();
+}
+
 function normalizeRows(input) {
   if (Array.isArray(input)) return input.filter((row) => row && typeof row === "object");
   if (input && typeof input === "object") {
@@ -142,26 +180,29 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
   const sg = data.separation_guard && typeof data.separation_guard === "object" ? data.separation_guard : {};
 
   const vstat = val.status && typeof val.status === "object" ? val.status : {};
-  const runStatus = safeText(vstat.run_status);
+  const runStatus = formatRunStatus(vstat.run_status);
   const passed = vstat.passed;
   let valBadgeClass = "bg-slate-900";
-  let valBadgeText = runStatus || "unknown";
+  let valBadgeText = runStatus || "Unknown";
   if (passed === true) {
     valBadgeClass = "bg-green-900";
-    valBadgeText = runStatus ? `${runStatus} · pass` : "pass";
+    valBadgeText = "Passed";
   } else if (passed === false) {
     valBadgeClass = "bg-red-900";
-    valBadgeText = runStatus ? `${runStatus} · fail` : "fail";
-  } else if (runStatus === "idle" || vstat.exists === false) {
+    valBadgeText = "Failed";
+  } else if (String(vstat.run_status || "").trim().toLowerCase() === "idle" || vstat.exists === false) {
     valBadgeClass = "bg-slate-900";
-    valBadgeText = runStatus || "idle";
+    valBadgeText = "Idle";
+  } else if (String(vstat.run_status || "").trim().toLowerCase() === "running") {
+    valBadgeClass = "bg-blue-900";
+    valBadgeText = "Running";
   }
   const valMetaParts = [];
-  if (vstat.source) valMetaParts.push(`source: ${safeText(vstat.source)}`);
-  if (vstat.progress_pct != null && vstat.progress_pct !== "") valMetaParts.push(`progress: ${safeText(vstat.progress_pct)}%`);
-  if (vstat.generated_at) valMetaParts.push(`updated: ${safeText(vstat.generated_at)}`);
+  if (vstat.source) valMetaParts.push(`Source: ${prettifySourceName(vstat.source)}`);
+  if (vstat.progress_pct != null && vstat.progress_pct !== "") valMetaParts.push(`Progress: ${safeText(vstat.progress_pct)}%`);
+  if (vstat.generated_at) valMetaParts.push(`Updated: ${formatGeneratedAt(vstat.generated_at)}`);
   const valMeta = valMetaParts.length ? `<span class="muted">${valMetaParts.join(" · ")}</span>` : "";
-  const artifacts = val.artifacts_present === true ? "present" : val.artifacts_present === false ? "missing" : "—";
+  const artifacts = val.artifacts_present === true ? "Available" : val.artifacts_present === false ? "Missing" : "Unknown";
 
   const outcomes = Array.isArray(lv.latest_outcomes) ? lv.latest_outcomes : [];
   let outcomesTable = "";
@@ -212,7 +253,7 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     <div class="performance-buckets">
       <div class="perf-bucket">
         <h3>Backtest</h3>
-        <div class="perf-source">${safeText(bt.source)}</div>
+        <div class="perf-source">Data source: ${safeText(prettifySourceName(bt.source))}</div>
         <div class="perf-metric"><span class="label">Run at</span><span class="value">${safeText(bt.run_at)}</span></div>
         <div class="perf-metric"><span class="label">Trades</span><span class="value">${safeText(bt.total_trades)}</span></div>
         <div class="perf-metric"><span class="label">Win rate</span><span class="value">${formatPercentPoints(bt.win_rate)}</span></div>
@@ -221,20 +262,20 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
       </div>
       <div class="perf-bucket">
         <h3>Shadow / paper</h3>
-        <div class="perf-source">${safeText(sp.source)}</div>
+        <div class="perf-source">Data source: ${safeText(prettifySourceName(sp.source))}</div>
         <div class="perf-metric"><span class="label">Shadow actions</span><span class="value">${safeText(sp.shadow_actions)}</span></div>
         <p class="perf-bucket-note">${safeText(sp.notes)}</p>
       </div>
       <div class="perf-bucket">
         <h3>Live</h3>
-        <div class="perf-source">${safeText(lv.source)}</div>
+        <div class="perf-source">Data source: ${safeText(prettifySourceName(lv.source))}</div>
         <div class="perf-metric"><span class="label">Live actions</span><span class="value">${safeText(lv.live_actions)}</span></div>
         <div class="perf-metric"><span class="label">Recorded outcomes</span><span class="value">${safeText(lv.recorded_outcomes)}</span></div>
       </div>
     </div>
     <div class="performance-validation">
       <span class="health-badge ${valBadgeClass}">${safeText(valBadgeText)}</span>
-      <span class="muted">Artifacts dir: <strong>${safeText(artifacts)}</strong></span>
+      <span class="muted">Validation artifacts: <strong>${safeText(artifacts)}</strong></span>
       ${valMeta}
     </div>
     ${callout}

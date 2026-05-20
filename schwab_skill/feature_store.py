@@ -216,7 +216,7 @@ def log_stage_b_signal(
             avg_vol_50=signal.get("avg_vol_50"),
             signal_score=signal.get("signal_score"),
             # Advisory
-            advisory_prob=advisory.get("p_up_10d"),
+            advisory_prob=signal.get("p_up_calibrated", advisory.get("p_up_10d")),
             advisory_confidence=advisory.get("confidence_bucket"),
             mirofish_conviction=signal.get("mirofish_conviction"),
             # Risk
@@ -246,6 +246,10 @@ def log_stage_b_signal(
             "mirofish_conviction", "breakout_confirmed",
             "mirofish_disagreement", "agent_weighting", "meta_policy",
             "meta_policy_size_multiplier", "prediction_market_size_multiplier",
+            "edge_score", "reliability_score", "execution_score", "composite_score",
+            "rank_score", "rank_basis", "score_stack_version", "p_up_calibrated", "ev_10d",
+            "data_provider", "data_provider_primary", "used_fallback_data", "fallback_reason",
+            "pead_score_delta", "guidance_score_delta",
         }
         raw = {k: v for k, v in signal.items() if k in safe_keys}
         record.raw_features_json = json.dumps(raw, default=str)
@@ -277,6 +281,14 @@ def get_feature_dataframe(
             return pd.DataFrame()
         data = []
         for r in rows:
+            raw_extra: dict[str, Any] = {}
+            if r.raw_features_json:
+                try:
+                    parsed = json.loads(r.raw_features_json)
+                    if isinstance(parsed, dict):
+                        raw_extra = parsed
+                except Exception:
+                    raw_extra = {}
             data.append({
                 "scan_id": r.scan_id,
                 "scan_ts": r.scan_ts,
@@ -305,6 +317,16 @@ def get_feature_dataframe(
                 "quality_filtered": r.quality_filtered,
                 "event_risk_flagged": r.event_risk_flagged,
                 "regime_bucket": r.regime_bucket,
+                "edge_score": raw_extra.get("edge_score"),
+                "reliability_score": raw_extra.get("reliability_score"),
+                "execution_score": raw_extra.get("execution_score"),
+                "composite_score": raw_extra.get("composite_score"),
+                "rank_score": raw_extra.get("rank_score"),
+                "p_up_calibrated": raw_extra.get("p_up_calibrated"),
+                "ev_10d": raw_extra.get("ev_10d"),
+                "data_provider": raw_extra.get("data_provider"),
+                "data_provider_primary": raw_extra.get("data_provider_primary"),
+                "used_fallback_data": raw_extra.get("used_fallback_data"),
             })
         return pd.DataFrame(data)
     finally:

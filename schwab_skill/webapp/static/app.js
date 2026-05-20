@@ -133,6 +133,7 @@ import {
   runReport,
   runResearchDossier,
   downloadResearchDossier,
+  downloadResearchFundamentalWorkbook,
 } from "./panels/report.js";
 import {
   PRESET_SETTING_LABELS,
@@ -219,32 +220,32 @@ let _lastAblationRunStatus = "idle";
 const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
-    title: "Today",
-    text: "Run a scan, look over the candidates, and approve only the trades you like.",
+    title: "Built to endure.",
+    text: "Operate with discipline: run a scan, evaluate with context, and approve only what meets your standard.",
     ctaLabel: "Run a scan",
     ctaHref: "#scanSection",
     altCtaLabel: "Review pending",
     altCtaHref: "#pendingSection",
   },
   research: {
-    title: "Analyze",
-    text: "Review pending approvals, then run research and diligence before you size up.",
+    title: "Disciplined analysis.",
+    text: "Pressure-test ideas with quick checks, backtests, and deeper diligence before committing capital.",
     ctaLabel: "Quick check",
     ctaHref: "#quickCheckSection",
     altCtaLabel: "Open backtests",
     altCtaHref: "#backtestSection",
   },
   diagnostics: {
-    title: "Health",
-    text: "How the system is doing right now \u2014 connections, data quality, and recent runs.",
+    title: "Resilience first.",
+    text: "Keep reliability visible, detect drift early, and resolve blockers before they impact execution.",
     ctaLabel: "Health ribbon",
     ctaHref: "#healthRibbon",
     altCtaLabel: "Detailed status",
     altCtaHref: "#statusDetailsPanel",
   },
   settings: {
-    title: "Settings",
-    text: "Connect your Schwab account, choose a strategy preset, and manage live-trading guardrails.",
+    title: "Aligned controls.",
+    text: "Set connectivity, guardrails, and account controls so execution remains consistent over time.",
     ctaLabel: "Connections",
     ctaHref: "#onboardingSection",
     altCtaLabel: "Trading controls",
@@ -415,7 +416,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Trade, 2 Analyze, 3 Health, 4 Settings.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Diagnostics, 4 Settings.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -452,8 +453,8 @@ function maybeShowScreenNudge(mode) {
   const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const nudgeMap = {
     settings: "Finish connectivity and profile settings once, then return to Operations.",
-    research: "Use reports, SEC compare, backtests, and portfolio context to validate trades.",
-    diagnostics: "Use this screen to troubleshoot without interrupting trade flow.",
+    research: "Use quick check, backtests, SEC compare, and dossiers to validate each setup.",
+    diagnostics: "Use this screen to validate reliability and troubleshoot blockers without interrupting operations.",
   };
   const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";
   showToast(`${cfg.title}: ${hint}`, "info", 2800);
@@ -4676,6 +4677,36 @@ function wireEvents() {
   bindEvent("dossierDownloadJsonBtn", "click", () => downloadResearchDossier("json"));
   bindEvent("dossierDownloadMdBtn", "click", () => downloadResearchDossier("md"));
   bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
+  bindEvent("dossierDownloadModelWorkbookBtn", "click", downloadResearchFundamentalWorkbook);
+  document.querySelectorAll("#reportTemplateButtons button[data-template]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const node = e.currentTarget;
+      const template = node.getAttribute("data-template") || "institutional_quick_read";
+      const section = node.getAttribute("data-section") || "";
+      const skipMirofish = node.getAttribute("data-skip-mirofish") === "true";
+      const skipEdgar = node.getAttribute("data-skip-edgar") === "true";
+      const sectionEl = document.getElementById("reportSection");
+      const skipMiroEl = document.getElementById("skipMirofish");
+      const skipEdgarEl = document.getElementById("skipEdgar");
+      const templateMeta = document.getElementById("reportTemplateMeta");
+      const advanced = document.getElementById("reportAdvancedOptions");
+      if (sectionEl) sectionEl.value = section;
+      if (skipMiroEl) skipMiroEl.checked = skipMirofish;
+      if (skipEdgarEl) skipEdgarEl.checked = skipEdgar;
+      if (templateMeta) {
+        const sectionLabel = section || "all sections";
+        templateMeta.textContent = `Template loaded: ${template} (${sectionLabel}, skip_mirofish=${skipMirofish}, skip_edgar=${skipEdgar})`;
+      }
+      if (advanced && (section || skipMirofish || skipEdgar)) {
+        advanced.open = true;
+      }
+      updateActionCenter({
+        title: "Report Template Loaded",
+        message: `${template} template loaded. Generate dossier when ready.`,
+        severity: "info",
+      });
+    });
+  });
   bindEvent("secCompareBtn", "click", runSecCompare);
   bindEvent("secCompareMode", "change", applySecCompareMode);
   bindEvent("secCompareResetProfileBtn", "click", resetSecCompareProfileOverride);

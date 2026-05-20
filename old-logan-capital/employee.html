@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Portal - Old Logan Capital</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16x16.png">
+    <link rel="manifest" href="./site.webmanifest">
+
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --cream: #F5F1E8;
+            --dark: #1a1a1a;
+            --dark-alt: #2a2a2a;
+            --forest: #1A3A2E;
+            --forest-light: #2D5A4A;
+            --text: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --border: rgba(26, 26, 26, 0.1);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            line-height: 1.7;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 1rem 2rem;
+            background: var(--dark);
+            color: var(--cream);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background: var(--forest);
+        }
+
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 2rem 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(245, 241, 232, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+        }
+
+        .logo-text {
+            font-family: 'Fraunces', serif;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+            text-decoration: none;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 10rem 5% 4rem;
+        }
+
+        h1 {
+            font-family: 'Fraunces', serif;
+            font-size: 3.5rem;
+            font-weight: 700;
+            letter-spacing: -2px;
+            margin-bottom: 1rem;
+            color: var(--dark);
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            margin-bottom: 4rem;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            padding: 3rem;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: var(--dark);
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .card h2 {
+            font-family: 'Fraunces', serif;
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--dark);
+        }
+
+        .card p {
+            color: var(--text-muted);
+            line-height: 1.8;
+            margin-bottom: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Portal Dashboard -->
+    <div id="portalPage">
+        <nav>
+            <a href="index.html" class="logo-text">Old Logan Capital</a>
+        </nav>
+
+        <div class="container">
+            <h1>Employee Portal</h1>
+            <p class="subtitle">Internal tools and resources for the Old Logan Capital team</p>
+
+            <div class="dashboard">
+                <div class="card">
+                    <h2>Watchlist Management System</h2>
+                    <p>
+                        A collaborative system for submitting, reviewing, and tracking investment opportunities.
+                        Submit tickers with detailed analysis, review team submissions independently to avoid groupthink,
+                        and receive Discord notifications at key workflow stages.
+                    </p>
+                    <a href="watchlist.html" class="btn">Launch Watchlist System</a>
+                </div>
+
+                <div class="card">
+                    <h2>Trading Screener</h2>
+                    <p>
+                        Access the TradingBot screener workspace for scanning, diagnostics, and trade workflow support.
+                        This launches the dedicated screener service in a new tab so you can keep the portal open.
+                    </p>
+                    <a href="https://screener.oldlogancapital.com" class="btn" target="_blank" rel="noopener noreferrer">Launch Trading Screener</a>
+                </div>
+
+                <div class="card">
+                    <h2>Team Resources</h2>
+                    <p>Access shared research, internal documents, and collaboration tools.</p>
+                    <a href="#" class="btn">View Resources</a>
+                </div>
+
+                <div class="card">
+                    <h2>Discord Integration</h2>
+                    <p>Manage Discord notifications and team communication settings.</p>
+                    <a href="#" class="btn">Configure Settings</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

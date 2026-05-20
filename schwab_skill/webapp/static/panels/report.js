@@ -788,6 +788,82 @@ function buildTrustHeaderSection(rawData) {
   });
 }
 
+function parseIsoDate(value) {
+  if (!value) return null;
+  const dt = new Date(value);
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function freshnessBadgeFromDate(value) {
+  const dt = parseIsoDate(value);
+  if (!dt) return { label: "unknown", css: "warn", ageDays: null };
+  const ageDays = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 86400000));
+  if (ageDays <= 7) return { label: "fresh", css: "good", ageDays };
+  if (ageDays <= 45) return { label: "watch", css: "warn", ageDays };
+  return { label: "stale", css: "warn", ageDays };
+}
+
+function buildEvidenceTraceSection(rawData) {
+  const trust = rawData?.report_trust || {};
+  const edgar = rawData?.edgar || {};
+  const generatedAt = rawData?.generated_at || "";
+  const freshness = freshnessBadgeFromDate(generatedAt);
+  const filings = (edgar?.recent_filings || []).slice(0, 3);
+  const filingExcerpts = filings.length
+    ? filings.map((f) => `${safeText(f.form || "Filing")} (${safeText(f.date || "n/a")}): ${safeText(f.description || "No description.")}`)
+    : [];
+  const managementQuotes = (trust?.analyst_take || [])
+    .map((row) => safeText(row?.text || ""))
+    .filter(Boolean)
+    .slice(0, 3);
+  const dcf = rawData?.dcf || {};
+  const technical = rawData?.technical || {};
+  const pctText = (value, digits = 2) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "n/a";
+    const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
+    return `${pctVal.toFixed(digits)}%`;
+  };
+  const numText = (value, digits = 1) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "n/a";
+    return n.toFixed(digits);
+  };
+  const calcBreadcrumbs = [
+    `DCF growth rate: ${pctText(dcf?.growth_rate, 2)}`,
+    `DCF WACC: ${pctText(dcf?.wacc, 2)}`,
+    `Terminal growth: ${pctText(dcf?.terminal_growth, 2)}`,
+    `Margin of safety: ${pctText(dcf?.margin_of_safety, 1)}`,
+    `Technical signal score: ${numText(technical?.signal_score, 1)}/100`,
+  ];
+  const freshnessLine = generatedAt
+    ? `Generated at ${escapeHtml(generatedAt)} · age ${freshness.ageDays ?? "n/a"} day(s)`
+    : "Generated timestamp unavailable.";
+
+  const body = `
+    <div class="report-scenario-kpis">
+      <div><span class="subtle">Timestamp Freshness</span><div class="pill ${freshness.css}">${escapeHtml(freshness.label)}</div></div>
+      <div><span class="subtle">Generated At</span><div class="mono-nums">${escapeHtml(generatedAt || "n/a")}</div></div>
+      <div><span class="subtle">Source Confidence</span><div class="mono-nums">${Number.isFinite(Number(trust?.data_confidence)) ? `${(Number(trust.data_confidence) * 100).toFixed(1)}%` : "n/a"}</div></div>
+    </div>
+    <div class="subtle">${freshnessLine}</div>
+    <div class="ir-subhead">Filing Excerpts</div>
+    ${bulletList(filingExcerpts, { empty: "No filing excerpts available." })}
+    <div class="ir-subhead">Management Quotes</div>
+    ${bulletList(managementQuotes, { empty: "No management quotes surfaced." })}
+    <div class="ir-subhead">Calculation Breadcrumbs</div>
+    ${bulletList(calcBreadcrumbs, { empty: "No calculation breadcrumbs available." })}
+  `;
+
+  return makeInstitutionalSection({
+    id: "evidence_trace",
+    eyebrow: "Traceability",
+    title: "Evidence and Freshness",
+    subtitle: "Filing excerpts, management quotes, and calculation breadcrumbs used in this report.",
+    body,
+  });
+}
+
 function buildFactsTakeHypothesesSection(rawData) {
   const trust = rawData?.report_trust || {};
   const facts = Array.isArray(trust?.verified_facts) ? trust.verified_facts : [];
@@ -917,6 +993,7 @@ export function renderReportVisual(data) {
     <article class="ir-document">
       ${buildTrustHeaderSection(data)}
       ${buildFactsTakeHypothesesSection(data)}
+      ${buildEvidenceTraceSection(data)}
       ${buildCoverHeader(data, normalized)}
       ${buildExecutiveSummarySection(data, normalized)}
       ${buildBusinessModelSection(data, normalized)}
@@ -949,6 +1026,16 @@ export function applyReportViewMode() {
   }
 }
 
+function setReportRunStatus(message, severity = "muted") {
+  const el = document.getElementById("reportRunStatus");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.remove("muted", "warn", "good");
+  if (severity === "warn") el.classList.add("warn");
+  else if (severity === "good") el.classList.add("good");
+  else el.classList.add("muted");
+}
+
 export async function runReport() {
   if (!smokeChecked) {
     smokeChecked = true;
@@ -969,6 +1056,7 @@ export async function runReport() {
 
   btn.disabled = true;
   btn.textContent = "Running...";
+  setReportRunStatus("Status: queued", "muted");
   output.textContent = "Generating report...";
   visual.innerHTML = `<div class="report-empty">Generating visual report...</div>`;
   updateActionCenter({ title: "Report Running", message: `Generating report for ${ticker}...`, severity: "info" });
@@ -978,10 +1066,12 @@ export async function runReport() {
     if (section) qs.set("section", section);
     qs.set("skip_mirofish", String(skipMirofish));
     qs.set("skip_edgar", String(skipEdgar));
+    setReportRunStatus("Status: fetching data", "muted");
     const out = await api.get(`/api/report/${ticker}?${qs.toString()}`, { timeoutMs: 300000 });
     if (!out.ok) {
       output.textContent = out.error || "Report failed.";
       visual.innerHTML = `<div class="report-empty">${safeText(out.error || "Report failed.")}</div>`;
+      setReportRunStatus("Status: partial failure (fetching/scoring failed)", "warn");
       logEvent({ kind: "report", severity: "error", message: `Report ${ticker} failed: ${out.error}` });
       return;
     }
@@ -989,17 +1079,27 @@ export async function runReport() {
     state.lastReportData = out.data;
     state.reportRawView = false;
     applyReportViewMode();
+    setReportRunStatus("Status: scoring", "muted");
+    let portfolioRiskFailed = false;
     try {
       const portfolioRiskOut = await api.get("/api/portfolio/risk", { timeoutMs: 20000 });
       state.lastPortfolioRiskData = portfolioRiskOut.ok ? portfolioRiskOut.data : null;
+      if (!portfolioRiskOut.ok) portfolioRiskFailed = true;
     } catch {
       state.lastPortfolioRiskData = null;
+      portfolioRiskFailed = true;
     }
 
     state.activeReportTab = "summary";
+    setReportRunStatus("Status: drafting", "muted");
     output.textContent = JSON.stringify(out.data, null, 2);
     renderReportTabs(out.data);
     renderReportVisual(out.data);
+    if (portfolioRiskFailed) {
+      setReportRunStatus("Status: complete with partial failure (portfolio risk unavailable)", "warn");
+    } else {
+      setReportRunStatus("Status: complete", "good");
+    }
     logEvent({ kind: "report", severity: "info", message: `Report complete for ${ticker}${section ? ` (${section})` : ""}.` });
     updateActionCenter({ title: "Report Complete", message: `Full report ready for ${ticker}.`, severity: "success" });
   } finally {
@@ -1392,6 +1492,46 @@ export async function downloadResearchDossier(format = "json") {
       if (format === "json") btn.textContent = "Download JSON";
       else if (format === "md") btn.textContent = "Download Markdown";
       else btn.textContent = "Download PDF";
+    }
+  }
+}
+
+export async function downloadResearchFundamentalWorkbook() {
+  const ticker = resolveDossierTicker();
+  if (!ticker) {
+    setDossierMeta("Enter a ticker in Full Report or SEC Compare first.", "warn");
+    updateActionCenter({
+      title: "Ticker Required",
+      message: "Set a ticker in Full Report or SEC Compare before downloading the model workbook.",
+      severity: "warn",
+    });
+    return;
+  }
+  const btn = document.getElementById("dossierDownloadModelWorkbookBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Downloading...";
+  }
+  setDossierMeta("Downloading fundamental model workbook...", "muted");
+  try {
+    const out = await api.downloadResearchFundamentalWorkbook(ticker, { timeoutMs: 300000 });
+    if (handleDossierRuntimeUnavailable(out)) return;
+    if (!out.ok) {
+      setDossierMeta(out.error || "Workbook download failed.", "warn");
+      logEvent({ kind: "report", severity: "error", message: `Workbook download failed: ${out.error}` });
+      return;
+    }
+    triggerBlobDownload(out.data.blob, out.data.filename);
+    setDossierMeta(`Downloaded ${out.data.filename}`, "good");
+    updateActionCenter({
+      title: "Workbook Ready",
+      message: `${out.data.filename} saved.`,
+      severity: "success",
+    });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Download Fundamental Model Workbook (.xlsx)";
     }
   }
 }

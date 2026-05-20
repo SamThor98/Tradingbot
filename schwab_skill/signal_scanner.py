@@ -265,12 +265,12 @@ def _compute_high_level_rank_score(
     The rank intentionally prioritizes composite quality while still carrying
     execution/reliability, calibrated probability, and a bounded EV nudge.
     """
+    # Reduce score-double-counting: composite already carries edge/reliability/execution.
     base = (
-        (composite_score * 0.55)
-        + (edge_score * 0.15)
-        + (reliability_score * 0.15)
-        + (execution_score * 0.1)
-        + ((p_up_calibrated * 100.0) * 0.05)
+        (composite_score * 0.75)
+        + ((p_up_calibrated * 100.0) * 0.15)
+        + (execution_score * 0.05)
+        + (reliability_score * 0.05)
     )
 
     # Keep EV contribution informative but bounded so it cannot dominate rank.

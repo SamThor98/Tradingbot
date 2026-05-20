@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="description" content="Built to endure. Positioned to prosper. Old Logan Capital combines resilience with strategic vision for long-term investment success.">
+    <title>Old Logan Capital</title>
+
+    <link rel="canonical" href="https://oldlogancapital.com/">
+
+    <link rel="apple-touch-icon" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./assets/icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./assets/icons/favicon-16x16.png">
+    <link rel="manifest" href="./site.webmanifest">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Old Logan Capital">
+    <meta name="theme-color" content="#F5F1E8">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1a1a1a">
+
+    <meta property="og:title" content="Old Logan Capital">
+    <meta property="og:image" content="https://oldlogancapital.com/assets/images/logo.png">
+    <meta property="og:image:secure_url" content="https://oldlogancapital.com/assets/images/logo.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:alt" content="Old Logan Capital Logo">
+    <meta property="og:url" content="https://oldlogancapital.com/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Old Logan Capital">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Old Logan Capital">
+    <meta name="twitter:image" content="https://oldlogancapital.com/assets/images/logo.png">
+    <meta name="twitter:image:alt" content="Old Logan Capital Logo">
+
+    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="./assets/icons/apple-touch-icon.png">
+    <link rel="apple-touch-startup-image" href="./assets/images/logo.png">
+    <meta property="al:ios:url" content="https://oldlogancapital.com/">
+    <meta property="al:ios:app_name" content="Old Logan Capital">
+
+    <meta name="author" content="Old Logan Capital">
+    <meta name="format-detection" content="telephone=no">
+
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --cream: #F5F1E8;
+            --cream-dark: #EBE5D6;
+            --dark: #1a1a1a;
+            --dark-alt: #2a2a2a;
+            --forest: #1A3A2E;
+            --forest-light: #2D5A4A;
+            --gold: #C9A962;
+            --text: #1a1a1a;
+            --text-muted: #5a5a5a;
+            --border: rgba(26, 26, 26, 0.1);
+            --border-light: rgba(26, 26, 26, 0.05);
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        html {
+            scroll-behavior: smooth;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            line-height: 1.7;
+            position: relative;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* iOS Safe Area Support */
+        @supports (padding: max(0px)) {
+            nav {
+                padding-left: max(5%, env(safe-area-inset-left));
+                padding-right: max(5%, env(safe-area-inset-right));
+                padding-top: env(safe-area-inset-top);
+            }
+
+            .hero,
+            section,
+            .contact-section,
+            footer {
+                padding-left: max(5%, env(safe-area-inset-left));
+                padding-right: max(5%, env(safe-area-inset-right));
+            }
+
+            footer {
+                padding-bottom: max(4rem, env(safe-area-inset-bottom));
+            }
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 1200px;
+            height: 1200px;
+            background-image: url('./assets/images/logo-icon.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        ::selection {
+            background: var(--dark);
+            color: var(--cream);
+        }
+
+        /* Decorative Corner Elements */
+        .corner-decoration {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-style: solid;
+            border-color: var(--border);
+        }
+
+        .corner-decoration.top-left {
+            top: 0;
+            left: 0;
+            border-width: 2px 0 0 2px;
+        }
+
+        .corner-decoration.top-right {
+            top: 0;
+            right: 0;
+            border-width: 2px 2px 0 0;
+        }
+
+        .corner-decoration.bottom-left {
+            bottom: 0;
+            left: 0;
+            border-width: 0 0 2px 2px;
+        }
+
+        .corner-decoration.bottom-right {
+            bottom: 0;
+            right: 0;
+            border-width: 0 2px 2px 0;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            padding: 2rem 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(245, 241, 232, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            text-decoration: none;
+            gap: 0.75rem;
+        }
+
+        .logo-text {
+            font-family: 'Fraunces', serif;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+            line-height: 1;
+        }
+
+
+
+        .nav-links {
+            display: flex;
+            gap: 3rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+            transition: color 0.2s ease;
+            position: relative;
+        }
+
+        .nav-links a:hover {
+            color: var(--dark);
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .nav-cta {
+            padding: 0.75rem 1.4rem;
+            background: var(--dark);
+            color: var(--cream);
+            text-decoration: none;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            border: 1px solid var(--dark);
+            transition: all 0.3s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .nav-cta::before {
+            display: none;
+        }
+
+        .nav-cta:hover {
+            background: var(--forest);
+            border-color: var(--forest);
+            color: var(--cream);
+        }
+
+        .nav-cta.secondary {
+            background: transparent;
+            color: var(--dark);
+            border: 1px solid var(--border);
+        }
+
+        .nav-cta.secondary::before {
+            display: none;
+        }
+
+        .nav-cta.secondary:hover {
+            background: var(--dark);
+            border-color: var(--dark);
+            color: var(--cream);
+        }
+
+        /* Hero */
+        .hero {
+            min-height: auto;
+            display: block;
+            padding: 10rem 5% 4rem;
+            max-width: 100%;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            overflow: hidden;
+            background: var(--cream);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .hero-video-container {
+            display: none;
+        }
+
+        .hero-video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            transform: translate(-50%, -50%);
+            object-fit: cover;
+        }
+
+        .hero-overlay {
+            display: none;
+        }
+
+        .hero-content {
+            max-width: 900px;
+            margin-left: 0;
+            animation: fadeInUp 1s ease 0.2s both;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero h1 {
+            font-family: 'Fraunces', serif;
+            font-size: 3.5rem;
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -2px;
+            margin-bottom: 1rem;
+            color: var(--dark);
+            font-optical-sizing: auto;
+            text-shadow: none;
+        }
+
+        .hero h1 .highlight {
+            color: var(--dark);
+            font-style: normal;
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            max-width: 760px;
+            margin-bottom: 2.25rem;
+            line-height: 1.7;
+            font-weight: 400;
+            text-shadow: none;
+        }
+
+        .hero .subtitle {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            margin-bottom: 2.5rem;
+        }
+
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+            max-width: 500px;
+        }
+
+        .stat {
+            animation: fadeInUp 1s ease both;
+        }
+
+        .stat:nth-child(1) { animation-delay: 0.4s; }
+        .stat:nth-child(2) { animation-delay: 0.5s; }
+
+        .stat h3 {
+            font-family: 'Fraunces', serif;
+            font-size: 2.4rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+            letter-spacing: -1px;
+            text-shadow: none;
+        }
+
+        .stat p {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin: 0;
+            font-weight: 400;
+        }
+
+        /* Sections */
+        section {
+            padding: 8rem 5%;
+            max-width: 1600px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .section-label {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            font-weight: 400;
+            display: inline-block;
+        }
+
+        section h2 {
+            font-family: 'Fraunces', serif;
+            font-size: 3.5rem;
+            font-weight: 700;
+            letter-spacing: -2px;
+            margin-bottom: 4.5rem;
+            color: var(--dark);
+            max-width: 800px;
+            line-height: 1.1;
+        }
+
+        /* Portfolio Grid */
+        .portfolio-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+        }
+
+        .portfolio-card {
+            padding: 3rem;
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .portfolio-card:hover {
+            border-color: var(--dark);
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .portfolio-card h3 {
+            font-family: 'Fraunces', serif;
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+        }
+
+        .portfolio-card p {
+            color: var(--text-muted);
+            line-height: 1.6;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Team Grid */
+        .team-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2.5rem;
+        }
+
+        .team-member {
+            text-align: center;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .team-photo {
+            width: 200px;
+            height: 200px;
+            background: rgba(255, 255, 255, 0.5);
+            background-size: cover;
+            background-position: center;
+            border-radius: 50%;
+            margin: 0 auto 2rem;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .team-photo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .team-member:hover .team-photo {
+            border-color: var(--dark);
+        }
+
+        .team-member h3 {
+            font-family: 'Fraunces', serif;
+            font-size: 1.35rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+        }
+
+        .team-member p {
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.7rem;
+            font-weight: 400;
+        }
+
+        /* Investor Letters */
+        .letters-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .letter-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2rem 2.5rem;
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            text-decoration: none;
+            color: var(--text);
+            transition: all 0.2s ease;
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .letter-item::before,
+        .letter-item::after,
+        .letter-item *::before,
+        .letter-item *::after {
+            display: none !important;
+            content: none !important;
+        }
+
+        .letter-item:hover {
+            border-color: var(--dark);
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .letter-item h4 {
+            font-family: 'Fraunces', serif;
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+        }
+
+        .letter-item span {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 400;
+        }
+
+        /* Contact Section */
+        .contact-section {
+            background: var(--dark);
+            color: var(--cream);
+            padding: 10rem 5%;
+            margin: 0;
+            max-width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .contact-section::before {
+            content: '';
+            position: absolute;
+            left: 5%;
+            bottom: 10%;
+            width: 500px;
+            height: 500px;
+            background-image: url('./assets/images/logo-icon.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.03;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .contact-content {
+            max-width: 1600px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .contact-info h2 {
+            font-family: 'Fraunces', serif;
+            font-size: 4.5rem;
+            margin-bottom: 2rem;
+            color: var(--cream);
+            letter-spacing: -2px;
+            line-height: 1.1;
+            max-width: 900px;
+        }
+
+        .contact-info p {
+            color: rgba(245, 241, 232, 0.6);
+            margin-bottom: 3rem;
+            font-size: 1.2rem;
+            line-height: 1.7;
+            max-width: 700px;
+        }
+
+        .contact-email {
+            display: inline-block;
+            font-size: 1.3rem;
+            color: var(--cream);
+            text-decoration: none;
+            font-weight: 500;
+            border-bottom: 2px solid rgba(245, 241, 232, 0.3);
+            padding-bottom: 5px;
+            transition: all 0.2s ease;
+            letter-spacing: -0.3px;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .contact-email:hover {
+            border-bottom-color: var(--cream);
+        }
+
+        .social-links {
+            display: flex;
+            gap: 2.5rem;
+            margin-top: 3rem;
+        }
+
+        .social-links a {
+            color: rgba(245, 241, 232, 0.5);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 400;
+            transition: color 0.2s ease;
+            font-family: 'IBM Plex Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .social-links a:hover {
+            color: var(--cream);
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem 5%;
+            border-top: 1px solid var(--border-light);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1600px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .footer-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+        }
+
+
+        .footer-logo-text {
+            font-family: 'Fraunces', serif;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--dark);
+            letter-spacing: -0.5px;
+        }
+
+        footer p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-family: 'IBM Plex Mono', monospace;
+            letter-spacing: 0.5px;
+            font-weight: 400;
+        }
+
+        /* iOS-style mobile improvements */
+        @media (max-width: 1024px) {
+            body::after {
+                width: 800px;
+                height: 800px;
+                opacity: 0.02;
+            }
+
+            .hero-overlay {
+                background: linear-gradient(
+                    135deg,
+                    rgba(26, 26, 26, 0.75) 0%,
+                    rgba(26, 26, 26, 0.6) 50%,
+                    rgba(26, 26, 26, 0.4) 100%
+                );
+            }
+
+            nav {
+                padding: 1rem 5%;
+            }
+
+            .logo-text {
+                font-size: 1.1rem;
+            }
+
+            .logo-icon {
+                height: 26px;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .nav-buttons {
+                gap: 0.5rem;
+            }
+
+            .nav-cta {
+                padding: 0.65rem 1rem;
+                font-size: 0.7rem;
+            }
+
+            .hero {
+                padding: 6rem 5% 3rem;
+                min-height: 80vh;
+            }
+
+            .hero-content {
+                margin-left: 0;
+            }
+
+            .hero h1 {
+                font-size: 2.8rem;
+                letter-spacing: -1.5px;
+                margin-bottom: 1.5rem;
+            }
+
+            .hero p {
+                font-size: 1.05rem;
+                margin-bottom: 2.5rem;
+                line-height: 1.6;
+            }
+
+            .hero-stats {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1.5rem;
+                padding-top: 2rem;
+            }
+
+            .stat h3 {
+                font-size: 2.2rem;
+            }
+
+            .stat p {
+                font-size: 0.65rem;
+            }
+
+            section {
+                padding: 4rem 5%;
+            }
+
+            .section-label {
+                font-size: 0.65rem;
+                margin-bottom: 1rem;
+            }
+
+            section h2 {
+                font-size: 2rem;
+                margin-bottom: 2.5rem;
+                letter-spacing: -1px;
+            }
+
+            .portfolio-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+            }
+
+            #values .portfolio-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .portfolio-card {
+                padding: 1.5rem;
+                background: rgba(255, 255, 255, 0.5);
+                border: 1px solid var(--border);
+                text-align: center;
+            }
+
+            .portfolio-card h3 {
+                font-size: 1rem;
+                margin-bottom: 0;
+                font-weight: 600;
+            }
+
+            .portfolio-card p {
+                display: none;
+            }
+
+            .team-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 2rem;
+            }
+
+            .team-photo {
+                width: 140px;
+                height: 140px;
+                margin-bottom: 1rem;
+            }
+
+            .team-member h3 {
+                font-size: 1.1rem;
+            }
+
+            .team-member p {
+                font-size: 0.65rem;
+            }
+
+            .letter-item {
+                padding: 1.5rem;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+
+            .letter-item h4 {
+                font-size: 1.1rem;
+            }
+
+            .letter-item span {
+                font-size: 0.65rem;
+            }
+
+            .contact-section {
+                padding: 4rem 5%;
+            }
+
+            .contact-section::before {
+                width: 300px;
+                height: 300px;
+                opacity: 0.02;
+            }
+
+            .contact-info h2 {
+                font-size: 2.2rem;
+                margin-bottom: 1.5rem;
+            }
+
+            .contact-info p {
+                font-size: 1rem;
+                margin-bottom: 2rem;
+            }
+
+            .contact-email {
+                font-size: 1.1rem;
+            }
+
+            .social-links {
+                flex-wrap: wrap;
+                gap: 1.5rem;
+                margin-top: 2rem;
+            }
+
+            .social-links a {
+                font-size: 0.75rem;
+            }
+
+            footer {
+                padding: 2.5rem 5%;
+                flex-direction: column;
+                gap: 1.5rem;
+                text-align: center;
+            }
+
+            footer p {
+                font-size: 0.7rem;
+            }
+
+            .corner-decoration {
+                width: 40px;
+                height: 40px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            nav {
+                padding: 0.9rem 5%;
+            }
+
+            .nav-cta {
+                padding: 0.6rem 0.85rem;
+                font-size: 0.65rem;
+            }
+
+            .hero {
+                padding: 5rem 5% 2.5rem;
+                min-height: 75vh;
+            }
+
+            .hero h1 {
+                font-size: 2.2rem;
+                letter-spacing: -1px;
+                margin-bottom: 1.25rem;
+            }
+
+            .hero p {
+                font-size: 0.95rem;
+                margin-bottom: 2rem;
+            }
+
+            .hero-stats {
+                gap: 1.25rem;
+                padding-top: 1.75rem;
+            }
+
+            .stat h3 {
+                font-size: 1.8rem;
+            }
+
+            section {
+                padding: 3.5rem 5%;
+            }
+
+            section h2 {
+                font-size: 1.75rem;
+                margin-bottom: 2rem;
+            }
+
+            .portfolio-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+            }
+
+            .portfolio-card {
+                padding: 1.5rem;
+                text-align: center;
+            }
+
+            .portfolio-card h3 {
+                margin-bottom: 0;
+            }
+
+            .portfolio-card p {
+                display: none;
+            }
+
+            .team-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 2rem;
+            }
+
+            .team-photo {
+                width: 140px;
+                height: 140px;
+            }
+
+            .contact-info h2 {
+                font-size: 1.9rem;
+            }
+
+            .contact-info p {
+                font-size: 0.95rem;
+            }
+
+            .contact-email {
+                font-size: 1rem;
+            }
+        }
+
+        /* Small mobile devices */
+        @media (max-width: 480px) {
+            nav {
+                padding: 0.85rem 5%;
+            }
+
+            .logo-text {
+                font-size: 1rem;
+            }
+
+            .nav-buttons {
+                gap: 0.4rem;
+            }
+
+            .nav-cta {
+                padding: 0.55rem 0.75rem;
+                font-size: 0.6rem;
+            }
+
+            .hero {
+                padding: 4.5rem 5% 2rem;
+            }
+
+            .hero h1 {
+                font-size: 1.9rem;
+            }
+
+            .hero p {
+                font-size: 0.9rem;
+            }
+
+            .hero-stats {
+                gap: 1rem;
+            }
+
+            .stat h3 {
+                font-size: 1.6rem;
+            }
+
+            .stat p {
+                font-size: 0.6rem;
+            }
+
+            section {
+                padding: 3rem 5%;
+            }
+
+            section h2 {
+                font-size: 1.6rem;
+            }
+
+            .portfolio-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+
+            .portfolio-card {
+                padding: 1.25rem;
+                text-align: center;
+            }
+
+            .portfolio-card h3 {
+                font-size: 0.95rem;
+                margin-bottom: 0;
+            }
+
+            .portfolio-card p {
+                display: none;
+            }
+
+            .contact-info h2 {
+                font-size: 1.7rem;
+            }
+
+            .social-links {
+                gap: 1.25rem;
+            }
+        }
+
+        /* Employee portal parity at desktop/tablet widths */
+        @media (min-width: 769px) {
+            nav {
+                padding: 2rem 5%;
+            }
+
+            .hero {
+                min-height: auto;
+                padding: 10rem 5% 4rem;
+            }
+
+            .hero h1 {
+                font-size: 3.5rem;
+                letter-spacing: -2px;
+                margin-bottom: 1rem;
+            }
+
+            .hero .subtitle {
+                font-size: 1.2rem;
+                max-width: 760px;
+                margin-bottom: 2.5rem;
+            }
+
+            #values,
+            #letters {
+                padding-top: 6rem;
+                padding-bottom: 6rem;
+            }
+
+            #values h2,
+            #letters h2 {
+                font-size: 3rem;
+                letter-spacing: -1.5px;
+                margin-bottom: 2.75rem;
+            }
+        }
+
+        /* Bio Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(26, 26, 26, 0.95);
+            backdrop-filter: blur(10px);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--cream);
+            padding: 4rem;
+            max-width: 700px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+            clip-path: polygon(20px 0, 100% 0, 100% calc(100% - 20px), calc(100% - 20px) 100%, 0 100%, 0 20px);
+            animation: fadeInUp 0.4s ease;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 2rem;
+            right: 2rem;
+            font-size: 2rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            background: none;
+            border: none;
+            transition: color 0.2s ease;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            color: var(--dark);
+        }
+
+        .modal-header {
+            margin-bottom: 2rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1.5rem;
+        }
+
+        .modal-photo {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .modal-header-content {
+            flex: 1;
+        }
+
+        .modal-header h3 {
+            font-family: 'Fraunces', serif;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+            letter-spacing: -1px;
+        }
+
+        .modal-header .role {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+            margin-bottom: 0;
+        }
+
+        .modal-linkedin-header {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.2s ease;
+            white-space: nowrap;
+            padding-top: 0.25rem;
+        }
+
+        .modal-linkedin-header:hover {
+            color: var(--dark);
+        }
+
+        .modal-bio {
+            font-size: 1.05rem;
+            line-height: 1.8;
+            color: var(--text);
+            margin-bottom: 0;
+        }
+
+        @media (max-width: 768px) {
+            .modal-content {
+                padding: 2.5rem;
+                max-height: 85vh;
+            }
+
+            .modal-header {
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+
+            .modal-photo {
+                width: 70px;
+                height: 70px;
+            }
+
+            .modal-header h3 {
+                font-size: 2rem;
+            }
+
+            .modal-linkedin-header {
+                width: 100%;
+                margin-top: 0.5rem;
+            }
+
+            .modal-bio {
+                font-size: 0.95rem;
+            }
+
+            .modal-close {
+                top: 1.5rem;
+                right: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="#" class="logo">
+            <span class="logo-text">Old Logan Capital</span>
+        </a>
+        <div class="nav-buttons">
+            <a href="screener.html" class="nav-cta secondary">Investor Portal</a>
+            <a href="employee.html" class="nav-cta secondary">Employee Login</a>
+            <a href="#contact" class="nav-cta">Get in Touch</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-video-container">
+            <video autoplay muted loop playsinline class="hero-video" preload="auto">
+                <source src="./assets/Bison-in-storm.mp4" type="video/mp4">
+            </video>
+        </div>
+        <div class="hero-overlay"></div>
+        <div class="hero-content">
+            <h1>Built to endure. <span class="highlight">Positioned to prosper.</span></h1>
+            <p class="subtitle">Like the bison that weathered the American frontier, Old Logan Capital combines resilience with strategic vision.</p>
+            <div class="hero-stats">
+                <div class="stat">
+                    <h3>$35K+</h3>
+                    <p>Assets Under Management</p>
+                </div>
+                <div class="stat">
+            </div>
+        </div>
+    </section>
+
+    <section id="values">
+
+        <h2>Our Values</h2>
+        <div class="portfolio-grid">
+            <div class="portfolio-card">
+                <h3>Radical Transparency</h3>
+                <p>We open the curtain on our process, research, and performance. Ideas flow freely, decisions are shared openly.</p>
+            </div>
+            <div class="portfolio-card">
+                <h3>Integrity</h3>
+                <p>Your success is our success. We act in the best interest of our clients, with honesty on both successes and failures.</p>
+            </div>
+            <div class="portfolio-card">
+                <h3>Convexity</h3>
+                <p>We seek asymmetric opportunities with favorable risk profiles, embracing innovation and disruption to create transformative value and lasting competitive advantages.</p>
+            </div>
+            <div class="portfolio-card">
+                <h3>Winning</h3>
+                <p>We hate losing. Our competitive edge comes from disciplined production, unbiased analysis, and stoic decision-making.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="team">
+        <h2>Leadership</h2>
+        <div class="team-grid">
+            <div class="team-member" onclick="openModal('paxton')" style="cursor: pointer;">
+                <div class="team-photo">
+                    <img src="./team-photos/paxton.jpg" alt="Paxton Thompson" />
+                </div>
+                <h3>Paxton Thompson</h3>
+                <p>Co-Founder & Managing Partner</p>
+            </div>
+            <div class="team-member" onclick="openModal('sam')" style="cursor: pointer;">
+                <div class="team-photo">
+                    <img src="./team-photos/sam.jpg" alt="Sam Thoresen" />
+                </div>
+                <h3>Sam Thoresen</h3>
+                <p>Co-Founder & Managing Partner</p>
+            </div>
+            <div class="team-member" onclick="openModal('alex')" style="cursor: pointer;">
+                <div class="team-photo">
+                    <img src="./team-photos/alex.jpg" alt="Alex Evenson" />
+                </div>
+                <h3>Alex Evenson</h3>
+                <p>Co-Founder & Managing Partner</p>
+            </div>
+            <div class="team-member" onclick="openModal('garett')" style="cursor: pointer;">
+                <div class="team-photo">
+                    <img src="./team-photos/garett.jpg" alt="Garett Lake" />
+                </div>
+                <h3>Garett Lake</h3>
+                <p>Co-Founder & Managing Partner</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="letters">
+        <div class="corner-decoration bottom-left"></div>
+        <div class="corner-decoration bottom-right"></div>
+        <h2>Investor Letters</h2>
+        <div class="letters-list">
+            <a href="investorletter/2025/" target="_blank" class="letter-item">
+                <h4>2025 Annual Letter</h4>
+                <span>Annual · 2025</span>
+            </a>
+            <a href="https://drive.google.com/file/d/1hQA2Y3z4g0LSe7qedgjnrF_m9ecMEx5U/view" target="_blank" class="letter-item">
+                <h4>Q3 2025 Investor Letter</h4>
+                <span>Q3 2025 · September 2025</span>
+            </a>
+        </div>
+    </section>
+
+    <section class="contact-section" id="contact">
+        <div class="contact-content">
+            <div class="contact-info">
+                <h2>Let's build something exceptional together.</h2>
+                <p>We're here to explore opportunities for long-term value creation. Reach out if you're ready to explore with us.</p>
+                <a href="mailto:oldlogancapital@gmail.com" class="contact-email">oldlogancapital@gmail.com</a>
+                <div class="social-links">
+                    <a href="https://x.com/OldLoganCapital" target="_blank">Follow on X</a>
+                    <a href="https://www.linkedin.com/company/oldlogancapital" target="_blank">LinkedIn</a>
+                    <a href="screener.html">Investor Portal</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <a href="#" class="footer-logo">
+            <span class="footer-logo-text">Old Logan Capital</span>
+        </a>
+        <p>&copy; 2024 Old Logan Capital. All rights reserved.</p>
+    </footer>
+
+    <!-- Bio Modals -->
+    <div id="modal-paxton" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal('paxton')">&times;</button>
+            <div class="modal-header">
+                <img src="./team-photos/paxton.jpg" alt="Paxton Thompson" class="modal-photo">
+                <div class="modal-header-content">
+                    <h3>Paxton Thompson</h3>
+                    <div class="role">Co-Founder & Managing Partner</div>
+                </div>
+                <a href="https://www.linkedin.com/in/paxton-thompson/" target="_blank" class="modal-linkedin-header">LinkedIn →</a>
+            </div>
+            <div class="modal-bio">
+                <p>Paxton brings a unique perspective to investment management, shaped by years of competing at professional baseball's highest levels with the Texas Rangers and Philadelphia Phillies organizations. The mental discipline required to perform under pressure translates directly to his approach to capital allocation and portfolio construction at Old Logan Capital.</p>
+                <p>His experience in wealth management at Firm Foundation Family Wealth provided hands-on exposure to client service, financial planning, and investment strategy. This foundation, combined with his focus on private equity and M&A analysis, drives Old Logan's commitment to identifying undervalued opportunities and building long-term partnerships. Paxton's competitive mindset and ability to excel in high-stakes environments inform the firm's resilient, performance-oriented investment philosophy.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-sam" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal('sam')">&times;</button>
+            <div class="modal-header">
+                <img src="./team-photos/sam.jpg" alt="Sam Thoresen" class="modal-photo">
+                <div class="modal-header-content">
+                    <h3>Sam Thoresen</h3>
+                    <div class="role">Co-Founder & Managing Partner</div>
+                </div>
+                <a href="https://www.linkedin.com/in/samthoresen/" target="_blank" class="modal-linkedin-header">LinkedIn →</a>
+            </div>
+            <div class="modal-bio">
+                <p>Sam's analytical rigor stems from hands-on experience in fundamental equity research at Deepwater Asset Management, where he conducted deep-dive analysis on public companies alongside seasoned investment professionals. This foundation in evaluating businesses, scrutinizing financial statements, and identifying value drives Old Logan Capital's disciplined research process and commitment to fundamental analysis.</p>
+                <p>As a professional athlete in the Chicago Cubs organization, Sam understands the importance of preparation, pattern recognition, and execution under uncertainty. These skills translate directly to navigating market cycles and making sound investment decisions. His entrepreneurial experience building and scaling Mow'em Down Mowing from the ground up taught him operational efficiency, customer service excellence, and the practical realities of running a profitable business. At Old Logan, Sam brings a unique combination of Wall Street analysis, athletic discipline, and real-world business experience to portfolio construction and company evaluation.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-alex" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal('alex')">&times;</button>
+            <div class="modal-header">
+                <img src="./team-photos/alex.jpg" alt="Alex Evenson" class="modal-photo">
+                <div class="modal-header-content">
+                    <h3>Alex Evenson</h3>
+                    <div class="role">Co-Founder & Managing Partner</div>
+                </div>
+                <a href="https://www.linkedin.com/in/alexevenson7/" target="_blank" class="modal-linkedin-header">LinkedIn →</a>
+            </div>
+            <div class="modal-bio">
+                <p>Alex brings operational finance expertise from managing large-scale business units within UnitedHealth Group's Optum division, where he oversees financial planning, business development workstreams, and departments with over $150M in annual operating expenses. His experience navigating complex organizational structures, analyzing unit economics, and driving strategic initiatives provides Old Logan Capital with critical insight into how businesses actually operate beneath the surface-level metrics.</p>
+                <p>Having worked across pharmacy services operations and business development, Alex understands the interplay between growth investments, operational efficiency, and margin expansion. This knowledge informs Old Logan's approach to evaluating management teams and assessing sustainable competitive advantages. His ability to dissect financial statements, model business scenarios, and identify operational leverage points ensures the firm maintains a rigorous, detail-oriented investment process grounded in real-world corporate finance experience.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-garett" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal('garett')">&times;</button>
+            <div class="modal-header">
+                <img src="./team-photos/garett.jpg" alt="Garett Lake" class="modal-photo">
+                <div class="modal-header-content">
+                    <h3>Garett Lake, CPA</h3>
+                    <div class="role">Co-Founder & Managing Partner</div>
+                </div>
+                <a href="https://www.linkedin.com/in/garett-lake-cpa-25b124223/" target="_blank" class="modal-linkedin-header">LinkedIn →</a>
+            </div>
+            <div class="modal-bio">
+                <p>Garett's CPA credential and work as a Tax Accountant at STEVENS GROUP CPAS provide Old Logan Capital with critical technical expertise in financial reporting, tax structure analysis, and accounting quality assessment. His deep understanding of GAAP principles, tax regulations, and financial statement construction enables the firm to identify accounting red flags, evaluate management's financial reporting integrity, and understand the tax implications of corporate transactions and capital allocation decisions.</p>
+                <p>Working directly with business clients on tax planning and compliance has given Garett insight into the practical financial challenges companies face, from cash flow management to regulatory compliance. This ground-level perspective, combined with his 5-year competitive baseball career across multiple collegiate programs, reinforces Old Logan's commitment to disciplined preparation, attention to detail, and the mental toughness required to make sound decisions under pressure. Garett ensures the firm maintains rigorous accounting diligence and a sophisticated understanding of how tax policy impacts investment returns.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Modal functions
+        function openModal(person) {
+            const modal = document.getElementById('modal-' + person);
+            if (modal) {
+                modal.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function closeModal(person) {
+            const modal = document.getElementById('modal-' + person);
+            if (modal) {
+                modal.classList.remove('active');
+                document.body.style.overflow = 'auto';
+            }
+        }
+
+        // Close modal when clicking outside content
+        window.addEventListener('click', function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.classList.remove('active');
+                document.body.style.overflow = 'auto';
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const activeModal = document.querySelector('.modal.active');
+                if (activeModal) {
+                    activeModal.classList.remove('active');
+                    document.body.style.overflow = 'auto';
+                }
+            }
+        });
+
+        // Scroll to top on page load/refresh
+        if (history.scrollRestoration) {
+            history.scrollRestoration = 'manual';
+        }
+        window.addEventListener('beforeunload', function() {
+            window.scrollTo(0, 0);
+        });
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                window.scrollTo(0, 0);
+            }, 0);
+        });
+    </script>
+</body>
+</html>

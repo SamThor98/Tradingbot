@@ -8,6 +8,7 @@ quality gates, and sector climate filter) and reports return/risk diagnostics.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -50,13 +51,17 @@ from config import (
     get_forensic_sloan_max,
     get_pead_enabled,
     get_pead_lookback_days,
+    get_pead_score_boost,
+    get_pead_score_boost_large,
+    get_pead_score_penalty,
+    get_pead_score_penalty_large,
     get_quality_gates_mode,
     get_quality_soft_min_reasons,
     get_schwab_only_data,
 )
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
-from signal_scanner import _evaluate_quality_gates, _load_watchlist
+from signal_scanner import _apply_score_stack, _evaluate_quality_gates, _load_watchlist
 from stage_analysis import add_indicators, check_vcp_volume, compute_signal_components, is_stage_2
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -104,6 +109,7 @@ class BacktestContext:
     price_data: dict[str, pd.DataFrame]
     sector_etf_by_ticker: dict[str, str | None]
     sector_perf: dict[str, pd.DataFrame]
+    history_meta_by_ticker: dict[str, dict[str, Any]]
     excluded_tickers: list[dict[str, Any]]
     data_integrity: dict[str, Any]
 
@@ -377,6 +383,7 @@ def _prepare_context(
     cleaned = [str(t).strip().upper() for t in universe if str(t).strip()]
     universe = list(dict.fromkeys(cleaned))
     price_data: dict[str, pd.DataFrame] = {}
+    history_meta_by_ticker: dict[str, dict[str, Any]] = {}
     sector_etf_by_ticker: dict[str, str | None] = {}
     excluded: list[dict[str, Any]] = []
     data_integrity: dict[str, Any] = {
@@ -431,6 +438,7 @@ def _prepare_context(
 
     for ticker in universe:
         df, history_meta = _fetch_history_with_meta(ticker, start_date, end_date, schwab_auth=schwab_auth)
+        history_meta_by_ticker[ticker] = dict(history_meta or {})
         data_integrity["history_fetch_total"] = int(data_integrity.get("history_fetch_total", 0) or 0) + 1
         provider = str(history_meta.get("provider") or "unknown")
         reason = str(history_meta.get("reason") or "unknown")
@@ -473,6 +481,7 @@ def _prepare_context(
         price_data=price_data,
         sector_etf_by_ticker=sector_etf_by_ticker,
         sector_perf=sector_perf,
+        history_meta_by_ticker=history_meta_by_ticker,
         excluded_tickers=excluded,
         data_integrity=data_integrity,
     )
@@ -553,6 +562,79 @@ def _safe_telemetry_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _roc_auc_rank(y_true: pd.Series, y_score: pd.Series) -> float | None:
+    y = pd.to_numeric(y_true, errors="coerce")
+    s = pd.to_numeric(y_score, errors="coerce")
+    mask = ~(y.isna() | s.isna())
+    if int(mask.sum()) <= 1:
+        return None
+    yb = y[mask].astype(int)
+    pos = yb == 1
+    neg = yb == 0
+    n_pos = int(pos.sum())
+    n_neg = int(neg.sum())
+    if n_pos == 0 or n_neg == 0:
+        return None
+    ranks = s[mask].rank(method="average")
+    sum_pos = float(ranks[pos].sum())
+    return float((sum_pos - (n_pos * (n_pos + 1) / 2.0)) / (n_pos * n_neg))
+
+
+def _score_stack_metrics_from_trades(trades_df: pd.DataFrame) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if trades_df.empty:
+        return out
+
+    score_cols = ["signal_score", "composite_score", "rank_score", "edge_score", "execution_score", "reliability_score"]
+    for col in score_cols:
+        if col in trades_df.columns:
+            auc = _roc_auc_rank(trades_df["net_return"] > 0, trades_df[col])
+            ic = trades_df[[col, "net_return"]].corr(method="spearman").iloc[0, 1]
+            out[col] = {
+                "auc_upside": float(auc) if auc is not None else None,
+                "spearman_ic_net_return": float(ic) if pd.notna(ic) else None,
+            }
+
+    if "p_up_calibrated" in trades_df.columns:
+        p = pd.to_numeric(trades_df["p_up_calibrated"], errors="coerce").clip(lower=1e-6, upper=1 - 1e-6)
+        y = (pd.to_numeric(trades_df["net_return"], errors="coerce") > 0).astype(float)
+        mask = ~(p.isna() | y.isna())
+        if int(mask.sum()) > 0:
+            p2 = p[mask]
+            y2 = y[mask]
+            brier = float(((p2 - y2) ** 2).mean())
+            logloss = float(-(y2 * p2.map(math.log) + (1.0 - y2) * (1.0 - p2).map(math.log)).mean())
+            out["p_up_calibrated"] = {
+                "brier": brier,
+                "logloss": logloss,
+                "auc_upside": _roc_auc_rank(y2, p2),
+            }
+    return out
+
+
+def _provider_segment_metrics_from_trades(trades_df: pd.DataFrame) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if trades_df.empty:
+        return out
+    if "data_provider" in trades_df.columns:
+        for provider, group in trades_df.groupby("data_provider"):
+            net = pd.to_numeric(group["net_return"], errors="coerce")
+            out[str(provider)] = {
+                "n": int(len(group)),
+                "win_rate_net": float((net > 0).mean() * 100.0) if len(group) else 0.0,
+                "avg_net_return_pct": float(net.mean() * 100.0) if len(group) else 0.0,
+            }
+    if "used_fallback_data" in trades_df.columns:
+        for label, group in trades_df.groupby("used_fallback_data"):
+            net = pd.to_numeric(group["net_return"], errors="coerce")
+            out[f"fallback_{bool(label)}"] = {
+                "n": int(len(group)),
+                "win_rate_net": float((net > 0).mean() * 100.0) if len(group) else 0.0,
+                "avg_net_return_pct": float(net.mean() * 100.0) if len(group) else 0.0,
+            }
+    return out
 
 
 def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> dict[str, Any]:
@@ -938,6 +1020,10 @@ def _run_backtest_core(
     forensic_altman_min = float(get_forensic_altman_min(sd))
     pead_enabled = get_pead_enabled(sd)
     pead_lookback_days = int(get_pead_lookback_days(sd))
+    pead_score_boost = float(get_pead_score_boost(sd))
+    pead_score_boost_large = float(get_pead_score_boost_large(sd))
+    pead_score_penalty = float(get_pead_score_penalty(sd))
+    pead_score_penalty_large = float(get_pead_score_penalty_large(sd))
     adaptive_guardrail_policy = _load_adaptive_guardrail_policy(sd)
 
     starting_equity = float(get_backtest_portfolio_starting_equity(sd))
@@ -1069,12 +1155,11 @@ def _run_backtest_core(
         return mark
 
     def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float]:
-        miro = candidate.signal.get("mirofish_conviction")
-        adv = ((candidate.signal.get("advisory") or {}).get("p_up_10d"))
-        primary = _safe_telemetry_float(miro, _safe_telemetry_float(adv))
+        rank_score = _safe_telemetry_float(candidate.signal.get("rank_score"))
+        composite_score = _safe_telemetry_float(candidate.signal.get("composite_score"))
         return (
-            primary,
-            _safe_telemetry_float(adv),
+            rank_score,
+            composite_score,
             _safe_telemetry_float(candidate.signal.get("signal_score")),
         )
 
@@ -1141,7 +1226,18 @@ def _run_backtest_core(
                     "ohlc_path": ohlc_path,
                     "exit_reason": exit_reason,
                     "signal_score": pos.signal.get("signal_score"),
+                    "edge_score": pos.signal.get("edge_score"),
+                    "reliability_score": pos.signal.get("reliability_score"),
+                    "execution_score": pos.signal.get("execution_score"),
+                    "composite_score": pos.signal.get("composite_score"),
+                    "rank_score": pos.signal.get("rank_score"),
+                    "p_up_calibrated": pos.signal.get("p_up_calibrated"),
+                    "ev_10d": pos.signal.get("ev_10d"),
                     "mirofish_conviction": pos.signal.get("mirofish_conviction"),
+                    "data_provider": pos.signal.get("data_provider"),
+                    "data_provider_primary": pos.signal.get("data_provider_primary"),
+                    "used_fallback_data": pos.signal.get("used_fallback_data"),
+                    "fallback_reason": pos.signal.get("fallback_reason"),
                     "sector_filter": pos.sector_reason,
                     "quality_reasons": pos.reasons,
                     "forensic_sloan": pos.signal.get("forensic_sloan"),
@@ -1247,7 +1343,13 @@ def _run_backtest_core(
                 "forensic_beneish": ((forensic_snapshot or {}).get("beneish") or {}).get("m_score"),
                 "forensic_altman": ((forensic_snapshot or {}).get("altman") or {}).get("z_score"),
                 "forensic_flags": list((forensic_snapshot or {}).get("forensic_flags", []) or []),
+                "breakout_confirmed": True,
             }
+            history_meta = context.history_meta_by_ticker.get(ticker, {})
+            signal["data_provider"] = str(history_meta.get("provider") or "unknown")
+            signal["data_provider_primary"] = str(signal["data_provider"]).lower() == "schwab"
+            signal["used_fallback_data"] = bool(history_meta.get("used_fallback", False))
+            signal["fallback_reason"] = history_meta.get("reason")
 
             pead_info = None
             if pead_enabled:
@@ -1264,6 +1366,37 @@ def _run_backtest_core(
                     LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
             signal["pead_surprise_pct"] = (pead_info or {}).get("surprise_pct")
             signal["pead_beat"] = (pead_info or {}).get("beat")
+            pead_score_delta = 0.0
+            if pead_enabled and signal["pead_surprise_pct"] is not None:
+                try:
+                    s = float(signal["pead_surprise_pct"])
+                    if s > 0.15:
+                        pead_score_delta = pead_score_boost_large
+                    elif s > 0.05:
+                        pead_score_delta = pead_score_boost
+                    elif s < -0.15:
+                        pead_score_delta = -abs(pead_score_penalty_large)
+                    elif s < 0:
+                        pead_score_delta = -abs(pead_score_penalty)
+                except (TypeError, ValueError):
+                    pead_score_delta = 0.0
+            if pead_score_delta != 0.0:
+                signal["signal_score"] = max(0.0, min(100.0, float(signal["signal_score"]) + pead_score_delta))
+            signal["pead_score_delta"] = float(pead_score_delta)
+
+            try:
+                from advisory_model import score_signal_advisory
+
+                advisory = score_signal_advisory(signal, skill_dir=sd)
+                if advisory is not None:
+                    signal["advisory"] = advisory.to_dict()
+            except Exception as e:
+                LOG.debug("Backtest advisory scoring skipped for %s: %s", ticker, e)
+
+            try:
+                signal = _apply_score_stack(signal)
+            except Exception as e:
+                LOG.debug("Backtest score stack skipped for %s: %s", ticker, e)
 
             if prediction_market_engine is not None and prediction_market_mode == "live":
                 diagnostics["prediction_market_processed"] = int(diagnostics["prediction_market_processed"]) + 1
@@ -1508,7 +1641,18 @@ def _run_backtest_core(
                 "ohlc_path": ohlc_path,
                 "exit_reason": "final_liquidation",
                 "signal_score": pos.signal.get("signal_score"),
+                "edge_score": pos.signal.get("edge_score"),
+                "reliability_score": pos.signal.get("reliability_score"),
+                "execution_score": pos.signal.get("execution_score"),
+                "composite_score": pos.signal.get("composite_score"),
+                "rank_score": pos.signal.get("rank_score"),
+                "p_up_calibrated": pos.signal.get("p_up_calibrated"),
+                "ev_10d": pos.signal.get("ev_10d"),
                 "mirofish_conviction": pos.signal.get("mirofish_conviction"),
+                "data_provider": pos.signal.get("data_provider"),
+                "data_provider_primary": pos.signal.get("data_provider_primary"),
+                "used_fallback_data": pos.signal.get("used_fallback_data"),
+                "fallback_reason": pos.signal.get("fallback_reason"),
                 "sector_filter": pos.sector_reason,
                 "quality_reasons": pos.reasons,
                 "forensic_sloan": pos.signal.get("forensic_sloan"),
@@ -1588,6 +1732,8 @@ def _run_backtest_core(
             "excluded_count": len(context.excluded_tickers),
             "universe_size": len(context.watchlist),
             "data_integrity": context.data_integrity,
+            "score_stack_metrics": {},
+            "provider_segment_metrics": {},
             "findings": "No trades generated over the requested window.",
             "trades_sample": [],
         }
@@ -1628,6 +1774,8 @@ def _run_backtest_core(
         f"portfolio net return {100.0 * total_ret_net:.2f}% with max DD {100.0 * max_dd:.2f}%, "
         f"net PF {profit_factor_net if profit_factor_net == float('inf') else round(float(profit_factor_net), 3)}."
     )
+    score_stack_metrics = _score_stack_metrics_from_trades(trades_df)
+    provider_segment_metrics = _provider_segment_metrics_from_trades(trades_df)
 
     out: dict[str, Any] = {
         "start_date": start,
@@ -1681,6 +1829,8 @@ def _run_backtest_core(
         "excluded_count": len(context.excluded_tickers),
         "universe_size": len(context.watchlist),
         "data_integrity": context.data_integrity,
+        "score_stack_metrics": score_stack_metrics,
+        "provider_segment_metrics": provider_segment_metrics,
         "trades_sample": all_trades[:5],
         "findings": findings,
     }

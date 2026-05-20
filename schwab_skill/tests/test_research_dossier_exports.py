@@ -218,6 +218,19 @@ def test_export_endpoint_sets_content_disposition(monkeypatch) -> None:
     assert "attachment; filename=\"aapl_research_dossier.pdf\"" == pdf_resp.headers.get("content-disposition")
     assert bytes(pdf_resp.body).startswith(b"%PDF-1.4")
 
+    xlsx_resp = research.research_dossier_export("AAPL", format="xlsx")
+    assert xlsx_resp.status_code == 200
+    assert xlsx_resp.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "attachment; filename=\"aapl_fundamental_workbook.xlsx\"" == xlsx_resp.headers.get("content-disposition")
+    # XLSX container should start with ZIP magic bytes.
+    assert bytes(xlsx_resp.body).startswith(b"PK\x03\x04")
+
+    model_wb_resp = research.research_fundamental_workbook_export("AAPL")
+    assert model_wb_resp.status_code == 200
+    assert model_wb_resp.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "attachment; filename=\"aapl_fundamental_model_workbook.xlsx\"" == model_wb_resp.headers.get("content-disposition")
+    assert bytes(model_wb_resp.body).startswith(b"PK\x03\x04")
+
 
 def test_dossier_markdown_includes_institutional_sections(monkeypatch) -> None:
     """The exported Markdown must follow institutional section flow."""

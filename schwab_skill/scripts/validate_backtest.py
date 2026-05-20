@@ -50,6 +50,18 @@ def main() -> int:
     parser.add_argument("--tickers", type=int, default=40, help="Number of tickers to test")
     parser.add_argument("--start", default="2015-01-01", help="Backtest start date")
     parser.add_argument("--promotion", action="store_true", help="Enforce promotion-grade net-performance gates.")
+    parser.add_argument(
+        "--promotion-max-fallback-ratio",
+        type=float,
+        default=0.25,
+        help="Maximum allowed fallback provider share in promotion mode.",
+    )
+    parser.add_argument(
+        "--promotion-min-primary-ratio",
+        type=float,
+        default=0.50,
+        help="Minimum required primary-provider share in promotion mode.",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(SKILL_DIR))
@@ -101,6 +113,32 @@ def main() -> int:
             errors.append(f"max_drawdown_net_pct {float(result.get('max_drawdown_net_pct', 0.0) or 0.0):.2f}% < -45.00%")
         if float(result.get("win_rate_net", 0.0) or 0.0) < 50.0:
             errors.append(f"win_rate_net {float(result.get('win_rate_net', 0.0) or 0.0):.2f}% < 50.00%")
+        data_integrity = result.get("data_integrity") or {}
+        total_hist = int(data_integrity.get("history_fetch_total", 0) or 0)
+        fallback_hist = int(data_integrity.get("history_fallback_used", 0) or 0)
+        primary_hist = int(data_integrity.get("history_provider_schwab", 0) or 0)
+        if total_hist > 0:
+            fallback_ratio = float(fallback_hist) / float(total_hist)
+            primary_ratio = float(primary_hist) / float(total_hist)
+            if fallback_ratio > float(args.promotion_max_fallback_ratio):
+                errors.append(
+                    "fallback_ratio_too_high:"
+                    f"{fallback_ratio:.3f}>{float(args.promotion_max_fallback_ratio):.3f}"
+                )
+            if primary_ratio < float(args.promotion_min_primary_ratio):
+                errors.append(
+                    "primary_ratio_too_low:"
+                    f"{primary_ratio:.3f}<{float(args.promotion_min_primary_ratio):.3f}"
+                )
+        score_stack = result.get("score_stack_metrics") or {}
+        rank_metrics = score_stack.get("rank_score") or {}
+        rank_auc = rank_metrics.get("auc_upside")
+        if rank_auc is not None and float(rank_auc) < 0.51:
+            errors.append(f"rank_auc_upside {float(rank_auc):.4f} < 0.5100")
+        pcal = score_stack.get("p_up_calibrated") or {}
+        brier = pcal.get("brier")
+        if brier is not None and float(brier) > 0.255:
+            errors.append(f"p_up_brier {float(brier):.4f} > 0.2550")
         if errors:
             print("\nFAIL: promotion backtest gates not met:")
             for e in errors:

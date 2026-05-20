@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: olc-watchlist-backend
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: cd server && npm install
+    startCommand: cd server && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://oldlogancapital.com
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+    disk:
+      name: olc-data
+      mountPath: /opt/render/project/src/server
+      sizeGB: 1

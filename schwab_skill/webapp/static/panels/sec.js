@@ -20,11 +20,17 @@ export function applySecCompareMode() {
   const modeEl = document.getElementById("secCompareMode");
   const tickerB = document.getElementById("secCompareTickerB");
   const changesOnly = document.getElementById("secCompareChangesOnly");
+  const modeHelp = document.getElementById("secCompareModeHelp");
   if (!modeEl || !tickerB) return;
   const mode = modeEl.value;
   const requiresSecondTicker = mode === "ticker_vs_ticker";
   tickerB.disabled = !requiresSecondTicker;
   tickerB.placeholder = requiresSecondTicker ? "Ticker B (MSFT)" : "Not required for over-time mode";
+  if (modeHelp) {
+    modeHelp.textContent = requiresSecondTicker
+      ? "ticker_vs_ticker compares two issuers and is best used as an advanced contrast view."
+      : "ticker_over_time compares current filing language vs prior periods to surface execution drift.";
+  }
   if (changesOnly) {
     changesOnly.disabled = mode !== "ticker_over_time";
     if (mode !== "ticker_over_time") changesOnly.checked = false;
@@ -92,6 +98,21 @@ function confidenceBand(confidence) {
 
 function analysisModeLabel(mode) {
   return mode === "metadata_fallback" ? "metadata_fallback" : "full_text";
+}
+
+function parseDateSafe(value) {
+  if (!value) return null;
+  const dt = new Date(value);
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function freshnessLabel(value) {
+  const dt = parseDateSafe(value);
+  if (!dt) return { label: "unknown", css: "warn", ageDays: null };
+  const ageDays = Math.max(0, Math.floor((Date.now() - dt.getTime()) / 86400000));
+  if (ageDays <= 7) return { label: "fresh", css: "good", ageDays };
+  if (ageDays <= 45) return { label: "watch", css: "warn", ageDays };
+  return { label: "stale", css: "warn", ageDays };
 }
 
 const TIMELINE_NOISE_PATTERNS = [
@@ -762,6 +783,25 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
   const compareLimits = (compare.limits || []).slice(0, 3);
   const rationale = (compare.change_summary?.plain_english_rationale || []).slice(0, 3);
   const evidenceRanked = (compare.evidence || compare.change_summary?.evidence_ranked || []).slice(0, 4);
+  const filingExcerpts = [left, right]
+    .filter(Boolean)
+    .map((side, idx) => {
+      const label = idx === 0 ? leftLabel : rightLabel;
+      const quote = safeText((side?.evidence || [])[0]?.quote || side?.high_level_takeaway || "No quote snippet.");
+      return `${label} ${safeText(side?.form || "form")} (${safeText(side?.filing_date || "n/a")}): ${quote}`;
+    });
+  const managementQuotes = evidenceRanked
+    .map((ev) => safeText(ev?.quote || ""))
+    .filter(Boolean)
+    .slice(0, 3);
+  const calcBreadcrumbs = [
+    `Compare confidence: ${compareConfidence !== null ? `${safeText(compareConfidence)}/100` : "n/a"}`,
+    `Evidence quality mode: ${evidenceMode}`,
+    `Metric delta fields captured: ${Object.keys(deltas || {}).length}`,
+    `Red flag count: ${redFlags.length}`,
+  ];
+  const freshnessLeft = freshnessLabel(left?.filing_date);
+  const freshnessRight = freshnessLabel(right?.filing_date);
   const warning = analysisMode !== "full_text" || compareLimits.length;
   const whatChanged = materialRaw.length ? materialRaw.slice(0, 3) : differencesRaw.slice(0, 3);
   const whyItMatters = rationale.length ? rationale : [safeText(compare.investor_takeaway || "Impact statement unavailable.")];
@@ -773,6 +813,7 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
       <div><span class="${sentimentTagClass(sentimentTag)}">${sentimentTag}</span></div>
       <div class="compare-lead">${headline}</div>
       <div class="subtle">Mode: ${safeText(data.mode || compare.mode || "N/A")} | Form: ${safeText(data.form_type || "N/A")} | Evidence quality: ${evidenceMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : " | Confidence: Unavailable"}</div>
+      <div class="subtle">Freshness: ${leftLabel} <span class="pill ${freshnessLeft.css}">${safeText(freshnessLeft.label)}</span> · ${rightLabel} <span class="pill ${freshnessRight.css}">${safeText(freshnessRight.label)}</span></div>
       ${warning ? `<div class="report-callout warn">Reduced confidence context. ${compareLimits.length ? `Limits: ${safeText(compareLimits.join("; "))}` : "Metadata fallback or partial evidence mode."}</div>` : ""}
       <ul class="report-bullets">
         <li>Claim: ${safeText(compare.investor_takeaway || headline)}</li>
@@ -810,6 +851,12 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
       </ul>
       <div class="subtle">Metric Context</div>
       <div>${deltaChips || "<span class='muted'>No material metric deltas captured.</span>"}</div>
+      <div class="subtle">Filing Excerpts</div>
+      <ul class="report-bullets">${(filingExcerpts.length ? filingExcerpts : ["No filing excerpts available."]).map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>
+      <div class="subtle">Management Quotes</div>
+      <ul class="report-bullets">${(managementQuotes.length ? managementQuotes : ["No management quotes surfaced."]).map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>
+      <div class="subtle">Calculation Breadcrumbs</div>
+      <ul class="report-bullets">${calcBreadcrumbs.map((x) => `<li>${safeText(x)}</li>`).join("")}</ul>
       <div class="subtle">The "TL;DR Verdict"</div>
       <div class="compare-lead">${tldrVerdict}</div>
       <div class="subtle">Shared context</div>
@@ -981,13 +1028,15 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   if (mode === "ticker_vs_ticker" && !tickerB) return;
 
   btn.disabled = true;
-  meta.textContent = "Running SEC compare + management execution analysis...";
+  meta.textContent = "Status: queued";
   renderSecCompareEmpty("Running SEC compare...");
   updateActionCenter({ title: "SEC Compare Running", message: "Comparing filing evidence. This can take a moment.", severity: "info" });
   try {
+    let usedFallback = false;
+    let profilePersistFailed = false;
     // Best-effort profile override persistence for SaaS runtime.
     if (profileOverride || selectedProfile === "auto") {
-      await api.post(
+      const profilePersistOut = await api.post(
         "/api/sec/management-dashboard/profile",
         {
           profile_override: profileOverride || null,
@@ -996,7 +1045,9 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
         },
         { timeoutMs: 20000 },
       );
+      profilePersistFailed = !profilePersistOut?.ok;
     }
+    meta.textContent = "Status: fetching data";
     const qs = new URLSearchParams();
     qs.set("mode", mode);
     qs.set("ticker", tickerA);
@@ -1007,21 +1058,23 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     const out = await api.get(`/api/sec/compare?${qs.toString()}`, { timeoutMs: 300000 });
     let payload = out.ok ? out.data : null;
     if (!out.ok && (out.status === 404 || String(out.error || "").toLowerCase().includes("not found"))) {
-      meta.textContent = "SEC compare endpoint not found; using metadata fallback.";
+      meta.textContent = "Status: fetching data (metadata fallback mode)";
+      usedFallback = true;
       const fallback = await buildFallbackSecCompare(mode, tickerA, tickerB, formType);
       if (!fallback.ok) {
-        meta.textContent = `SEC compare failed: ${safeText(fallback.error)}`;
+        meta.textContent = "Status: partial failure (fetching failed)";
         renderSecCompareEmpty(safeText(fallback.error || "Compare failed."));
         logEvent({ kind: "report", severity: "error", message: `SEC compare fallback failed: ${fallback.error}` });
         return;
       }
       payload = fallback;
     } else if (!out.ok) {
-      meta.textContent = `SEC compare failed: ${safeText(out.error)}`;
+      meta.textContent = "Status: partial failure (fetching failed)";
       renderSecCompareEmpty(safeText(out.error || "Compare failed."));
       logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${out.error}` });
       return;
     }
+    meta.textContent = "Status: scoring";
     const dashboardOut = await fetchManagementDashboard({
       mode,
       tickerA,
@@ -1037,8 +1090,15 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     state.secCompareResult = payload;
     state.secManagementDashboard = payload.management_dashboard;
     state.secRuthlessMode = ruthlessMode;
+    meta.textContent = "Status: drafting";
     const activeProfile = safeText(payload.management_dashboard?.profile?.selected || profileOverride || "auto_detect");
-    meta.textContent = `Dashboard ready (${mode}, ${formType}) · profile: ${activeProfile} · data source: ${safeText(dashboardOut.source)}.`;
+    const backendPartial = usedFallback || safeText(dashboardOut.source).toLowerCase().includes("fallback");
+    const partialFailure = backendPartial || profilePersistFailed;
+    if (partialFailure) {
+      meta.textContent = `Status: complete with partial failure · profile: ${activeProfile} · source: ${safeText(dashboardOut.source)}`;
+    } else {
+      meta.textContent = `Status: complete · profile: ${activeProfile} · source: ${safeText(dashboardOut.source)}`;
+    }
     renderProfileStatusFromDashboard(payload.management_dashboard);
     renderSecCompareVisual(payload, { getDisplayMode });
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });

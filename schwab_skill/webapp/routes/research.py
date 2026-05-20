@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
+from io import BytesIO
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response
+from xml.sax.saxutils import escape as xml_escape
 
 from execution import get_account_status
 from finnhub_data import get_finnhub_research_snapshot
@@ -1426,6 +1430,262 @@ def _text_to_simple_pdf(text: str) -> bytes:
     return bytes(out)
 
 
+_INVALID_SHEET_CHARS = re.compile(r"[\\/*?:\[\]]")
+_INVALID_XML_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+
+def _xlsx_sheet_name(raw: str, idx: int) -> str:
+    base = _INVALID_SHEET_CHARS.sub("_", str(raw or "").strip())[:31]
+    if not base:
+        base = f"Sheet{idx}"
+    return base
+
+
+def _xlsx_col_label(index: int) -> str:
+    # 1-indexed column index to Excel letters (1->A, 27->AA).
+    out = ""
+    n = index
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
+def _xlsx_cell_ref(col_idx: int, row_idx: int) -> str:
+    return f"{_xlsx_col_label(col_idx)}{row_idx}"
+
+
+def _xlsx_text(value: Any) -> str:
+    text = str(value if value is not None else "")
+    text = _INVALID_XML_CHARS.sub("", text)
+    return xml_escape(text, {'"': "&quot;", "'": "&apos;"})
+
+
+def _xlsx_sheet_xml(rows: list[list[Any]]) -> bytes:
+    body: list[str] = []
+    for row_idx, row in enumerate(rows, start=1):
+        cells: list[str] = []
+        for col_idx, value in enumerate(row, start=1):
+            if value is None:
+                continue
+            ref = _xlsx_cell_ref(col_idx, row_idx)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                txt = _xlsx_text(value)
+                cells.append(
+                    f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{txt}</t></is></c>'
+                )
+        body.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(body)}</sheetData>'
+        "</worksheet>"
+    )
+    return xml.encode("utf-8")
+
+
+def _build_fundamental_workbook_sheets(dossier: dict[str, Any]) -> list[tuple[str, list[list[Any]]]]:
+    pitch = dossier.get("executive_pitch") or {}
+    sections = dossier.get("sections") or {}
+    fundamentals = sections.get("technical_valuation_fundamentals") or {}
+    raw = fundamentals.get("raw_report") or {}
+    tech = raw.get("technical") or {}
+    dcf = raw.get("dcf") or {}
+    comps = raw.get("comps") or {}
+    health = raw.get("health") or {}
+    snapshot = (sections.get("finnhub_catalysts_risks") or {}).get("snapshot") or {}
+    metrics = snapshot.get("metrics") or {}
+    catalysts = list((sections.get("finnhub_catalysts_risks") or {}).get("catalysts") or [])
+    risks = list((sections.get("finnhub_catalysts_risks") or {}).get("risks") or [])
+    sec_analyze = ((sections.get("sec_narrative") or {}).get("analyze") or {})
+    sec_compare = (((sections.get("sec_narrative") or {}).get("compare") or {}).get("compare") or {})
+
+    overview_rows: list[list[Any]] = [
+        ["Field", "Value"],
+        ["Ticker", dossier.get("ticker") or ""],
+        ["Generated At (UTC)", dossier.get("generated_at") or ""],
+        ["Recommendation", pitch.get("recommendation") or ""],
+        ["Confidence Label", pitch.get("confidence_label") or ""],
+        ["Confidence Score", pitch.get("confidence_score") or ""],
+        ["Time Horizon", pitch.get("time_horizon") or ""],
+    ]
+
+    fundamental_rows: list[list[Any]] = [
+        ["Metric", "Value", "Source"],
+        ["Revenue Growth TTM YoY (%)", metrics.get("revenue_growth_ttm_yoy"), "Finnhub metrics"],
+        ["EPS Growth TTM YoY (%)", metrics.get("eps_growth_ttm_yoy"), "Finnhub metrics"],
+        ["Operating Margin TTM (%)", metrics.get("operating_margin_ttm"), "Finnhub metrics"],
+        ["Net Margin TTM (%)", metrics.get("net_margin_ttm"), "Finnhub metrics"],
+        ["ROE TTM (%)", metrics.get("roe_ttm"), "Finnhub metrics"],
+        ["ROA TTM (%)", metrics.get("roa_ttm"), "Finnhub metrics"],
+        ["Current Ratio (Q)", metrics.get("current_ratio_quarterly"), "Finnhub metrics"],
+        ["Quick Ratio (Q)", metrics.get("quick_ratio_quarterly"), "Finnhub metrics"],
+        ["Debt/Equity (Q)", metrics.get("debt_to_equity_quarterly"), "Finnhub metrics"],
+        ["Interest Coverage TTM", metrics.get("interest_coverage_ttm"), "Finnhub metrics"],
+        ["Dividend Yield TTM (%)", metrics.get("dividend_yield_ttm"), "Finnhub metrics"],
+    ]
+
+    valuation_rows: list[list[Any]] = [
+        ["Lens", "Value", "Source"],
+        ["DCF Intrinsic Value", dcf.get("intrinsic_value"), "report.dcf"],
+        ["Current Price", dcf.get("current_price"), "report.dcf"],
+        ["Margin of Safety (%)", dcf.get("margin_of_safety"), "report.dcf"],
+        ["DCF Growth Rate (%)", dcf.get("growth_rate"), "report.dcf"],
+        ["WACC (%)", dcf.get("wacc"), "report.dcf"],
+        ["Terminal Growth (%)", dcf.get("terminal_growth"), "report.dcf"],
+        ["Median Peer P/E", comps.get("median_pe"), "report.comps"],
+        ["Median Peer P/S", comps.get("median_ps"), "report.comps"],
+        ["Implied Price (P/E)", comps.get("implied_price_pe"), "report.comps"],
+        ["Implied Price (P/S)", comps.get("implied_price_ps"), "report.comps"],
+        ["P/E TTM", metrics.get("pe_ttm"), "Finnhub metrics"],
+        ["P/B Annual", metrics.get("pb_annual"), "Finnhub metrics"],
+        ["P/S TTM", metrics.get("ps_ttm"), "Finnhub metrics"],
+        ["EV/EBITDA", metrics.get("ev_to_ebitda"), "Finnhub metrics"],
+    ]
+
+    technical_rows: list[list[Any]] = [
+        ["Technical Signal", "Value", "Source"],
+        ["Signal Score", tech.get("signal_score"), "report.technical"],
+        ["Stage 2", bool(tech.get("stage_2")), "report.technical"],
+        ["VCP", bool(tech.get("vcp")), "report.technical"],
+        ["Current Price", tech.get("current_price"), "report.technical"],
+        ["52w High", tech.get("high_52w"), "report.technical"],
+        ["52w Low", tech.get("low_52w"), "report.technical"],
+        ["SMA 50", tech.get("sma_50"), "report.technical"],
+        ["SMA 150", tech.get("sma_150"), "report.technical"],
+        ["SMA 200", tech.get("sma_200"), "report.technical"],
+        ["Sector ETF", tech.get("sector_etf"), "report.technical"],
+    ]
+
+    health_rows: list[list[Any]] = [
+        ["Health Signal", "Value", "Source"],
+        ["Current Ratio", health.get("current_ratio"), "report.health"],
+        ["Debt to Equity", health.get("debt_to_equity"), "report.health"],
+        ["Interest Coverage", health.get("interest_coverage"), "report.health"],
+        ["ROE", health.get("roe"), "report.health"],
+        ["Operating Margin", health.get("operating_margin"), "report.health"],
+        ["Flag Count", len(health.get("flags") or []), "report.health"],
+    ]
+    for idx, flag in enumerate((health.get("flags") or [])[:20], start=1):
+        health_rows.append([f"Flag {idx}", flag, "report.health"])
+
+    sec_rows: list[list[Any]] = [
+        ["SEC Lens", "Value", "Source"],
+        ["Analyze Headline", sec_analyze.get("summary_headline") or sec_analyze.get("error"), "sec_analyze"],
+        ["Analyze Narrative", sec_analyze.get("narrative_summary"), "sec_analyze"],
+        ["Compare Headline", sec_compare.get("summary_headline"), "sec_compare"],
+        ["Compare Narrative", sec_compare.get("narrative_summary"), "sec_compare"],
+        ["Compare Confidence", sec_compare.get("compare_confidence"), "sec_compare"],
+    ]
+    for idx, item in enumerate((sec_compare.get("top_differences") or [])[:10], start=1):
+        sec_rows.append([f"Top Difference {idx}", item, "sec_compare"])
+
+    catalyst_risk_rows: list[list[Any]] = [["Type", "Item"]]
+    for item in catalysts[:20]:
+        catalyst_risk_rows.append(["Catalyst", item])
+    for item in risks[:20]:
+        catalyst_risk_rows.append(["Risk", item])
+    if len(catalyst_risk_rows) == 1:
+        catalyst_risk_rows.append(["Info", "No catalyst/risk rows available."])
+
+    return [
+        ("Overview", overview_rows),
+        ("Fundamentals", fundamental_rows),
+        ("Valuation", valuation_rows),
+        ("Technical", technical_rows),
+        ("Health", health_rows),
+        ("SEC Trace", sec_rows),
+        ("Catalysts Risks", catalyst_risk_rows),
+    ]
+
+
+def _dossier_to_xlsx(dossier: dict[str, Any]) -> bytes:
+    sheets = _build_fundamental_workbook_sheets(dossier)
+    if not sheets:
+        sheets = [("Overview", [["Field", "Value"], ["Ticker", dossier.get("ticker") or ""]])]
+
+    sheet_xml_blobs: list[bytes] = []
+    sheet_names: list[str] = []
+    for idx, (raw_name, rows) in enumerate(sheets, start=1):
+        sheet_names.append(_xlsx_sheet_name(raw_name, idx))
+        sheet_xml_blobs.append(_xlsx_sheet_xml(rows))
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        "<sheets>"
+        + "".join(
+            f'<sheet name="{_xlsx_text(name)}" sheetId="{idx}" r:id="rId{idx}"/>'
+            for idx, name in enumerate(sheet_names, start=1)
+        )
+        + "</sheets></workbook>"
+    ).encode("utf-8")
+
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + "".join(
+            f'<Relationship Id="rId{idx}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            f'Target="worksheets/sheet{idx}.xml"/>'
+            for idx in range(1, len(sheet_names) + 1)
+        )
+        + '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+        'Target="styles.xml"/>'
+        + "</Relationships>"
+    ).encode("utf-8")
+
+    root_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/>'
+        "</Relationships>"
+    ).encode("utf-8")
+
+    content_types_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        + "".join(
+            f'<Override PartName="/xl/worksheets/sheet{idx}.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            for idx in range(1, len(sheet_names) + 1)
+        )
+        + '<Override PartName="/xl/styles.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        "</Types>"
+    ).encode("utf-8")
+
+    # Minimal style sheet to keep workbook validators happy.
+    styles_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+        '<borders count="1"><border/></borders>'
+        '<cellStyleXfs count="1"><xf/></cellStyleXfs>'
+        '<cellXfs count="1"><xf xfId="0"/></cellXfs>'
+        "</styleSheet>"
+    ).encode("utf-8")
+
+    buf = BytesIO()
+    with ZipFile(buf, "w", compression=ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", root_rels_xml)
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        zf.writestr("xl/styles.xml", styles_xml)
+        for idx, sheet_blob in enumerate(sheet_xml_blobs, start=1):
+            zf.writestr(f"xl/worksheets/sheet{idx}.xml", sheet_blob)
+    return buf.getvalue()
+
+
 @router.get("/api/chart/{ticker}", response_model=ApiResponse)
 def chart_data(ticker: str, days: int = 120) -> ApiResponse:
     """OHLCV candle data for Lightweight Charts."""
@@ -1750,7 +2010,7 @@ def research_dossier(ticker: str) -> ApiResponse:
 @router.get("/api/research/dossier/{ticker}/export")
 def research_dossier_export(
     ticker: str,
-    format: str = Query(default="json", pattern="^(json|md|pdf)$"),
+    format: str = Query(default="json", pattern="^(json|md|pdf|xlsx)$"),
 ) -> Response:
     try:
         dossier = _compose_research_dossier(ticker)
@@ -1764,6 +2024,10 @@ def research_dossier_export(
             body = _dossier_to_markdown(dossier).encode("utf-8")
             filename = f"{safe_symbol.lower()}_research_dossier.md"
             media_type = "text/markdown; charset=utf-8"
+        elif format == "xlsx":
+            body = _dossier_to_xlsx(dossier)
+            filename = f"{safe_symbol.lower()}_fundamental_workbook.xlsx"
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             try:
                 body = dossier_to_pdf(dossier)
@@ -1777,4 +2041,23 @@ def research_dossier_export(
         return Response(content=body, media_type=media_type, headers=headers)
     except Exception as exc:
         error = _err_response("research_dossier_export", exc)
+        return Response(content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500)
+
+
+@router.get("/api/research/dossier/{ticker}/fundamental-workbook")
+def research_fundamental_workbook_export(ticker: str) -> Response:
+    try:
+        dossier = _compose_research_dossier(ticker)
+        symbol = str(dossier.get("ticker") or ticker.upper().strip())
+        safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
+        body = _dossier_to_xlsx(dossier)
+        filename = f"{safe_symbol.lower()}_fundamental_model_workbook.xlsx"
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+    except Exception as exc:
+        error = _err_response("research_fundamental_workbook_export", exc)
         return Response(content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500)

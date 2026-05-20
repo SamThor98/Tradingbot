@@ -1425,6 +1425,11 @@ body[data-theme="editorial"] .app-topbar-actions .btn {
 
 body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn {
   padding: 6px !important;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  flex: 0 0 auto;
 }
 
 body[data-theme="editorial"] .app-topbar #notifPanel {
@@ -1996,7 +2001,6 @@ body.ui-screen-operations[data-theme="editorial"] #performanceSection,
 body.ui-screen-operations[data-theme="editorial"] #learningSection,
 body.ui-screen-operations[data-theme="editorial"] #calibrationSection,
 body.ui-screen-operations[data-theme="editorial"] #portfolioSection,
-body.ui-screen-operations[data-theme="editorial"] #sectorsSection,
 body.ui-screen-operations[data-theme="editorial"] #reportSectionCard,
 body.ui-screen-operations[data-theme="editorial"] #secCompareSection,
 body.ui-screen-operations[data-theme="editorial"] #activitySection,
@@ -2379,4 +2383,356 @@ body[data-theme="editorial"] .toast-container {
   body[data-theme="editorial"] .activity-drawer {
     padding-bottom: 72px;
   }
+}
+
+/* ============================================================
+   Chrome-first workspace spacing (desktop/laptop)
+   Give the primary trade lanes more breathing room and avoid
+   compressed three-column layouts on common 13-15" screens.
+============================================================ */
+body[data-theme="editorial"] main.container {
+  width: min(100%, 1920px);
+  max-width: 1920px;
+  margin: 22px auto 60px;
+  padding-left: clamp(18px, 3vw, 42px);
+  padding-right: clamp(18px, 3vw, 42px);
+}
+
+body[data-theme="editorial"] #workflowPrimary {
+  padding: clamp(12px, 1.2vw, 20px);
+}
+
+body[data-theme="editorial"] .operate-kanban {
+  grid-template-columns: minmax(420px, 1.32fr) minmax(360px, 1fr) minmax(360px, 1.05fr);
+  gap: clamp(14px, 1.6vw, 26px);
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  min-height: clamp(500px, 56vh, 760px);
+  padding: 14px 14px 16px;
+}
+
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane-head {
+  margin-bottom: 14px;
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane-head strong {
+  font-size: 1rem;
+}
+
+body[data-theme="editorial"] .operate-kanban #scanSection .scan-results-layout {
+  gap: 12px;
+}
+
+body[data-theme="editorial"] .operate-kanban #scanSection .table-wrap,
+body[data-theme="editorial"] .operate-kanban #pendingSection .task-board {
+  max-height: min(66vh, 760px);
+}
+
+@media (max-width: 1500px) {
+  body[data-theme="editorial"] .operate-kanban {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  body[data-theme="editorial"] .operate-kanban .kanban-lane:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ============================================================
+   FINAL CANONICAL THEME — Old Logan Light Editorial
+   This single block replaces layered v6-v12 overrides.
+============================================================ */
+body[data-theme="editorial"] {
+  --ui-bg: #f6f2ea;
+  --ui-surface: #fcfaf5;
+  --ui-surface-soft: #f4eee2;
+  --ui-border: rgba(22, 22, 22, 0.14);
+  --ui-border-strong: rgba(22, 22, 22, 0.22);
+  --ui-text: #202020;
+  --ui-muted: #585858;
+  --ui-accent: #7b6040;
+  background: var(--ui-bg) !important;
+  color: var(--ui-text) !important;
+}
+
+body[data-theme="editorial"] main.container {
+  width: min(100%, 1320px);
+  max-width: 1320px;
+  margin: 18px auto 54px !important;
+  padding-left: clamp(16px, 2.2vw, 26px);
+  padding-right: clamp(16px, 2.2vw, 26px);
+  gap: 14px !important;
+}
+
+body[data-theme="editorial"] .app-topbar {
+  background: rgba(250, 246, 238, 0.96) !important;
+  border-bottom: 1px solid var(--ui-border) !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(4px);
+}
+
+body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .app-topbar-brand .brand-text {
+  color: #171717 !important;
+  font-family: "Fraunces", Georgia, serif !important;
+  font-style: normal !important;
+  font-weight: 700 !important;
+  font-size: 1.12rem !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs {
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  color: #5e5e5e !important;
+  text-transform: none !important;
+  letter-spacing: 0.02em !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: #1f1f1f !important;
+  color: #f8f3e9 !important;
+}
+
+body[data-theme="editorial"] .card,
+body[data-theme="editorial"] .panel-disclosure,
+body[data-theme="editorial"] .details-raw,
+body[data-theme="editorial"] .tool-output-host,
+body[data-theme="editorial"] #workflowPrimary,
+body[data-theme="editorial"] .operate-kanban,
+body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-border) !important;
+  color: var(--ui-text) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] h1,
+body[data-theme="editorial"] h2,
+body[data-theme="editorial"] h3,
+body[data-theme="editorial"] .mode-header-title,
+body[data-theme="editorial"] .section-title h2,
+body[data-theme="editorial"] .section-title h3,
+body[data-theme="editorial"] .kanban-lane-head strong {
+  color: #1c1c1c !important;
+  font-family: "Fraunces", Georgia, serif !important;
+  font-style: normal !important;
+  font-weight: 650 !important;
+  letter-spacing: 0 !important;
+  -webkit-text-fill-color: #1c1c1c !important;
+}
+
+body[data-theme="editorial"] .muted,
+body[data-theme="editorial"] p,
+body[data-theme="editorial"] small,
+body[data-theme="editorial"] .hero-kpi-hint,
+body[data-theme="editorial"] .mode-header-hint {
+  color: var(--ui-muted) !important;
+}
+
+body[data-theme="editorial"] .mode-header {
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-border-strong) !important;
+}
+
+body[data-theme="editorial"] .mode-header::before,
+body[data-theme="editorial"] .kanban-lane-head::after {
+  background: var(--ui-accent) !important;
+}
+
+body[data-theme="editorial"] .mode-header .workspace-eyebrow,
+body[data-theme="editorial"] .mode-header .mode-header-title,
+body[data-theme="editorial"] .mode-header .mode-header-lead,
+body[data-theme="editorial"] .mode-header .hero-kpi-label,
+body[data-theme="editorial"] .mode-header .hero-kpi-value,
+body[data-theme="editorial"] .mode-header .hero-kpi-hint,
+body[data-theme="editorial"] .mode-header .mode-header-hint,
+body[data-theme="editorial"] .mode-header .mode-header-anchors a {
+  color: #202020 !important;
+}
+
+body[data-theme="editorial"] .mode-header-kpis {
+  border-left-color: var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi {
+  border-bottom-color: var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi-value {
+  font-size: 1.45rem !important;
+}
+
+body[data-theme="editorial"] #operationsWorkspaceIntro,
+body[data-theme="editorial"] #researchWorkspaceIntro,
+body[data-theme="editorial"] #diagnosticsWorkspaceIntro,
+body[data-theme="editorial"] #settingsWorkspaceIntro {
+  background: var(--ui-surface) !important;
+  border-color: var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] #operationsWorkspaceIntro h2,
+body[data-theme="editorial"] #researchWorkspaceIntro h2,
+body[data-theme="editorial"] #diagnosticsWorkspaceIntro h2,
+body[data-theme="editorial"] #settingsWorkspaceIntro h2,
+body[data-theme="editorial"] #operationsWorkspaceIntro .muted,
+body[data-theme="editorial"] #researchWorkspaceIntro .muted,
+body[data-theme="editorial"] #diagnosticsWorkspaceIntro .muted,
+body[data-theme="editorial"] #settingsWorkspaceIntro .muted,
+body[data-theme="editorial"] #operationsWorkspaceIntro .workspace-eyebrow,
+body[data-theme="editorial"] #researchWorkspaceIntro .workspace-eyebrow,
+body[data-theme="editorial"] #diagnosticsWorkspaceIntro .workspace-eyebrow,
+body[data-theme="editorial"] #settingsWorkspaceIntro .workspace-eyebrow {
+  color: #222 !important;
+}
+
+body[data-theme="editorial"] .btn {
+  background: var(--ui-surface) !important;
+  color: #222 !important;
+  border: 1px solid var(--ui-border-strong) !important;
+  text-transform: none !important;
+  letter-spacing: 0.02em !important;
+}
+
+body[data-theme="editorial"] .btn:hover {
+  background: var(--ui-surface-soft) !important;
+  color: #111 !important;
+}
+
+body[data-theme="editorial"] .btn.primary,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  background: #1e1e1e !important;
+  border-color: #1e1e1e !important;
+  color: #f7f2e8 !important;
+}
+
+body[data-theme="editorial"] .btn.primary:hover,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary:hover {
+  background: #2b2b2b !important;
+  border-color: #2b2b2b !important;
+}
+
+body[data-theme="editorial"] input,
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea {
+  background: #fffdf8 !important;
+  color: #242424 !important;
+  border: 1px solid var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] input:focus,
+body[data-theme="editorial"] select:focus,
+body[data-theme="editorial"] textarea:focus {
+  border-color: var(--ui-accent) !important;
+  box-shadow: 0 0 0 1px rgba(123, 96, 64, 0.2) !important;
+}
+
+body[data-theme="editorial"] table thead th {
+  background: #f3eadc !important;
+  color: #3f352a !important;
+  border-bottom: 1px solid var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] table tbody td {
+  color: #262626 !important;
+  border-bottom: 1px solid rgba(22, 22, 22, 0.08) !important;
+}
+
+body[data-theme="editorial"] table tbody tr:hover td,
+body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: #f3ebe0 !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .pill,
+body[data-theme="editorial"] .chip,
+body[data-theme="editorial"] .health-badge {
+  background: #f4ecdf !important;
+  color: #5a4630 !important;
+  border: 1px solid rgba(123, 96, 64, 0.28) !important;
+}
+
+body[data-theme="editorial"] #pendingSection,
+body[data-theme="editorial"] #pendingSection .task-board,
+body[data-theme="editorial"] #pendingSection .task-empty {
+  background: var(--ui-surface) !important;
+  color: var(--ui-text) !important;
+}
+
+body[data-theme="editorial"] #pendingSection .task-empty {
+  border: 1px dashed var(--ui-border) !important;
+  color: var(--ui-muted) !important;
+}
+
+body[data-theme="editorial"] #toolsSection .tool-card,
+body[data-theme="editorial"] #toolsSection .tool-card:hover {
+  background: var(--ui-surface-soft) !important;
+  border: 1px solid var(--ui-border) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+body[data-theme="editorial"] #toolsSection .tool-card-title {
+  color: var(--ui-text) !important;
+}
+
+body[data-theme="editorial"] #toolsSection .tool-card-desc {
+  color: var(--ui-muted) !important;
+}
+
+body[data-theme="editorial"] #toolsSection .tool-card-cta {
+  color: var(--ui-accent) !important;
+}
+
+body[data-theme="editorial"] .panel-disclosure-summary {
+  background: var(--ui-surface-soft) !important;
+  color: var(--ui-text) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid var(--ui-border) !important;
+}
+
+body[data-theme="editorial"] .panel-disclosure .disclosure-hint {
+  color: #666 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+body[data-theme="editorial"] #reportSectionCard .report-visual {
+  margin: 0 12px 14px !important;
+}
+
+body[data-theme="editorial"] .report-empty {
+  color: var(--ui-muted) !important;
+  background: var(--ui-surface-soft) !important;
+  border: 1px solid var(--ui-border) !important;
+  border-radius: 4px !important;
+  padding: 14px 16px !important;
+  line-height: 1.45 !important;
+}
+
+body[data-theme="editorial"] #reportSectionCard #reportAdvancedOptions {
+  margin: 0 12px 12px !important;
+  border-color: var(--ui-border) !important;
+  background: var(--ui-surface) !important;
+}
+
+body[data-theme="editorial"] .site-footer {
+  background: transparent !important;
+  border-top: 1px solid var(--ui-border) !important;
+  color: var(--ui-muted) !important;
+}
+
+body[data-theme="editorial"] .site-footer a {
+  color: #5f4a31 !important;
+  border-bottom-color: rgba(95, 74, 49, 0.3) !important;
 }
