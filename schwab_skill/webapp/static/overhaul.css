@@ -1,13 +1,20 @@
 /* ============================================================
-   Editorial Trading Terminal — Visual Overhaul v3
+   Editorial Trading Terminal — Visual Overhaul (legacy stack)
    Loaded AFTER styles.css and simple.css; intentionally high
    specificity (body[data-theme="editorial"]) to win the cascade
    without rewriting legacy stylesheets.
 
-   Aesthetic: dark navy ink + warm newsprint cream + muted
-   editorial accents. Display serif (Fraunces, italic) paired
-   with Manrope body and JetBrains Mono numerics. Sharp corners,
-   strong vertical rhythm, generous white space.
+   LEGACY LAYER INVENTORY (kept for backward compatibility):
+   - v3 base editorial pass (dark-first tokens + component overrides)
+   - decongestion and top-region unification passes
+   - user-friendliness and async-state passes
+   - fullscreen/layout stability patches
+   - final light editorial pass
+
+   CANONICAL READABILITY CONTRACT:
+   - `static/readability.css` is loaded after this file and acts as
+     the single active readability contract.
+   - New readability updates should target `readability.css`.
 ============================================================ */
 
 body[data-theme="editorial"] {

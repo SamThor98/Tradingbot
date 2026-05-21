@@ -14,6 +14,7 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
+import { getApiAccessToken } from "../modules/auth.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 
@@ -161,12 +162,25 @@ export function renderPresetApplyPreview() {
 }
 
 export async function loadProfiles() {
+  const panel = document.getElementById("profilePanel");
+  if (!panel) return;
+  const token = await getApiAccessToken();
+  if (!token) {
+    renderProfilePanel(panel, null, {
+      error: "Sign in first to load profile settings (missing auth session).",
+    });
+    return;
+  }
   const mode = document.getElementById("settingsModeSelect")?.value || "standard";
   const expert = mode === "expert";
   const out = await api.get(`/api/settings/profiles?expert=${expert}`);
-  const panel = document.getElementById("profilePanel");
-  if (!panel) return;
   if (!out.ok) {
+    if (out.status === 401) {
+      renderProfilePanel(panel, null, {
+        error: "Sign in first to load profile settings (session expired or missing).",
+      });
+      return;
+    }
     renderProfilePanel(panel, null, { error: `Profile load failed: ${out.error}` });
     return;
   }

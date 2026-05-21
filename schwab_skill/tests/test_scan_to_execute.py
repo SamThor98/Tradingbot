@@ -467,9 +467,12 @@ class TestHealthAndStatus:
         assert contract["api_envelope"] == "ApiResponse"
 
     def test_static_pages(self, client: TestClient):
-        for path in ["/", "/simple", "/login"]:
+        for path in ["/", "/simple"]:
             resp = client.get(path)
             assert resp.status_code == 200
+        login_resp = client.get("/login", follow_redirects=False)
+        assert login_resp.status_code == 302
+        assert login_resp.headers.get("location") == "/?section=connect"
 
 
 class TestLocalOAuthEndpoints:

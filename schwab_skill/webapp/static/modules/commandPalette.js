@@ -52,7 +52,7 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     { id: "standard-view", label: "Switch to Standard view", icon: "eye", action: setDisplayMode("standard") },
     { id: "pro-view", label: "Switch to Pro view", icon: "eye", action: setDisplayMode("pro") },
     { id: "simple-page", label: "Open Simple Scan Page", icon: "external", action: () => { window.location.href = "/simple"; } },
-    { id: "login", label: "Open Sign In Page", icon: "key", action: () => { window.location.href = "/login"; } },
+    { id: "connect", label: "Open Connect Schwab", icon: "key", action: () => { window.location.href = "/?section=connect"; } },
     { id: "top", label: "Scroll to Top", icon: "arrow-up", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
   ];
 }

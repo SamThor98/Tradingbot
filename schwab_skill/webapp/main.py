@@ -1513,9 +1513,9 @@ def simple_dashboard() -> HTMLResponse:
 
 
 @app.get("/login")
-def login_page() -> HTMLResponse:
-    """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
-    return render_versioned_html(STATIC_DIR / "login.html")
+def login_page() -> RedirectResponse:
+    """Legacy login path now forwards to connect-first dashboard flow."""
+    return RedirectResponse("/?section=connect", status_code=302)
 
 
 _STARTUP_TIME = datetime.now(timezone.utc)

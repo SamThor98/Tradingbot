@@ -179,6 +179,17 @@ async function initSupabase(url, anonKey) {
     if (error) setMessage(error.message);
     else setMessage("Check email if confirmation is required, then sign in.");
   });
+  document.getElementById("loginSbReset")?.addEventListener("click", async () => {
+    const email = document.getElementById("loginSbEmail")?.value?.trim() || "";
+    if (!email) {
+      setMessage("Enter your account email, then click Send reset email.");
+      return;
+    }
+    const redirectTo = `${window.location.origin}/login`;
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) setMessage(error.message);
+    else setMessage("Password reset email sent. Check your inbox.");
+  });
   document.getElementById("loginSbSignOut")?.addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
     await clearCookieSession();

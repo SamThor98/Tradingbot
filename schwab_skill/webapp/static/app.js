@@ -253,6 +253,7 @@ const SCREEN_CONTEXT = Object.freeze({
   },
 });
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
+const FEATURE_GUIDE_SEEN_KEY = "tradingbot.ui.feature_guide_seen";
 const SCREEN_SECTIONS = Object.freeze({
   operations: [
     "dashboardToday",
@@ -298,6 +299,7 @@ const SECTION_TO_SCREEN = Object.freeze(
 );
 let currentScreenMode = "operations";
 let screenSwitchTimer = null;
+let connectFirstFocused = false;
 
 const FUNNEL_EVENTS = Object.freeze({
   SIGNUP: "signup",
@@ -477,6 +479,42 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   maybePrimeScreenData(m);
   maybeShowScreenNudge(m);
   if (updateUrl) writeScreenModeToUrl(m);
+}
+
+function shouldForceConnectFirst() {
+  return Boolean(state.publicConfig?.saas_mode && state.accountMe?.onboarding_required);
+}
+
+function applyConnectFirstExperience() {
+  const active = shouldForceConnectFirst();
+  document.body.classList.toggle("ui-connect-first", active);
+
+  const tabs = document.querySelector(".app-topbar-tabs");
+  if (tabs) tabs.classList.toggle("hidden", active);
+
+  const modeHeader = document.getElementById("screenContextCard");
+  if (modeHeader) modeHeader.classList.toggle("hidden", active);
+
+  const scanBtn = document.getElementById("scanBtn");
+  if (scanBtn) scanBtn.disabled = active;
+
+  if (!active) {
+    connectFirstFocused = false;
+    return;
+  }
+
+  applyScreenMode("settings", { updateUrl: true });
+  updateActionCenter({
+    title: "Connect Schwab first",
+    message: "Finish Schwab connection in this section. Other workflows unlock automatically once connected.",
+    severity: "warn",
+  });
+
+  if (!connectFirstFocused) {
+    const onboardingEl = document.getElementById("onboardingSection");
+    onboardingEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+    connectFirstFocused = true;
+  }
 }
 
 function applyDisplayMode(mode) {
@@ -665,6 +703,7 @@ async function refreshAccountMe() {
     state.accountMe = null;
     renderLiveTradingSaasPanel();
     renderBillingPanel();
+    applyConnectFirstExperience();
     return;
   }
   const token = await getApiAccessToken();
@@ -672,12 +711,14 @@ async function refreshAccountMe() {
     state.accountMe = null;
     renderLiveTradingSaasPanel();
     renderBillingPanel();
+    applyConnectFirstExperience();
     return;
   }
   const out = await api.get("/api/me");
   state.accountMe = out.ok ? out.data : null;
   renderLiveTradingSaasPanel();
   renderBillingPanel();
+  applyConnectFirstExperience();
 }
 
 async function refreshCritical() {
@@ -725,44 +766,47 @@ async function initSupabaseAuth(url, anonKey) {
     data: { session },
   } = await sb.auth.getSession();
   persistApiJwtFromSession(session);
+  if (session?.access_token) {
+    await createCookieAuthSession(session.access_token);
+  }
   updateSupabaseAuthUI(session);
 
-  sb.auth.onAuthStateChange((_event, nextSession) => {
+  sb.auth.onAuthStateChange(async (_event, nextSession) => {
     persistApiJwtFromSession(nextSession);
+    if (nextSession?.access_token) {
+      await createCookieAuthSession(nextSession.access_token);
+    }
     updateSupabaseAuthUI(nextSession);
     if (nextSession?.access_token) scheduleRetainedSessionTracking();
     void refreshAccountMe();
+    void loadProfiles();
+    void refreshOnboarding();
+    void refreshAuthDebugPanel();
   });
 
-  document.getElementById("supabaseSignInBtn")?.addEventListener("click", async () => {
+  document.getElementById("supabaseVerifyBtn")?.addEventListener("click", async () => {
     const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
-    const password = document.getElementById("supabasePassword")?.value || "";
-    if (!email || !password) {
-      logEvent({ kind: "system", severity: "warn", message: "Enter email and password." });
+    if (!email) {
+      logEvent({ kind: "system", severity: "warn", message: "Enter an email address first." });
       return;
     }
-    const { error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) logEvent({ kind: "system", severity: "error", message: error.message });
-    else logEvent({ kind: "system", severity: "info", message: "Signed in." });
-  });
-
-  document.getElementById("supabaseSignUpBtn")?.addEventListener("click", async () => {
-    const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
-    const password = document.getElementById("supabasePassword")?.value || "";
-    if (!email || !password) {
-      logEvent({ kind: "system", severity: "warn", message: "Enter email and password to sign up." });
-      return;
-    }
-    const { error } = await sb.auth.signUp({ email, password });
+    const redirectTo = `${window.location.origin}/?section=connect`;
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: redirectTo,
+      },
+    });
     if (error) logEvent({ kind: "system", severity: "error", message: error.message });
     else {
       logEvent({
         kind: "system",
         severity: "info",
-        message: "Sign-up sent. Check email if confirmation is required, then sign in.",
+        message: "Verification email sent. Open your inbox and continue from the sign-in link.",
       });
       void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
-        source: "supabase_password_signup",
+        source: "supabase_email_verification",
       });
     }
   });
@@ -1002,6 +1046,20 @@ function updateTopStrategyChip(summary = null) {
 }
 
 function setHealthRibbonUnavailable(reason) {
+  const rawReason = safeText(reason || "").trim();
+  const lower = rawReason.toLowerCase();
+  let uiReason = rawReason;
+  if (
+    lower.includes("missing authentication") ||
+    lower.includes("authorization: bearer") ||
+    lower.includes("auth session cookie")
+  ) {
+    uiReason = "Verify your email session, then connect Schwab to unlock live health checks.";
+  } else if (lower.includes("expired") && lower.includes("token")) {
+    uiReason = "Session expired. Sign in again to restore health checks.";
+  }
+  if (!uiReason) uiReason = "status fetch failed";
+
   const ribbon = document.getElementById("healthRibbon");
   if (ribbon) ribbon.setAttribute("data-async-state", "error");
   ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
@@ -1009,7 +1067,7 @@ function setHealthRibbonUnavailable(reason) {
     if (!el) return;
     el.className = "health-badge bg-slate-900";
     el.textContent = "Unknown";
-    markUnavailable(el, reason || "status fetch failed");
+    markUnavailable(el, uiReason);
   });
   ["healthTileAuth", "healthTileQuotes", "healthTileApi", "healthTileValidation"].forEach((id) => {
     const tile = document.getElementById(id);
@@ -1023,7 +1081,7 @@ function setHealthRibbonUnavailable(reason) {
       asOf: null,
       source: "/api/status",
       surface: "health_ribbon",
-      unavailable: reason ? `unavailable: ${reason}` : "unavailable",
+      unavailable: `unavailable: ${uiReason}`,
     });
   });
   // Reference noteIso so eslint stays quiet; the timestamp is unused but kept
@@ -2748,6 +2806,53 @@ async function copyTextToClipboard(text) {
   return ok;
 }
 
+function setAuthDebugValue(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = safeText(value || "—");
+}
+
+async function refreshAuthDebugPanel() {
+  const cfg = state.publicConfig || {};
+  const authSetup = cfg?.auth_setup && typeof cfg.auth_setup === "object" ? cfg.auth_setup : {};
+  const hasSupabaseUi = Boolean(cfg?.supabase?.url && cfg?.supabase?.anon_key);
+  const jwtReady =
+    authSetup.jwt_verification_ready === true ||
+    (authSetup.jwt_verification_ready === undefined && authSetup.jwt_secret_configured === true);
+
+  setAuthDebugValue("authDebugSupabaseUi", hasSupabaseUi ? "ready" : "missing SUPABASE_URL / SUPABASE_ANON_KEY");
+  setAuthDebugValue("authDebugJwtVerify", jwtReady ? "ready" : "missing SUPABASE_URL and/or SUPABASE_JWT_SECRET");
+
+  const hint = document.getElementById("authDebugHint");
+  if (hint) hint.textContent = "Checking /api/auth/session…";
+
+  try {
+    const out = await api.get("/api/auth/session");
+    if (!out.ok) {
+      setAuthDebugValue("authDebugSession", `error: ${out.error || "request failed"}`);
+      setAuthDebugValue("authDebugSubject", "—");
+      setAuthDebugValue("authDebugEmail", "—");
+      if (hint) hint.textContent = "Session check failed. Verify your email session and retry.";
+      return;
+    }
+    const data = out.data || {};
+    const authed = Boolean(data.authenticated);
+    setAuthDebugValue("authDebugSession", authed ? "yes" : "no");
+    setAuthDebugValue("authDebugSubject", data.sub || "—");
+    setAuthDebugValue("authDebugEmail", data.email || "—");
+    if (hint) {
+      hint.textContent = authed
+        ? "Session cookie is valid for protected APIs."
+        : "No auth session cookie yet. Use Verify email to unlock protected APIs.";
+    }
+  } catch (err) {
+    setAuthDebugValue("authDebugSession", "error");
+    setAuthDebugValue("authDebugSubject", "—");
+    setAuthDebugValue("authDebugEmail", "—");
+    if (hint) hint.textContent = `Session check error: ${safeText(err?.message || err || "unknown")}`;
+  }
+}
+
 async function loadConfig() {
   const tokenInput = document.getElementById("jwtInput");
   const saveBtn = document.getElementById("saveJwtBtn");
@@ -2879,6 +2984,7 @@ async function loadConfig() {
     });
   }
   state.config = { auth_mode: hasSupabaseUi ? "supabase" : "jwt" };
+  await refreshAuthDebugPanel();
   const authSetup = publicCfg?.auth_setup && typeof publicCfg.auth_setup === "object" ? publicCfg.auth_setup : {};
   const saasHost = Boolean(publicCfg?.saas_mode);
   const originHint = window.location.origin || "";
@@ -2896,7 +3002,7 @@ async function loadConfig() {
     updateActionCenter({
       title: "Hosted sign-in not configured",
       message: hasSupabaseUi
-        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
+        ? "Use Verify email when prompted. Your session token is used automatically."
         : `This server did not expose Supabase browser sign-in (set SUPABASE_URL and SUPABASE_ANON_KEY in Render to match your local .env). In Supabase → Authentication → URL configuration, add ${originHint} to Site URL and Redirect URLs.`,
       severity: "warn",
     });
@@ -2904,13 +3010,19 @@ async function loadConfig() {
     updateActionCenter({
       title: "Authentication Required",
       message: hasSupabaseUi
-        ? "Sign in with Supabase to access protected APIs. Your session token is used automatically."
-        : "Sign in with Supabase to access protected APIs.",
+        ? "Use Verify email when prompted. Your session token is handled automatically."
+        : "Supabase browser auth is required to access protected APIs.",
       severity: "warn",
     });
   }
 
   const params = new URLSearchParams(window.location.search);
+  const section = safeText(params.get("section") || "").trim().toLowerCase();
+  if (section === "connect") {
+    applyScreenMode("settings", { updateUrl: false });
+    const onboardingEl = document.getElementById("onboardingSection");
+    onboardingEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   const oauthSt = params.get("schwab_oauth");
   const marketOauthSt = params.get("schwab_market_oauth");
   const billingSt = params.get("billing");
@@ -2992,6 +3104,7 @@ async function loadConfig() {
       void trackProductEvent("billing_checkout_canceled", { source: "redirect_query" });
     }
   }
+  applyConnectFirstExperience();
 }
 
 /**
@@ -3178,6 +3291,21 @@ async function refreshStatus() {
   }
   if (!statusRes.ok) {
     logEvent({ kind: "system", severity: "error", message: `Status failed: ${statusRes.error}` });
+    const statusUiError = (() => {
+      const raw = safeText(statusRes.error || "").trim();
+      const lower = raw.toLowerCase();
+      if (
+        lower.includes("missing authentication") ||
+        lower.includes("authorization: bearer") ||
+        lower.includes("auth session cookie")
+      ) {
+        return "Verify your email session first, then connect Schwab to unlock live status.";
+      }
+      if (lower.includes("expired") && lower.includes("token")) {
+        return "Session expired. Verify your email again to continue.";
+      }
+      return raw || "Status check unavailable right now.";
+    })();
     const quoteEl = document.getElementById("quoteHealth");
     const errEl = document.getElementById("apiErrorRate");
     const validationEl = document.getElementById("validationHealth");
@@ -3190,10 +3318,10 @@ async function refreshStatus() {
       "validationHealth",
       "lastScan",
       "apiErrorRate",
-    ].forEach((id) => markUnavailable(document.getElementById(id), statusRes.error || "/api/status failed"));
+    ].forEach((id) => markUnavailable(document.getElementById(id), statusUiError));
     // Reset ribbon to honest unknown.
-    setHealthRibbonUnavailable(statusRes.error || "/api/status failed");
-    updateActionCenter({ title: "Status unavailable", message: statusRes.error, severity: "error" });
+    setHealthRibbonUnavailable(statusUiError);
+    updateActionCenter({ title: "Status unavailable", message: statusUiError, severity: "error" });
     return;
   }
 
@@ -4451,6 +4579,7 @@ async function refreshAll() {
     ["portfolio", refreshPortfolio()],
     ["sectors", refreshSectors()],
     ["onboarding", refreshOnboarding()],
+    ["auth_debug", refreshAuthDebugPanel()],
     ["profiles", loadProfiles()],
     ["performance", refreshPerformance()],
     ["calibration", refreshCalibration()],
@@ -4503,6 +4632,56 @@ async function maybeAutoRunScanOnLoad() {
   await runScan();
 }
 
+function markFeatureGuideSeen() {
+  try {
+    localStorage.setItem(FEATURE_GUIDE_SEEN_KEY, "1");
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
+function hasSeenFeatureGuide() {
+  try {
+    return localStorage.getItem(FEATURE_GUIDE_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function openFeatureGuide({ markSeen = true } = {}) {
+  const dialog = document.getElementById("featureGuideDialog");
+  if (!dialog) return false;
+  if (dialog.open) return true;
+  if (markSeen) markFeatureGuideSeen();
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+    return true;
+  }
+  dialog.setAttribute("open", "open");
+  return true;
+}
+
+function closeFeatureGuide() {
+  const dialog = document.getElementById("featureGuideDialog");
+  if (!dialog?.open) return;
+  dialog.close();
+}
+
+function setupFeatureGuideFirstClick() {
+  if (hasSeenFeatureGuide()) return;
+  const handler = () => {
+    if (hasSeenFeatureGuide()) {
+      document.removeEventListener("click", handler, true);
+      return;
+    }
+    const blockingDialog = document.querySelector("dialog[open]:not(#featureGuideDialog)");
+    if (blockingDialog) return;
+    const opened = openFeatureGuide({ markSeen: true });
+    if (opened) document.removeEventListener("click", handler, true);
+  };
+  document.addEventListener("click", handler, true);
+}
+
 /**
  * Safe DOM binder. Logs (but never throws) when an element is missing so a
  * single stale id can't take down the whole bootstrap. Returns the element
@@ -4523,6 +4702,7 @@ function bindEvent(elementId, eventName, handler, options) {
 }
 
 function wireEvents() {
+  setupFeatureGuideFirstClick();
   restoreBacktestFormFromStorage();
   setDefaultBacktestDates();
   syncBtUniverseRow();
@@ -4591,6 +4771,12 @@ function wireEvents() {
   });
   bindEvent("refreshBtn", "click", refreshAll);
   bindEvent("applyProfileBtn", "click", applyProfile);
+  document.getElementById("featureGuideBtn")?.addEventListener("click", () => openFeatureGuide({ markSeen: true }));
+  document.getElementById("featureGuideCloseBtn")?.addEventListener("click", closeFeatureGuide);
+  document.getElementById("featureGuideDialog")?.addEventListener("close", markFeatureGuideSeen);
+  document.getElementById("featureGuideDialog")?.addEventListener("click", (e) => {
+    if (e.target?.id === "featureGuideDialog") closeFeatureGuide();
+  });
   document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
   document.getElementById("saveTradingHaltBtn")?.addEventListener("click", () => void submitTradingHaltSave());
   document.getElementById("billingCheckoutBtn")?.addEventListener("click", () => void beginBillingCheckout());
@@ -4995,8 +5181,8 @@ function connectSSE() {
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else if (state.config?.auth_mode === "supabase") {
     updateActionCenter({
-      title: "Sign in",
-      message: "Sign in with Supabase to load portfolio, pending trades, and billing-protected actions.",
+      title: "Email verification required",
+      message: "Verify your email with Supabase to load portfolio, pending trades, and billing-protected actions.",
       severity: "warn",
     });
     safeInit("setupLazySectionLoading", setupLazySectionLoading);

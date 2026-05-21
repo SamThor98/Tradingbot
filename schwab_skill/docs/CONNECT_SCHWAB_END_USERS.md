@@ -10,6 +10,18 @@ Give this to customers who use your hosted dashboard. Operators: the same conten
 4. Click **Connect Schwab (market)** and complete the second approval.
 5. Optionally run **Start Wizard** and steps 1–4 to confirm health, scan, and paper test (subscription rules may apply).
 
+## Schwab Developer Portal URLs (self-hosted)
+
+If you maintain your own Schwab developer apps, sign in first and open:
+
+- `GET /api/oauth/schwab/portal-config`
+
+Use these values from the response:
+
+- `account_callback_url` for the Schwab **account** app callback
+- `market_callback_url` for the Schwab **market** app callback
+- `frontend_return_url` as the return/home URL (when Schwab asks for it)
+
 ## Why two buttons?
 
 Schwab’s APIs separate **brokerage account** access from **market data** access. This app needs both for scans and trading features.

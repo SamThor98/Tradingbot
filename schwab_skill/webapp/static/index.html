@@ -16,6 +16,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
     <link rel="stylesheet" href="/static/overhaul.css?v=__APP_VERSION__" />
+    <link rel="stylesheet" href="/static/readability.css?v=__APP_VERSION__" />
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"
             integrity="sha384-JZigAjwiaZtkUbA44CWkPaT3iBb/mU5pO6QOANp+OqHd4q+1+7MG1kzp2OOP9ZfP"
             crossorigin="anonymous"
@@ -109,10 +110,8 @@
         <div id="supabaseSignedOut" class="inline-form compact auth-supabase-row">
           <label class="field-label" for="supabaseEmail">Email</label>
           <input id="supabaseEmail" type="email" autocomplete="username" placeholder="you@example.com" />
-          <label class="field-label" for="supabasePassword">Password</label>
-          <input id="supabasePassword" type="password" autocomplete="current-password" placeholder="••••••••" />
-          <button id="supabaseSignInBtn" class="btn small secondary" type="button">Sign in</button>
-          <button id="supabaseSignUpBtn" class="btn small secondary" type="button">Sign up</button>
+          <button id="supabaseVerifyBtn" class="btn small secondary" type="button">Verify email</button>
+          <small class="muted">Shown only when a protected action needs verification.</small>
         </div>
         <div id="supabaseSignedIn" class="inline-form compact auth-supabase-row hidden">
           <span id="supabaseUserLabel" class="muted"></span>
@@ -122,7 +121,7 @@
           <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
           <div class="inline-form compact">
             <label class="field-label" for="jwtInput">JWT</label>
-            <input id="jwtInput" type="password" placeholder="Supabase access token (or paste after sign-in)" />
+            <input id="jwtInput" type="password" placeholder="Supabase access token (optional fallback after verification)" />
             <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
             <button id="copyJwtBtn" class="btn small secondary" type="button">Copy Token</button>
           </div>
@@ -668,8 +667,36 @@
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
             <h2>Connect Schwab</h2>
-            <small id="onboardingMeta" class="muted">Use one guided flow to connect and verify your account.</small>
+            <small id="onboardingMeta" class="muted">Use one guided flow to connect Schwab quickly; advanced checks are optional.</small>
           </div>
+
+          <details id="authDebugPanel" class="onboarding-help">
+            <summary>Auth debug</summary>
+            <div class="onboarding-help-body">
+              <p class="muted">Use this to verify Supabase wiring and live session auth before running protected APIs.</p>
+              <div class="inline-form compact">
+                <label class="field-label" for="authDebugSupabaseUi">Supabase browser auth UI</label>
+                <input id="authDebugSupabaseUi" type="text" readonly value="checking..." />
+              </div>
+              <div class="inline-form compact">
+                <label class="field-label" for="authDebugJwtVerify">JWT verification ready</label>
+                <input id="authDebugJwtVerify" type="text" readonly value="checking..." />
+              </div>
+              <div class="inline-form compact">
+                <label class="field-label" for="authDebugSession">Session authenticated</label>
+                <input id="authDebugSession" type="text" readonly value="checking..." />
+              </div>
+              <div class="inline-form compact">
+                <label class="field-label" for="authDebugSubject">Session subject (sub)</label>
+                <input id="authDebugSubject" type="text" readonly value="checking..." />
+              </div>
+              <div class="inline-form compact">
+                <label class="field-label" for="authDebugEmail">Session email</label>
+                <input id="authDebugEmail" type="text" readonly value="checking..." />
+              </div>
+              <p id="authDebugHint" class="muted" style="margin: 8px 0 0">Loading auth state…</p>
+            </div>
+          </details>
 
           <ol id="onboardingStepper" class="onboarding-stepper" aria-label="Schwab setup progress">
             <li data-step="account"><span class="step-num">1</span><span class="step-label">Connect account</span><span class="step-state muted">pending</span></li>
@@ -699,7 +726,7 @@
               </p>
               <h3>Before you start</h3>
               <ul class="onboarding-help-list muted">
-                <li>Sign in to this dashboard first.</li>
+                <li>No password login is required first; the app asks for email verification only when needed.</li>
                 <li>Allow pop-ups/redirects for Schwab approval.</li>
                 <li>Use the Schwab login tied to this account.</li>
               </ul>
@@ -748,6 +775,71 @@
             <label class="muted"><input id="automationOptIn" type="checkbox" /> Allow live orders without the extra confirmation step</label>
             <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
           </div>
+          <div class="inline-form compact" style="margin-top: 0.5rem">
+            <button id="featureGuideBtn" class="btn small secondary" type="button">Open feature guide</button>
+            <small class="muted">Reopen this website walkthrough anytime.</small>
+          </div>
+          <details class="panel-disclosure" style="margin-top: 0.75rem">
+            <summary class="panel-disclosure-summary">
+              Full settings logic guide
+              <span class="disclosure-hint muted">what each control changes</span>
+            </summary>
+            <div class="onboarding-help-body muted">
+              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
+                <summary class="panel-disclosure-summary">
+                  Onboarding logic
+                  <span class="disclosure-hint muted">connect + verify sequence</span>
+                </summary>
+                <ul class="onboarding-help-list">
+                  <li><strong>Connect account:</strong> links brokerage permissions used for orders and account context.</li>
+                  <li><strong>Connect market data:</strong> links quote access used by scanning, charts, and checks.</li>
+                  <li><strong>Verify tokens:</strong> confirms auth tokens are present and usable before live workflows.</li>
+                  <li><strong>Test scan / paper order:</strong> validates end-to-end flow without risking live capital.</li>
+                </ul>
+              </details>
+              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
+                <summary class="panel-disclosure-summary">
+                  Preset control logic
+                  <span class="disclosure-hint muted">how profile settings apply</span>
+                </summary>
+                <ul class="onboarding-help-list">
+                  <li><strong>Profile:</strong> selects the risk/behavior template (conservative, balanced, aggressive).</li>
+                  <li><strong>Mode:</strong> standard shows plain-language values; expert also shows raw runtime env values.</li>
+                  <li><strong>Rank explain:</strong> controls how score rationale renders in scan tables (compact tooltip vs inline text).</li>
+                  <li><strong>Automation opt-in:</strong> stores whether live automation can proceed without the extra confirmation gate.</li>
+                  <li><strong>Apply preset:</strong> persists selected settings to backend profile config and reloads panel state.</li>
+                  <li><strong>Open feature guide:</strong> manually reopens the initial website walkthrough popup.</li>
+                </ul>
+              </details>
+              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
+                <summary class="panel-disclosure-summary">
+                  Preset guardrails (trust + safety)
+                  <span class="disclosure-hint muted">why settings changes are controlled</span>
+                </summary>
+                <ul class="onboarding-help-list">
+                  <li><strong>Fixed preset catalog:</strong> profiles come from a controlled server-side template set, not free-form user input.</li>
+                  <li><strong>Preview before apply:</strong> the panel shows what will change before saving, so updates are explicit and reviewable.</li>
+                  <li><strong>No silent activation:</strong> changing profile values does not auto-send orders; execution still follows approval controls.</li>
+                  <li><strong>Layered confirmations:</strong> live trading enable requires risk acknowledgment and typing <code>ENABLE</code>.</li>
+                  <li><strong>Per-order confirmation:</strong> each live order still requires typed ticker confirmation in the approval dialog.</li>
+                  <li><strong>Emergency stop:</strong> pause setting can block new live approvals immediately until intentionally re-enabled.</li>
+                  <li><strong>Optional step-up security:</strong> 2FA can enforce stronger approval verification for sensitive actions.</li>
+                </ul>
+              </details>
+              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
+                <summary class="panel-disclosure-summary">
+                  Live trading logic
+                  <span class="disclosure-hint muted">activation, pause, security, billing</span>
+                </summary>
+                <ul class="onboarding-help-list">
+                  <li><strong>Enable live trading:</strong> requires risk acknowledgment + typing <code>ENABLE</code> before activation.</li>
+                  <li><strong>Pause new live orders:</strong> blocks new approval execution until pause is removed and saved.</li>
+                  <li><strong>2FA panel:</strong> adds extra approval protection for sensitive/high-value actions.</li>
+                  <li><strong>Billing controls:</strong> checkout starts subscription; portal manages payment method and plan lifecycle.</li>
+                </ul>
+              </details>
+            </div>
+          </details>
           <div id="presetApplyPreview" class="preset-apply-preview" aria-live="polite"></div>
           <div id="liveTradingSaasBlock" class="live-trading-saas hidden" style="margin-top: 1rem; padding: 0.75rem; border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 8px">
             <h3 class="field-label">Live trading (SaaS)</h3>
@@ -1393,57 +1485,85 @@
             <h3>Management Execution &amp; Integrity Dashboard</h3>
             <small class="muted">SEC guidance tracking, execution integrity, and dilution risk map</small>
           </div>
-          <div class="inline-form">
-            <label class="field-label" for="secCompareMode">Mode</label>
-            <select id="secCompareMode">
-              <option value="ticker_over_time" selected>ticker_over_time</option>
-              <option value="ticker_vs_ticker">ticker_vs_ticker</option>
-            </select>
-            <small id="secCompareModeHelp" class="muted">ticker_over_time compares current filing language vs prior periods to surface execution drift.</small>
-            <label class="field-label" for="secCompareProfile">Profile</label>
-            <select id="secCompareProfile" title="Auto uses backend profile detection; pick a profile to override.">
-              <option value="auto" selected>auto_detect</option>
-              <option value="early_growth">early_growth</option>
-              <option value="scaled_growth">scaled_growth</option>
-              <option value="mature_compounder">mature_compounder</option>
-              <option value="cyclical">cyclical</option>
-            </select>
-            <label class="field-label" for="secCompareProfileReason">Override reason</label>
-            <input id="secCompareProfileReason" placeholder="Why override profile?" />
-            <label class="field-label" for="secCompareProfileEvidence">Evidence ref</label>
-            <input id="secCompareProfileEvidence" placeholder="Optional filing/fact reference" />
-            <button id="secCompareResetProfileBtn" class="btn small secondary" type="button" title="Reset saved profile override to auto-detect">
-              Reset profile
-            </button>
-            <small id="secCompareProfileStatus" class="muted">Profile source: auto-detect</small>
-            <details id="secCompareProfileHistoryDetails" class="panel-disclosure panel-disclosure--advanced">
+          <div class="sec-compare-controls">
+            <div class="sec-compare-grid">
+              <label class="field-label" for="secCompareMode">Mode</label>
+              <select id="secCompareMode">
+                <option value="ticker_over_time" selected>ticker_over_time</option>
+                <option value="ticker_vs_ticker">ticker_vs_ticker</option>
+              </select>
+
+              <label class="field-label" for="secCompareFormType">Form</label>
+              <select id="secCompareFormType">
+                <option value="10-K">10-K</option>
+                <option value="10-Q">10-Q</option>
+                <option value="8-K">8-K</option>
+              </select>
+
+              <label class="field-label" for="secCompareTickerA">Ticker A</label>
+              <input id="secCompareTickerA" placeholder="Ticker A (AAPL)" />
+
+              <label class="field-label" for="secCompareTickerB">Ticker B</label>
+              <input id="secCompareTickerB" placeholder="Ticker B (MSFT)" />
+            </div>
+
+            <small id="secCompareModeHelp" class="muted sec-compare-help">
+              ticker_over_time compares current filing language vs prior periods to surface execution drift.
+            </small>
+
+            <div class="sec-compare-toggles">
+              <label class="muted">
+                <input id="secCompareChangesOnly" type="checkbox" />
+                Highlight changes only
+              </label>
+              <label class="muted">
+                <input id="secCompareRuthlessMode" type="checkbox" />
+                Ruthless mode
+              </label>
+            </div>
+
+            <div class="sec-compare-actions">
+              <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
+              <small id="secCompareProfileStatus" class="muted">Profile source: auto-detect</small>
+            </div>
+
+            <details class="panel-disclosure panel-disclosure--advanced sec-compare-profile-panel">
               <summary class="panel-disclosure-summary">
-                Profile override history
-                <span class="disclosure-hint muted">latest 5 changes</span>
+                Profile override settings
+                <span class="disclosure-hint muted">optional manual profile controls</span>
               </summary>
-              <ul id="secCompareProfileHistoryList" class="report-bullets">
-                <li class="muted">No override history yet.</li>
-              </ul>
+              <div class="sec-compare-grid">
+                <label class="field-label" for="secCompareProfile">Profile</label>
+                <select id="secCompareProfile" title="Auto uses backend profile detection; pick a profile to override.">
+                  <option value="auto" selected>auto_detect</option>
+                  <option value="early_growth">early_growth</option>
+                  <option value="scaled_growth">scaled_growth</option>
+                  <option value="mature_compounder">mature_compounder</option>
+                  <option value="cyclical">cyclical</option>
+                </select>
+
+                <label class="field-label" for="secCompareProfileReason">Override reason</label>
+                <input id="secCompareProfileReason" placeholder="Why override profile?" />
+
+                <label class="field-label" for="secCompareProfileEvidence">Evidence ref</label>
+                <input id="secCompareProfileEvidence" placeholder="Optional filing/fact reference" />
+
+                <div class="sec-compare-profile-actions">
+                  <button id="secCompareResetProfileBtn" class="btn small secondary" type="button" title="Reset saved profile override to auto-detect">
+                    Reset profile
+                  </button>
+                </div>
+              </div>
+              <details id="secCompareProfileHistoryDetails" class="panel-disclosure panel-disclosure--advanced sec-compare-history">
+                <summary class="panel-disclosure-summary">
+                  Profile override history
+                  <span class="disclosure-hint muted">latest 5 changes</span>
+                </summary>
+                <ul id="secCompareProfileHistoryList" class="report-bullets">
+                  <li class="muted">No override history yet.</li>
+                </ul>
+              </details>
             </details>
-            <label class="field-label" for="secCompareTickerA">Ticker A</label>
-            <input id="secCompareTickerA" placeholder="Ticker A (AAPL)" />
-            <label class="field-label" for="secCompareTickerB">Ticker B</label>
-            <input id="secCompareTickerB" placeholder="Ticker B (MSFT)" />
-            <label class="field-label" for="secCompareFormType">Form</label>
-            <select id="secCompareFormType">
-              <option value="10-K">10-K</option>
-              <option value="10-Q">10-Q</option>
-              <option value="8-K">8-K</option>
-            </select>
-            <label class="muted">
-              <input id="secCompareChangesOnly" type="checkbox" />
-              Highlight Changes Only
-            </label>
-            <label class="muted">
-              <input id="secCompareRuthlessMode" type="checkbox" />
-              Ruthless Mode
-            </label>
-            <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
           </div>
           <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
             <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
@@ -1617,6 +1737,27 @@
           <button id="queueScanConfirmBtn" class="btn primary" type="button">Add to pending</button>
         </div>
       </div>
+    </dialog>
+
+    <dialog id="featureGuideDialog" class="modal">
+      <form method="dialog">
+        <h3>Website feature guide</h3>
+        <p class="muted">
+          This app follows one flow: scan in Operations, validate in Research, verify safety in Diagnostics, and configure controls in Settings.
+        </p>
+        <ul class="muted" style="margin: 0.5rem 0 0.75rem 1rem">
+          <li><strong>Operations:</strong> execute your daily queue.</li>
+          <li><strong>Research:</strong> pressure-test ideas.</li>
+          <li><strong>Diagnostics:</strong> check health and blockers.</li>
+          <li><strong>Settings:</strong> configure account and risk controls.</li>
+        </ul>
+        <p class="muted">
+          For full per-setting behavior, open <strong>Settings -> Full settings logic guide</strong>.
+        </p>
+        <div class="modal-actions">
+          <button id="featureGuideCloseBtn" class="btn secondary" value="default">Got it</button>
+        </div>
+      </form>
     </dialog>
 
     <button id="scrollTopBtn" class="scroll-top-btn" type="button" aria-label="Scroll to top" data-tooltip="Back to top">

@@ -34,7 +34,10 @@ import requests
 from config import (
     get_finnhub_api_key,
     get_finnhub_max_news_items,
+    get_finnhub_max_retries,
     get_finnhub_news_days,
+    get_finnhub_rate_limit_per_min,
+    get_finnhub_retry_backoff_cap_sec,
     get_finnhub_timeout_sec,
 )
 
@@ -95,6 +98,16 @@ def _safe_str(value: Any) -> str:
     return str(value).strip()
 
 
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
 def _to_iso_utc(ts: int | float | None) -> str | None:
     if ts is None:
         return None
@@ -153,13 +166,19 @@ class FinnhubClient:
         timeout_sec: float = 8.0,
         session: requests.Session | None = None,
         max_retries: int = 3,
+        retry_backoff_cap_sec: float = 30.0,
         rate_limit_per_min: int = DEFAULT_RATE_LIMIT_PER_MIN,
     ) -> None:
         self.api_key = api_key.strip()
         self.timeout_sec = float(timeout_sec)
         self.session = session or requests.Session()
         self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_cap_sec = max(1.0, float(retry_backoff_cap_sec))
         self._limiter = _RateLimiter(rate_limit_per_min, DEFAULT_RATE_WINDOW_SEC)
+
+    def _retry_sleep(self, attempt: int, *, multiplier: float = 0.6) -> float:
+        wait_for = max(0.1, multiplier * (2**attempt))
+        return min(self.retry_backoff_cap_sec, wait_for)
 
     # ------------------------------------------------------------------
     # Low-level transport
@@ -180,19 +199,19 @@ class FinnhubClient:
                 last_detail = f"{type(exc).__name__}"
                 LOG.info("Finnhub %s transport error (attempt %s): %s", endpoint, attempt + 1, exc)
                 if attempt < self.max_retries:
-                    time.sleep(min(4.0, 0.6 * (2**attempt)))
+                    time.sleep(self._retry_sleep(attempt, multiplier=0.6))
                     continue
                 return _CallResult(None, "error", last_detail)
 
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
-                wait_for = 1.5 * (2**attempt)
+                wait_for = self._retry_sleep(attempt, multiplier=1.5)
                 if retry_after:
                     try:
                         wait_for = max(wait_for, float(retry_after))
                     except (TypeError, ValueError):
                         pass
-                wait_for = min(30.0, wait_for)
+                wait_for = min(self.retry_backoff_cap_sec, wait_for)
                 LOG.info("Finnhub %s rate limited; waiting %.1fs", endpoint, wait_for)
                 time.sleep(wait_for)
                 last_detail = "rate_limited"
@@ -216,7 +235,7 @@ class FinnhubClient:
                     endpoint, resp.status_code, attempt + 1,
                 )
                 if attempt < self.max_retries:
-                    time.sleep(min(4.0, 0.6 * (2**attempt)))
+                    time.sleep(self._retry_sleep(attempt, multiplier=0.6))
                     continue
                 return _CallResult(None, "error", last_detail)
 
@@ -563,13 +582,39 @@ class FinnhubClient:
                 if isinstance(latest, dict):
                     recent_quarter_revenue = _safe_float(latest.get("v"))
 
-        success = not errors
+        core_quality_checks = {
+            "profile": _has_value(profile.get("name")) if isinstance(profile, dict) else False,
+            "quote": _has_value(_safe_float(quote.get("c"))) if isinstance(quote, dict) else False,
+            "metrics": _has_value(metric_block.get("peTTM")) or _has_value(metric_block.get("epsTTM")),
+            "news": len(normalized_news) >= 3,
+            "recommendations": len(recommendation_history) >= 1,
+            "earnings": len(normalized_earnings) >= 1,
+            "price_target": _has_value(price_target.get("targetMean")) if isinstance(price_target, dict) else False,
+        }
+        core_quality_pass = sum(1 for ok in core_quality_checks.values() if ok)
+        core_quality_total = len(core_quality_checks)
+        quality_ok = core_quality_pass >= 5
+        quality_notes: list[str] = []
+        if not quality_ok:
+            quality_notes.append(
+                f"insufficient_core_coverage:{core_quality_pass}/{core_quality_total}"
+            )
+            errors.append("quality:insufficient_core_coverage")
+
+        success = not errors and quality_ok
         return {
             "enabled": True,
             "ticker": sym,
             "as_of": now.isoformat(),
             "ok": success,
             "errors": errors,
+            "quality": {
+                "ok": quality_ok,
+                "core_checks_passed": core_quality_pass,
+                "core_checks_total": core_quality_total,
+                "core_checks": core_quality_checks,
+                "notes": quality_notes,
+            },
             "profile": {
                 "name": _safe_str(profile.get("name")),
                 "exchange": _safe_str(profile.get("exchange")),
@@ -705,6 +750,13 @@ def _empty_payload(ticker: str, *, errors: list[str], enabled: bool) -> dict[str
         "ok": False,
         "errors": errors,
         "as_of": datetime.now(UTC).isoformat(),
+        "quality": {
+            "ok": False,
+            "core_checks_passed": 0,
+            "core_checks_total": 0,
+            "core_checks": {},
+            "notes": ["snapshot_unavailable"],
+        },
         "profile": {},
         "quote": {},
         "price_target": {},
@@ -744,6 +796,9 @@ def get_finnhub_research_snapshot(
     client = FinnhubClient(
         api_key=api_key,
         timeout_sec=get_finnhub_timeout_sec(sd),
+        max_retries=get_finnhub_max_retries(sd),
+        retry_backoff_cap_sec=get_finnhub_retry_backoff_cap_sec(sd),
+        rate_limit_per_min=get_finnhub_rate_limit_per_min(sd),
     )
     try:
         return client.get_snapshot(

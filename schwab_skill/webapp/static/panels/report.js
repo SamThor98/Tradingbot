@@ -1338,6 +1338,25 @@ function markdownToPreviewHtml(markdown) {
   return out.join("");
 }
 
+function buildDossierQualityBadge(data) {
+  const quality = data?.sections?.finnhub_catalysts_risks?.snapshot?.quality || null;
+  if (!quality || typeof quality !== "object") {
+    return `<div class="dossier-quality-badge dossier-quality-badge--unknown">Finnhub data quality: unknown</div>`;
+  }
+  const passed = Number(quality.core_checks_passed);
+  const total = Number(quality.core_checks_total);
+  const coverageText = Number.isFinite(passed) && Number.isFinite(total) && total > 0
+    ? ` (${passed}/${total} core checks)`
+    : "";
+  if (quality.ok) {
+    const perfect = Number.isFinite(passed) && Number.isFinite(total) && total > 0 && passed >= total;
+    const label = perfect ? "high" : "good";
+    const qualityText = perfect ? "high" : "good";
+    return `<div class="dossier-quality-badge dossier-quality-badge--${label}">Finnhub data quality: ${qualityText}${coverageText}</div>`;
+  }
+  return `<div class="dossier-quality-badge dossier-quality-badge--degraded">Finnhub data quality: degraded${coverageText}</div>`;
+}
+
 function setDossierPreview(data, markdownText = "") {
   const writeup = document.getElementById("dossierWriteup");
   const details = document.getElementById("dossierDetails");
@@ -1348,7 +1367,8 @@ function setDossierPreview(data, markdownText = "") {
     const html = markdownText
       ? markdownToPreviewHtml(markdownText)
       : `<div class="report-empty">Narrative preview unavailable. Use Download Markdown as fallback.</div>`;
-    writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${html}</article>`;
+    const qualityBadgeHtml = buildDossierQualityBadge(data);
+    writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${qualityBadgeHtml}${html}</article>`;
   }
   details.classList.remove("hidden");
   out.textContent = JSON.stringify(data, null, 2);

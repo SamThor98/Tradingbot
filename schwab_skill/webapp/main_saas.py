@@ -14,10 +14,11 @@ import stripe
 from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from config import bootstrap_dotenv_into_environ
 from execution import get_account_status
 
 from ._shared import manual_jwt_entry_enabled as _shared_manual_jwt
@@ -85,6 +86,10 @@ from .tenant_runtime import (
     user_has_account_session,
     user_schwab_ready_for_live_trading,
 )
+
+# Mirror local-mode behavior: promote schwab_skill/.env into process env
+# before startup config and module imports read os.getenv.
+bootstrap_dotenv_into_environ()
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -548,9 +553,9 @@ def simple_dashboard() -> HTMLResponse:
 
 
 @app.get("/login")
-def login_page() -> HTMLResponse:
-    """Focused sign-in (same JWT / Supabase session as the main dashboard)."""
-    return render_versioned_html(STATIC_DIR / "login.html")
+def login_page() -> RedirectResponse:
+    """Legacy login path now forwards to connect-first dashboard flow."""
+    return RedirectResponse("/?section=connect", status_code=302)
 
 
 @app.get("/api/public-config", response_model=ApiResponse)

@@ -7,8 +7,9 @@
     <title>Connect your Schwab account — setup guide</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect rx='20' width='100' height='100' fill='%230c0e14'/><path d='M20 65 L35 45 L50 55 L65 30 L80 40' stroke='%2338bdf8' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='80' cy='40' r='5' fill='%23818cf8'/></svg>" />
     <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/readability.css" />
   </head>
-  <body>
+  <body data-theme="editorial">
     <a class="skip-link" href="#guideMain">Skip to main content</a>
     <div class="bg-blur bg1"></div>
     <div class="bg-blur bg2"></div>
@@ -35,7 +36,7 @@
       <article class="card legal-body">
         <h2>Before you start</h2>
         <ul class="legal-list">
-          <li>Sign in to <strong>this</strong> site first (email/password or the sign-in method your host uses).</li>
+          <li>Open the in-app wizard first; it will request email verification only when required.</li>
           <li>If you run your own instance, register callback URLs in Schwab Developer Portal before you click Connect.</li>
           <li>Use the same Schwab login you use for brokerage (or paper trading, if that is what you use with this app).</li>
           <li>Allow pop-ups or redirects for this site if your browser blocks them—you will briefly leave this page to approve access on Schwab.</li>
@@ -54,14 +55,34 @@
             The wizard shows a 5-step progress bar and highlights whichever step you’re on.
           </li>
           <li>
-            Click the big <strong>Next step</strong> button. The first two steps redirect you to Schwab to approve
-            <em>account</em> access and <em>market data</em> access in turn.
+            Click the big <strong>Next step</strong> button. The app now auto-chains OAuth so after you approve
+            <em>account</em> access, it immediately opens the <em>market data</em> approval flow.
           </li>
           <li>
             Steps 3–5 (verify tokens, test scan, paper order) run inline — just keep clicking <strong>Next step</strong>
             until the bar turns green.
           </li>
         </ol>
+
+        <h2>Schwab Developer Portal URLs</h2>
+        <p class="muted">
+          Use these exact values in Schwab Developer Portal. They are detected from this running host and your server config.
+        </p>
+        <div id="portalUrlsBox" class="inline-form compact" style="display:block;">
+          <p id="portalUrlsStatus" class="muted">Loading callback URLs…</p>
+          <div id="portalUrlsRows" class="hidden">
+            <label class="field-label" for="portalAccountCb">Account callback URL</label>
+            <input id="portalAccountCb" type="text" readonly />
+            <label class="field-label" for="portalMarketCb">Market callback URL</label>
+            <input id="portalMarketCb" type="text" readonly />
+            <label class="field-label" for="portalFrontReturn">Frontend return URL</label>
+            <input id="portalFrontReturn" type="text" readonly />
+            <label class="field-label" for="portalAccountStart">Account authorize start URL</label>
+            <input id="portalAccountStart" type="text" readonly />
+            <label class="field-label" for="portalMarketStart">Market authorize start URL</label>
+            <input id="portalMarketStart" type="text" readonly />
+          </div>
+        </div>
 
         <h2>Live trading</h2>
         <p>
@@ -82,5 +103,48 @@
         </p>
       </article>
     </main>
+    <script>
+      (async function loadPortalUrls() {
+        const status = document.getElementById("portalUrlsStatus");
+        const rows = document.getElementById("portalUrlsRows");
+        const setStatus = (msg) => {
+          if (status) status.textContent = msg || "";
+        };
+        try {
+          const res = await fetch("/api/oauth/schwab/portal-config", {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          });
+          const body = res.ok ? await res.json() : {};
+          const data = body && body.data && typeof body.data === "object" ? body.data : null;
+          if (!res.ok || !data) {
+            setStatus("Finish email verification in-app, then reload this page to view your exact callback URLs.");
+            return;
+          }
+          const map = {
+            portalAccountCb: data.account_callback_url,
+            portalMarketCb: data.market_callback_url,
+            portalFrontReturn: data.frontend_return_url,
+            portalAccountStart: data.account_authorize_start_url,
+            portalMarketStart: data.market_authorize_start_url,
+          };
+          for (const [id, value] of Object.entries(map)) {
+            const el = document.getElementById(id);
+            if (el) el.value = String(value || "");
+          }
+          if (rows) rows.classList.remove("hidden");
+          const mismatch =
+            data.account_callback_matches_configured === false ||
+            data.market_callback_matches_configured === false;
+          setStatus(
+            mismatch
+              ? "Warning: effective callback URL does not match one or more configured callback env values."
+              : "Copy these URLs directly into Schwab Developer Portal.",
+          );
+        } catch (_err) {
+          setStatus("Could not load portal URLs right now. Reload after email verification.");
+        }
+      })();
+    </script>
   </body>
 </html>

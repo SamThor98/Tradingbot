@@ -1028,6 +1028,32 @@ def get_finnhub_max_news_items(skill_dir: Path | None = None) -> int:
     return max(1, min(50, value))
 
 
+def get_finnhub_quality_priority(skill_dir: Path | None = None) -> bool:
+    """Prefer data completeness/accuracy over fetch latency for dossier snapshots."""
+    return _get_bool("FINNHUB_QUALITY_PRIORITY", True, skill_dir)
+
+
+def get_finnhub_rate_limit_per_min(skill_dir: Path | None = None) -> int:
+    """Client-side pacing cap. Lower defaults reduce 429 churn on free tier."""
+    default = 45 if get_finnhub_quality_priority(skill_dir) else 55
+    value = _get_int("FINNHUB_RATE_LIMIT_PER_MIN", default, skill_dir)
+    return max(10, min(60, value))
+
+
+def get_finnhub_max_retries(skill_dir: Path | None = None) -> int:
+    """HTTP retry budget per endpoint call."""
+    default = 6 if get_finnhub_quality_priority(skill_dir) else 3
+    value = _get_int("FINNHUB_MAX_RETRIES", default, skill_dir)
+    return max(0, min(12, value))
+
+
+def get_finnhub_retry_backoff_cap_sec(skill_dir: Path | None = None) -> float:
+    """Cap for exponential retry sleeps."""
+    default = 45.0 if get_finnhub_quality_priority(skill_dir) else 30.0
+    value = _get_float("FINNHUB_RETRY_BACKOFF_CAP_SEC", default, skill_dir)
+    return max(5.0, min(120.0, value))
+
+
 def get_sec_filing_analysis_enabled(skill_dir: Path | None = None) -> bool:
     """Enable full filing-text analysis endpoints and report enrichment."""
     return _get_bool("SEC_FILING_ANALYSIS_ENABLED", True, skill_dir)

@@ -1,21 +1,21 @@
 :root {
-  color-scheme: dark;
-  --bg: #07080d;
-  --bg-elevated: #0c0e14;
-  --panel: rgba(18, 21, 32, 0.82);
-  --panel-border: rgba(99, 120, 200, 0.22);
-  --text: #f4f4f8;
-  --muted: #9ca3b8;
-  --accent: #38bdf8;
-  --accent-2: #818cf8;
-  --good: #34d399;
-  --bad: #fb7185;
-  --warn: #fbbf24;
-  --ring-good: #34d399;
-  --ring-warn: #fbbf24;
-  --ring-bad: #fb7185;
-  --ring-neutral: #64748b;
-  --hero-glow: rgba(56, 189, 248, 0.12);
+  color-scheme: light;
+  --bg: #f6f2ea;
+  --bg-elevated: #fdfaf4;
+  --panel: rgba(253, 250, 244, 0.94);
+  --panel-border: rgba(26, 26, 26, 0.16);
+  --text: #1f1f1f;
+  --muted: #55504a;
+  --accent: #6f5538;
+  --accent-2: #8a6a45;
+  --good: #2f6b4f;
+  --bad: #9e3f36;
+  --warn: #8a5c1f;
+  --ring-good: #2f6b4f;
+  --ring-warn: #8a5c1f;
+  --ring-bad: #9e3f36;
+  --ring-neutral: #6c6258;
+  --hero-glow: rgba(111, 85, 56, 0.08);
   --font-sans: "DM Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -42,7 +42,7 @@ html, body {
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
-  line-height: 1.45;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -1300,6 +1300,40 @@ select:focus-visible,
   box-shadow: 0 10px 26px rgba(2, 8, 23, 0.2);
   line-height: 1.7;
   letter-spacing: 0.003em;
+}
+.ir-dossier-preview .dossier-quality-badge {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.08);
+  color: #0f172a;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.ir-dossier-preview .dossier-quality-badge--high {
+  border-color: rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.12);
+  color: #166534;
+}
+.ir-dossier-preview .dossier-quality-badge--good {
+  border-color: rgba(14, 116, 144, 0.45);
+  background: rgba(14, 116, 144, 0.1);
+  color: #0f4c5c;
+}
+.ir-dossier-preview .dossier-quality-badge--degraded {
+  border-color: rgba(180, 83, 9, 0.45);
+  background: rgba(180, 83, 9, 0.12);
+  color: #9a3412;
+}
+.ir-dossier-preview .dossier-quality-badge--unknown {
+  border-color: rgba(71, 85, 105, 0.45);
+  background: rgba(71, 85, 105, 0.12);
+  color: #334155;
 }
 .ir-dossier-preview .ir-h3 {
   font-size: 1.62rem;

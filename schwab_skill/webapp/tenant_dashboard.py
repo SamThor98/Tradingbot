@@ -2735,6 +2735,41 @@ def schwab_market_authorize_start(
     return out
 
 
+@router.get("/api/oauth/schwab/portal-config", response_model=ApiResponse)
+def schwab_oauth_portal_config(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> ApiResponse:
+    """Expose effective Schwab OAuth URLs so end users can self-serve setup."""
+    account_configured = (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
+    market_configured = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
+    account_effective = _single_schwab_callback_uri(request)
+    market_effective = _resolve_schwab_redirect_uri(request, market=True)
+    origin = _request_origin(request)
+    front = (os.getenv("SAAS_FRONTEND_URL") or origin).rstrip("/")
+    account_start = f"{origin}/api/oauth/schwab/start"
+    market_start = f"{origin}/api/oauth/schwab/market/start"
+    return _ok(
+        {
+            "user_id": user.id,
+            "frontend_origin": origin,
+            "frontend_return_url": f"{front}/",
+            "account_authorize_start_url": account_start,
+            "market_authorize_start_url": market_start,
+            "account_callback_url": account_effective,
+            "market_callback_url": market_effective,
+            "configured_account_callback_url": account_configured or None,
+            "configured_market_callback_url": market_configured or None,
+            "account_callback_matches_configured": (
+                bool(account_configured) and account_effective == account_configured
+            ),
+            "market_callback_matches_configured": (
+                bool(market_configured) and market_effective == market_configured
+            ),
+        }
+    )
+
+
 @router.get("/api/oauth/schwab/callback")
 def schwab_oauth_callback(
     request: Request,
@@ -2835,6 +2870,25 @@ def schwab_oauth_callback(
         detail={},
         request_id=_request_id(request),
     )
+
+    # UX fast-path: if market OAuth is configured and this user has not linked
+    # market tokens yet, immediately continue into the market consent screen.
+    # This removes the extra "go back then click market connect" step.
+    market_client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
+    market_missing = not bool((row.market_token_payload_enc or "").strip())
+    if market_client_id and market_missing:
+        try:
+            market_state = sign_schwab_oauth_state(user_id, SCHWAB_OAUTH_KIND_MARKET)
+            market_redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+            market_url = schwab_authorize_url(market_client_id, market_redirect_uri, market_state)
+            return RedirectResponse(market_url, status_code=302)
+        except Exception as exc:
+            LOG.warning(
+                "schwab_oauth_callback: market auto-chain unavailable for user_id=%s: %s",
+                user_id,
+                safe_exception_message(exc, fallback="market_auto_chain_failed"),
+            )
+
     return red("schwab_oauth=ok")
 
 
@@ -2918,4 +2972,4 @@ def schwab_market_oauth_callback(
         detail={},
         request_id=_request_id(request),
     )
-    return red("schwab_market_oauth=ok")
+    return red("schwab_oauth=ok&schwab_market_oauth=ok")
