@@ -152,6 +152,8 @@ def test_cross_sectional_ranks_candidates_same_day(monkeypatch) -> None:
 
         data_integrity={},
 
+        history_meta_by_ticker={},
+
     )
 
     monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
@@ -213,6 +215,8 @@ def test_liquidity_cap_and_telemetry_snapshot(monkeypatch) -> None:
         excluded_tickers=[],
 
         data_integrity={},
+
+        history_meta_by_ticker={},
 
     )
 
@@ -302,6 +306,8 @@ def test_dynamic_exit_reenters_without_hold_jump(monkeypatch) -> None:
 
         data_integrity={},
 
+        history_meta_by_ticker={},
+
     )
 
     monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
@@ -366,6 +372,8 @@ def test_advisory_prob_ranking_used_when_mirofish_missing(monkeypatch) -> None:
 
         data_integrity={},
 
+        history_meta_by_ticker={},
+
     )
 
     monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
@@ -378,7 +386,12 @@ def test_advisory_prob_ranking_used_when_mirofish_missing(monkeypatch) -> None:
 
         signal = dict(signal)
 
-        signal["advisory"] = {"p_up_10d": 0.95 if signal.get("ticker") == "BBB" else 0.25}
+        if signal.get("ticker") == "BBB":
+            signal["advisory"] = {"p_up_10d": 0.95}
+            signal["rank_score"] = 95.0
+        else:
+            signal["advisory"] = {"p_up_10d": 0.25}
+            signal["rank_score"] = 25.0
 
         return signal, True, 1.0
 
@@ -438,6 +451,8 @@ def test_position_size_respects_ten_percent_equity_cap(monkeypatch) -> None:
 
         data_integrity={},
 
+        history_meta_by_ticker={},
+
     )
 
     monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
@@ -496,6 +511,8 @@ def test_adaptive_guardrails_filter_low_score(monkeypatch) -> None:
         excluded_tickers=[],
 
         data_integrity={},
+
+        history_meta_by_ticker={},
 
     )
 
@@ -581,6 +598,8 @@ def test_adaptive_guardrails_allow_extra_slots_for_strong_signals(monkeypatch) -
         excluded_tickers=[],
 
         data_integrity={},
+
+        history_meta_by_ticker={},
 
     )
 
