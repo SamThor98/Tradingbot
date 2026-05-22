@@ -1584,6 +1584,7 @@ def public_config() -> ApiResponse:
     """Non-secret client config (optional Supabase browser sign-in)."""
     url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
     anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    configured_api_key = (os.getenv("WEB_API_KEY") or "").strip()
     supabase: dict[str, str] | None = None
     if url and anon:
         supabase = {"url": url, "anon_key": anon}
@@ -1610,7 +1611,9 @@ def public_config() -> ApiResponse:
         "schwab_market_oauth": schwab_market_oauth,
         "manual_jwt_entry_enabled": _manual_jwt_entry_enabled(default=True),
         "platform_live_trading_kill_switch": plat_kill,
-        "api_key_required": bool(os.getenv("WEB_API_KEY", "").strip()),
+        "api_key_required": bool(configured_api_key),
+        # Exposed so the web UI can auto-populate the exact write API key.
+        "api_key_value": configured_api_key or None,
     }
     impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
     if impl.startswith(("http://", "https://")):

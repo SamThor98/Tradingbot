@@ -563,6 +563,7 @@ def public_config() -> ApiResponse:
     """Non-secret client config (e.g. Supabase URL + anon key for browser sign-in)."""
     url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
     anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    configured_api_key = (os.getenv("WEB_API_KEY") or "").strip()
     supabase: dict[str, str] | None = None
     if url and anon:
         supabase = {"url": url, "anon_key": anon}
@@ -591,6 +592,9 @@ def public_config() -> ApiResponse:
         "sse_enabled": False,
         "manual_jwt_entry_enabled": _shared_manual_jwt(default=False),
         "platform_live_trading_kill_switch": plat_kill,
+        "api_key_required": bool(configured_api_key),
+        # Exposed so the web UI can auto-populate the exact write API key.
+        "api_key_value": configured_api_key or None,
         # Helps hosted dashboards explain “works locally, not on Render” without exposing secrets.
         "auth_setup": {
             "supabase_sign_in_available": bool(url and anon),

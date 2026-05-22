@@ -2895,9 +2895,16 @@ async function loadConfig() {
   state.publicConfig = publicCfg;
   state.sseEnabled = publicCfg?.sse_enabled === true;
   state.allowManualJwt = publicCfg?.manual_jwt_entry_enabled !== false;
-  if (publicCfg.api_key_required && !localStorage.getItem("tradingbot.api_key")) {
-    const key = prompt("This server requires an API key for write operations.\nEnter your WEB_API_KEY:");
-    if (key) localStorage.setItem("tradingbot.api_key", key.trim());
+  if (publicCfg.api_key_required) {
+    const configuredKey = String(publicCfg.api_key_value || "").trim();
+    if (configuredKey) {
+      // Keep the browser copy aligned with server config so write flows always
+      // use the currently configured WEB_API_KEY.
+      localStorage.setItem("tradingbot.api_key", configuredKey);
+    } else if (!localStorage.getItem("tradingbot.api_key")) {
+      const key = prompt("This server requires an API key for write operations.\nEnter your WEB_API_KEY:");
+      if (key) localStorage.setItem("tradingbot.api_key", key.trim());
+    }
   }
   applySchwabConnectButtonVisibility();
   renderLiveTradingSaasPanel();
