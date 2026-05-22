@@ -91,10 +91,16 @@ function isApiKeyAuthFailure(status, payload) {
 function promptForApiKeyRefresh() {
   if (typeof window === "undefined" || typeof window.prompt !== "function") return false;
   const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
-  const message = existing
-    ? "Saved WEB_API_KEY was rejected by the server.\nEnter the correct WEB_API_KEY:"
+  const hasExisting = Boolean(existing);
+  if (hasExisting) {
+    // The server already rejected the stored value; clear it immediately so we
+    // do not keep auto-filling a bad key into subsequent retries.
+    localStorage.removeItem("tradingbot.api_key");
+  }
+  const message = hasExisting
+    ? "Saved WEB_API_KEY was rejected by the server.\nEnter the correct WEB_API_KEY (leave blank to skip):"
     : "This server requires WEB_API_KEY for write operations.\nEnter your WEB_API_KEY:";
-  const entered = window.prompt(message, existing || "");
+  const entered = window.prompt(message, "");
   if (entered == null) return false;
   const next = String(entered || "").trim();
   if (!next) {

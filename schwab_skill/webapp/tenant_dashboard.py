@@ -2753,7 +2753,7 @@ def schwab_oauth_portal_config(
         {
             "user_id": user.id,
             "frontend_origin": origin,
-            "frontend_return_url": f"{front}/",
+            "frontend_return_url": f"{front}/?section=connect",
             "account_authorize_start_url": account_start,
             "market_authorize_start_url": market_start,
             "account_callback_url": account_effective,
@@ -2778,10 +2778,13 @@ def schwab_oauth_callback(
     error: str = "",
     db: OrmSession = Depends(_db),
 ):
-    front = (os.getenv("SAAS_FRONTEND_URL") or "http://127.0.0.1:8000").rstrip("/")
+    front = (os.getenv("SAAS_FRONTEND_URL") or _request_origin(request)).rstrip("/")
 
     def red(qs: str) -> RedirectResponse:
-        return RedirectResponse(f"{front}/?{qs}", status_code=302)
+        query = qs.strip().lstrip("?")
+        if query:
+            return RedirectResponse(f"{front}/?section=connect&{query}", status_code=302)
+        return RedirectResponse(f"{front}/?section=connect", status_code=302)
 
     def status_key(k: str | None) -> str:
         return "schwab_market_oauth" if k == SCHWAB_OAUTH_KIND_MARKET else "schwab_oauth"
@@ -2900,10 +2903,13 @@ def schwab_market_oauth_callback(
     error: str = "",
     db: OrmSession = Depends(_db),
 ):
-    front = (os.getenv("SAAS_FRONTEND_URL") or "http://127.0.0.1:8000").rstrip("/")
+    front = (os.getenv("SAAS_FRONTEND_URL") or _request_origin(request)).rstrip("/")
 
     def red(qs: str) -> RedirectResponse:
-        return RedirectResponse(f"{front}/?{qs}", status_code=302)
+        query = qs.strip().lstrip("?")
+        if query:
+            return RedirectResponse(f"{front}/?section=connect&{query}", status_code=302)
+        return RedirectResponse(f"{front}/?section=connect", status_code=302)
 
     if error:
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")

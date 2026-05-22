@@ -669,6 +669,18 @@
             <h2>Connect Schwab</h2>
             <small id="onboardingMeta" class="muted">Use one guided flow to connect Schwab quickly; advanced checks are optional.</small>
           </div>
+          <div id="connectAuthInline" class="card" style="margin-bottom:10px; padding:10px;">
+            <div id="connectSignedInState" class="inline-form compact hidden">
+              <span class="pill good small">Signed in</span>
+              <span class="muted">Signed in as <strong id="connectSignedInEmail">—</strong></span>
+            </div>
+            <div id="connectSignedOutState" class="inline-form compact hidden">
+              <label class="field-label" for="connectVerifyEmailInput">Email</label>
+              <input id="connectVerifyEmailInput" type="email" autocomplete="username" placeholder="you@example.com" />
+              <button id="connectVerifyEmailBtn" class="btn small secondary" type="button">Verify email</button>
+              <small id="connectVerifyStatus" class="muted">Verify once, then connect Schwab.</small>
+            </div>
+          </div>
 
           <details id="authDebugPanel" class="onboarding-help">
             <summary>Auth debug</summary>
@@ -814,16 +826,31 @@
               <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
                 <summary class="panel-disclosure-summary">
                   Preset guardrails (trust + safety)
-                  <span class="disclosure-hint muted">why settings changes are controlled</span>
+                  <span class="disclosure-hint muted">actual enforced values + why each exists</span>
                 </summary>
                 <ul class="onboarding-help-list">
-                  <li><strong>Fixed preset catalog:</strong> profiles come from a controlled server-side template set, not free-form user input.</li>
-                  <li><strong>Preview before apply:</strong> the panel shows what will change before saving, so updates are explicit and reviewable.</li>
-                  <li><strong>No silent activation:</strong> changing profile values does not auto-send orders; execution still follows approval controls.</li>
-                  <li><strong>Layered confirmations:</strong> live trading enable requires risk acknowledgment and typing <code>ENABLE</code>.</li>
-                  <li><strong>Per-order confirmation:</strong> each live order still requires typed ticker confirmation in the approval dialog.</li>
-                  <li><strong>Emergency stop:</strong> pause setting can block new live approvals immediately until intentionally re-enabled.</li>
-                  <li><strong>Optional step-up security:</strong> 2FA can enforce stronger approval verification for sensitive actions.</li>
+                  <li><strong>Guardrails are fixed presets, not free-form:</strong> users can only apply <code>conservative</code>, <code>balanced</code>, or <code>aggressive</code> templates. Reason: removes accidental misconfiguration and keeps behavior auditable.</li>
+                  <li><strong>Position size caps by preset:</strong> conservative <code>$300</code>, balanced <code>$500</code>, aggressive <code>$900</code> per new buy. Reason: hard-limits single-trade blast radius by risk profile.</li>
+                  <li><strong>Daily trade cap by preset:</strong> conservative <code>3</code>, balanced <code>5</code>, aggressive <code>8</code> new live trades/day. Reason: prevents over-trading and limits damage from bad market regimes.</li>
+                  <li><strong>Quality-gate strictness:</strong> conservative uses <code>QUALITY_GATES_MODE=hard</code>; balanced/aggressive use <code>soft</code>. Reason: tighter profile rejects weaker setups; looser profiles allow more opportunity flow.</li>
+                  <li><strong>Event-risk policy:</strong> conservative/balanced use <code>EVENT_RISK_MODE=live</code>; aggressive uses <code>shadow</code>. Conservative uses <code>EVENT_ACTION=block</code>, balanced/aggressive use <code>downsize</code>. Reason: earnings/macro risk is either blocked or size-reduced based on desired aggressiveness.</li>
+                  <li><strong>Execution-quality policy:</strong> conservative/balanced use <code>EXEC_QUALITY_MODE=live</code>; aggressive uses <code>shadow</code>. Reason: stricter profiles enforce spread/slippage checks live; aggressive logs would-block signals without hard blocking.</li>
+                  <li><strong>Automation defaults fail-safe:</strong> <code>automation_opt_in</code> defaults to off, so approvals require explicit live confirmation unless intentionally enabled. Reason: avoids silent automation on first use.</li>
+                  <li><strong>Apply is explicit and reviewable:</strong> the UI shows a before/after preview, then persists profile + mode + automation state with an update timestamp. Reason: clear operator intent and change traceability.</li>
+                </ul>
+              </details>
+              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
+                <summary class="panel-disclosure-summary">
+                  What the screener looks for (trading rationale)
+                  <span class="disclosure-hint muted">overall signal thesis in plain English</span>
+                </summary>
+                <ul class="onboarding-help-list">
+                  <li><strong>Core edge thesis:</strong> the screener targets <em>trend-continuation breakouts</em> (Stage 2 + VCP behavior), not random short-term mean reversion. Reason: continuation setups historically provide cleaner follow-through when trend, structure, and participation align.</li>
+                  <li><strong>Stage A (fast filter):</strong> quickly narrows the universe to candidates with Stage 2/VCP characteristics so capital is not spent evaluating weak names. Reason: speed + discipline — most symbols should fail fast.</li>
+                  <li><strong>Stage B (enrichment):</strong> shortlisted names are stress-tested with deeper context (quality gates, event/forensic checks, SEC context, advisory probabilities, and strategy ensemble inputs). Reason: avoid false breakouts that look good on price alone.</li>
+                  <li><strong>Regime awareness:</strong> market-regime gates can block or suppress risk when broad conditions are unfavorable. Reason: even good single-name setups underperform in weak tape, so the system is designed to reduce exposure then.</li>
+                  <li><strong>Score = prioritization, not blind execution:</strong> score/edge/reliability/execution components rank opportunities by quality and tradeability. Reason: highest-ranked names should combine signal strength with practical execution quality, not just chart shape.</li>
+                  <li><strong>Near-miss visibility:</strong> names that fail thresholds remain visible with reasons. Reason: transparency builds trust and helps users see that exclusions are rule-driven, not arbitrary.</li>
                 </ul>
               </details>
               <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">

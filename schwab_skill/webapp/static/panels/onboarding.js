@@ -21,6 +21,13 @@ import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { showToast } from "../modules/notifications.js";
 
+let _authUiWired = false;
+let _verifyCooldownTimer = null;
+
+const VERIFY_EMAIL_COOLDOWN_KEY = "tradingbot.connect.verify_email_cooldown_until_ms";
+const VERIFY_EMAIL_COOLDOWN_MS = 60 * 1000;
+const VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
+
 const STEP_NAMES = {
   connect: "Link Schwab",
   verify_token_health: "Verify Tokens",
@@ -333,8 +340,182 @@ function _flashOAuthError(title, message) {
   try { showToast(message, "error", 6000); } catch { /* ignore */ }
 }
 
+async function getSessionStatus() {
+  try {
+    const out = await fetch("/api/auth/session", {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    if (!out.ok) return { authenticated: false, email: "" };
+    const body = await out.json();
+    const data = body?.data && typeof body.data === "object" ? body.data : {};
+    return {
+      authenticated: Boolean(data.authenticated),
+      email: String(data.email || "").trim(),
+    };
+  } catch {
+    return { authenticated: false, email: "" };
+  }
+}
+
+async function renderConnectAuthStatus() {
+  const wrap = document.getElementById("connectAuthInline");
+  const signedIn = document.getElementById("connectSignedInState");
+  const signedOut = document.getElementById("connectSignedOutState");
+  const who = document.getElementById("connectSignedInEmail");
+  if (!wrap || !signedIn || !signedOut || !who) return;
+
+  const session = await getSessionStatus();
+  if (session.authenticated) {
+    signedIn.classList.remove("hidden");
+    signedOut.classList.add("hidden");
+    who.textContent = session.email || "this session";
+  } else {
+    signedIn.classList.add("hidden");
+    signedOut.classList.remove("hidden");
+    who.textContent = "";
+  }
+}
+
+function _readVerifyCooldownUntil() {
+  const raw = localStorage.getItem(VERIFY_EMAIL_COOLDOWN_KEY) || "";
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+function _writeVerifyCooldownUntil(tsMs) {
+  const safe = Number(tsMs);
+  if (!Number.isFinite(safe) || safe <= Date.now()) {
+    localStorage.removeItem(VERIFY_EMAIL_COOLDOWN_KEY);
+    return;
+  }
+  localStorage.setItem(VERIFY_EMAIL_COOLDOWN_KEY, String(Math.floor(safe)));
+}
+
+function _setVerifyStatusMessage(text) {
+  const status = document.getElementById("connectVerifyStatus");
+  if (!status) return;
+  status.textContent = String(text || "").trim();
+}
+
+function _formatCooldownLabel(msLeft) {
+  const totalSec = Math.max(1, Math.ceil(msLeft / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
+}
+
+function _refreshVerifyButtonState() {
+  const btn = document.getElementById("connectVerifyEmailBtn");
+  if (!btn) return;
+  const until = _readVerifyCooldownUntil();
+  const now = Date.now();
+  const msLeft = until - now;
+  if (msLeft > 0) {
+    btn.disabled = true;
+    btn.textContent = `Verify email (${_formatCooldownLabel(msLeft)})`;
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = "Verify email";
+}
+
+function _startVerifyCooldown(ms, reason = "") {
+  const cooldownMs = Math.max(1000, Number(ms) || 0);
+  _writeVerifyCooldownUntil(Date.now() + cooldownMs);
+  if (_verifyCooldownTimer) {
+    clearInterval(_verifyCooldownTimer);
+    _verifyCooldownTimer = null;
+  }
+  _refreshVerifyButtonState();
+  if (reason) _setVerifyStatusMessage(reason);
+  _verifyCooldownTimer = window.setInterval(() => {
+    _refreshVerifyButtonState();
+    if (_readVerifyCooldownUntil() <= Date.now()) {
+      clearInterval(_verifyCooldownTimer);
+      _verifyCooldownTimer = null;
+      _writeVerifyCooldownUntil(0);
+      _refreshVerifyButtonState();
+      if (!reason) _setVerifyStatusMessage("You can request another verification email.");
+    }
+  }, 1000);
+}
+
+async function requestInlineEmailVerification() {
+  const sb = getSupabaseClient();
+  if (!sb) {
+    _flashOAuthError(
+      "Authentication required",
+      "Email verification is required before connecting Schwab. Browser auth is not configured on this host.",
+    );
+    return false;
+  }
+  const input = document.getElementById("connectVerifyEmailInput");
+  const status = document.getElementById("connectVerifyStatus");
+  const cleanEmail = String(input?.value || "").trim();
+  if (!cleanEmail) {
+    if (status) status.textContent = "Enter your email first.";
+    return false;
+  }
+  const until = _readVerifyCooldownUntil();
+  if (until > Date.now()) {
+    _setVerifyStatusMessage(`Please wait ${_formatCooldownLabel(until - Date.now())} before requesting another email.`);
+    _refreshVerifyButtonState();
+    return false;
+  }
+  const redirectTo = `${window.location.origin}/?section=connect`;
+  const { error } = await sb.auth.signInWithOtp({
+    email: cleanEmail,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: redirectTo,
+    },
+  });
+  if (error) {
+    const msg = error.message || "Verification request failed.";
+    const lower = String(msg).toLowerCase();
+    if (lower.includes("rate limit") || lower.includes("email rate limit exceeded")) {
+      _startVerifyCooldown(
+        VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS,
+        `Email rate limit reached. Please wait ${_formatCooldownLabel(VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS)} before retrying.`,
+      );
+    } else {
+      if (status) status.textContent = msg;
+    }
+    return false;
+  }
+  _startVerifyCooldown(
+    VERIFY_EMAIL_COOLDOWN_MS,
+    "Verification email sent. Open the link, then return here.",
+  );
+  return true;
+}
+
+function wireInlineAuthUi() {
+  if (_authUiWired) return;
+  _authUiWired = true;
+  const verifyBtn = document.getElementById("connectVerifyEmailBtn");
+  verifyBtn?.addEventListener("click", async () => {
+    const ok = await requestInlineEmailVerification();
+    if (ok) {
+      showToast("Verification email sent.", "info", 4000);
+    }
+  });
+  _refreshVerifyButtonState();
+  const until = _readVerifyCooldownUntil();
+  if (until > Date.now()) {
+    _startVerifyCooldown(until - Date.now());
+  }
+}
+
 async function ensureSessionForSchwabConnect() {
-  if (await ensureCookieAuthSession()) return true;
+  if (await ensureCookieAuthSession()) {
+    await renderConnectAuthStatus();
+    return true;
+  }
 
   const sb = getSupabaseClient();
   if (!sb) {
@@ -351,36 +532,26 @@ async function ensureSessionForSchwabConnect() {
     } = await sb.auth.getSession();
     if (session?.access_token) {
       const ok = await createCookieAuthSession(session.access_token);
-      if (ok && (await ensureCookieAuthSession())) return true;
+      if (ok && (await ensureCookieAuthSession())) {
+        await renderConnectAuthStatus();
+        return true;
+      }
     }
   } catch {
     // fall through to OTP flow
   }
 
-  const email = window.prompt("Enter your email to verify before connecting Schwab:");
-  const cleanEmail = String(email || "").trim();
-  if (!cleanEmail) {
-    showToast("Email verification is required before connecting Schwab.", "warn", 4200);
-    return false;
-  }
-  const redirectTo = `${window.location.origin}/?section=connect`;
-  const { error } = await sb.auth.signInWithOtp({
-    email: cleanEmail,
-    options: {
-      shouldCreateUser: true,
-      emailRedirectTo: redirectTo,
-    },
-  });
-  if (error) {
-    _flashOAuthError("Could not start email verification", error.message || "Verification request failed.");
-    return false;
-  }
-  showToast("Verification email sent. Open the sign-in link, then click Connect Schwab again.", "info", 7000);
+  await renderConnectAuthStatus();
+  const signedOut = document.getElementById("connectSignedOutState");
+  signedOut?.classList.remove("hidden");
+  const input = document.getElementById("connectVerifyEmailInput");
+  input?.focus();
   updateActionCenter({
-    title: "Email verification sent",
-    message: "Open the link in your inbox to finish sign-in, then retry Connect Schwab.",
+    title: "Email verification required",
+    message: "Verify with the inline email form in Connect Schwab, then click Connect again.",
     severity: "warn",
   });
+  showToast("Verify your email in the Connect panel first.", "warn", 4500);
   return false;
 }
 
@@ -451,6 +622,8 @@ export async function triggerSchwabMarketOAuth() {
 }
 
 export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
+  wireInlineAuthUi();
+  await renderConnectAuthStatus();
   const meta = document.getElementById("onboardingMeta");
   if (meta) meta.textContent = "Loading onboarding status...";
   const out = await api.get("/api/onboarding/status");

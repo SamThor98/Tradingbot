@@ -1679,7 +1679,10 @@ def local_schwab_oauth_callback(
     error: str = "",
 ):
     def red(qs: str) -> RedirectResponse:
-        return RedirectResponse(f"/?{qs}", status_code=302)
+        query = qs.strip().lstrip("?")
+        if query:
+            return RedirectResponse(f"/?section=connect&{query}", status_code=302)
+        return RedirectResponse("/?section=connect", status_code=302)
 
     def status_key(k: str | None) -> str:
         return "schwab_market_oauth" if k == "market" else "schwab_oauth"
@@ -1714,6 +1717,14 @@ def local_schwab_oauth_callback(
     else:
         write_encrypted_token_file(TOKENS_ACCOUNT_PATH, tok, client_secret)
         _audit_event("oauth_schwab_account_callback", "local-dashboard", {"saved": "tokens_account.enc"})
+        market_client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
+        market_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
+        market_missing = not TOKENS_MARKET_PATH.exists()
+        if market_client_id and market_secret and market_missing:
+            market_state = _new_local_oauth_state("market")
+            market_redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+            market_url = schwab_authorize_url(market_client_id, market_redirect_uri, market_state)
+            return RedirectResponse(market_url, status_code=302)
     return red(f"{status_key(kind)}=ok")
 
 
@@ -1725,7 +1736,10 @@ def local_schwab_market_oauth_callback(
     error: str = "",
 ):
     def red(qs: str) -> RedirectResponse:
-        return RedirectResponse(f"/?{qs}", status_code=302)
+        query = qs.strip().lstrip("?")
+        if query:
+            return RedirectResponse(f"/?section=connect&{query}", status_code=302)
+        return RedirectResponse("/?section=connect", status_code=302)
 
     if error:
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")
