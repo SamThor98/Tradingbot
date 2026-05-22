@@ -531,11 +531,12 @@ async function ensureSessionForSchwabConnect() {
       data: { session },
     } = await sb.auth.getSession();
     if (session?.access_token) {
-      const ok = await createCookieAuthSession(session.access_token);
-      if (ok && (await ensureCookieAuthSession())) {
-        await renderConnectAuthStatus();
-        return true;
-      }
+      // Treat an existing Supabase session as already-verified auth. We still
+      // attempt to refresh the HttpOnly cookie bridge, but we don't block the
+      // user on that probe because OAuth authorize-url calls can use Bearer.
+      await createCookieAuthSession(session.access_token);
+      await renderConnectAuthStatus();
+      return true;
     }
   } catch {
     // fall through to OTP flow
@@ -564,27 +565,23 @@ export async function triggerSchwabAccountOAuth() {
     );
     return;
   }
-  const redirectPath = "/api/oauth/schwab/start";
   try {
-    // Redirect-first path avoids fragile fetch-only startup failures.
-    window.location.assign(redirectPath);
-  } catch {
-    try {
-      const out = await api.get("/api/oauth/schwab/authorize-url");
-      if (!out.ok || !out.data?.url) {
-        _flashOAuthError(
-          "Could not start Schwab account OAuth",
-          out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
-        );
-        return;
-      }
-      window.location.href = out.data.url;
-    } catch (err) {
+    // API-first uses Bearer auth and works even if the cookie bridge needs a
+    // refresh; this keeps "verify email" effectively one-time per session.
+    const out = await api.get("/api/oauth/schwab/authorize-url");
+    if (!out.ok || !out.data?.url) {
       _flashOAuthError(
         "Could not start Schwab account OAuth",
-        `OAuth start failed: ${err?.message || err || "unknown error"}`,
+        out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
       );
+      return;
     }
+    window.location.href = out.data.url;
+  } catch (err) {
+    _flashOAuthError(
+      "Could not start Schwab account OAuth",
+      `OAuth start failed: ${err?.message || err || "unknown error"}`,
+    );
   }
 }
 
@@ -597,27 +594,23 @@ export async function triggerSchwabMarketOAuth() {
     );
     return;
   }
-  const redirectPath = "/api/oauth/schwab/market/start";
   try {
-    // Redirect-first path avoids fragile fetch-only startup failures.
-    window.location.assign(redirectPath);
-  } catch {
-    try {
-      const out = await api.get("/api/oauth/schwab/market/authorize-url");
-      if (!out.ok || !out.data?.url) {
-        _flashOAuthError(
-          "Could not start Schwab market OAuth",
-          out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
-        );
-        return;
-      }
-      window.location.href = out.data.url;
-    } catch (err) {
+    // API-first uses Bearer auth and works even if the cookie bridge needs a
+    // refresh; this keeps "verify email" effectively one-time per session.
+    const out = await api.get("/api/oauth/schwab/market/authorize-url");
+    if (!out.ok || !out.data?.url) {
       _flashOAuthError(
         "Could not start Schwab market OAuth",
-        `OAuth start failed: ${err?.message || err || "unknown error"}`,
+        out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
       );
+      return;
     }
+    window.location.href = out.data.url;
+  } catch (err) {
+    _flashOAuthError(
+      "Could not start Schwab market OAuth",
+      `OAuth start failed: ${err?.message || err || "unknown error"}`,
+    );
   }
 }
 
