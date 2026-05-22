@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import re
-from io import BytesIO
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response
-from xml.sax.saxutils import escape as xml_escape
 
 from execution import get_account_status
 from finnhub_data import get_finnhub_research_snapshot
