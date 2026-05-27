@@ -184,6 +184,42 @@ def test_resolve_schwab_redirect_uri_swaps_loopback_when_serving_remote(monkeypa
     assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://dash.example.com/api/oauth/schwab/callback"
 
 
+def test_resolve_schwab_redirect_uri_prefers_active_render_host_when_configured_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SCHWAB_CALLBACK_URL",
+        "https://tradingbot-api-8cm8.onrender.com/api/oauth/schwab/callback",
+    )
+    req = _make_request(
+        scheme="https",
+        netloc="olc-screener.onrender.com",
+        forwarded_proto="https",
+        forwarded_host="olc-screener.onrender.com",
+    )
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == (
+        "https://olc-screener.onrender.com/api/oauth/schwab/callback"
+    )
+
+
+def test_resolve_schwab_redirect_uri_prefers_active_render_host_for_market_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SCHWAB_MARKET_CALLBACK_URL",
+        "https://tradingbot-api-8cm8.onrender.com/api/oauth/schwab/market/callback",
+    )
+    req = _make_request(
+        scheme="https",
+        netloc="olc-screener.onrender.com",
+        forwarded_proto="https",
+        forwarded_host="olc-screener.onrender.com",
+    )
+    assert rh.resolve_schwab_redirect_uri(req, market=True) == (
+        "https://olc-screener.onrender.com/api/oauth/schwab/market/callback"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Request-id propagation parity.
 # ---------------------------------------------------------------------------

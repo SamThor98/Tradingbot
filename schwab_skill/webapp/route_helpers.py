@@ -107,6 +107,12 @@ def is_loopback_host(hostname: str | None) -> bool:
     return host in {"127.0.0.1", "localhost", "::1"}
 
 
+def _is_render_hostname(hostname: str | None) -> bool:
+    """Return True for standard Render-managed hostnames."""
+    host = str(hostname or "").strip().lower()
+    return host.endswith(".onrender.com")
+
+
 def request_origin(request: Request) -> str:
     """Resolve the externally-visible origin (``proto://host``) of a request.
 
@@ -164,6 +170,16 @@ def resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
         urllib.parse.urlparse(inferred).hostname or ""
     ).strip().lower()
     if is_loopback_host(configured_host) and not is_loopback_host(inferred_host):
+        return inferred
+    # Render host migrations can leave stale callback env vars (old service host).
+    # If both hosts are Render-managed and differ, prefer the active request host.
+    if (
+        configured_host
+        and inferred_host
+        and configured_host != inferred_host
+        and _is_render_hostname(configured_host)
+        and _is_render_hostname(inferred_host)
+    ):
         return inferred
     return configured
 
