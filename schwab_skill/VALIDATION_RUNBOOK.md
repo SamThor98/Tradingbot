@@ -8,6 +8,8 @@ Use this to execute the same validation flow in each environment.
 2. Optional web metrics gate:
    - Start web app: `uvicorn webapp.main:app --port 8000`
    - Run: `python scripts/validate_all.py --profile local --web-base-url http://127.0.0.1:8000 --strict`
+3. Optional production-safe light-load probe (read-only endpoints only):
+   - `python scripts/web_load_smoke.py --base-url http://127.0.0.1:8000`
 
 Expected:
 - All steps `PASS`
@@ -86,6 +88,7 @@ Use this split to keep PR feedback fast while still running heavy improvement lo
 
 - If `healthcheck.py` fails: refresh tokens via OAuth flow.
 - If observability gate fails: inspect `execution_safety_metrics.json` and web deep health metrics.
+- If web load smoke fails: inspect `validation_artifacts/latest_web_load_smoke.json` and keep probes restricted to routes from `scripts/web_safe_routes.py`.
 - If smoke fails in web health: verify dependencies (`fastapi`, `uvicorn`, `sqlalchemy`) and local DB access.
 - If `validate_data_integrity` is skipped: set `DATA_INTEGRITY_UNIVERSE_FILE` and `DATA_INTEGRITY_PM_HISTORICAL_FILE` (optional date overrides: `DATA_INTEGRITY_START_DATE`, `DATA_INTEGRITY_END_DATE`).
 

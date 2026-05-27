@@ -142,6 +142,20 @@ function renderAuthBootstrapSection(portalConfig) {
   </section>`;
 }
 
+function buildPortalConfigFallback() {
+  const origin = window?.location?.origin || "";
+  const saasMode = Boolean(state.publicConfig?.saas_mode);
+  const accountAuthorizeStartPath = saasMode ? "/api/oauth/schwab/start" : "/api/oauth/schwab/authorize-start";
+  const marketAuthorizeStartPath = saasMode ? "/api/oauth/schwab/market/start" : "/api/oauth/schwab/market/authorize-start";
+  return {
+    frontend_return_url: origin ? `${origin}/?section=connect` : "",
+    account_callback_url: origin ? `${origin}/api/oauth/schwab/callback` : "",
+    market_callback_url: origin ? `${origin}/api/oauth/schwab/market/callback` : "",
+    account_authorize_start_url: origin ? `${origin}${accountAuthorizeStartPath}` : "",
+    market_authorize_start_url: origin ? `${origin}${marketAuthorizeStartPath}` : "",
+  };
+}
+
 function wireOnboardingCopyButtons(rootEl) {
   if (!rootEl) return;
   const copyButtons = rootEl.querySelectorAll(".onboarding-copy-btn");
@@ -628,6 +642,9 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
     }
   } catch {
     portalConfig = null;
+  }
+  if (!portalConfig) {
+    portalConfig = buildPortalConfigFallback();
   }
   const section = document.getElementById("onboardingSection");
   if (!meta) return;

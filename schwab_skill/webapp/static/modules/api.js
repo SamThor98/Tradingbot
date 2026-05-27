@@ -90,11 +90,6 @@ function isApiKeyAuthFailure(status, payload) {
 
 function promptForApiKeyRefresh() {
   if (typeof window === "undefined" || typeof window.prompt !== "function") return false;
-  const configured = String(state.publicConfig?.api_key_value || "").trim();
-  if (configured) {
-    localStorage.setItem("tradingbot.api_key", configured);
-    return true;
-  }
   const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
   const hasExisting = Boolean(existing);
   if (hasExisting) {

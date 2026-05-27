@@ -455,6 +455,7 @@ class TestHealthAndStatus:
         assert data["data"]["sse_enabled"] is True
         assert data["data"]["scan_transport"] == "local_thread"
         assert data["data"]["ui_contract_version"] == "2026-04-webapp-stabilization"
+        assert "api_key_value" not in data["data"]
 
     def test_runtime_contract(self, client: TestClient):
         resp = client.get("/api/runtime-contract")
@@ -474,6 +475,22 @@ class TestHealthAndStatus:
         assert login_resp.status_code == 302
         assert login_resp.headers.get("location") == "/?section=connect"
 
+    def test_login_redirect_honors_frontend_return_url(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(
+            "WEB_FRONTEND_RETURN_URL",
+            "https://olc-screener.onrender.com/?screen=operations",
+        )
+        login_resp = client.get("/login", follow_redirects=False)
+        assert login_resp.status_code == 302
+        assert (
+            login_resp.headers.get("location")
+            == "https://olc-screener.onrender.com/?screen=operations"
+        )
+
 
 class TestLocalOAuthEndpoints:
     def test_local_authorize_url_returns_schwab_oauth_link(
@@ -484,7 +501,7 @@ class TestLocalOAuthEndpoints:
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_KEY", "ak")
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_SECRET", "as")
         monkeypatch.setenv("SCHWAB_CALLBACK_URL", "http://testserver/api/oauth/schwab/callback")
-        resp = client.get("/api/oauth/schwab/authorize-url")
+        resp = client.get("/api/oauth/schwab/authorize-url", headers=_auth_headers())
         data = resp.json()
         assert data["ok"] is True
         url = (data.get("data") or {}).get("url") or ""
@@ -500,7 +517,7 @@ class TestLocalOAuthEndpoints:
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_KEY", "ak")
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_SECRET", "as")
         monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
-        resp = client.get("/api/oauth/schwab/authorize-url")
+        resp = client.get("/api/oauth/schwab/authorize-url", headers=_auth_headers())
         data = resp.json()
         assert data["ok"] is True
         url = (data.get("data") or {}).get("url") or ""
@@ -521,7 +538,7 @@ class TestLocalOAuthEndpoints:
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_KEY", "ak")
         monkeypatch.setenv("SCHWAB_ACCOUNT_APP_SECRET", "as")
         monkeypatch.setenv("SCHWAB_CALLBACK_URL", "http://testserver/api/oauth/schwab/callback")
-        auth_resp = client.get("/api/oauth/schwab/authorize-url").json()
+        auth_resp = client.get("/api/oauth/schwab/authorize-url", headers=_auth_headers()).json()
         state = ((auth_resp.get("data") or {}).get("state") or "").strip()
         callback = client.get(
             "/api/oauth/schwab/callback",
@@ -533,3 +550,34 @@ class TestLocalOAuthEndpoints:
         write_mock.assert_called_once()
         out_path = str(write_mock.call_args.args[0]).replace("\\", "/")
         assert out_path.endswith("tokens_account.enc")
+
+    @patch("webapp.main.write_encrypted_token_file")
+    @patch(
+        "webapp.main.exchange_schwab_code_for_tokens",
+        return_value={"access_token": "a", "refresh_token": "r", "token_type": "Bearer"},
+    )
+    def test_local_account_callback_redirect_honors_frontend_return_url(
+        self,
+        _exchange_mock,
+        _write_mock,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SCHWAB_ACCOUNT_APP_KEY", "ak")
+        monkeypatch.setenv("SCHWAB_ACCOUNT_APP_SECRET", "as")
+        monkeypatch.setenv("SCHWAB_CALLBACK_URL", "http://testserver/api/oauth/schwab/callback")
+        monkeypatch.setenv(
+            "WEB_FRONTEND_RETURN_URL",
+            "https://olc-screener.onrender.com/?screen=operations",
+        )
+        auth_resp = client.get("/api/oauth/schwab/authorize-url", headers=_auth_headers()).json()
+        state = ((auth_resp.get("data") or {}).get("state") or "").strip()
+        callback = client.get(
+            "/api/oauth/schwab/callback",
+            params={"code": "code123", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 302
+        location = callback.headers.get("location") or ""
+        assert location.startswith("https://olc-screener.onrender.com/?screen=operations&")
+        assert "schwab_oauth=ok" in location

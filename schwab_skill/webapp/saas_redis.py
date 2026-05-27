@@ -8,6 +8,25 @@ import redis
 _client: redis.Redis | None = None
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _rate_limit_fail_open_allowed() -> bool:
+    """Fail closed in production-like envs, but stay developer-friendly locally."""
+    env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+    production_like = env in {"prod", "production", "staging"}
+    raw = os.getenv("SAAS_RATE_LIMIT_FAIL_OPEN")
+    if production_like:
+        return _bool_env("SAAS_RATE_LIMIT_FAIL_OPEN", default=False)
+    if raw is None or not str(raw).strip():
+        return True
+    return _bool_env("SAAS_RATE_LIMIT_FAIL_OPEN", default=False)
+
+
 def redis_client() -> redis.Redis:
     global _client
     if _client is None:
@@ -29,7 +48,7 @@ def acquire_scan_cooldown(user_id: str, cooldown_sec: int) -> bool:
         key = f"saas:scan:cooldown:{user_id}"
         return bool(redis_client().set(key, "1", nx=True, ex=cooldown_sec))
     except redis.RedisError:
-        fail_open = (os.getenv("SAAS_RATE_LIMIT_FAIL_OPEN") or "").strip().lower() in ("1", "true", "yes", "on")
+        fail_open = _rate_limit_fail_open_allowed()
         return bool(fail_open)
 
 
@@ -46,7 +65,7 @@ def fixed_window_rate_limit(user_id: str, bucket: str, limit: int, window_sec: i
             r.expire(key, window_sec)
         return n <= limit, n
     except redis.RedisError:
-        fail_open = (os.getenv("SAAS_RATE_LIMIT_FAIL_OPEN") or "").strip().lower() in ("1", "true", "yes", "on")
+        fail_open = _rate_limit_fail_open_allowed()
         return bool(fail_open), 0
 
 

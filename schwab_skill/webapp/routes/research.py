@@ -11,7 +11,7 @@ from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from execution import get_account_status
@@ -31,9 +31,10 @@ from ..management_dashboard import PROFILE_WEIGHTS, build_management_dashboard
 from ..pdf_export import dossier_to_pdf
 from ..report_trust import build_report_trust_payload
 from ..report_v2 import build_report_v2
+from ..route_helpers import require_api_key_if_set as _require_api_key_if_set
 from ..schemas import ApiResponse
 
-router = APIRouter(tags=["research"])
+router = APIRouter(tags=["research"], dependencies=[Depends(_require_api_key_if_set)])
 
 SKILL_DIR = Path(__file__).resolve().parent.parent.parent
 _LOCAL_SEC_MGMT_PROFILE_OVERRIDE: str | None = None

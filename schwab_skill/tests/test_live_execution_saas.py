@@ -677,6 +677,7 @@ def test_public_config_and_runtime_contract_in_saas(saas_client: TestClient) -> 
     assert data.get("scan_transport") == "celery"
     assert data.get("sse_enabled") is False
     assert data.get("ui_contract_version") == "2026-04-webapp-stabilization"
+    assert "api_key_value" not in data
 
     runtime = saas_client.get("/api/runtime-contract")
     assert runtime.status_code == 200
@@ -685,6 +686,39 @@ def test_public_config_and_runtime_contract_in_saas(saas_client: TestClient) -> 
     assert runtime_data.get("scan_transport") == "celery"
     assert runtime_data.get("sse_enabled") is False
     assert runtime_data.get("api_envelope") == "ApiResponse"
+
+
+def test_trade_approve_rate_limited(saas_client: TestClient, test_db: sessionmaker) -> None:
+    db = test_db()
+    try:
+        _seed_user_with_schwab(db)
+        user = db.query(User).filter(User.id == "user_1").one()
+        user.live_execution_enabled = True
+        db.add(
+            PendingTrade(
+                id="ratelimit1",
+                user_id="user_1",
+                ticker="AAPL",
+                qty=1,
+                price=100.0,
+                status="pending",
+                signal_json="{}",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    with (
+        patch("webapp.tenant_dashboard.get_account_status", return_value={"accounts": []}),
+        patch("webapp.tenant_dashboard.fixed_window_rate_limit", return_value=(False, 9)),
+    ):
+        resp = saas_client.post(
+            "/api/trades/ratelimit1/approve?confirm_live=true",
+            json={"typed_ticker": "AAPL"},
+            headers=_auth_header(),
+        )
+    assert resp.status_code == 429
+    assert "Order rate limit exceeded" in (resp.json().get("detail") or "")
 
 
 def test_validate_startup_configuration_requires_prod_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,6 +859,27 @@ def test_market_oauth_callback_rejects_account_state(saas_client: TestClient, mo
     )
     assert r.status_code == 302
     assert "schwab_market_oauth=error" in (r.headers.get("location") or "")
+
+
+def test_market_oauth_callback_prefers_explicit_frontend_return_url(
+    saas_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCHWAB_MARKET_CALLBACK_URL", "https://cb.example/m")
+    monkeypatch.setenv("SAAS_FRONTEND_URL", "https://front.test")
+    monkeypatch.setenv(
+        "WEB_FRONTEND_RETURN_URL",
+        "https://olc-screener.onrender.com/?screen=operations",
+    )
+    state = sign_schwab_oauth_state("user_1", SCHWAB_OAUTH_KIND_ACCOUNT)
+    r = saas_client.get(
+        "/api/oauth/schwab/market/callback",
+        params={"code": "c1", "state": state},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    loc = r.headers.get("location") or ""
+    assert loc.startswith("https://olc-screener.onrender.com/?screen=operations&")
+    assert "schwab_market_oauth=error" in loc
 
 
 def test_account_oauth_callback_rejects_market_state(saas_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -112,6 +112,7 @@ from .route_helpers import (
 from .route_helpers import (
     simple_err as _shared_simple_err,
 )
+from .saas_redis import fixed_window_rate_limit
 from .schemas import ApiResponse, ApproveTradeRequest, CreatePendingTrade
 from .security import (
     decrypt_secret,
@@ -182,6 +183,14 @@ def _load_state(db: OrmSession, user_id: str, key: str, default: dict[str, Any])
         return default
     parsed = parse_json(row.value_json, default)
     return parsed if isinstance(parsed, dict) else default
+
+
+def _order_rate_limit(user_id: str) -> None:
+    limit = int(os.getenv("SAAS_RATE_ORDERS_PER_MIN", "8"))
+    window = int(os.getenv("SAAS_RATE_LIMIT_WINDOW_SEC", "60"))
+    ok, n = fixed_window_rate_limit(user_id, "order", limit, window)
+    if not ok:
+        raise HTTPException(status_code=429, detail=f"Order rate limit exceeded ({n}/{limit} per {window}s).")
 
 
 def _latest_validation_status() -> dict[str, Any]:
@@ -488,6 +497,33 @@ def _oauth_wants_browser_redirect(request: Request, redirect: bool) -> bool:
     sec_fetch_mode = (request.headers.get("sec-fetch-mode") or "").lower()
     sec_fetch_dest = (request.headers.get("sec-fetch-dest") or "").lower()
     return "text/html" in accept or sec_fetch_mode == "navigate" or sec_fetch_dest == "document"
+
+
+def _frontend_oauth_return_url(request: Request | None = None) -> str:
+    """Resolve frontend URL for OAuth completion redirects."""
+    explicit = (os.getenv("WEB_FRONTEND_RETURN_URL") or "").strip()
+    if explicit.startswith(("http://", "https://")):
+        return explicit
+
+    frontend_origin = (
+        (os.getenv("SAAS_FRONTEND_URL") or "").strip()
+        or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
+    ).rstrip("/")
+    if frontend_origin.startswith(("http://", "https://")):
+        return f"{frontend_origin}/?section=connect"
+
+    if request is not None:
+        origin = _request_origin(request).rstrip("/")
+        if origin.startswith(("http://", "https://")):
+            return f"{origin}/?section=connect"
+    return "/?section=connect"
+
+
+def _append_query(url: str, query: str) -> str:
+    query = (query or "").strip().lstrip("?")
+    if not query:
+        return url
+    return f"{url}{'&' if '?' in url else '?'}{query}"
 
 
 def _global_live_trading_kill_switch_on() -> bool:
@@ -2294,6 +2330,8 @@ def tenant_approve_trade(
             data={"checklist": checklist, "automation_opt_in": automation_opt_in},
         )
 
+    _order_rate_limit(user.id)
+
     with tenant_skill_dir(db, user.id) as skill_dir:
         result = submit_order(
             ticker=row.ticker,
@@ -2746,14 +2784,14 @@ def schwab_oauth_portal_config(
     account_effective = _single_schwab_callback_uri(request)
     market_effective = _resolve_schwab_redirect_uri(request, market=True)
     origin = _request_origin(request)
-    front = (os.getenv("SAAS_FRONTEND_URL") or origin).rstrip("/")
+    front = _frontend_oauth_return_url(request)
     account_start = f"{origin}/api/oauth/schwab/start"
     market_start = f"{origin}/api/oauth/schwab/market/start"
     return _ok(
         {
             "user_id": user.id,
             "frontend_origin": origin,
-            "frontend_return_url": f"{front}/?section=connect",
+            "frontend_return_url": front,
             "account_authorize_start_url": account_start,
             "market_authorize_start_url": market_start,
             "account_callback_url": account_effective,
@@ -2778,13 +2816,10 @@ def schwab_oauth_callback(
     error: str = "",
     db: OrmSession = Depends(_db),
 ):
-    front = (os.getenv("SAAS_FRONTEND_URL") or _request_origin(request)).rstrip("/")
+    front = _frontend_oauth_return_url(request)
 
     def red(qs: str) -> RedirectResponse:
-        query = qs.strip().lstrip("?")
-        if query:
-            return RedirectResponse(f"{front}/?section=connect&{query}", status_code=302)
-        return RedirectResponse(f"{front}/?section=connect", status_code=302)
+        return RedirectResponse(_append_query(front, qs), status_code=302)
 
     def status_key(k: str | None) -> str:
         return "schwab_market_oauth" if k == SCHWAB_OAUTH_KIND_MARKET else "schwab_oauth"
@@ -2903,13 +2938,10 @@ def schwab_market_oauth_callback(
     error: str = "",
     db: OrmSession = Depends(_db),
 ):
-    front = (os.getenv("SAAS_FRONTEND_URL") or _request_origin(request)).rstrip("/")
+    front = _frontend_oauth_return_url(request)
 
     def red(qs: str) -> RedirectResponse:
-        query = qs.strip().lstrip("?")
-        if query:
-            return RedirectResponse(f"{front}/?section=connect&{query}", status_code=302)
-        return RedirectResponse(f"{front}/?section=connect", status_code=302)
+        return RedirectResponse(_append_query(front, qs), status_code=302)
 
     if error:
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")

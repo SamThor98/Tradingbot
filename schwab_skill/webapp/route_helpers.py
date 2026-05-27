@@ -28,7 +28,7 @@ import os
 import urllib.parse
 from typing import Any
 
-from fastapi import Request
+from fastapi import Header, HTTPException, Request
 
 from .preset_catalog import PRESET_PROFILES
 from .recovery_map import map_failure
@@ -172,3 +172,48 @@ def request_id(request: Request) -> str | None:
     """Return the per-request id stamped onto ``request.state`` by the
     request-id middleware (or ``None`` if the middleware didn't run)."""
     return getattr(request.state, "request_id", None)
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """Parse standard boolean env values using project-wide conventions."""
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on"}
+
+
+def require_api_key_if_set(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    x_user: str | None = Header(default=None),
+) -> dict[str, str]:
+    """Shared API-key dependency for local/sensitive web routes.
+
+    Behavior matches existing local semantics:
+    - When ``WEB_API_KEY`` is set, require exact ``X-API-Key``.
+    - When unset, allow loopback/non-production usage.
+    - On Render production-like hosts, require an explicit API key unless
+      ``WEB_ALLOW_UNSAFE_LOCAL_WRITES`` is enabled.
+    """
+    configured = (os.getenv("WEB_API_KEY") or "").strip()
+    if not configured:
+        if not (os.getenv("RENDER") or "").strip():
+            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
+        env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+        production_like = env in {"prod", "production", "staging"} or bool((os.getenv("RENDER") or "").strip())
+        unsafe = env_flag("WEB_ALLOW_UNSAFE_LOCAL_WRITES", default=False)
+        host = (request.url.hostname or "").strip()
+        if not host:
+            host = str(request.headers.get("host") or "").split(":")[0].strip()
+        if not host and request.client is not None:
+            host = str(request.client.host or "").strip()
+        loopback = is_loopback_host(host)
+        if unsafe or (not production_like) or loopback:
+            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
+        raise HTTPException(
+            status_code=503,
+            detail="WEB_API_KEY is required for write operations. Configure WEB_API_KEY on the server.",
+        )
+    if not x_api_key or x_api_key != configured:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key.")
+    return {"actor": (x_user or "web-user").strip() or "web-user"}

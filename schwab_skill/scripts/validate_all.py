@@ -130,6 +130,29 @@ def _steps_for_profile(
         ("validate_promotion_flow", [py, str(SCRIPTS_DIR / "validate_promotion_flow.py")], None),
         ("validation_smoke", [py, str(SCRIPTS_DIR / "validation_smoke.py")], None),
     ]
+    if web_base_url:
+        web_load_cmd = [
+            py,
+            str(SCRIPTS_DIR / "web_load_smoke.py"),
+            "--base-url",
+            web_base_url,
+            "--burst-requests-per-endpoint",
+            "5",
+            "--steady-requests-per-endpoint",
+            "8",
+            "--burst-concurrency",
+            "8",
+            "--steady-concurrency",
+            "4",
+            "--max-error-rate-pct",
+            "5.0",
+            "--max-p95-ms",
+            "1500",
+        ]
+        # Hosted SaaS readiness/live endpoints are only present in SaaS mode.
+        if profile in {"server", "container", "ci"}:
+            web_load_cmd.append("--include-saas")
+        steps.append(("web_load_smoke", web_load_cmd, None))
 
     if profile in {"local", "server"}:
         steps.append(("healthcheck", [py, str(SKILL_DIR / "healthcheck.py")], None))

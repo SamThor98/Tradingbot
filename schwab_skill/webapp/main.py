@@ -395,6 +395,39 @@ def _oauth_wants_browser_redirect(request: Request, redirect: bool) -> bool:
     return "text/html" in accept or sec_fetch_mode == "navigate" or sec_fetch_dest == "document"
 
 
+def _frontend_oauth_return_url(request: Request | None = None) -> str:
+    """Resolve where browser OAuth callbacks should return users.
+
+    Priority:
+    1) WEB_FRONTEND_RETURN_URL (full URL, can include query params)
+    2) SAAS_FRONTEND_URL / WEB_PUBLIC_ORIGIN (+ local connect route)
+    3) Local relative connect route fallback.
+    """
+    explicit = (os.getenv("WEB_FRONTEND_RETURN_URL") or "").strip()
+    if explicit.startswith(("http://", "https://")):
+        return explicit
+
+    frontend_origin = (
+        (os.getenv("SAAS_FRONTEND_URL") or "").strip()
+        or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
+    ).rstrip("/")
+    if frontend_origin.startswith(("http://", "https://")):
+        return f"{frontend_origin}/?section=connect"
+
+    if request is not None:
+        origin = _request_origin(request).rstrip("/")
+        if origin.startswith(("http://", "https://")):
+            return f"{origin}/?section=connect"
+    return "/?section=connect"
+
+
+def _append_query(url: str, query: str) -> str:
+    query = (query or "").strip().lstrip("?")
+    if not query:
+        return url
+    return f"{url}{'&' if '?' in url else '?'}{query}"
+
+
 def _new_local_oauth_state(kind: str) -> str:
     now = int(time.time())
     token = secrets.token_urlsafe(32)
@@ -1515,7 +1548,7 @@ def simple_dashboard() -> HTMLResponse:
 @app.get("/login")
 def login_page() -> RedirectResponse:
     """Legacy login path now forwards to connect-first dashboard flow."""
-    return RedirectResponse("/?section=connect", status_code=302)
+    return RedirectResponse(_frontend_oauth_return_url(), status_code=302)
 
 
 _STARTUP_TIME = datetime.now(timezone.utc)
@@ -1612,8 +1645,6 @@ def public_config() -> ApiResponse:
         "manual_jwt_entry_enabled": _manual_jwt_entry_enabled(default=True),
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
-        # Exposed so the web UI can auto-populate the exact write API key.
-        "api_key_value": configured_api_key or None,
     }
     impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
     if impl.startswith(("http://", "https://")):
@@ -1635,7 +1666,11 @@ def runtime_contract() -> ApiResponse:
 
 
 @app.get("/api/oauth/schwab/authorize-url", response_model=ApiResponse)
-def local_schwab_authorize_url(request: Request, redirect: bool = False) -> ApiResponse | RedirectResponse:
+def local_schwab_authorize_url(
+    request: Request,
+    redirect: bool = False,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Configure SCHWAB_ACCOUNT_APP_KEY for OAuth.")
@@ -1648,14 +1683,21 @@ def local_schwab_authorize_url(request: Request, redirect: bool = False) -> ApiR
 
 
 @app.get("/api/oauth/schwab/start", include_in_schema=False)
-def local_schwab_authorize_start(request: Request) -> RedirectResponse:
-    out = local_schwab_authorize_url(request, redirect=True)
+def local_schwab_authorize_start(
+    request: Request,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> RedirectResponse:
+    out = local_schwab_authorize_url(request, redirect=True, _auth=_auth)
     assert isinstance(out, RedirectResponse)
     return out
 
 
 @app.get("/api/oauth/schwab/market/authorize-url", response_model=ApiResponse)
-def local_schwab_market_authorize_url(request: Request, redirect: bool = False) -> ApiResponse | RedirectResponse:
+def local_schwab_market_authorize_url(
+    request: Request,
+    redirect: bool = False,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse | RedirectResponse:
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Configure SCHWAB_MARKET_APP_KEY for market OAuth.")
@@ -1668,8 +1710,11 @@ def local_schwab_market_authorize_url(request: Request, redirect: bool = False) 
 
 
 @app.get("/api/oauth/schwab/market/start", include_in_schema=False)
-def local_schwab_market_authorize_start(request: Request) -> RedirectResponse:
-    out = local_schwab_market_authorize_url(request, redirect=True)
+def local_schwab_market_authorize_start(
+    request: Request,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> RedirectResponse:
+    out = local_schwab_market_authorize_url(request, redirect=True, _auth=_auth)
     assert isinstance(out, RedirectResponse)
     return out
 
@@ -1681,11 +1726,10 @@ def local_schwab_oauth_callback(
     state: str = "",
     error: str = "",
 ):
+    front = _frontend_oauth_return_url(request)
+
     def red(qs: str) -> RedirectResponse:
-        query = qs.strip().lstrip("?")
-        if query:
-            return RedirectResponse(f"/?section=connect&{query}", status_code=302)
-        return RedirectResponse("/?section=connect", status_code=302)
+        return RedirectResponse(_append_query(front, qs), status_code=302)
 
     def status_key(k: str | None) -> str:
         return "schwab_market_oauth" if k == "market" else "schwab_oauth"
@@ -1738,11 +1782,10 @@ def local_schwab_market_oauth_callback(
     state: str = "",
     error: str = "",
 ):
+    front = _frontend_oauth_return_url(request)
+
     def red(qs: str) -> RedirectResponse:
-        query = qs.strip().lstrip("?")
-        if query:
-            return RedirectResponse(f"/?section=connect&{query}", status_code=302)
-        return RedirectResponse("/?section=connect", status_code=302)
+        return RedirectResponse(_append_query(front, qs), status_code=302)
 
     if error:
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")

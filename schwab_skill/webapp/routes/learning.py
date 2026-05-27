@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -11,13 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends
 
 from ..calibration_snapshot import build_calibration_snapshot
 from ..recovery_map import map_failure as _map_failure
+from ..route_helpers import require_api_key_if_set as _require_api_key_if_set
 from ..schemas import ApiResponse
 
-router = APIRouter(tags=["learning"])
+router = APIRouter(tags=["learning"], dependencies=[Depends(_require_api_key_if_set)])
 
 SKILL_DIR = Path(__file__).resolve().parent.parent.parent
 BACKTEST_RESULTS_PATH = SKILL_DIR / ".backtest_results.json"
@@ -186,40 +186,6 @@ def _run_ablation_cycle_async() -> None:
         _ABLATION_STATE["report_md"] = report_md
         _ABLATION_STATE["last_error"] = None
         _write_ablation_state_locked()
-
-
-def _require_api_key_if_set(
-    request: Request,
-    x_api_key: str | None = Header(default=None),
-    x_user: str | None = Header(default=None),
-) -> dict[str, str]:
-    configured = os.getenv("WEB_API_KEY", "").strip()
-    if not configured:
-        if not (os.getenv("RENDER") or "").strip():
-            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
-        env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
-        production_like = env in ("prod", "production", "staging") or bool((os.getenv("RENDER") or "").strip())
-        unsafe = (os.getenv("WEB_ALLOW_UNSAFE_LOCAL_WRITES") or "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-        host = (request.url.hostname or "").strip()
-        if not host:
-            host = str(request.headers.get("host") or "").split(":")[0].strip()
-        if not host and request.client is not None:
-            host = str(request.client.host or "").strip()
-        loopback = host in {"127.0.0.1", "localhost", "::1"}
-        if unsafe or (not production_like) or loopback:
-            return {"actor": (x_user or "unsafe-local-user").strip() or "unsafe-local-user"}
-        raise HTTPException(
-            status_code=503,
-            detail="WEB_API_KEY is required for write operations. Configure WEB_API_KEY on the server.",
-        )
-    if not x_api_key or x_api_key != configured:
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key.")
-    return {"actor": (x_user or "web-user").strip() or "web-user"}
 
 
 def _get_validation_status() -> dict[str, Any]:

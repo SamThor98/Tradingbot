@@ -23,6 +23,7 @@ and promotion-blocking criteria) is defined in:
 | CI quick | Fast PR/push safety | `ruff`, `pytest`, `mypy`, `validate_signal_quality.py`, `validate_scanner_parallelization.py`, `validate_shadow_mode.py` |
 | CI scheduled | Frequent artifact snapshots without heavy backtest | `python scripts/validate_all.py --profile ci --skip-backtest --strict` |
 | Server heavy | Continuous improvement/tuning/backtest | `python scripts/run_continuous_strategy_cycle.py --strict` |
+| Web light load (read-only) | Production-safe endpoint saturation smoke | `python scripts/web_load_smoke.py --base-url <url>` |
 
 Fast mode (when network/data providers are constrained):
 
@@ -62,10 +63,12 @@ Pass condition:
 ### 3) Execution safety (shadow path)
 - `scripts/validate_shadow_mode.py`
 - `scripts/validate_observability_gates.py`
+- `scripts/web_load_smoke.py` (when `--web-base-url` is provided to `validate_all.py`)
 
 Pass condition:
 - Shadow-mode order path does not submit live broker requests.
 - Circuits stable, stop-failure and guardrail thresholds within configured limits.
+- Read-only web probe stays within configured error-rate and p95 latency limits.
 
 ### 4) Backtest regression (CI/container baseline)
 - `scripts/validate_backtest.py --tickers 20`
@@ -92,6 +95,8 @@ If the web API is running, include endpoint error-rate checks:
 `python scripts/validate_all.py --profile local --web-base-url http://127.0.0.1:8000 --strict`
 
 This enables `/api/health/deep` metric gating inside `validate_observability_gates.py`.
+It also enables `web_load_smoke`, which uses an allowlisted read-only route
+inventory from `scripts/web_safe_routes.py`.
 
 ## Artifact Contract
 

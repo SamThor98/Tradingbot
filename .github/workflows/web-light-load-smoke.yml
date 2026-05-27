@@ -1,0 +1,43 @@
+name: web-light-load-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target base URL (read-only probes only)"
+        required: true
+        type: string
+      include_saas:
+        description: "Include SaaS readiness/live endpoints"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  web-light-load-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r schwab_skill/requirements-dev.txt
+      - name: Run production-safe light-load probe
+        working-directory: schwab_skill
+        env:
+          TARGET_BASE_URL: ${{ inputs.base_url }}
+          INCLUDE_SAAS: ${{ inputs.include_saas }}
+        run: |
+          EXTRA=""
+          if [ "${INCLUDE_SAAS}" = "true" ]; then EXTRA="--include-saas"; fi
+          python scripts/web_load_smoke.py --base-url "${TARGET_BASE_URL}" ${EXTRA}
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-light-load-artifacts
+          path: schwab_skill/validation_artifacts/latest_web_load_smoke.json
