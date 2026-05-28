@@ -9,6 +9,8 @@ import concurrent.futures as cf
 import json
 import logging
 import time
+from collections import defaultdict
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -555,25 +557,25 @@ def _apply_event_risk_policy_to_signals(
             out.append(sig)
             continue
 
-        diagnostics["event_risk_flagged"] = int(diagnostics.get("event_risk_flagged", 0) or 0) + 1
+        diagnostics["event_risk_flagged"] += 1
         enriched = dict(sig)
         enriched["event_risk"] = policy
 
         if mode == "live" and action == "block":
-            diagnostics["event_risk_blocked"] = int(diagnostics.get("event_risk_blocked", 0) or 0) + 1
+            diagnostics["event_risk_blocked"] += 1
             try:
                 from agent_intelligence import log_counterfactual_event
 
                 if log_counterfactual_event(signal=enriched, reason="event_risk_blocked", skill_dir=skill_dir):
-                    diagnostics["counterfactual_logged"] = int(diagnostics.get("counterfactual_logged", 0) or 0) + 1
+                    diagnostics["counterfactual_logged"] += 1
             except Exception:
                 pass
             continue
         if (mode == "live" and action == "downsize") or (mode == "shadow" and action == "downsize"):
-            diagnostics["event_risk_downsized"] = int(diagnostics.get("event_risk_downsized", 0) or 0) + 1
+            diagnostics["event_risk_downsized"] += 1
             enriched["event_risk"]["shadow_action"] = "would_downsize" if mode == "shadow" else "downsize"
         elif mode == "shadow" and action == "block":
-            diagnostics["event_risk_blocked"] = int(diagnostics.get("event_risk_blocked", 0) or 0) + 1
+            diagnostics["event_risk_blocked"] += 1
             enriched["event_risk"]["shadow_action"] = "would_block"
         out.append(enriched)
     return out
@@ -1434,7 +1436,7 @@ def _accumulate_provider_fallback_diagnostics(
     fb_reason = str(out.get("fallback_reason") or candidate.get("fallback_reason") or "").strip()
 
     if provider == "schwab":
-        diagnostics["data_provider_primary_count"] = int(diagnostics.get("data_provider_primary_count", 0) or 0) + 1
+        diagnostics["data_provider_primary_count"] += 1
         if used_fallback or fb_reason:
             diagnostics["fallback_inconsistent_count"] = int(
                 diagnostics.get("fallback_inconsistent_count", 0) or 0
@@ -1452,11 +1454,291 @@ def _accumulate_provider_fallback_diagnostics(
                 diagnostics.get("fallback_inconsistent_count", 0) or 0
             ) + 1
     else:
-        diagnostics["data_provider_unknown_count"] = int(diagnostics.get("data_provider_unknown_count", 0) or 0) + 1
+        diagnostics["data_provider_unknown_count"] += 1
         if used_fallback and not fb_reason:
             diagnostics["fallback_reason_missing_count"] = int(
                 diagnostics.get("fallback_reason_missing_count", 0) or 0
             ) + 1
+
+
+def _apply_post_stage_b_chain(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    *,
+    skill_dir: Path,
+    scan_id: str,
+    top_n: int,
+    regime_v2_snapshot: dict[str, Any] | None,
+    regime_v2_mode: str,
+    capture_shortlist: list[dict[str, Any]] | None,
+    record_nonfatal: Callable[..., None],
+) -> list[dict[str, Any]]:
+    """Apply the sequential post-Stage-B filter/ranking chain.
+
+    Runs self-study, quality gates, event-risk, strategy ensemble, and
+    meta-policy filters, then ranks by ``rank_score`` and trims to ``top_n``.
+    Mutates ``diagnostics`` in place and, when ``capture_shortlist`` is given,
+    populates it with the disposition-tagged shortlist snapshot. Returns the
+    ranked, top-N-capped surviving signals.
+
+    Extracted from ``scan_for_signals_detailed`` to keep the orchestration
+    readable and the chain independently unit-testable. ``record_nonfatal`` is
+    the bounded-warning recorder owned by the caller.
+    """
+    # ────────────────────────────────────────────────────────────────────────
+    # Shortlist snapshot for the dashboard.
+    #
+    # When the caller passes `capture_shortlist=[...]`, we build a parallel
+    # list of post-Stage-B-enriched signals and tag each with `_filter_status`
+    # describing what happened to it through the remaining filter chain
+    # (self-study, quality gates, event risk, meta-policy, top-N). The
+    # dashboard renders this list so operators can see *all* candidates that
+    # made it to Stage B — including those eliminated by quality gates — with
+    # disposition badges, instead of just the post-filter survivors.
+    #
+    # Trading behavior is unchanged: only the survivors in `signals` are
+    # ranked, top-N capped, persisted as ScanResult, and surfaced for trade
+    # staging. The shortlist is purely a UI/analytics view.
+    # ────────────────────────────────────────────────────────────────────────
+    _shortlist_snapshot: list[dict[str, Any]] = []
+    _shortlist_index_by_ticker: dict[str, int] = {}
+    if capture_shortlist is not None:
+        _shortlist_snapshot = [dict(s) for s in signals]
+        for i, snap in enumerate(_shortlist_snapshot):
+            snap["_shortlist_index"] = i
+            snap["_filter_status"] = "kept"
+        _shortlist_index_by_ticker = {
+            str(s.get("ticker", "")): i for i, s in enumerate(_shortlist_snapshot) if s.get("ticker")
+        }
+
+    def _tag_shortlist_drop(
+        prev: list[dict[str, Any]],
+        current: list[dict[str, Any]],
+        status: str,
+        reasons_by_ticker: dict[str, list[str]] | None = None,
+    ) -> None:
+        if capture_shortlist is None or not _shortlist_snapshot:
+            return
+        prev_tickers = {str(s.get("ticker", "")) for s in prev if s.get("ticker")}
+        current_tickers = {str(s.get("ticker", "")) for s in current if s.get("ticker")}
+        for ticker in prev_tickers - current_tickers:
+            idx = _shortlist_index_by_ticker.get(ticker)
+            if idx is None:
+                continue
+            snap = _shortlist_snapshot[idx]
+            if snap.get("_filter_status") != "kept":
+                continue
+            snap["_filter_status"] = status
+            if reasons_by_ticker and ticker in reasons_by_ticker:
+                snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
+
+    # Self-study: optionally filter by learned min conviction
+    try:
+        from self_study import get_learned_min_conviction
+        min_conv = get_learned_min_conviction(skill_dir)
+        if min_conv is not None:
+            before = list(signals)
+            signals = [s for s in signals if (s.get("mirofish_conviction") or 0) >= min_conv]
+            if len(before) > len(signals):
+                diagnostics["self_study_filtered"] = len(before) - len(signals)
+                LOG.info(
+                    "Self-study: filtered %d signals (min_conviction=%d)",
+                    diagnostics["self_study_filtered"],
+                    min_conv,
+                )
+                _tag_shortlist_drop(before, signals, "filtered_self_study")
+    except Exception as e:
+        LOG.debug("Self-study filter skipped: %s", e)
+
+    # Optional quality gates (default off). When disabled, count would-filter diagnostics only.
+    try:
+        from config import get_quality_gates_mode
+        quality_mode = get_quality_gates_mode(skill_dir)
+        diagnostics["quality_gates_mode"] = quality_mode
+        gated: list[dict[str, Any]] = []
+        for s in signals:
+            reasons = _evaluate_quality_gates(s, skill_dir)
+            if not reasons:
+                gated.append(s)
+                continue
+            for r in reasons:
+                key = f"quality_reason_{r}"
+                diagnostics[key] += 1
+                # Preserve legacy counter names consumed by older digests and scripts.
+                if r == "weak_breakout_volume":
+                    diagnostics["low_breakout_volume"] += 1
+                elif r == "forensic_sloan_high":
+                    diagnostics["forensic_sloan_flags"] += 1
+                elif r == "forensic_beneish_manipulator":
+                    diagnostics["forensic_beneish_flags"] += 1
+                elif r == "forensic_altman_distress":
+                    diagnostics["forensic_altman_flags"] += 1
+            has_forensic_reason = any(
+                r in {"forensic_sloan_high", "forensic_beneish_manipulator", "forensic_altman_distress"}
+                for r in reasons
+            )
+            if _quality_mode_should_filter(reasons, skill_dir):
+                diagnostics["quality_gates_filtered"] += 1
+                if has_forensic_reason:
+                    diagnostics["forensic_filtered"] += 1
+                # Tag the matching shortlist entry with disposition + per-signal reasons.
+                if capture_shortlist is not None:
+                    ticker = str(s.get("ticker", ""))
+                    idx = _shortlist_index_by_ticker.get(ticker)
+                    if idx is not None:
+                        snap = _shortlist_snapshot[idx]
+                        if snap.get("_filter_status") == "kept":
+                            snap["_filter_status"] = "filtered_quality_gates"
+                            snap["_filter_reasons"] = list(reasons)
+                try:
+                    from agent_intelligence import log_counterfactual_event
+
+                    if log_counterfactual_event(signal=s, reason="quality_filtered", skill_dir=skill_dir):
+                        diagnostics["counterfactual_logged"] += 1
+                except Exception as e:
+                    record_nonfatal(
+                        "stage_b_logging_failures",
+                        "Counterfactual logging failed for %s: %s",
+                        str(s.get("ticker", "")),
+                        e,
+                    )
+                try:
+                    from feature_store import log_stage_b_signal
+                    log_stage_b_signal(
+                        scan_id=scan_id, signal=s,
+                        quality_reasons=reasons, quality_filtered=True,
+                        regime_bucket=diagnostics.get("regime_v2_bucket"),
+                        skill_dir=skill_dir,
+                    )
+                except Exception as e:
+                    record_nonfatal(
+                        "stage_b_logging_failures",
+                        "Stage B feature-store filtered logging failed for %s: %s",
+                        str(s.get("ticker", "")),
+                        e,
+                    )
+                continue
+            diagnostics["quality_gates_would_filter"] += 1
+            gated.append(s)
+        signals = gated
+    except Exception as e:
+        LOG.debug("Quality gate evaluation skipped: %s", e)
+
+    # Event-risk policy: can tag, suppress, or mark downsize intent.
+    try:
+        before_event_risk = list(signals)
+        signals = _apply_event_risk_policy_to_signals(signals, diagnostics, skill_dir)
+        _tag_shortlist_drop(before_event_risk, signals, "filtered_event_risk")
+    except Exception as e:
+        LOG.debug("Event-risk policy evaluation skipped: %s", e)
+
+    # Strategy plugin ensemble (shadow by default): rank-ready score + attribution diagnostics.
+    try:
+        from strategy_plugins import apply_strategy_ensemble
+
+        before_ensemble = list(signals)
+        signals = apply_strategy_ensemble(
+            signals=signals,
+            diagnostics=diagnostics,
+            regime_v2_snapshot=regime_v2_snapshot,
+            skill_dir=skill_dir,
+        )
+        # Ensemble is documented as enrich-only, but defensively tag any drops.
+        _tag_shortlist_drop(before_ensemble, signals, "filtered_ensemble")
+    except Exception as e:
+        LOG.debug("Strategy ensemble evaluation skipped: %s", e)
+
+    # Meta-policy/uncertainty combiner: optional final decision layer.
+    try:
+        from agent_intelligence import apply_meta_policy_to_signal, log_counterfactual_event
+
+        before_meta = list(signals)
+        next_signals: list[dict[str, Any]] = []
+        for s in signals:
+            enriched, keep = apply_meta_policy_to_signal(signal=s, diagnostics=diagnostics, skill_dir=skill_dir)
+            if not keep:
+                if log_counterfactual_event(signal=enriched, reason="meta_policy_suppressed", skill_dir=skill_dir):
+                    diagnostics["counterfactual_logged"] += 1
+                continue
+            next_signals.append(enriched)
+        signals = next_signals
+        _tag_shortlist_drop(before_meta, signals, "filtered_meta_policy")
+    except Exception as e:
+        LOG.debug("Meta-policy evaluation skipped: %s", e)
+
+    # Rank by high-level score stack and take top N
+    diagnostics["rank_basis"] = "rank_score"
+    signals.sort(
+        key=lambda s: s.get(
+            "rank_score",
+            s.get("ensemble_score", s.get("composite_score", s.get("signal_score", 0))),
+        ),
+        reverse=True,
+    )
+    if top_n > 0 and len(signals) > top_n:
+        diagnostics["top_n_applied"] = len(signals) - top_n
+        before_top_n = list(signals)
+        signals = signals[:top_n]
+        _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
+
+    if regime_v2_snapshot is not None:
+        for s in signals:
+            s["regime_v2"] = {
+                "score": regime_v2_snapshot.get("score"),
+                "bucket": regime_v2_snapshot.get("bucket"),
+                "mode": regime_v2_mode,
+            }
+
+    try:
+        from feature_store import log_stage_b_signal
+        for s in signals:
+            log_stage_b_signal(
+                scan_id=scan_id, signal=s,
+                quality_reasons=None, quality_filtered=False,
+                regime_bucket=diagnostics.get("regime_v2_bucket"),
+                skill_dir=skill_dir,
+            )
+    except Exception as e:
+        record_nonfatal(
+            "stage_b_logging_failures",
+            "Stage B feature-store final logging failed: %s",
+            e,
+        )
+
+    try:
+        _record_quality_snapshot(skill_dir, diagnostics, signals)
+    except Exception as e:
+        LOG.debug("Quality metrics snapshot skipped: %s", e)
+
+    # Finalise the shortlist snapshot for the caller. Survivors keep their
+    # default `_filter_status="kept"`; everything else has already been
+    # tagged at the filter step that dropped it.
+    if capture_shortlist is not None and _shortlist_snapshot:
+        # Refresh the surviving shortlist entries with the post-enrichment
+        # versions of `signals` so any score updates from the strategy
+        # ensemble / meta-policy steps reach the dashboard payload.
+        survivors_by_ticker: dict[str, dict[str, Any]] = {}
+        for s in signals:
+            t = str(s.get("ticker", ""))
+            if t:
+                survivors_by_ticker[t] = s
+        for snap in _shortlist_snapshot:
+            t = str(snap.get("ticker", ""))
+            survivor = survivors_by_ticker.get(t)
+            if survivor is not None and snap.get("_filter_status") == "kept":
+                preserved_status = snap.get("_filter_status")
+                preserved_index = snap.get("_shortlist_index")
+                preserved_reasons = snap.get("_filter_reasons")
+                snap.clear()
+                snap.update(survivor)
+                snap["_filter_status"] = preserved_status
+                if preserved_index is not None:
+                    snap["_shortlist_index"] = preserved_index
+                if preserved_reasons is not None:
+                    snap["_filter_reasons"] = preserved_reasons
+        capture_shortlist[:] = _shortlist_snapshot
+
+    return signals
 
 
 def scan_for_signals_detailed(
@@ -1504,7 +1786,12 @@ def scan_for_signals_detailed(
     signals: list[dict[str, Any]] = []
     data_failures: list[str] = []
 
-    diagnostics: dict[str, Any] = {
+    # defaultdict(int) base: missing counter keys read as 0, so accumulation
+    # sites can use `diagnostics[k] += n` without `or 0` guards. The explicit
+    # seed below is preserved so every documented counter is present (key
+    # presence is part of the diagnostics contract consumed by the dashboard
+    # and digests). A defaultdict is-a dict, so the return contract is unchanged.
+    diagnostics: dict[str, Any] = defaultdict(int, {
         "scan_blocked": 0,
         "scan_blocked_reason": None,
         "watchlist_size": 0,
@@ -1592,7 +1879,7 @@ def scan_for_signals_detailed(
         "stage_a_logging_failures": 0,
         "stage_b_logging_failures": 0,
         "post_scan_observability_failures": 0,
-    }
+    })
     diagnostics["prediction_market"] = {
         "enabled": False,
         "mode": "off",
@@ -1623,7 +1910,7 @@ def scan_for_signals_detailed(
     _bounded_warning_counts: dict[str, int] = {}
 
     def _record_nonfatal(counter_key: str, message: str, *fmt_args: Any) -> None:
-        diagnostics[counter_key] = int(diagnostics.get(counter_key, 0) or 0) + 1
+        diagnostics[counter_key] += 1
         seen = int(_bounded_warning_counts.get(counter_key, 0) or 0) + 1
         _bounded_warning_counts[counter_key] = seen
         if seen <= 3:
@@ -1884,7 +2171,7 @@ def scan_for_signals_detailed(
             "skipped": 0,
             "errors": 1,
         }
-        diagnostics["prediction_market_errors"] = int(diagnostics.get("prediction_market_errors", 0) or 0) + 1
+        diagnostics["prediction_market_errors"] += 1
     diagnostics["meta_policy"] = {
         "enabled": meta_policy_mode != "off",
         "mode": meta_policy_mode,
@@ -2024,7 +2311,7 @@ def scan_for_signals_detailed(
                     else:
                         reason = str(out.get("reason") or "exceptions")
                         if reason in stage_a_reason_keys:
-                            diagnostics[reason] = int(diagnostics.get(reason, 0) or 0) + 1
+                            diagnostics[reason] += 1
                         if out.get("error"):
                             data_failures.append(str(out["error"]))
                     try:
@@ -2136,7 +2423,7 @@ def scan_for_signals_detailed(
                     out = fut.result()
                     diag_delta = out.get("diag") or {}
                     for k, v in diag_delta.items():
-                        diagnostics[k] = int(diagnostics.get(k, 0) or 0) + int(v or 0)
+                        diagnostics[k] += int(v or 0)
                     if out.get("ok"):
                         sig = dict(out["signal"])
                         sig["_data_quality"] = diagnostics.get("data_quality")
@@ -2213,259 +2500,17 @@ def scan_for_signals_detailed(
             e,
         )
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Shortlist snapshot for the dashboard.
-    #
-    # When the caller passes `capture_shortlist=[...]`, we build a parallel
-    # list of post-Stage-B-enriched signals and tag each with `_filter_status`
-    # describing what happened to it through the remaining filter chain
-    # (self-study, quality gates, event risk, meta-policy, top-N). The
-    # dashboard renders this list so operators can see *all* candidates that
-    # made it to Stage B — including those eliminated by quality gates — with
-    # disposition badges, instead of just the post-filter survivors.
-    #
-    # Trading behavior is unchanged: only the survivors in `signals` are
-    # ranked, top-N capped, persisted as ScanResult, and surfaced for trade
-    # staging. The shortlist is purely a UI/analytics view.
-    # ────────────────────────────────────────────────────────────────────────
-    _shortlist_snapshot: list[dict[str, Any]] = []
-    _shortlist_index_by_ticker: dict[str, int] = {}
-    if capture_shortlist is not None:
-        _shortlist_snapshot = [dict(s) for s in signals]
-        for i, snap in enumerate(_shortlist_snapshot):
-            snap["_shortlist_index"] = i
-            snap["_filter_status"] = "kept"
-        _shortlist_index_by_ticker = {
-            str(s.get("ticker", "")): i for i, s in enumerate(_shortlist_snapshot) if s.get("ticker")
-        }
-
-    def _tag_shortlist_drop(
-        prev: list[dict[str, Any]],
-        current: list[dict[str, Any]],
-        status: str,
-        reasons_by_ticker: dict[str, list[str]] | None = None,
-    ) -> None:
-        if capture_shortlist is None or not _shortlist_snapshot:
-            return
-        prev_tickers = {str(s.get("ticker", "")) for s in prev if s.get("ticker")}
-        current_tickers = {str(s.get("ticker", "")) for s in current if s.get("ticker")}
-        for ticker in prev_tickers - current_tickers:
-            idx = _shortlist_index_by_ticker.get(ticker)
-            if idx is None:
-                continue
-            snap = _shortlist_snapshot[idx]
-            if snap.get("_filter_status") != "kept":
-                continue
-            snap["_filter_status"] = status
-            if reasons_by_ticker and ticker in reasons_by_ticker:
-                snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
-
-    # Self-study: optionally filter by learned min conviction
-    try:
-        from self_study import get_learned_min_conviction
-        min_conv = get_learned_min_conviction(skill_dir)
-        if min_conv is not None:
-            before = list(signals)
-            signals = [s for s in signals if (s.get("mirofish_conviction") or 0) >= min_conv]
-            if len(before) > len(signals):
-                diagnostics["self_study_filtered"] = len(before) - len(signals)
-                LOG.info(
-                    "Self-study: filtered %d signals (min_conviction=%d)",
-                    diagnostics["self_study_filtered"],
-                    min_conv,
-                )
-                _tag_shortlist_drop(before, signals, "filtered_self_study")
-    except Exception as e:
-        LOG.debug("Self-study filter skipped: %s", e)
-
-    # Optional quality gates (default off). When disabled, count would-filter diagnostics only.
-    try:
-        from config import get_quality_gates_mode
-        quality_mode = get_quality_gates_mode(skill_dir)
-        diagnostics["quality_gates_mode"] = quality_mode
-        gated: list[dict[str, Any]] = []
-        for s in signals:
-            reasons = _evaluate_quality_gates(s, skill_dir)
-            if not reasons:
-                gated.append(s)
-                continue
-            for r in reasons:
-                key = f"quality_reason_{r}"
-                diagnostics[key] = int(diagnostics.get(key, 0) or 0) + 1
-                # Preserve legacy counter names consumed by older digests and scripts.
-                if r == "weak_breakout_volume":
-                    diagnostics["low_breakout_volume"] = int(diagnostics.get("low_breakout_volume", 0) or 0) + 1
-                elif r == "forensic_sloan_high":
-                    diagnostics["forensic_sloan_flags"] = int(diagnostics.get("forensic_sloan_flags", 0) or 0) + 1
-                elif r == "forensic_beneish_manipulator":
-                    diagnostics["forensic_beneish_flags"] = int(diagnostics.get("forensic_beneish_flags", 0) or 0) + 1
-                elif r == "forensic_altman_distress":
-                    diagnostics["forensic_altman_flags"] = int(diagnostics.get("forensic_altman_flags", 0) or 0) + 1
-            has_forensic_reason = any(
-                r in {"forensic_sloan_high", "forensic_beneish_manipulator", "forensic_altman_distress"}
-                for r in reasons
-            )
-            if _quality_mode_should_filter(reasons, skill_dir):
-                diagnostics["quality_gates_filtered"] += 1
-                if has_forensic_reason:
-                    diagnostics["forensic_filtered"] += 1
-                # Tag the matching shortlist entry with disposition + per-signal reasons.
-                if capture_shortlist is not None:
-                    ticker = str(s.get("ticker", ""))
-                    idx = _shortlist_index_by_ticker.get(ticker)
-                    if idx is not None:
-                        snap = _shortlist_snapshot[idx]
-                        if snap.get("_filter_status") == "kept":
-                            snap["_filter_status"] = "filtered_quality_gates"
-                            snap["_filter_reasons"] = list(reasons)
-                try:
-                    from agent_intelligence import log_counterfactual_event
-
-                    if log_counterfactual_event(signal=s, reason="quality_filtered", skill_dir=skill_dir):
-                        diagnostics["counterfactual_logged"] = int(diagnostics.get("counterfactual_logged", 0) or 0) + 1
-                except Exception as e:
-                    _record_nonfatal(
-                        "stage_b_logging_failures",
-                        "Counterfactual logging failed for %s: %s",
-                        str(s.get("ticker", "")),
-                        e,
-                    )
-                try:
-                    from feature_store import log_stage_b_signal
-                    log_stage_b_signal(
-                        scan_id=_scan_id, signal=s,
-                        quality_reasons=reasons, quality_filtered=True,
-                        regime_bucket=diagnostics.get("regime_v2_bucket"),
-                        skill_dir=skill_dir,
-                    )
-                except Exception as e:
-                    _record_nonfatal(
-                        "stage_b_logging_failures",
-                        "Stage B feature-store filtered logging failed for %s: %s",
-                        str(s.get("ticker", "")),
-                        e,
-                    )
-                continue
-            diagnostics["quality_gates_would_filter"] += 1
-            gated.append(s)
-        signals = gated
-    except Exception as e:
-        LOG.debug("Quality gate evaluation skipped: %s", e)
-
-    # Event-risk policy: can tag, suppress, or mark downsize intent.
-    try:
-        before_event_risk = list(signals)
-        signals = _apply_event_risk_policy_to_signals(signals, diagnostics, skill_dir)
-        _tag_shortlist_drop(before_event_risk, signals, "filtered_event_risk")
-    except Exception as e:
-        LOG.debug("Event-risk policy evaluation skipped: %s", e)
-
-    # Strategy plugin ensemble (shadow by default): rank-ready score + attribution diagnostics.
-    try:
-        from strategy_plugins import apply_strategy_ensemble
-
-        before_ensemble = list(signals)
-        signals = apply_strategy_ensemble(
-            signals=signals,
-            diagnostics=diagnostics,
-            regime_v2_snapshot=regime_v2_snapshot,
-            skill_dir=skill_dir,
-        )
-        # Ensemble is documented as enrich-only, but defensively tag any drops.
-        _tag_shortlist_drop(before_ensemble, signals, "filtered_ensemble")
-    except Exception as e:
-        LOG.debug("Strategy ensemble evaluation skipped: %s", e)
-
-    # Meta-policy/uncertainty combiner: optional final decision layer.
-    try:
-        from agent_intelligence import apply_meta_policy_to_signal, log_counterfactual_event
-
-        before_meta = list(signals)
-        next_signals: list[dict[str, Any]] = []
-        for s in signals:
-            enriched, keep = apply_meta_policy_to_signal(signal=s, diagnostics=diagnostics, skill_dir=skill_dir)
-            if not keep:
-                if log_counterfactual_event(signal=enriched, reason="meta_policy_suppressed", skill_dir=skill_dir):
-                    diagnostics["counterfactual_logged"] = int(diagnostics.get("counterfactual_logged", 0) or 0) + 1
-                continue
-            next_signals.append(enriched)
-        signals = next_signals
-        _tag_shortlist_drop(before_meta, signals, "filtered_meta_policy")
-    except Exception as e:
-        LOG.debug("Meta-policy evaluation skipped: %s", e)
-
-    # Rank by high-level score stack and take top N
-    top_n = get_signal_top_n(skill_dir)
-    diagnostics["rank_basis"] = "rank_score"
-    signals.sort(
-        key=lambda s: s.get(
-            "rank_score",
-            s.get("ensemble_score", s.get("composite_score", s.get("signal_score", 0))),
-        ),
-        reverse=True,
+    signals = _apply_post_stage_b_chain(
+        signals,
+        diagnostics,
+        skill_dir=skill_dir,
+        scan_id=_scan_id,
+        top_n=top_n,
+        regime_v2_snapshot=regime_v2_snapshot,
+        regime_v2_mode=regime_v2_mode,
+        capture_shortlist=capture_shortlist,
+        record_nonfatal=_record_nonfatal,
     )
-    if top_n > 0 and len(signals) > top_n:
-        diagnostics["top_n_applied"] = len(signals) - top_n
-        before_top_n = list(signals)
-        signals = signals[:top_n]
-        _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
-
-    if regime_v2_snapshot is not None:
-        for s in signals:
-            s["regime_v2"] = {
-                "score": regime_v2_snapshot.get("score"),
-                "bucket": regime_v2_snapshot.get("bucket"),
-                "mode": regime_v2_mode,
-            }
-
-    try:
-        from feature_store import log_stage_b_signal
-        for s in signals:
-            log_stage_b_signal(
-                scan_id=_scan_id, signal=s,
-                quality_reasons=None, quality_filtered=False,
-                regime_bucket=diagnostics.get("regime_v2_bucket"),
-                skill_dir=skill_dir,
-            )
-    except Exception as e:
-        _record_nonfatal(
-            "stage_b_logging_failures",
-            "Stage B feature-store final logging failed: %s",
-            e,
-        )
-
-    try:
-        _record_quality_snapshot(skill_dir, diagnostics, signals)
-    except Exception as e:
-        LOG.debug("Quality metrics snapshot skipped: %s", e)
-
-    # Finalise the shortlist snapshot for the caller. Survivors keep their
-    # default `_filter_status="kept"`; everything else has already been
-    # tagged at the filter step that dropped it.
-    if capture_shortlist is not None and _shortlist_snapshot:
-        # Refresh the surviving shortlist entries with the post-enrichment
-        # versions of `signals` so any score updates from the strategy
-        # ensemble / meta-policy steps reach the dashboard payload.
-        survivors_by_ticker: dict[str, dict[str, Any]] = {}
-        for s in signals:
-            t = str(s.get("ticker", ""))
-            if t:
-                survivors_by_ticker[t] = s
-        for snap in _shortlist_snapshot:
-            t = str(snap.get("ticker", ""))
-            survivor = survivors_by_ticker.get(t)
-            if survivor is not None and snap.get("_filter_status") == "kept":
-                preserved_status = snap.get("_filter_status")
-                preserved_index = snap.get("_shortlist_index")
-                preserved_reasons = snap.get("_filter_reasons")
-                snap.clear()
-                snap.update(survivor)
-                snap["_filter_status"] = preserved_status
-                if preserved_index is not None:
-                    snap["_shortlist_index"] = preserved_index
-                if preserved_reasons is not None:
-                    snap["_filter_reasons"] = preserved_reasons
-        capture_shortlist[:] = _shortlist_snapshot
 
     return signals, diagnostics
 
