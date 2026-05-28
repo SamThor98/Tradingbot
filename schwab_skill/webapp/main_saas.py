@@ -552,6 +552,12 @@ def simple_dashboard() -> HTMLResponse:
     return render_versioned_html(STATIC_DIR / "simple.html")
 
 
+@app.get("/cockpit")
+def cockpit_page() -> HTMLResponse:
+    """Trading Cockpit: four always-visible lanes (per-tenant /api/cockpit/* under JWT)."""
+    return render_versioned_html(STATIC_DIR / "cockpit.html")
+
+
 @app.get("/login")
 def login_page() -> RedirectResponse:
     """Legacy login path now forwards to connect-first dashboard flow."""
@@ -1340,9 +1346,7 @@ def list_scan_results(
             .all()
         )
         flagged_days_map = {
-            str(ticker or "").upper(): int(days or 0)
-            for ticker, days in day_counts
-            if str(ticker or "").strip()
+            str(ticker or "").upper(): int(days or 0) for ticker, days in day_counts if str(ticker or "").strip()
         }
     return _ok(
         [

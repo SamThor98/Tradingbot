@@ -1331,7 +1331,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                 "diagnostics_summary": diagnostics_summary,
                 "strategy_summary": strategy_summary,
             }
-            _save_state(db, "last_scan", last_scan)
+            _save_last_scan(db, last_scan)
         finally:
             db.close()
         with _scan_lock:
@@ -1439,6 +1439,18 @@ def _save_state(db: Session, key: str, value: dict[str, Any]) -> None:
     else:
         row.value_json = value
     db.commit()
+
+
+def _save_last_scan(db: Session, last_scan: dict[str, Any]) -> None:
+    """Persist the new scan and roll the previous one into ``prev_scan`` so the
+    cockpit can compute "what changed since last cycle" deltas."""
+    try:
+        existing = _load_state(db, "last_scan", {})
+        if isinstance(existing, dict) and existing.get("signals"):
+            _save_state(db, "prev_scan", existing)
+    except Exception:
+        pass
+    _save_state(db, "last_scan", last_scan)
 
 
 def _audit_event(
@@ -2007,7 +2019,7 @@ def scan(
             "diagnostics_summary": diagnostics_summary,
             "strategy_summary": strategy_summary,
         }
-        _save_state(db, "last_scan", last_scan)
+        _save_last_scan(db, last_scan)
         return _ok(
             {
                 "signals_found": len(signals),
@@ -2098,6 +2110,284 @@ def sectors() -> ApiResponse:
         return _ok(heatmap)
     except Exception as e:
         return _err("sectors", e)
+
+
+def _cockpit_sector_lookup() -> Any:
+    try:
+        from sector_strength import get_ticker_sector_etf
+
+        return lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR)
+    except Exception:
+        return None
+
+
+def _cockpit_stop_lookup() -> Any:
+    """Return ticker -> bool(has registered stop) from exit-manager state."""
+    try:
+        from execution_persistence import _load_exit_manager_state
+
+        state = _load_exit_manager_state(SKILL_DIR)
+        positions = state.get("positions", {}) if isinstance(state, dict) else {}
+        registered = {str(k).upper() for k in positions.keys()}
+        return lambda t: str(t).upper() in registered
+    except Exception:
+        return None
+
+
+def _extract_bid_ask(quote: Any) -> tuple[float | None, float | None]:
+    if not isinstance(quote, dict):
+        return None, None
+    inner = quote.get("quote") if isinstance(quote.get("quote"), dict) else quote
+    bid = inner.get("bidPrice", inner.get("bid"))
+    ask = inner.get("askPrice", inner.get("ask"))
+    try:
+        bid = float(bid) if bid is not None else None
+    except (TypeError, ValueError):
+        bid = None
+    try:
+        ask = float(ask) if ask is not None else None
+    except (TypeError, ValueError):
+        ask = None
+    return bid, ask
+
+
+@app.get("/cockpit")
+def cockpit_page() -> HTMLResponse:
+    """Trading Cockpit: four always-visible lanes (additive to the main dashboard)."""
+    return render_versioned_html(STATIC_DIR / "cockpit.html")
+
+
+@app.get("/api/cockpit/market", response_model=ApiResponse)
+def cockpit_market(db: Session = Depends(get_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        snapshot = _scan_snapshot()
+        diagnostics = snapshot.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            last_scan = _load_state(db, "last_scan", {})
+            diagnostics = (last_scan or {}).get("diagnostics") if isinstance(last_scan, dict) else None
+        return _ok(cockpit_service.build_market(diagnostics or {}))
+    except Exception as e:
+        return _err("cockpit_market", e)
+
+
+@app.get("/api/cockpit/opportunities", response_model=ApiResponse)
+def cockpit_opportunities(
+    include_filtered: bool = True,
+    limit: int | None = None,
+) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        snapshot = _scan_snapshot()
+        cards = cockpit_service.build_opportunities(
+            snapshot.get("signals"),
+            shortlist=snapshot.get("shortlist_signals"),
+            skill_dir=SKILL_DIR,
+            include_filtered=include_filtered,
+            limit=limit,
+        )
+        return _ok({"opportunities": cards, "count": len(cards)})
+    except Exception as e:
+        return _err("cockpit_opportunities", e)
+
+
+@app.get("/api/cockpit/portfolio", response_model=ApiResponse)
+def cockpit_portfolio() -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+        if isinstance(status_data, str):
+            _record_endpoint_error("cockpit_portfolio")
+            return ApiResponse(ok=False, error=status_data)
+        return _ok(
+            cockpit_service.build_portfolio(
+                status_data,
+                sector_lookup=_cockpit_sector_lookup(),
+                stop_lookup=_cockpit_stop_lookup(),
+                skill_dir=SKILL_DIR,
+            )
+        )
+    except Exception as e:
+        return _err("cockpit_portfolio", e)
+
+
+@app.get("/api/cockpit/blotter", response_model=ApiResponse)
+def cockpit_blotter(db: Session = Depends(get_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        rows = (
+            db.query(PendingTrade)
+            .filter(PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
+            .order_by(PendingTrade.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        blotter = cockpit_service.build_blotter([_trade_to_dict(r) for r in rows])
+        return _ok({"blotter": blotter, "count": len(blotter)})
+    except Exception as e:
+        return _err("cockpit_blotter", e)
+
+
+@app.get("/api/cockpit/decision-packets", response_model=ApiResponse)
+def cockpit_decision_packets(limit: int = 50) -> ApiResponse:
+    """Recent decision packets (the unit of post-trade evaluation)."""
+    try:
+        from core import decision_packet
+
+        packets = decision_packet.load_packets(SKILL_DIR, limit=max(1, min(500, int(limit))))
+        return _ok({"packets": packets, "count": len(packets)})
+    except Exception as e:
+        return _err("cockpit_decision_packets", e)
+
+
+@app.get("/api/cockpit/review", response_model=ApiResponse)
+def cockpit_review() -> ApiResponse:
+    """Weekly learning diagnostics + advisory tuning proposals."""
+    try:
+        from core import decision_packet, trade_review, weight_feedback
+
+        packets = decision_packet.load_packets(SKILL_DIR)
+        report = trade_review.weekly_report(packets)
+        report["tuning_proposals"] = weight_feedback.propose(report)
+        return _ok(report)
+    except Exception as e:
+        return _err("cockpit_review", e)
+
+
+@app.get("/api/cockpit/execution/quality", response_model=ApiResponse)
+def cockpit_execution_quality(db: Session = Depends(get_db)) -> ApiResponse:
+    """Execution-quality attribution: lifecycle counts, slippage, policy events."""
+    try:
+        from core import cockpit_service
+        from execution_persistence import get_execution_safety_summary
+
+        rows = (
+            db.query(PendingTrade)
+            .filter(PendingTrade.user_id == LOCAL_DASHBOARD_USER_ID)
+            .order_by(PendingTrade.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        blotter = cockpit_service.build_blotter([_trade_to_dict(r) for r in rows])
+        summary = get_execution_safety_summary(skill_dir=SKILL_DIR, days=7)
+        return _ok(cockpit_service.build_execution_quality(summary, blotter))
+    except Exception as e:
+        return _err("cockpit_execution_quality", e)
+
+
+@app.get("/api/cockpit/deltas", response_model=ApiResponse)
+def cockpit_deltas(db: Session = Depends(get_db)) -> ApiResponse:
+    """What changed since the previous scan cycle."""
+    try:
+        from core import cockpit_service
+
+        snapshot = _scan_snapshot()
+        curr = (
+            {"signals": snapshot.get("signals")}
+            if snapshot.get("signals")
+            else _load_state(db, "last_scan", {})
+        )
+        prev = _load_state(db, "prev_scan", {})
+        return _ok(cockpit_service.build_deltas(prev, curr))
+    except Exception as e:
+        return _err("cockpit_deltas", e)
+
+
+@app.get("/api/cockpit/watchlists", response_model=ApiResponse)
+def cockpit_watchlists(db: Session = Depends(get_db)) -> ApiResponse:
+    """Adaptive watchlists: breaking out now / setup improving / risk rising."""
+    try:
+        from core import cockpit_service
+
+        snapshot = _scan_snapshot()
+        curr = (
+            {"signals": snapshot.get("signals")}
+            if snapshot.get("signals")
+            else _load_state(db, "last_scan", {})
+        )
+        prev = _load_state(db, "prev_scan", {})
+        return _ok(cockpit_service.build_watchlists(prev, curr, skill_dir=SKILL_DIR))
+    except Exception as e:
+        return _err("cockpit_watchlists", e)
+
+
+@app.get("/api/cockpit/movers", response_model=ApiResponse)
+def cockpit_movers(index: str = "$SPX") -> ApiResponse:
+    """Market movers / internals (Schwab /movers). Flag-gated: MARKET_MOVERS_MODE."""
+    try:
+        from core import cockpit_service
+        from market_data import get_market_movers_with_status
+
+        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        payload, meta = get_market_movers_with_status(index, auth=auth, skill_dir=SKILL_DIR)
+        if payload is None:
+            return _ok({"movers": {"gainers": [], "losers": [], "most_active": []}, "meta": meta})
+        return _ok({"movers": cockpit_service.build_movers(payload), "meta": meta})
+    except Exception as e:
+        return _err("cockpit_movers", e)
+
+
+@app.get("/api/cockpit/symbol/{ticker}/options", response_model=ApiResponse)
+def cockpit_symbol_options(ticker: str) -> ApiResponse:
+    """Options-chain intelligence for one symbol. Flag-gated: OPTIONS_INTEL_MODE."""
+    try:
+        from core import cockpit_service
+        from market_data import get_options_chain_with_status
+
+        symbol = ticker.upper().strip()
+        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        chain, meta = get_options_chain_with_status(symbol, auth=auth, skill_dir=SKILL_DIR)
+        if chain is None:
+            return _ok({"ticker": symbol, "options_intel": None, "meta": meta})
+        return _ok({"ticker": symbol, "options_intel": cockpit_service.build_symbol_options(chain), "meta": meta})
+    except Exception as e:
+        return _err("cockpit_symbol_options", e)
+
+
+@app.post("/api/cockpit/order-intent/preview", response_model=ApiResponse)
+def cockpit_order_intent_preview(payload: CreatePendingTrade) -> ApiResponse:
+    """Read-only order-intent preview (no broker POST). Approval still goes
+    through /api/pending-trades + /api/trades/{id}/approve."""
+    try:
+        from core import cockpit_service
+
+        symbol = payload.ticker.upper().strip()
+        signal = payload.signal or {}
+        if not signal:
+            with _scan_lock:
+                rows = list(_scan_job.get("signals") or []) + list(_scan_job.get("shortlist_signals") or [])
+            for row in rows:
+                if str((row or {}).get("ticker", "")).upper() == symbol:
+                    signal = row
+                    break
+
+        bid = ask = None
+        quote_age_sec = None
+        try:
+            auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+            quote = get_current_quote(symbol, auth=auth, skill_dir=SKILL_DIR)
+            bid, ask = _extract_bid_ask(quote)
+        except Exception:
+            quote = None
+
+        preview = cockpit_service.build_order_intent_preview(
+            ticker=symbol,
+            qty=payload.qty,
+            price=payload.price,
+            signal=signal,
+            bid=bid,
+            ask=ask,
+            quote_age_sec=quote_age_sec,
+            skill_dir=SKILL_DIR,
+        )
+        return _ok(preview)
+    except Exception as e:
+        return _err("cockpit_order_intent_preview", e)
 
 
 @app.get("/api/pending-trades", response_model=ApiResponse)
@@ -2331,6 +2621,27 @@ def approve_trade(
         )
 
     row.status = "executed"
+    # Phase 4 learning loop: snapshot this decision into a packet for later
+    # outcome attribution. Additive + guarded — never affects the trade.
+    try:
+        from core import cockpit_service, decision_packet
+        from core.providers import ExecutionProvider
+
+        _ls = _load_state(db, "last_scan", {})
+        _market = cockpit_service.build_market((_ls or {}).get("diagnostics") or {})
+        _execu = ExecutionProvider.from_order_result(result if isinstance(result, dict) else {}).model_dump(
+            mode="json"
+        )
+        _packet = decision_packet.build_packet(
+            ticker=row.ticker,
+            kind="approved",
+            signal=signal if isinstance(signal, dict) else {},
+            market=_market,
+            execution=_execu,
+        )
+        decision_packet.record_packet(SKILL_DIR, _packet)
+    except Exception as _pkt_exc:
+        logging.getLogger(__name__).debug("decision packet record skipped: %s", _pkt_exc)
     _save_state(
         db,
         "last_trade_approval",

@@ -117,7 +117,13 @@ async function parseJsonResponse(res) {
   try {
     return JSON.parse(text);
   } catch {
-    return { ok: false, error: `Invalid JSON response (${res.status})` };
+    const compact = String(text || "").replace(/\s+/g, " ").trim();
+    return {
+      ok: false,
+      error: `Server returned non-JSON response (${res.status})`,
+      detail: compact.slice(0, 220),
+      non_json: true,
+    };
   }
 }
 
@@ -155,6 +161,23 @@ export const api = {
       });
       let data = await parseJsonResponse(res);
 
+      if (
+        !res.ok &&
+        data?.non_json &&
+        res.status >= 502 &&
+        res.status <= 504 &&
+        String(fetchOptions.method || "GET").toUpperCase() === "GET"
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        res = await fetch(path, {
+          ...fetchOptions,
+          credentials: fetchOptions.credentials ?? "same-origin",
+          headers: authed,
+          signal: controller.signal,
+        });
+        data = await parseJsonResponse(res);
+      }
+
       if (!res.ok && isApiKeyAuthFailure(res.status, data) && promptForApiKeyRefresh()) {
         const refreshedHeaders = await this._authHeaders(headers);
         res = await fetch(path, {
@@ -167,15 +190,24 @@ export const api = {
       }
 
       if (!res.ok) {
+        const rawError = data?.error || data?.detail || `HTTP ${res.status}`;
         const mapped = classifyApiError(
           res.status,
-          data?.error || data?.detail || `HTTP ${res.status}`,
+          rawError,
         );
+        const transientUpstream =
+          data?.non_json && res.status >= 502 && res.status <= 504;
+        const userMessage = transientUpstream
+          ? "Temporary upstream error while loading data. Retry in a few seconds."
+          : mapped.userMessage;
+        const hint = transientUpstream
+          ? "Gateway returned an invalid response body. This is usually transient."
+          : mapped.hint;
         return {
           ok: false,
-          error: data?.error || data?.detail || `HTTP ${res.status}`,
-          user_message: mapped.userMessage,
-          hint: mapped.hint,
+          error: rawError,
+          user_message: userMessage,
+          hint,
           retryable: mapped.retryable,
           status: res.status,
           data: data?.data ?? null,

@@ -96,6 +96,7 @@ def _steps_for_profile(
             [py, str(SCRIPTS_DIR / "validate_decision_dashboard_contract.py")],
             None,
         ),
+        ("validate_contracts", [py, str(SCRIPTS_DIR / "validate_contracts.py")], None),
         ("validate_slo_mapping", [py, str(SCRIPTS_DIR / "validate_slo_mapping.py")], None),
         ("validate_typecheck_ratchet", [py, str(SCRIPTS_DIR / "validate_typecheck_ratchet.py")], None),
         ("validate_experiment_registry", [py, str(SCRIPTS_DIR / "validate_experiment_registry.py")], None),

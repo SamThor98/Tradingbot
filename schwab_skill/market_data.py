@@ -43,6 +43,33 @@ def _get_headers(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
 
 
+def _obs_endpoint_label(url: str) -> str:
+    """Derive a stable, low-cardinality endpoint label from a Schwab URL."""
+    try:
+        path = url.split("schwabapi.com", 1)[-1].split("?", 1)[0]
+        if "pricehistory" in path:
+            return "marketdata.pricehistory"
+        if "quotes" in path:
+            return "marketdata.quotes"
+        if "/orders" in path:
+            return "trader.orders"
+        if "/accounts" in path:
+            return "trader.accounts"
+        return path.strip("/")[:60] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _emit_obs(fn_name: str, *args: Any, **kwargs: Any) -> None:
+    """Best-effort observability emit; never affects the request path."""
+    try:
+        from core import observability
+
+        getattr(observability, fn_name)(*args, **kwargs)
+    except Exception:
+        pass
+
+
 def _request_with_backoff(
     auth: DualSchwabAuth,
     method: str,
@@ -52,6 +79,7 @@ def _request_with_backoff(
 ) -> requests.Response:
     # Prevent per-ticker thrashing when DNS/reads are failing.
     if not schwab_circuit.connection_stable:
+        _emit_obs("set_circuit_breaker_state", None, "schwab", True)
         raise RuntimeError("Schwab connection unstable (circuit breaker)")
 
     token = auth.get_market_token()
@@ -59,12 +87,19 @@ def _request_with_backoff(
     kwargs.setdefault("timeout", 30)
     backoff = INITIAL_BACKOFF
     refreshed_on_401 = False
+    endpoint = _obs_endpoint_label(url)
     for attempt in range(MAX_RETRIES):
+        _t0 = time.perf_counter()
         try:
             resp = requests.request(method, url, params=params, **kwargs)
         except Exception as e:
+            _emit_obs("record_request_latency", None, endpoint, "market", (time.perf_counter() - _t0) * 1000.0)
+            _emit_obs("record_request_error", None, endpoint, None)
             maybe_trip_breaker(e, schwab_circuit)
             raise
+        _emit_obs("record_request_latency", None, endpoint, "market", (time.perf_counter() - _t0) * 1000.0)
+        if resp.status_code >= 400:
+            _emit_obs("record_request_error", None, endpoint, resp.status_code)
         if resp.status_code == 401 and not refreshed_on_401:
             if auth.market_session.force_refresh():
                 refreshed_on_401 = True
@@ -315,6 +350,7 @@ def get_daily_history_with_meta(
         meta["history_price_basis"] = (
             "yfinance_adjusted" if _yf_meta_adjusted_flag(skill_dir) else "yfinance_raw_close"
         )
+        _emit_obs("observe_lineage", skill_dir, "market", meta)
         return out, meta
 
 
@@ -525,3 +561,121 @@ def get_current_quote(
     """Fetch real-time quote using Market Session."""
     quote, _meta = get_current_quote_with_status(ticker, auth=auth, skill_dir=skill_dir)
     return quote
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2: expanded Schwab market-data surfaces (flag-gated; default OFF).
+# Each returns (payload | None, meta). Callers gate via the provider layer;
+# the inline mode check prevents accidental network calls when disabled.
+# --------------------------------------------------------------------------- #
+def _ensure_auth(auth: DualSchwabAuth | None, skill_dir: Path | str | None) -> DualSchwabAuth:
+    return auth or DualSchwabAuth(skill_dir=Path(skill_dir) if skill_dir else None)
+
+
+def get_market_movers_with_status(
+    index: str = "$SPX",
+    *,
+    sort: str = "PERCENT_CHANGE_UP",
+    auth: DualSchwabAuth | None = None,
+    skill_dir: Path | str | None = None,
+) -> tuple[dict | None, dict[str, Any]]:
+    """Schwab /marketdata/v1/movers/{index} — market internals / movers.
+
+    Gated by ``MARKET_MOVERS_MODE`` (default off). Returns raw screener JSON.
+    """
+    meta: dict[str, Any] = {"provider": "schwab", "endpoint": "marketdata.movers", "index": index}
+    try:
+        from config import get_market_movers_mode
+
+        if get_market_movers_mode(skill_dir) == "off":
+            meta["reason"] = "mode_off"
+            return None, meta
+    except Exception:
+        meta["reason"] = "mode_off"
+        return None, meta
+    try:
+        auth = _ensure_auth(auth, skill_dir)
+        url = f"{SCHWAB_BASE}/marketdata/v1/movers/{index}"
+        resp = _request_with_backoff(auth, "GET", url, params={"sort": sort})
+        meta["http_status"] = resp.status_code
+        resp.raise_for_status()
+        return resp.json(), meta
+    except Exception as e:
+        meta["reason"] = type(e).__name__
+        meta["error_detail"] = str(e)[:200]
+        _emit_obs("record_request_error", skill_dir, "marketdata.movers", None)
+        return None, meta
+
+
+def get_options_chain_with_status(
+    symbol: str,
+    *,
+    contract_type: str = "ALL",
+    strike_count: int = 10,
+    auth: DualSchwabAuth | None = None,
+    skill_dir: Path | str | None = None,
+) -> tuple[dict | None, dict[str, Any]]:
+    """Schwab /marketdata/v1/chains — options-chain intelligence (IV, skew).
+
+    Gated by ``OPTIONS_INTEL_MODE`` (default off). Returns raw chain JSON.
+    """
+    sym = symbol.upper().strip()
+    meta: dict[str, Any] = {"provider": "schwab", "endpoint": "marketdata.options.chains", "symbol": sym}
+    try:
+        from config import get_options_intel_mode
+
+        if get_options_intel_mode(skill_dir) == "off":
+            meta["reason"] = "mode_off"
+            return None, meta
+    except Exception:
+        meta["reason"] = "mode_off"
+        return None, meta
+    try:
+        auth = _ensure_auth(auth, skill_dir)
+        url = f"{SCHWAB_BASE}/marketdata/v1/chains"
+        params = {"symbol": sym, "contractType": contract_type, "strikeCount": strike_count}
+        resp = _request_with_backoff(auth, "GET", url, params=params)
+        meta["http_status"] = resp.status_code
+        resp.raise_for_status()
+        return resp.json(), meta
+    except Exception as e:
+        meta["reason"] = type(e).__name__
+        meta["error_detail"] = str(e)[:200]
+        _emit_obs("record_request_error", skill_dir, "marketdata.options.chains", None)
+        return None, meta
+
+
+def get_instrument_with_status(
+    symbol: str,
+    *,
+    projection: str = "fundamental",
+    auth: DualSchwabAuth | None = None,
+    skill_dir: Path | str | None = None,
+) -> tuple[dict | None, dict[str, Any]]:
+    """Schwab /marketdata/v1/instruments — fundamentals / symbol metadata.
+
+    Gated by ``INSTRUMENTS_MODE`` (default off). Returns raw instrument JSON.
+    """
+    sym = symbol.upper().strip()
+    meta: dict[str, Any] = {"provider": "schwab", "endpoint": "marketdata.instruments", "symbol": sym}
+    try:
+        from config import get_instruments_mode
+
+        if get_instruments_mode(skill_dir) == "off":
+            meta["reason"] = "mode_off"
+            return None, meta
+    except Exception:
+        meta["reason"] = "mode_off"
+        return None, meta
+    try:
+        auth = _ensure_auth(auth, skill_dir)
+        url = f"{SCHWAB_BASE}/marketdata/v1/instruments"
+        resp = _request_with_backoff(auth, "GET", url, params={"symbol": sym, "projection": projection})
+        meta["http_status"] = resp.status_code
+        resp.raise_for_status()
+        return resp.json(), meta
+    except Exception as e:
+        meta["reason"] = type(e).__name__
+        meta["error_detail"] = str(e)[:200]
+        _emit_obs("record_request_error", skill_dir, "marketdata.instruments", None)
+        return None, meta

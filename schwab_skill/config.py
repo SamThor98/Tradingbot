@@ -1390,3 +1390,110 @@ def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)
     return max(10, min(20000, val))
+
+
+# --- Trading Cockpit (Phase 0): provider layer + observability ---
+
+
+def get_cockpit_providers_mode(skill_dir: Path | None = None) -> str:
+    """Rollout mode for the cockpit provider/contract layer (OFF|SHADOW|LIVE).
+
+    - off (default): providers are not consumed by any route; no behavior change.
+    - shadow: providers run alongside existing endpoints for parity comparison.
+    - live: cockpit routes consume normalized DTOs from the provider layer.
+    """
+    return _get_mode("COCKPIT_PROVIDERS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_observability_metrics_enabled(skill_dir: Path | None = None) -> bool:
+    """Emit the frozen cockpit observability metrics (latency, fallback, etc.).
+
+    Instrumentation only — writes a rolling-window JSON metrics file and, in
+    SaaS, updates Prometheus collectors when present. Default on; set
+    OBSERVABILITY_METRICS_ENABLED=false to silence (e.g. read-only sandboxes).
+    """
+    return _get_bool("OBSERVABILITY_METRICS_ENABLED", True, skill_dir)
+
+
+def get_pre_trade_gates_mode(skill_dir: Path | None = None) -> str:
+    """Cockpit pre-trade quality gates rollout mode (OFF|SHADOW|LIVE).
+
+    - off: checks are not computed (cards omit the pre_trade block).
+    - shadow (recommended first): checks computed and surfaced as badges, but
+      ``tradeable`` is advisory only — nothing is blocked.
+    - live: callers may gray-out / block non-tradeable cards.
+    """
+    return _get_mode("PRE_TRADE_GATES_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_pretrade_max_spread_bps(skill_dir: Path | None = None) -> float:
+    """Maximum acceptable bid/ask spread (basis points) for a tradeable card."""
+    val = _get_float("PRETRADE_MAX_SPREAD_BPS", 50.0, skill_dir)
+    return max(1.0, min(1000.0, val))
+
+
+def get_pretrade_min_dollar_volume(skill_dir: Path | None = None) -> float:
+    """Minimum 50-day average dollar volume (price * avg_vol_50) for liquidity OK."""
+    val = _get_float("PRETRADE_MIN_DOLLAR_VOLUME", 2_000_000.0, skill_dir)
+    return max(0.0, val)
+
+
+# --- Trading Cockpit (Phase 2): expanded Schwab market intelligence ---
+
+
+def get_market_movers_mode(skill_dir: Path | None = None) -> str:
+    """Schwab /movers (market internals) rollout mode (OFF|SHADOW|LIVE). Default off."""
+    return _get_mode("MARKET_MOVERS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_options_intel_mode(skill_dir: Path | None = None) -> str:
+    """Schwab options-chain intelligence rollout mode (OFF|SHADOW|LIVE). Default off."""
+    return _get_mode("OPTIONS_INTEL_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_instruments_mode(skill_dir: Path | None = None) -> str:
+    """Schwab /instruments fundamentals+search rollout mode (OFF|SHADOW|LIVE). Default off."""
+    return _get_mode("INSTRUMENTS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_minute_history_mode(skill_dir: Path | None = None) -> str:
+    """Schwab intraday (minute) pricehistory rollout mode (OFF|SHADOW|LIVE). Default off."""
+    return _get_mode("MINUTE_HISTORY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_scan_delta_improve_min(skill_dir: Path | None = None) -> float:
+    """Minimum rank_score increase vs last cycle to count as 'setup improving'."""
+    val = _get_float("SCAN_DELTA_IMPROVE_MIN", 5.0, skill_dir)
+    return max(0.1, min(100.0, val))
+
+
+# --- Trading Cockpit (Phase 3): execution policies + post-fill risk ---
+
+
+def get_exec_policy_mode(skill_dir: Path | None = None) -> str:
+    """Smart execution policy rollout mode (OFF|SHADOW|LIVE).
+
+    - off: no policy decision computed.
+    - shadow (default): policy decision computed, recorded, and attached to the
+      order result as ``_execution_policy`` — but does NOT change order routing.
+    - live: callers may apply the recommended order type / throttle.
+    """
+    return _get_mode("EXEC_POLICY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_exec_policy_tight_spread_bps(skill_dir: Path | None = None) -> float:
+    """Spread (bps) at/under which the reprice loop uses the aggressive cadence."""
+    val = _get_float("EXEC_POLICY_TIGHT_SPREAD_BPS", 10.0, skill_dir)
+    return max(1.0, min(500.0, val))
+
+
+def get_risk_max_concentration_pct(skill_dir: Path | None = None) -> float:
+    """Max single-position weight (% of equity) before a concentration drift flag."""
+    val = _get_float("RISK_MAX_CONCENTRATION_PCT", 25.0, skill_dir)
+    return max(1.0, min(100.0, val))
+
+
+def get_risk_max_gross_exposure_pct(skill_dir: Path | None = None) -> float:
+    """Max gross exposure (% of equity) before an exposure drift flag."""
+    val = _get_float("RISK_MAX_GROSS_EXPOSURE_PCT", 150.0, skill_dir)
+    return max(10.0, min(1000.0, val))

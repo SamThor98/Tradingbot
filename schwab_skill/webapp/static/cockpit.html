@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trading Cockpit</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/overhaul.css" />
+    <link rel="stylesheet" href="/static/readability.css" />
+    <style>
+      .cockpit-shell { max-width: 1600px; margin: 0 auto; padding: 12px 16px 48px; }
+      .cockpit-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .cockpit-head h1 { font-size: 1.15rem; margin: 8px 0; }
+      .cockpit-head .muted { font-size: 0.85rem; }
+      .cockpit-grid {
+        display: grid; gap: 12px; margin-top: 12px;
+        grid-template-columns: 1fr 1fr; grid-template-rows: auto auto;
+      }
+      @media (max-width: 1100px) { .cockpit-grid { grid-template-columns: 1fr; } }
+      .lane { border: 1px solid var(--border, #2a2f3a); border-radius: 10px; padding: 12px; background: var(--panel, #161a22); min-height: 180px; }
+      .lane h2 { font-size: 0.95rem; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+      .lane h2 .lane-prov { margin-left: auto; font-size: 0.72rem; font-weight: 400; opacity: 0.8; }
+      .prov-badge { font-size: 0.7rem; padding: 1px 6px; border-radius: 6px; border: 1px solid currentColor; }
+      .prov-high { color: #34d399; } .prov-medium { color: #fbbf24; } .prov-low { color: #f87171; }
+      .stale-dot { color: #f87171; font-weight: 700; }
+      .opp-row { display: grid; grid-template-columns: 64px 1fr auto auto; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--border, #2a2f3a); cursor: pointer; }
+      .opp-row:hover { background: rgba(255,255,255,0.03); }
+      .opp-row .tk { font-weight: 700; }
+      .opp-row .rank { font-variant-numeric: tabular-nums; opacity: 0.9; }
+      .pill { font-size: 0.7rem; padding: 1px 6px; border-radius: 6px; }
+      .pill.good { background: rgba(52,211,153,0.15); color: #34d399; }
+      .pill.bad { background: rgba(248,113,113,0.15); color: #f87171; }
+      .pill.warn { background: rgba(251,191,36,0.15); color: #fbbf24; }
+      .pill.muted { background: rgba(148,163,184,0.15); color: #94a3b8; }
+      .kv { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed rgba(148,163,184,0.15); font-size: 0.85rem; }
+      .kv span:last-child { font-variant-numeric: tabular-nums; }
+      .regime-bull { color: #34d399; } .regime-bear { color: #f87171; } .regime-neutral { color: #fbbf24; }
+      .drawer { position: fixed; top: 0; right: 0; width: min(520px, 96vw); height: 100%; background: var(--panel, #11151c); border-left: 1px solid var(--border, #2a2f3a); box-shadow: -8px 0 24px rgba(0,0,0,0.4); transform: translateX(100%); transition: transform 0.2s ease; overflow-y: auto; z-index: 50; }
+      .drawer.open { transform: translateX(0); }
+      .drawer-inner { padding: 16px; }
+      .drawer h3 { margin: 4px 0 12px; }
+      .drawer .close { float: right; cursor: pointer; opacity: 0.7; }
+      .change-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; font-size: 0.75rem; }
+      .change-chip { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border, #2a2f3a); }
+      .change-chip b { font-variant-numeric: tabular-nums; }
+      .preview-box { border: 1px solid var(--border, #2a2f3a); border-radius: 8px; padding: 10px; margin-top: 10px; }
+      .toolbar { display: flex; gap: 8px; align-items: center; }
+      .btn { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="cockpit-shell">
+      <div class="cockpit-head">
+        <h1>🛰️ Trading Cockpit</h1>
+        <div class="toolbar">
+          <span class="muted" id="cockpitReview"></span>
+          <span class="muted" id="cockpitUpdated">—</span>
+          <button class="btn small secondary" id="cockpitRefresh" type="button">Refresh</button>
+          <a class="btn small secondary" href="/">Full dashboard</a>
+        </div>
+      </div>
+
+      <div class="cockpit-grid">
+        <section class="lane" id="laneMarket">
+          <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
+          <div id="marketBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="lanePortfolio">
+          <h2>Portfolio Risk + Exposure <span class="lane-prov" data-prov="portfolio"></span></h2>
+          <div id="portfolioBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneOpportunities">
+          <h2>Ranked Opportunities <span class="lane-prov" data-prov="opportunities"></span></h2>
+          <div id="oppChangeStrip" class="change-strip"></div>
+          <div id="opportunitiesBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneBlotter">
+          <h2>Execution Blotter <span class="lane-prov" data-prov="blotter"></span></h2>
+          <div id="blotterQualityStrip" class="change-strip"></div>
+          <div id="blotterBody" data-async-state="idle"></div>
+        </section>
+      </div>
+    </div>
+
+    <aside class="drawer" id="cockpitDrawer" aria-hidden="true">
+      <div class="drawer-inner">
+        <span class="close" id="drawerClose" role="button" aria-label="Close">✕</span>
+        <div id="drawerBody"></div>
+      </div>
+    </aside>
+
+    <script type="module" src="/static/cockpit.js"></script>
+  </body>
+</html>

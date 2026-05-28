@@ -1584,6 +1584,32 @@ def place_order(
             }
         )
 
+        # Phase 3 smart-execution-policy shadow hook: advisory only. Computes a
+        # named, attributable routing decision and records it WITHOUT changing
+        # order routing. Promotion to live happens via EXEC_POLICY_MODE=live in
+        # a future change that consumes exec_quality_diag["policy"].
+        try:
+            from core import execution_policies
+
+            if execution_policies.policy_mode(skill_dir) != "off":
+                policy_decision = execution_policies.decide(
+                    side=side_n,
+                    base_order_type=order_type_n,
+                    spread_bps=spread_bps,
+                    expected_slippage_bps=expected_slippage_bps,
+                    liquid=bool(liquid),
+                    preferred_limit_price=preferred_limit_price,
+                    data_quality=str(snap.get("data_quality") or "") or None,
+                    is_risk_increasing=(side_n == "BUY"),
+                    skill_dir=skill_dir,
+                )
+                exec_quality_diag["policy"] = policy_decision
+                _record_execution_metric(
+                    skill_dir, "exec_policy_evaluated", reason=policy_decision.get("policy_id")
+                )
+        except Exception as _pol_exc:
+            logging.getLogger(__name__).debug("exec policy shadow hook skipped: %s", _pol_exc)
+
         if exec_quality_mode == "shadow":
             if block_reasons:
                 _record_execution_metric(

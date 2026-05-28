@@ -26,7 +26,7 @@ export async function refreshSectors() {
   const out = await api.get("/api/sectors");
   if (!out.ok) {
     const msg = out.user_message || out.error;
-    logEvent({ kind: "system", severity: "warn", message: `Sector load failed: ${out.error}` });
+    logEvent({ kind: "system", severity: "warn", message: `Sector load failed: ${msg}` });
     if (out.status === 401) {
       setAsyncState(grid, ASYNC_SIGNED_OUT, {
         message: "Sign in to load sector strength data.",

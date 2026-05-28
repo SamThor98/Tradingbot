@@ -185,6 +185,89 @@ def _load_state(db: OrmSession, user_id: str, key: str, default: dict[str, Any])
     return parsed if isinstance(parsed, dict) else default
 
 
+def _cockpit_scan_signal_groups(db: OrmSession, user_id: str, max_jobs: int = 2) -> list[list[dict[str, Any]]]:
+    """Return per-scan-job signal lists (latest first) from ScanResult rows.
+
+    SaaS ``last_scan`` carries only diagnostics, so cockpit opportunities/deltas
+    read the per-ticker payloads grouped by ``job_id``. The two most recent jobs
+    give current vs previous for "what changed" deltas — no Celery change needed.
+    """
+    rows = (
+        db.query(ScanResult)
+        .filter(ScanResult.user_id == user_id)
+        .order_by(ScanResult.created_at.desc())
+        .limit(1000)
+        .all()
+    )
+    order: list[str] = []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        jid = str(getattr(r, "job_id", "") or "")
+        sig = parse_json(r.payload_json, {})
+        if not isinstance(sig, dict) or not sig:
+            continue
+        if jid not in grouped:
+            if len(order) >= max_jobs:
+                continue
+            grouped[jid] = []
+            order.append(jid)
+        grouped[jid].append(sig)
+    return [grouped[j] for j in order]
+
+
+def _cockpit_sector_lookup(skill_dir: Any) -> Any:
+    try:
+        from sector_strength import get_ticker_sector_etf
+
+        return lambda t: get_ticker_sector_etf(t, skill_dir=skill_dir)
+    except Exception:
+        return None
+
+
+def _cockpit_stop_lookup(skill_dir: Any) -> Any:
+    try:
+        from execution_persistence import _load_exit_manager_state
+
+        positions = (_load_exit_manager_state(skill_dir) or {}).get("positions", {})
+        registered = {str(k).upper() for k in positions.keys()}
+        return lambda t: str(t).upper() in registered
+    except Exception:
+        return None
+
+
+def _cockpit_extract_bid_ask(quote: Any) -> tuple[float | None, float | None]:
+    if not isinstance(quote, dict):
+        return None, None
+    inner = quote.get("quote") if isinstance(quote.get("quote"), dict) else quote
+    out: list[float | None] = []
+    for key_a, key_b in (("bidPrice", "bid"), ("askPrice", "ask")):
+        val = inner.get(key_a, inner.get(key_b))
+        try:
+            out.append(float(val) if val is not None else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out[0], out[1]
+
+
+def _cockpit_load_packets(db: OrmSession, user_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+    data = _load_state(db, user_id, "decision_packets", {"packets": []})
+    packets = [p for p in (data.get("packets") or []) if isinstance(p, dict)]
+    return packets[-limit:] if limit else packets
+
+
+def _cockpit_record_packet(db: OrmSession, user_id: str, packet: dict[str, Any]) -> None:
+    """Persist a decision packet in AppState (Postgres-backed, per tenant)."""
+    try:
+        data = _load_state(db, user_id, "decision_packets", {"packets": []})
+        packets = data.get("packets") if isinstance(data.get("packets"), list) else []
+        packets.append(packet)
+        if len(packets) > 500:
+            del packets[: len(packets) - 500]
+        _save_state(db, user_id, "decision_packets", {"packets": packets})
+    except Exception as exc:
+        logging.getLogger(__name__).debug("tenant decision packet record skipped: %s", exc)
+
+
 def _order_rate_limit(user_id: str) -> None:
     limit = int(os.getenv("SAAS_RATE_ORDERS_PER_MIN", "8"))
     window = int(os.getenv("SAAS_RATE_LIMIT_WINDOW_SEC", "60"))
@@ -293,10 +376,7 @@ def _build_trade_outcome_payload(
     safe_result = result if isinstance(result, dict) else {}
     safe_signal = signal if isinstance(signal, dict) else {}
     fill = (
-        safe_result.get("fill_price")
-        or safe_result.get("average_price")
-        or safe_result.get("avg_fill_price")
-        or price
+        safe_result.get("fill_price") or safe_result.get("average_price") or safe_result.get("avg_fill_price") or price
     )
     return {
         "source": "saas_trade_approval",
@@ -344,7 +424,9 @@ def _learning_outcomes_for_user(db: OrmSession, user_id: str) -> list[dict[str, 
                     or payload.get("avg_fill_price")
                     or row.price
                 ),
-                "date": (row.created_at.isoformat()[:10] if row.created_at else datetime.now(timezone.utc).date().isoformat()),
+                "date": (
+                    row.created_at.isoformat()[:10] if row.created_at else datetime.now(timezone.utc).date().isoformat()
+                ),
                 "return_pct": payload.get("return_pct"),
                 "pnl_pct": payload.get("pnl_pct"),
             }
@@ -400,7 +482,12 @@ def _saas_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dic
     blocked: list[str] = []
     if _global_live_trading_kill_switch_on():
         blocked.append("platform_kill_switch")
-    if isinstance(event_risk, dict) and event_risk.get("mode") == "live" and event_risk.get("flagged") and event_risk.get("action") == "block":
+    if (
+        isinstance(event_risk, dict)
+        and event_risk.get("mode") == "live"
+        and event_risk.get("flagged")
+        and event_risk.get("action") == "block"
+    ):
         blocked.append("event_risk_block")
     if isinstance(regime, dict) and str(regime.get("mode", "off")) == "live":
         score = float(regime.get("score", 100) or 100)
@@ -506,8 +593,7 @@ def _frontend_oauth_return_url(request: Request | None = None) -> str:
         return explicit
 
     frontend_origin = (
-        (os.getenv("SAAS_FRONTEND_URL") or "").strip()
-        or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
+        (os.getenv("SAAS_FRONTEND_URL") or "").strip() or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
     ).rstrip("/")
     if frontend_origin.startswith(("http://", "https://")):
         return f"{frontend_origin}/?section=connect"
@@ -670,9 +756,7 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
             "takeaway": "Valuation supports upside." if mos >= 0 else "Valuation indicates premium pricing.",
         },
         "health": {
-            "verdict": "bullish"
-            if len(health_flags) == 0
-            else ("bearish" if len(health_flags) >= 3 else "neutral"),
+            "verdict": "bullish" if len(health_flags) == 0 else ("bearish" if len(health_flags) >= 3 else "neutral"),
             "takeaway": "Balance sheet and margins are stable."
             if len(health_flags) == 0
             else "Review flagged financial risks.",
@@ -716,8 +800,7 @@ def _normalize_sec_analysis_payload_sd(payload: dict[str, Any], *, analysis_mode
     if not summary_headline:
         verdict = str(data.get("verdict") or "neutral")
         summary_headline = (
-            f"{data.get('ticker', '')} {data.get('form', '')} filing reads {verdict} "
-            f"with confidence {confidence}/100."
+            f"{data.get('ticker', '')} {data.get('form', '')} filing reads {verdict} with confidence {confidence}/100."
         ).strip()
     narrative_summary = str(data.get("narrative_summary") or "").strip()
     if not narrative_summary:
@@ -743,7 +826,9 @@ def _normalize_sec_compare_payload_sd(payload: dict[str, Any], *, analysis_mode:
     investor_takeaway = str(compare_data.get("investor_takeaway") or "").strip()
     compare_data.setdefault(
         "summary_headline",
-        "SEC compare completed with meaningful differences." if differences else "SEC compare completed with broad alignment.",
+        "SEC compare completed with meaningful differences."
+        if differences
+        else "SEC compare completed with broad alignment.",
     )
     compare_data.setdefault(
         "narrative_summary",
@@ -889,7 +974,12 @@ def _compose_research_dossier_sd(
         else:
             sec_analysis = {"ok": False, "error": str(sec_out.get("error") or "SEC analysis unavailable")}
             source_metadata.append(
-                _source_entry_sd("sec_analyze", status="degraded", detail=str(sec_out.get("error") or "analysis failed"), fallback_used=True)
+                _source_entry_sd(
+                    "sec_analyze",
+                    status="degraded",
+                    detail=str(sec_out.get("error") or "analysis failed"),
+                    fallback_used=True,
+                )
             )
     else:
         sec_analysis = {"ok": False, "error": "SEC filing analysis disabled by config"}
@@ -913,7 +1003,12 @@ def _compose_research_dossier_sd(
         else:
             sec_compare_data = {"ok": False, "error": str(sec_compare_out.get("error") or "SEC compare unavailable")}
             source_metadata.append(
-                _source_entry_sd("sec_compare", status="degraded", detail=str(sec_compare_out.get("error") or "compare failed"), fallback_used=True)
+                _source_entry_sd(
+                    "sec_compare",
+                    status="degraded",
+                    detail=str(sec_compare_out.get("error") or "compare failed"),
+                    fallback_used=True,
+                )
             )
     else:
         sec_compare_data = {"ok": False, "error": "SEC compare disabled by config"}
@@ -928,11 +1023,17 @@ def _compose_research_dossier_sd(
             portfolio_risk = _build_portfolio_risk_analytics(portfolio_summary, skill_dir=skill_dir)
             source_metadata.append(_source_entry_sd("portfolio", status="ok", detail="positions and risk context"))
         else:
-            source_metadata.append(_source_entry_sd("portfolio", status="degraded", detail="account status unavailable", fallback_used=True))
+            source_metadata.append(
+                _source_entry_sd(
+                    "portfolio", status="degraded", detail="account status unavailable", fallback_used=True
+                )
+            )
     except Exception as exc:  # noqa: BLE001
         portfolio_summary = {}
         portfolio_risk = {}
-        source_metadata.append(_source_entry_sd("portfolio", status="degraded", detail=str(exc)[:180], fallback_used=True))
+        source_metadata.append(
+            _source_entry_sd("portfolio", status="degraded", detail=str(exc)[:180], fallback_used=True)
+        )
 
     sector_context: dict[str, Any]
     try:
@@ -940,7 +1041,9 @@ def _compose_research_dossier_sd(
         source_metadata.append(_source_entry_sd("sector_context", status="ok", detail="relative sector heatmap"))
     except Exception as exc:  # noqa: BLE001
         sector_context = {"ok": False, "error": str(exc)}
-        source_metadata.append(_source_entry_sd("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True))
+        source_metadata.append(
+            _source_entry_sd("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True)
+        )
 
     finnhub = get_finnhub_research_snapshot(symbol, skill_dir=skill_dir)
     finnhub_errors = list(finnhub.get("errors") or []) if isinstance(finnhub, dict) else []
@@ -972,7 +1075,10 @@ def _compose_research_dossier_sd(
         "ticker": symbol,
         "generated_at": generated_at,
         "executive_pitch": {
-            "thesis": str((report_v2.get("thesis") or {}).get("claim") or f"{symbol} setup requires review of report stack and SEC context."),
+            "thesis": str(
+                (report_v2.get("thesis") or {}).get("claim")
+                or f"{symbol} setup requires review of report stack and SEC context."
+            ),
             "recommendation": str((report_v2.get("ic_snapshot") or {}).get("recommendation") or "WATCH"),
             "confidence_label": str((report_v2.get("ic_snapshot") or {}).get("confidence_label") or "Moderate"),
             "confidence_score": round(confidence_score, 1),
@@ -1000,7 +1106,9 @@ def _compose_research_dossier_sd(
             },
         },
         "source_metadata": source_metadata,
-        "fallback_notes": [entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")],
+        "fallback_notes": [
+            entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")
+        ],
         "report_trust": report_trust,
     }
 
@@ -1020,7 +1128,7 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
     dcf = raw_report.get("dcf") or {}
     health = raw_report.get("health") or {}
     sec_analyze = sec_narr.get("analyze") or {}
-    sec_compare = ((sec_narr.get("compare") or {}).get("compare") or {})
+    sec_compare = (sec_narr.get("compare") or {}).get("compare") or {}
     quote = (fin.get("snapshot") or {}).get("quote") or {}
     pt = (fin.get("snapshot") or {}).get("price_target") or {}
     trends = (fin.get("snapshot") or {}).get("recommendation_trends") or {}
@@ -1048,8 +1156,12 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
     earnings = list(snapshot.get("earnings") or [])
     news = list(snapshot.get("news") or [])
     sec_summary = str(sec_analyze.get("narrative_summary") or sec_analyze.get("error") or "SEC analysis unavailable.")
-    compare_summary = str(sec_compare.get("narrative_summary") or (sec_narr.get("compare") or {}).get("error") or "SEC compare unavailable.")
-    hhi_label = (((portfolio.get("portfolio_risk") or {}).get("concentration") or {}).get("hhi_label") or "Unavailable")
+    compare_summary = str(
+        sec_compare.get("narrative_summary")
+        or (sec_narr.get("compare") or {}).get("error")
+        or "SEC compare unavailable."
+    )
+    hhi_label = ((portfolio.get("portfolio_risk") or {}).get("concentration") or {}).get("hhi_label") or "Unavailable"
     positions_count = (portfolio.get("portfolio_summary") or {}).get("positions_count", "n/a")
     total_mv = (portfolio.get("portfolio_summary") or {}).get("total_market_value", "n/a")
     recommendation = pitch.get("recommendation", "WATCH")
@@ -1064,7 +1176,7 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         if v is None:
             return "n/a"
         if abs(v) >= 1000:
-            return f"${v/1000:.2f}B"
+            return f"${v / 1000:.2f}B"
         return f"${v:.2f}M"
 
     def _ratio_pct(value: Any, digits: int = 1) -> str:
@@ -1109,10 +1221,7 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
             f"{_cite('finnhub', 'report_stack')}"
         ),
         "",
-        (
-            f"Portfolio context is {hhi_label}; this drives risk budget and sizing."
-            f"{_cite('portfolio')}"
-        ),
+        (f"Portfolio context is {hhi_label}; this drives risk budget and sizing.{_cite('portfolio')}"),
         "",
         (
             f"Desk stance: **{recommendation}** with **{confidence_label} ({confidence_score}/100)** confidence over "
@@ -1140,8 +1249,8 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         "",
         "### Earnings Quality (Recent Prints)",
         "",
-            f"Earnings dispersion and surprise cadence remain central to near-term rerating potential and should be read with valuation compression/expansion risk in mind.{_cite('finnhub')}",
-            "",
+        f"Earnings dispersion and surprise cadence remain central to near-term rerating potential and should be read with valuation compression/expansion risk in mind.{_cite('finnhub')}",
+        "",
         "| Period | Actual EPS | Estimate EPS | Surprise % |",
         "|---|---:|---:|---:|",
     ]
@@ -1335,7 +1444,9 @@ def _text_to_simple_pdf_sd(text: str) -> bytes:
             + b"\nendstream endobj\n"
         )
 
-    objs.append(f"{first_font_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode("ascii"))
+    objs.append(
+        f"{first_font_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode("ascii")
+    )
 
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -1347,12 +1458,7 @@ def _text_to_simple_pdf_sd(text: str) -> bytes:
     out.extend(b"0000000000 65535 f \n")
     for off in offsets[1:]:
         out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
-    out.extend(
-        (
-            f"trailer << /Size {len(objs) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_start}\n%%EOF\n"
-        ).encode("ascii")
-    )
+    out.extend((f"trailer << /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n").encode("ascii"))
     return bytes(out)
 
 
@@ -1467,6 +1573,240 @@ def tenant_sectors(user: User = Depends(get_current_user), db: OrmSession = Depe
         return _saas_error_response(exc, source="sectors", fallback="Unable to load sector heatmap right now.")
 
 
+# --------------------------------------------------------------------------- #
+# Trading Cockpit (SaaS parity) — DTO-backed lanes per tenant.
+# Builders live in core/cockpit_service; these routes only fetch per-tenant data.
+# --------------------------------------------------------------------------- #
+@router.get("/api/cockpit/market", response_model=ApiResponse)
+def tenant_cockpit_market(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        last_scan = _load_state(db, user.id, "last_scan", {})
+        diagnostics = last_scan.get("diagnostics") if isinstance(last_scan, dict) else None
+        return _ok(cockpit_service.build_market(diagnostics or {}))
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_market", fallback="Unable to load market regime.")
+
+
+@router.get("/api/cockpit/opportunities", response_model=ApiResponse)
+def tenant_cockpit_opportunities(
+    include_filtered: bool = True,
+    limit: int | None = None,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        groups = _cockpit_scan_signal_groups(db, user.id, max_jobs=1)
+        signals = groups[0] if groups else []
+        cards = cockpit_service.build_opportunities(signals, include_filtered=include_filtered, limit=limit)
+        return _ok({"opportunities": cards, "count": len(cards)})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_opportunities", fallback="Unable to load opportunities.")
+
+
+@router.get("/api/cockpit/portfolio", response_model=ApiResponse)
+def tenant_cockpit_portfolio(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading portfolio.")
+    try:
+        from core import cockpit_service
+
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            status_data = get_account_status(skill_dir=skill_dir)
+            if isinstance(status_data, str):
+                return _err(status_data)
+            return _ok(
+                cockpit_service.build_portfolio(
+                    status_data,
+                    sector_lookup=_cockpit_sector_lookup(skill_dir),
+                    stop_lookup=_cockpit_stop_lookup(skill_dir),
+                    skill_dir=skill_dir,
+                )
+            )
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_portfolio", fallback="Unable to load portfolio.")
+
+
+@router.get("/api/cockpit/blotter", response_model=ApiResponse)
+def tenant_cockpit_blotter(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        rows = (
+            db.query(PendingTrade)
+            .filter(PendingTrade.user_id == user.id)
+            .order_by(PendingTrade.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        blotter = cockpit_service.build_blotter([_trade_to_dict(r) for r in rows])
+        return _ok({"blotter": blotter, "count": len(blotter)})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_blotter", fallback="Unable to load blotter.")
+
+
+@router.get("/api/cockpit/deltas", response_model=ApiResponse)
+def tenant_cockpit_deltas(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        groups = _cockpit_scan_signal_groups(db, user.id, max_jobs=2)
+        curr = {"signals": groups[0]} if groups else {}
+        prev = {"signals": groups[1]} if len(groups) > 1 else {}
+        return _ok(cockpit_service.build_deltas(prev, curr))
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_deltas", fallback="Unable to compute deltas.")
+
+
+@router.get("/api/cockpit/watchlists", response_model=ApiResponse)
+def tenant_cockpit_watchlists(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        groups = _cockpit_scan_signal_groups(db, user.id, max_jobs=2)
+        curr = {"signals": groups[0]} if groups else {}
+        prev = {"signals": groups[1]} if len(groups) > 1 else {}
+        return _ok(cockpit_service.build_watchlists(prev, curr))
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_watchlists", fallback="Unable to compute watchlists.")
+
+
+@router.get("/api/cockpit/movers", response_model=ApiResponse)
+def tenant_cockpit_movers(
+    index: str = "$SPX",
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading movers.")
+    try:
+        from core import cockpit_service
+        from market_data import get_market_movers_with_status
+
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                payload, meta = get_market_movers_with_status(index, auth=auth, skill_dir=skill_dir)
+        movers = cockpit_service.build_movers(payload) if payload else {"gainers": [], "losers": [], "most_active": []}
+        return _ok({"movers": movers, "meta": meta})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_movers", fallback="Unable to load movers.")
+
+
+@router.get("/api/cockpit/symbol/{ticker}/options", response_model=ApiResponse)
+def tenant_cockpit_options(
+    ticker: str,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading options intelligence.")
+    try:
+        from core import cockpit_service
+        from market_data import get_options_chain_with_status
+
+        symbol = ticker.upper().strip()
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                chain, meta = get_options_chain_with_status(symbol, auth=auth, skill_dir=skill_dir)
+        intel = cockpit_service.build_symbol_options(chain) if chain else None
+        return _ok({"ticker": symbol, "options_intel": intel, "meta": meta})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_options", fallback="Unable to load options intelligence.")
+
+
+@router.get("/api/cockpit/execution/quality", response_model=ApiResponse)
+def tenant_cockpit_execution_quality(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(_db)
+) -> ApiResponse:
+    try:
+        from core import cockpit_service
+        from execution_persistence import get_execution_safety_summary
+
+        rows = (
+            db.query(PendingTrade)
+            .filter(PendingTrade.user_id == user.id)
+            .order_by(PendingTrade.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        blotter = cockpit_service.build_blotter([_trade_to_dict(r) for r in rows])
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            summary = get_execution_safety_summary(skill_dir=skill_dir, days=7)
+        return _ok(cockpit_service.build_execution_quality(summary, blotter))
+    except Exception as exc:
+        return _saas_error_response(
+            exc, source="cockpit_execution_quality", fallback="Unable to load execution quality."
+        )
+
+
+@router.get("/api/cockpit/decision-packets", response_model=ApiResponse)
+def tenant_cockpit_decision_packets(
+    limit: int = 50, user: User = Depends(get_current_user), db: OrmSession = Depends(_db)
+) -> ApiResponse:
+    try:
+        packets = _cockpit_load_packets(db, user.id, limit=max(1, min(500, int(limit))))
+        return _ok({"packets": packets, "count": len(packets)})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_decision_packets", fallback="Unable to load decision packets.")
+
+
+@router.get("/api/cockpit/review", response_model=ApiResponse)
+def tenant_cockpit_review(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        from core import trade_review, weight_feedback
+
+        packets = _cockpit_load_packets(db, user.id)
+        report = trade_review.weekly_report(packets)
+        report["tuning_proposals"] = weight_feedback.propose(report)
+        return _ok(report)
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_review", fallback="Unable to load review.")
+
+
+@router.post("/api/cockpit/order-intent/preview", response_model=ApiResponse)
+def tenant_cockpit_order_intent_preview(
+    payload: CreatePendingTrade,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    try:
+        from core import cockpit_service
+
+        symbol = payload.ticker.upper().strip()
+        signal = payload.signal or {}
+        if not signal:
+            row = (
+                db.query(ScanResult)
+                .filter(ScanResult.user_id == user.id, ScanResult.ticker == symbol)
+                .order_by(ScanResult.created_at.desc())
+                .first()
+            )
+            if row:
+                parsed = parse_json(row.payload_json, {})
+                if isinstance(parsed, dict):
+                    signal = parsed
+
+        bid = ask = None
+        if user_has_account_session(db, user.id):
+            try:
+                with tenant_skill_dir(db, user.id) as skill_dir:
+                    with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                        quote = get_current_quote(symbol, auth=auth, skill_dir=skill_dir)
+                        bid, ask = _cockpit_extract_bid_ask(quote)
+            except Exception:
+                bid = ask = None
+
+        preview = cockpit_service.build_order_intent_preview(
+            ticker=symbol, qty=payload.qty, price=payload.price, signal=signal, bid=bid, ask=ask
+        )
+        return _ok(preview)
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_order_intent_preview", fallback="Unable to build preview.")
+
+
 @router.get("/api/pending-trades", response_model=ApiResponse)
 def tenant_list_pending(
     status: str | None = None,
@@ -1560,11 +1900,7 @@ def tenant_calibration_summary(
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> ApiResponse:
-    row = (
-        db.query(AppState)
-        .filter(AppState.user_id == user.id, AppState.key == "calibration_snapshot")
-        .first()
-    )
+    row = db.query(AppState).filter(AppState.user_id == user.id, AppState.key == "calibration_snapshot").first()
     if not row:
         return _ok(
             {
@@ -1723,9 +2059,7 @@ def tenant_decision_card(
     stop_pct = max(0.03, min(0.15, 0.07))
     stop_level = round(price * (1.0 - stop_pct), 2) if price > 0 else None
     entry_zone = (
-        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)}
-        if price > 0
-        else {"low": None, "high": None}
+        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)} if price > 0 else {"low": None, "high": None}
     )
     confidence_bucket = str(((signal.get("advisory") or {}).get("confidence_bucket") or "unknown")).lower()
     score = float(signal.get("signal_score", 0) or 0)
@@ -1866,9 +2200,7 @@ def tenant_report_ticker(
                     if not section_key:
                         return ApiResponse(
                             ok=False,
-                            error=(
-                                f"Invalid section '{section}'. Use: tech, dcf, comps, health, edgar, mirofish."
-                            ),
+                            error=(f"Invalid section '{section}'. Use: tech, dcf, comps, health, edgar, mirofish."),
                         )
                 report = generate_full_report(
                     ticker.upper().strip(),
@@ -2007,7 +2339,9 @@ def tenant_sec_management_dashboard(
             safe_override = profile_override.strip().lower() or persisted_override
             if safe_override and safe_override not in PROFILE_WEIGHTS:
                 supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
-                return ApiResponse(ok=False, error=f"Invalid profile_override '{safe_override}'. Use one of: {supported}.")
+                return ApiResponse(
+                    ok=False, error=f"Invalid profile_override '{safe_override}'. Use one of: {supported}."
+                )
             if safe_mode not in {"ticker_vs_ticker", "ticker_over_time"}:
                 return ApiResponse(ok=False, error="Invalid mode. Use ticker_vs_ticker or ticker_over_time.")
             if not safe_ticker:
@@ -2162,10 +2496,7 @@ def tenant_research_dossier_export(
 @router.get("/api/performance", response_model=ApiResponse)
 def tenant_performance(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
     latest_bt = (
-        db.query(BacktestRun)
-        .filter(BacktestRun.user_id == user.id)
-        .order_by(BacktestRun.created_at.desc())
-        .first()
+        db.query(BacktestRun).filter(BacktestRun.user_id == user.id).order_by(BacktestRun.created_at.desc()).first()
     )
     bt_payload: dict[str, Any] = {
         "source": "saas_backtest_runs",
@@ -2191,11 +2522,7 @@ def tenant_performance(user: User = Depends(get_current_user), db: OrmSession = 
         .limit(50)
         .all()
     )
-    live_n = (
-        db.query(Order)
-        .filter(Order.user_id == user.id, Order.status == "executed")
-        .count()
-    )
+    live_n = db.query(Order).filter(Order.user_id == user.id, Order.status == "executed").count()
     latest_outcomes: list[dict[str, Any]] = []
     for o in ord_rows[:5]:
         res = parse_json(o.result_json, {})
@@ -2372,6 +2699,25 @@ def tenant_approve_trade(
     row.status = "executed"
     db.commit()
     db.refresh(row)
+    # Phase 4 learning loop (SaaS): snapshot the decision into a packet
+    # (AppState-backed per tenant). Additive + guarded — never affects the trade.
+    try:
+        from core import cockpit_service, decision_packet
+        from core.providers import ExecutionProvider
+
+        _ls = _load_state(db, user.id, "last_scan", {})
+        _market = cockpit_service.build_market((_ls or {}).get("diagnostics") or {})
+        _execu = ExecutionProvider.from_order_result(result if isinstance(result, dict) else {}).model_dump(mode="json")
+        _pkt = decision_packet.build_packet(
+            ticker=row.ticker,
+            kind="approved",
+            signal=signal if isinstance(signal, dict) else {},
+            market=_market,
+            execution=_execu,
+        )
+        _cockpit_record_packet(db, user.id, _pkt.model_dump(mode="json"))
+    except Exception as _pkt_exc:
+        logging.getLogger(__name__).debug("tenant decision packet skipped: %s", _pkt_exc)
     try:
         upsert_trade_outcome(
             db,
@@ -2455,7 +2801,9 @@ def tenant_preflight_trade(
 
 
 @router.get("/api/settings/profiles", response_model=ApiResponse)
-def tenant_get_profiles(expert: bool = False, user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+def tenant_get_profiles(
+    expert: bool = False, user: User = Depends(get_current_user), db: OrmSession = Depends(_db)
+) -> ApiResponse:
     settings = _load_state(db, user.id, "ui_settings", {})
     profile = str(settings.get("profile", DEFAULT_PROFILE)).strip().lower()
     profile = profile if profile in PRESET_PROFILES else DEFAULT_PROFILE
@@ -2621,7 +2969,12 @@ def tenant_onboarding_step(
         }
     elif step_key == "verify_token_health":
         snap = _tenant_api_health_snapshot(db, user.id)
-        ok = bool(snap.get("schwab_linked") and snap.get("market_token_ok") and snap.get("account_token_ok") and snap.get("quote_ok"))
+        ok = bool(
+            snap.get("schwab_linked")
+            and snap.get("market_token_ok")
+            and snap.get("account_token_ok")
+            and snap.get("quote_ok")
+        )
         steps["verify_token_health"] = {
             "ok": ok,
             "at": now_iso,
@@ -2645,7 +2998,9 @@ def tenant_onboarding_step(
                     "at": now_iso,
                     "details": {
                         "signals_found": len(signals),
-                        "diagnostics_summary": {k: diagnostics.get(k) for k in ("watchlist_size", "exceptions", "scan_blocked")},
+                        "diagnostics_summary": {
+                            k: diagnostics.get(k) for k in ("watchlist_size", "exceptions", "scan_blocked")
+                        },
                     },
                 }
             except Exception as e:
@@ -2801,9 +3156,7 @@ def schwab_oauth_portal_config(
             "account_callback_matches_configured": (
                 bool(account_configured) and account_effective == account_configured
             ),
-            "market_callback_matches_configured": (
-                bool(market_configured) and market_effective == market_configured
-            ),
+            "market_callback_matches_configured": (bool(market_configured) and market_effective == market_configured),
         }
     )
 
@@ -2834,10 +3187,7 @@ def schwab_oauth_callback(
         return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
     if kind != SCHWAB_OAUTH_KIND_ACCOUNT:
-        return red(
-            "schwab_oauth=error&message="
-            + urllib.parse.quote("wrong_oauth_flow_use_account_authorize_link")
-        )
+        return red("schwab_oauth=error&message=" + urllib.parse.quote("wrong_oauth_flow_use_account_authorize_link"))
 
     client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
     client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
@@ -2865,7 +3215,7 @@ def schwab_oauth_callback(
 
         row.access_token_enc = encrypt_secret(access)
         row.refresh_token_enc = encrypt_secret(refresh)
-        row.token_type = (str(tok.get("token_type") or "Bearer").strip() or "Bearer")
+        row.token_type = str(tok.get("token_type") or "Bearer").strip() or "Bearer"
         exp_in = tok.get("expires_in")
         if exp_in is not None:
             try:
@@ -2947,40 +3297,29 @@ def schwab_market_oauth_callback(
         return red(f"schwab_market_oauth=error&message={urllib.parse.quote(error)}")
     verified = verify_schwab_oauth_state(state)
     if not verified or not code.strip():
-        return red(
-            "schwab_market_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
     user_id, kind = verified
     if kind != SCHWAB_OAUTH_KIND_MARKET:
         return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("wrong_oauth_flow_use_market_authorize_link")
+            "schwab_market_oauth=error&message=" + urllib.parse.quote("wrong_oauth_flow_use_market_authorize_link")
         )
 
     client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
     client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
     redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
     if not client_id or not client_secret:
-        return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("server_market_oauth_not_configured")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("server_market_oauth_not_configured"))
 
     try:
         tok = exchange_schwab_code_for_tokens(client_id, client_secret, code, redirect_uri)
     except Exception as exc:
         safe_error = safe_exception_message(exc, fallback="oauth_exchange_failed")
-        return red(
-            "schwab_market_oauth=error&message=" + urllib.parse.quote(safe_error[:180])
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
 
     access = str(tok.get("access_token") or "").strip()
     refresh = str(tok.get("refresh_token") or "").strip()
     if not access or not refresh:
-        return red(
-            "schwab_market_oauth=error&message="
-            + urllib.parse.quote("token_response_missing_tokens")
-        )
+        return red("schwab_market_oauth=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
 
     try:
         row = db.query(UserCredential).filter(UserCredential.user_id == user_id).first()
@@ -2997,9 +3336,7 @@ def schwab_market_oauth_callback(
             db.rollback()
         except Exception:
             pass
-        LOG.exception(
-            "schwab_market_oauth_callback: failed to persist tokens for user_id=%s", user_id
-        )
+        LOG.exception("schwab_market_oauth_callback: failed to persist tokens for user_id=%s", user_id)
         safe_error = safe_exception_message(exc, fallback="token_storage_failed")
         return red("schwab_market_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
 
