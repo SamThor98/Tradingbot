@@ -111,6 +111,28 @@ def test_execution_drag_by_condition() -> None:
     assert drag["elevated"]["samples"] == 2
 
 
+def test_execution_drag_preserves_realized_zero_slippage() -> None:
+    # A perfect fill (realized 0.0) must NOT fall through to the expected estimate.
+    pkt = {
+        "volatility_state": "low",
+        "expected_slippage_bps": 25.0,
+        "outcome": {"label": "win", "realized_slippage_bps": 0.0},
+    }
+    drag = trade_review.execution_drag_by_condition([pkt])
+    assert drag["low"]["avg_slippage_bps"] == 0.0  # not 25.0
+    assert drag["low"]["samples"] == 1
+
+
+def test_execution_drag_uses_expected_only_when_realized_missing() -> None:
+    pkt = {
+        "volatility_state": "low",
+        "expected_slippage_bps": 25.0,
+        "outcome": {"label": "win"},  # no realized
+    }
+    drag = trade_review.execution_drag_by_condition([pkt])
+    assert drag["low"]["avg_slippage_bps"] == 25.0
+
+
 def test_weekly_report_coverage() -> None:
     packets = [_packet("bullish", "a", "low", 70, label="win"), _packet("bullish", "a", "low", 70, label="pending")]
     rep = trade_review.weekly_report(packets)

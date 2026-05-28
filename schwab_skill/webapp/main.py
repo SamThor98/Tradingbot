@@ -2369,9 +2369,12 @@ def cockpit_order_intent_preview(payload: CreatePendingTrade) -> ApiResponse:
         bid = ask = None
         quote_age_sec = None
         try:
+            from data_health import parse_quote_age_seconds
+
             auth = DualSchwabAuth(skill_dir=SKILL_DIR)
             quote = get_current_quote(symbol, auth=auth, skill_dir=SKILL_DIR)
             bid, ask = _extract_bid_ask(quote)
+            quote_age_sec = parse_quote_age_seconds(quote)
         except Exception:
             quote = None
 

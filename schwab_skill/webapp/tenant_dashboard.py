@@ -1790,17 +1790,27 @@ def tenant_cockpit_order_intent_preview(
                     signal = parsed
 
         bid = ask = None
+        quote_age_sec = None
         if user_has_account_session(db, user.id):
             try:
+                from data_health import parse_quote_age_seconds
+
                 with tenant_skill_dir(db, user.id) as skill_dir:
                     with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
                         quote = get_current_quote(symbol, auth=auth, skill_dir=skill_dir)
                         bid, ask = _cockpit_extract_bid_ask(quote)
+                        quote_age_sec = parse_quote_age_seconds(quote)
             except Exception:
                 bid = ask = None
 
         preview = cockpit_service.build_order_intent_preview(
-            ticker=symbol, qty=payload.qty, price=payload.price, signal=signal, bid=bid, ask=ask
+            ticker=symbol,
+            qty=payload.qty,
+            price=payload.price,
+            signal=signal,
+            bid=bid,
+            ask=ask,
+            quote_age_sec=quote_age_sec,
         )
         return _ok(preview)
     except Exception as exc:

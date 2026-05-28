@@ -102,11 +102,17 @@ class ExecutionProvider:
         elif isinstance(res.get("_execution_quality_reprice"), list):
             reprice_count = len(res["_execution_quality_reprice"])
 
+        # Preserve a realized 0.0 (perfect fill); only fall back to the estimate
+        # when no realized measurement exists (None), not when it is falsy.
+        realized_slip = eq.get("realized_slippage_bps")
+        if realized_slip is None:
+            realized_slip = eq.get("slippage_bps")
+        if realized_slip is None:
+            realized_slip = eq.get("expected_slippage_bps")
+
         quality = ExecutionQuality(
             expected_price=_f(eq.get("expected_price") or res.get("expected_price")),
-            realized_slippage_bps=_f(
-                eq.get("realized_slippage_bps") or eq.get("slippage_bps") or eq.get("expected_slippage_bps")
-            ),
+            realized_slippage_bps=_f(realized_slip),
             spread_bps_at_submit=_f(eq.get("spread_bps") or eq.get("spread_bps_at_submit")),
             reprice_count=reprice_count,
             latency_ms=_f(eq.get("latency_ms")),

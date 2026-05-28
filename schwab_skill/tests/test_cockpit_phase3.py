@@ -117,6 +117,25 @@ def test_execution_provider_maps_policy_and_reprice() -> None:
     assert state.quality.realized_slippage_bps == 12.0  # falls back to expected when no realized
 
 
+def test_execution_provider_preserves_realized_zero_slippage() -> None:
+    # Realized 0.0 (perfect fill) must be kept, not replaced by the expected estimate.
+    state = ExecutionProvider.from_order_result(
+        {
+            "ticker": "AAPL",
+            "status": "filled",
+            "_execution_quality": {"realized_slippage_bps": 0.0, "expected_slippage_bps": 18.0},
+        }
+    )
+    assert state.quality.realized_slippage_bps == 0.0
+
+
+def test_execution_provider_falls_back_to_expected_when_realized_missing() -> None:
+    state = ExecutionProvider.from_order_result(
+        {"ticker": "AAPL", "status": "filled", "_execution_quality": {"expected_slippage_bps": 18.0}}
+    )
+    assert state.quality.realized_slippage_bps == 18.0
+
+
 def test_build_execution_quality_attribution() -> None:
     blotter = [
         {

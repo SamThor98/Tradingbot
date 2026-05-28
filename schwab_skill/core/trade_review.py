@@ -89,7 +89,10 @@ def execution_drag_by_condition(packets: list[dict[str, Any]]) -> dict[str, Any]
     groups: dict[str, list[float]] = {}
     for p in packets:
         cond = str(p.get("volatility_state") or "unknown")
-        slip = _f((p.get("outcome") or {}).get("realized_slippage_bps")) or _f(p.get("expected_slippage_bps"))
+        # Preserve a realized 0.0 (perfect fill); only fall back to the estimate
+        # when realized slippage is genuinely absent (None), not merely falsy.
+        realized = _f((p.get("outcome") or {}).get("realized_slippage_bps"))
+        slip = realized if realized is not None else _f(p.get("expected_slippage_bps"))
         if slip is not None:
             groups.setdefault(cond, []).append(slip)
     return {cond: {"avg_slippage_bps": _avg(xs), "samples": len(xs)} for cond, xs in groups.items()}
