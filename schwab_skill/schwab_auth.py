@@ -435,9 +435,24 @@ class DualSchwabAuth:
         self,
         skill_dir: Path | str | None = None,
         auto_refresh: bool | None = None,
+        token_dir: Path | str | None = None,
     ):
         self.skill_dir = Path(skill_dir or Path(__file__).resolve().parent)
         env = _load_env(self.skill_dir / ".env")
+
+        # Where the encrypted token files live. Defaults to ``skill_dir`` to
+        # preserve historical behaviour (and per-tenant isolation in SaaS,
+        # which constructs one ``DualSchwabAuth`` per tenant skill dir and
+        # never sets ``token_dir``/``SCHWAB_TOKEN_DIR``). The override exists so
+        # single-user deploys on ephemeral hosts (e.g. Render web instances)
+        # can point token storage at a persistent disk mount that lives
+        # *outside* the read-only source tree.
+        token_base = Path(
+            token_dir
+            or os.getenv("SCHWAB_TOKEN_DIR")
+            or env.get("SCHWAB_TOKEN_DIR")
+            or self.skill_dir
+        )
 
         account_callback = (os.getenv("SCHWAB_CALLBACK_URL") or env.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1").strip()
         market_callback = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or env.get("SCHWAB_MARKET_CALLBACK_URL") or account_callback).strip()
@@ -452,7 +467,7 @@ class DualSchwabAuth:
             client_id=market_key,
             client_secret=market_secret,
             redirect_uri=market_callback,
-            token_path=self.skill_dir / "tokens_market.enc",
+            token_path=token_base / "tokens_market.enc",
             skill_dir=self.skill_dir,
             auto_refresh=auto_refresh,
         )
@@ -461,7 +476,7 @@ class DualSchwabAuth:
             client_id=account_key,
             client_secret=account_secret,
             redirect_uri=account_callback,
-            token_path=self.skill_dir / "tokens_account.enc",
+            token_path=token_base / "tokens_account.enc",
             skill_dir=self.skill_dir,
             auto_refresh=auto_refresh,
         )

@@ -96,8 +96,13 @@ EXPERIMENT_REGISTRY_PATH = VALIDATION_ARTIFACT_DIR / "experiment_registry.jsonl"
 BACKTEST_RESULTS_PATH = SKILL_DIR / ".backtest_results.json"
 TRADE_OUTCOMES_PATH = SKILL_DIR / ".trade_outcomes.json"
 EXECUTION_METRICS_PATH = SKILL_DIR / "execution_safety_metrics.json"
-TOKENS_MARKET_PATH = SKILL_DIR / "tokens_market.enc"
-TOKENS_ACCOUNT_PATH = SKILL_DIR / "tokens_account.enc"
+# Token files default to the source dir, but honour SCHWAB_TOKEN_DIR so a
+# single-user deploy on an ephemeral host (e.g. a Render web instance) can
+# persist tokens on a mounted disk outside the read-only source tree. Must
+# match the resolution in schwab_auth.DualSchwabAuth so reads and writes agree.
+TOKEN_DIR = Path((os.getenv("SCHWAB_TOKEN_DIR") or "").strip() or SKILL_DIR)
+TOKENS_MARKET_PATH = TOKEN_DIR / "tokens_market.enc"
+TOKENS_ACCOUNT_PATH = TOKEN_DIR / "tokens_account.enc"
 ONBOARDING_TARGET_MINUTES = 20
 DEFAULT_AUTOMATION_OPT_IN = False
 DEFAULT_UI_MODE = "standard"
