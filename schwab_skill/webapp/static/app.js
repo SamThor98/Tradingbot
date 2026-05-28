@@ -3241,14 +3241,12 @@ function renderSchwabTokenHealth(health) {
 
 async function refreshStatus() {
   const saasMode = !!state.publicConfig?.saas_mode;
-  // In SaaS mode the Schwab quote probe inside /api/status already populates
-  // status.api_health (quote_ok + quote_health). Calling /api/health/deep on
-  // top would trigger a SECOND probe per dashboard refresh, doubling Schwab
-  // load and racing on the rotating refresh token. Synthesize deepRes from
-  // the status payload when available. If api_health is missing (mixed-version
-  // deployments), fall back to /api/health/deep to avoid false "Degraded"
-  // state in the health ribbon. (Local mode keeps the legacy split because
-  // /api/health/deep there also surfaces server-wide metrics counters.)
+  // /api/status is now network-free: it returns token *presence* only and does
+  // NOT run a live Schwab quote probe (that probe refreshed per-tenant tokens
+  // and raced the scan worker on Schwab's single-use refresh token). Live quote
+  // health comes from /api/health/deep (server-side cached). Older servers may
+  // still embed quote_ok/quote_health in status.api_health — if so, reuse it to
+  // avoid a redundant probe; otherwise fetch /api/health/deep.
   const statusRes = await api.get("/api/status");
   let deepRes;
   if (saasMode) {
@@ -3256,9 +3254,7 @@ async function refreshStatus() {
       const ah = statusRes.data?.api_health || {};
       const hasEmbeddedApiHealth =
         Object.prototype.hasOwnProperty.call(ah, "quote_ok") ||
-        Object.prototype.hasOwnProperty.call(ah, "quote_health") ||
-        Object.prototype.hasOwnProperty.call(ah, "market_token_ok") ||
-        Object.prototype.hasOwnProperty.call(ah, "account_token_ok");
+        Object.prototype.hasOwnProperty.call(ah, "quote_health");
       if (hasEmbeddedApiHealth) {
         deepRes = {
           ok: true,

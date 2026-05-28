@@ -158,6 +158,28 @@ def write_encrypted_token_file(token_path: Path, tokens: dict, client_secret: st
         f.write(_encrypt(_stamp_refresh_at(tokens), key))
 
 
+def read_encrypted_token_file(token_path: Path, client_secret: str) -> dict | None:
+    """Read a token payload written by ``write_encrypted_token_file``/SchwabSession.
+
+    Returns the decrypted token dict, or ``None`` if the file is missing or
+    cannot be decrypted. Used by SaaS workers to persist refreshed tokens back
+    to the database after an operation (tokens are refreshed in-process and
+    written to the per-tenant skill dir; this reads them back out).
+    """
+    token_path = Path(token_path)
+    if not token_path.is_file():
+        return None
+    key = _get_encryption_key(client_secret)
+    try:
+        with open(token_path, "rb") as f:
+            data = _decrypt(f.read(), key)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or "access_token" not in data:
+        return None
+    return data
+
+
 def _decrypt(encrypted: bytes, key: bytes) -> dict | None:
     try:
         return json.loads(Fernet(key).decrypt(encrypted).decode())

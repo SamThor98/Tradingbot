@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 import struct
+import threading
 import time
 import urllib.parse
 import uuid
@@ -123,7 +124,11 @@ from .security import (
     require_paid_entitlement,
     utcnow_iso,
 )
-from .tenant_runtime import tenant_skill_dir, user_has_account_session
+from .tenant_runtime import (
+    tenant_skill_dir,
+    user_can_materialize_for_scan,
+    user_has_account_session,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -514,7 +519,89 @@ def _saas_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dic
     )
 
 
+def _status_probe_ttl_seconds() -> float:
+    """Cache TTL (seconds) for the per-user Schwab health probe in /api/status.
+
+    The dashboard polls /api/status continuously (and especially hard during a
+    scan). Without caching, every poll fires a *live* blocking Schwab quote
+    request (``get_current_quote_with_status``, up to 5 retries / 60s backoff).
+    On a single-worker web instance those blocking probes pile up, exhaust the
+    request threadpool, and Render's proxy returns a non-JSON 502. A short TTL
+    collapses concurrent/scan-time polls onto one recent probe result.
+    Set to 0 to disable caching.
+    """
+    raw = (os.getenv("TENANT_STATUS_PROBE_TTL_SECONDS") or "30").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 30.0
+
+
+# Per-user cache of the (expensive) Schwab health snapshot. Keyed by user_id ->
+# (expires_at_monotonic, snapshot_dict). Guarded by a lock so concurrent polls
+# on the threadpool share a single in-flight result window.
+_health_snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_health_snapshot_cache_lock = threading.Lock()
+
+
+def _invalidate_health_snapshot(user_id: str) -> None:
+    """Drop any cached health snapshot for ``user_id``.
+
+    Call after a Schwab link/unlink so the next /api/status poll recomputes a
+    fresh probe instead of serving a stale (e.g. pre-link "Disconnected") result
+    for up to the cache TTL.
+    """
+    with _health_snapshot_cache_lock:
+        _health_snapshot_cache.pop(user_id, None)
+
+
 def _tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[str, Any]:
+    """Cached wrapper around the live Schwab health probe.
+
+    Reuses a recent probe result within ``TENANT_STATUS_PROBE_TTL_SECONDS`` to
+    keep the frequently-polled /api/status endpoint cheap and non-blocking.
+    """
+    ttl = _status_probe_ttl_seconds()
+    if ttl <= 0:
+        return _compute_tenant_api_health_snapshot(db, user_id)
+
+    now = time.monotonic()
+    with _health_snapshot_cache_lock:
+        cached = _health_snapshot_cache.get(user_id)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
+    snapshot = _compute_tenant_api_health_snapshot(db, user_id)
+
+    with _health_snapshot_cache_lock:
+        _health_snapshot_cache[user_id] = (time.monotonic() + ttl, snapshot)
+    return snapshot
+
+
+def _tenant_token_presence(db: OrmSession, user_id: str) -> dict[str, Any]:
+    """Pure-DB token presence read for the polled /api/status endpoint.
+
+    Deliberately performs NO Schwab network call (no quote probe, no token
+    refresh). The web process must not authenticate to Schwab on the polled
+    status path: doing so refreshes per-tenant tokens that the scan worker is
+    also using, and the two processes race on Schwab's single-use refresh token
+    (``400 unsupported_token_type``), interrupting scans and market-data loads.
+    Live quote health lives in /api/health/deep instead.
+    """
+    linked = user_has_account_session(db, user_id)
+    market_ok = bool(user_can_materialize_for_scan(db, user_id)[0]) if linked else False
+    return {
+        "schwab_linked": linked,
+        "market_token_ok": market_ok,
+        "account_token_ok": linked,
+        # quote_ok/quote_health intentionally omitted — the frontend resolves
+        # live quote health from /api/health/deep (cached) so routine status
+        # polling stays network-free.
+        "probe": "deferred",
+    }
+
+
+def _compute_tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[str, Any]:
     linked = user_has_account_session(db, user_id)
     market_ok = account_ok = quote_ok = False
     qmeta: dict[str, Any] = {}
@@ -1466,7 +1553,10 @@ def _text_to_simple_pdf_sd(text: str) -> bytes:
 def tenant_status(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
     try:
         checked_at = datetime.now(timezone.utc).isoformat()
-        snap = _tenant_api_health_snapshot(db, user.id)
+        # Pure-DB presence read: no live Schwab probe on the polled status path
+        # (live quote health is served by /api/health/deep). This keeps the web
+        # process from racing the scan worker on per-tenant Schwab tokens.
+        snap = _tenant_token_presence(db, user.id)
         market_token_ok = bool(snap.get("market_token_ok"))
         account_token_ok = bool(snap.get("account_token_ok"))
         last_scan = _load_state(
@@ -3261,6 +3351,9 @@ def schwab_oauth_callback(
             "wizard_required": False,
         },
     )
+    # Freshly linked account: drop the cached health snapshot so the next
+    # /api/status poll reflects the new tokens immediately.
+    _invalidate_health_snapshot(user_id)
     log_audit(
         db,
         action="oauth_schwab_callback",
@@ -3350,6 +3443,9 @@ def schwab_market_oauth_callback(
         safe_error = safe_exception_message(exc, fallback="token_storage_failed")
         return red("schwab_market_oauth=error&message=" + urllib.parse.quote(safe_error[:180]))
 
+    # Freshly linked market tokens: drop the cached health snapshot so quote_ok
+    # in /api/status reflects the new tokens on the next poll.
+    _invalidate_health_snapshot(user_id)
     log_audit(
         db,
         action="oauth_schwab_market_callback",

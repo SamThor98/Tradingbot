@@ -18,10 +18,10 @@ from typing import Any, Iterator
 
 from sqlalchemy.orm import Session
 
-from schwab_auth import write_encrypted_token_file
+from schwab_auth import read_encrypted_token_file, write_encrypted_token_file
 
 from .models import User, UserCredential
-from .security import decrypt_secret
+from .security import decrypt_secret, encrypt_secret
 
 LOG = logging.getLogger(__name__)
 
@@ -330,6 +330,86 @@ def materialize_tenant_skill_dir(db: Session, user_id: str, skill_dir: Path) -> 
             )
 
 
+def _refresh_at_value(tokens: dict[str, Any] | None) -> str:
+    """Comparable `_last_refresh_at` stamp (ISO string) for freshness ordering."""
+    if not isinstance(tokens, dict):
+        return ""
+    return str(tokens.get("_last_refresh_at") or "")
+
+
+def _tokens_refreshed(fresh: dict[str, Any], current: dict[str, Any] | None) -> bool:
+    """True if ``fresh`` (read from the skill dir) is a real refresh of ``current``.
+
+    Change is detected by token *value* (the access/refresh token actually
+    rotated), not by the `_last_refresh_at` stamp — DB payloads written by the
+    OAuth callback are unstamped, so a stamp-only comparison would falsely fire
+    on every operation. The stamp is then used only as an anti-regression guard
+    so a slower process cannot overwrite a newer token written concurrently.
+    """
+    cur = current or {}
+    value_changed = (
+        fresh.get("access_token") != cur.get("access_token")
+        or fresh.get("refresh_token") != cur.get("refresh_token")
+    )
+    if not value_changed:
+        return False
+    # Never regress to an older token than what's already stored.
+    return _refresh_at_value(fresh) >= _refresh_at_value(cur)
+
+
+def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> None:
+    """Write Schwab tokens refreshed during an operation back into the DB.
+
+    Tokens are materialized into an ephemeral per-tenant skill dir; any refresh
+    that happens mid-operation (e.g. on a 401 during market-data loading) is
+    written to that dir by ``SchwabSession`` and would otherwise be lost when
+    the dir is deleted — leaving the DB (the cross-process source of truth) with
+    a stale refresh token that eventually fails with ``400 unsupported_token_type``.
+
+    A ``_last_refresh_at`` freshness guard ensures a slower/older operation can
+    never overwrite a newer token written by a concurrent process. The market
+    token is only persisted for tenants that already use per-user market OAuth
+    (never for those on the shared platform-market fallback).
+    """
+    try:
+        row = db.query(UserCredential).filter(UserCredential.user_id == user_id).first()
+        if not row:
+            return
+
+        account_secret = (os.environ.get("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+        market_secret = (os.environ.get("SCHWAB_MARKET_APP_SECRET") or "").strip()
+        had_user_market = bool((row.market_token_payload_enc or "").strip())
+        changed = False
+
+        if account_secret:
+            fresh = read_encrypted_token_file(Path(skill_dir) / "tokens_account.enc", account_secret)
+            if fresh and fresh.get("access_token") and fresh.get("refresh_token"):
+                current = _account_token_dict(row)
+                if _tokens_refreshed(fresh, current):
+                    row.account_token_payload_enc = encrypt_secret(json.dumps(fresh, default=str))
+                    row.access_token_enc = encrypt_secret(str(fresh["access_token"]))
+                    row.refresh_token_enc = encrypt_secret(str(fresh["refresh_token"]))
+                    row.token_type = (str(fresh.get("token_type") or "Bearer").strip() or "Bearer")
+                    changed = True
+
+        if market_secret and had_user_market:
+            fresh_m = read_encrypted_token_file(Path(skill_dir) / "tokens_market.enc", market_secret)
+            if fresh_m and fresh_m.get("access_token") and fresh_m.get("refresh_token"):
+                current_m = _market_token_dict(row)
+                if _tokens_refreshed(fresh_m, current_m):
+                    row.market_token_payload_enc = encrypt_secret(json.dumps(fresh_m, default=str))
+                    changed = True
+
+        if changed:
+            db.commit()
+    except Exception as exc:
+        LOG.warning("persist_tenant_tokens_back failed for user_id=%s: %s", user_id, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 @contextmanager
 def tenant_skill_dir(db: Session, user_id: str) -> Iterator[Path]:
     root = Path(tempfile.mkdtemp(prefix=f"tb_saas_{user_id[:24]}_"))
@@ -337,4 +417,7 @@ def tenant_skill_dir(db: Session, user_id: str) -> Iterator[Path]:
         materialize_tenant_skill_dir(db, user_id, root)
         yield root
     finally:
+        # Persist any in-operation token refresh back to the DB before the
+        # ephemeral dir is deleted, so the shared source of truth stays fresh.
+        persist_tenant_tokens_back(db, user_id, root)
         shutil.rmtree(root, ignore_errors=True)
