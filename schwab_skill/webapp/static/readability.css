@@ -10,23 +10,26 @@
 ============================================================ */
 
 body[data-theme="editorial"] {
-  --ol-bg: #f6f2ea;
-  --ol-surface: #fdfaf4;
-  --ol-surface-soft: #f5efe3;
-  --ol-border: rgba(26, 26, 26, 0.16);
-  --ol-border-strong: rgba(26, 26, 26, 0.27);
-  --ol-text: #1f1f1f;
-  --ol-text-soft: #2f2a25;
-  --ol-muted: #45403a;
-  --ol-muted-soft: #666059;
-  --ol-accent: #6f5538;
-  --ol-accent-soft: rgba(111, 85, 56, 0.15);
-  --ol-ok: #2f6b4f;
+  /* Old Logan Capital canonical palette — cream / forest / gold */
+  --ol-bg: #f5f1e8;
+  --ol-surface: #fffefb;
+  --ol-surface-soft: #ebe5d6;
+  --ol-border: rgba(26, 26, 26, 0.12);
+  --ol-border-strong: rgba(26, 26, 26, 0.22);
+  --ol-text: #1a1a1a;
+  --ol-text-soft: #2a2a2a;
+  --ol-muted: #5a5a5a;
+  --ol-muted-soft: #6e6862;
+  --ol-accent: #1a3a2e; /* forest green — primary accent */
+  --ol-accent-2: #2d5a4a; /* forest light */
+  --ol-gold: #c9a962; /* secondary accent */
+  --ol-accent-soft: rgba(26, 58, 46, 0.12);
+  --ol-ok: #2d5a4a;
   --ol-warn: #8a5c1f;
-  --ol-bad: #9e3f36;
+  --ol-bad: #c94949;
   background: var(--ol-bg) !important;
   color: var(--ol-text) !important;
-  font-family: "Manrope", "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  font-family: "DM Sans", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif !important;
   font-size: 16px;
   line-height: 1.55;
 }
@@ -70,11 +73,11 @@ body[data-theme="editorial"] [id$="Status"] {
 }
 
 body[data-theme="editorial"] a {
-  color: #503d2a;
+  color: var(--ol-accent);
 }
 
 body[data-theme="editorial"] a:hover {
-  color: #322518;
+  color: #0f241b;
 }
 
 body[data-theme="editorial"] h1,
@@ -286,12 +289,12 @@ body[data-theme="editorial"] textarea::placeholder {
 /* Operations first: scan -> evaluate -> approve */
 body[data-theme="editorial"] .workflow-primary-heading {
   color: var(--ol-accent) !important;
-  font-family: "Manrope", sans-serif !important;
-  font-size: 0.78rem !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.74rem !important;
   font-style: normal !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.18em;
 }
 
 body[data-theme="editorial"] .operate-kanban {
@@ -301,7 +304,7 @@ body[data-theme="editorial"] .operate-kanban {
 }
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane {
-  min-height: clamp(510px, 55vh, 760px);
+  min-height: clamp(320px, 42vh, 560px);
   padding: 14px 14px 16px !important;
 }
 
@@ -352,8 +355,8 @@ body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
 /* Near-miss panel readability */
 body[data-theme="editorial"] .scan-near-miss-panel,
 body[data-theme="editorial"] #nearMissPanel {
-  border: 1px solid rgba(111, 85, 56, 0.34) !important;
-  background: #f7efe1 !important;
+  border: 1px solid rgba(26, 58, 46, 0.28) !important;
+  background: #f3efe2 !important;
   color: #231f1b !important;
   padding: 10px 12px !important;
 }
@@ -386,8 +389,8 @@ body[data-theme="editorial"] .pill,
 body[data-theme="editorial"] .chip,
 body[data-theme="editorial"] .health-badge {
   background: var(--ol-surface-soft) !important;
-  color: #3f3428 !important;
-  border: 1px solid rgba(111, 85, 56, 0.32) !important;
+  color: #2a2a2a !important;
+  border: 1px solid rgba(26, 58, 46, 0.24) !important;
   font-size: 0.8rem !important;
 }
 
@@ -406,8 +409,8 @@ body[data-theme="editorial"] .health-badge.bg-red-900 {
 /* Action center readability: high contrast by semantic state */
 body[data-theme="editorial"] .action-center,
 body[data-theme="editorial"] #actionCenter {
-  border: 1px solid rgba(47, 42, 37, 0.22) !important;
-  border-left: 4px solid #5e4a34 !important;
+  border: 1px solid rgba(47, 42, 37, 0.18) !important;
+  border-left: 4px solid var(--ol-accent) !important;
   background: #fbf6ed !important;
   color: #1d1a17 !important;
 }
@@ -688,9 +691,9 @@ body[data-theme="editorial"] .code-block {
 body[data-theme="editorial"] #scanSection .chip,
 body[data-theme="editorial"] #scanSection .pill,
 body[data-theme="editorial"] #scanSection .scan-blockers-chip {
-  background: #f1e8d9 !important;
-  color: #3f3428 !important;
-  border-color: rgba(111, 85, 56, 0.35) !important;
+  background: #ece5d5 !important;
+  color: #2a2a2a !important;
+  border-color: rgba(26, 58, 46, 0.26) !important;
 }
 
 body[data-theme="editorial"] .warn,
@@ -730,5 +733,322 @@ body[data-theme="editorial"] :focus-visible {
     border-left: 0 !important;
     border-top: 1px solid var(--ol-border) !important;
   }
+}
+
+/* ============================================================
+   Old Logan editorial finish — softened geometry, forest/gold
+   accents, mono eyebrows, frosted cream chrome.
+============================================================ */
+body[data-theme="editorial"] {
+  --radius-card: 8px;
+  --radius-pill: 6px;
+}
+
+/* Frosted cream topbar (marketing nav) */
+body[data-theme="editorial"] .app-topbar {
+  background: rgba(245, 241, 232, 0.98) !important;
+  backdrop-filter: saturate(1.05) blur(10px);
+  -webkit-backdrop-filter: saturate(1.05) blur(10px);
+}
+
+/* Softened-rectangular surfaces */
+body[data-theme="editorial"] .card,
+body[data-theme="editorial"] .mode-header,
+body[data-theme="editorial"] #workflowPrimary,
+body[data-theme="editorial"] .operate-kanban,
+body[data-theme="editorial"] .operate-kanban .kanban-lane,
+body[data-theme="editorial"] .panel-disclosure,
+body[data-theme="editorial"] .health-tile,
+body[data-theme="editorial"] .stats .stat,
+body[data-theme="editorial"] .task-card,
+body[data-theme="editorial"] #toolsSection .tool-card,
+body[data-theme="editorial"] .mgmt-card,
+body[data-theme="editorial"] #decisionDashboardCard,
+body[data-theme="editorial"] #statusDetailsPanel,
+body[data-theme="editorial"] #onboardingSection,
+body[data-theme="editorial"] #settingsSection {
+  border-radius: 8px !important;
+}
+
+body[data-theme="editorial"] .btn,
+body[data-theme="editorial"] input,
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea {
+  border-radius: 6px !important;
+}
+
+body[data-theme="editorial"] .pill,
+body[data-theme="editorial"] .chip,
+body[data-theme="editorial"] .health-badge {
+  border-radius: 4px !important;
+}
+
+/* Primary CTA: ink default, forest-green hover (marketing nav-cta) */
+body[data-theme="editorial"] .btn.primary:hover,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary:hover {
+  background: var(--ol-accent) !important;
+  border-color: var(--ol-accent) !important;
+  color: #f5f1e8 !important;
+}
+
+/* Active tab: ink fill with a gold underline cue */
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--ol-gold) !important;
+}
+
+/* Mono uppercase eyebrow / caption labels (institutional voice) */
+body[data-theme="editorial"] .workspace-eyebrow,
+body[data-theme="editorial"] .hero-kpi-label,
+body[data-theme="editorial"] .stat-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+}
+
+/* Forest step markers in the operations kanban */
+body[data-theme="editorial"] .kanban-lane-step {
+  background: var(--ol-accent) !important;
+  color: #f5f1e8 !important;
+}
+
+/* Workflow-strip lanes (research/diagnostics/settings) on cream */
+body[data-theme="editorial"] .research-lane,
+body[data-theme="editorial"] .diagnostics-lane,
+body[data-theme="editorial"] .settings-lane,
+body[data-theme="editorial"] .operations-workspace-intro {
+  background: var(--ol-surface-soft) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 8px !important;
+}
+
+body[data-theme="editorial"] .research-lane h3,
+body[data-theme="editorial"] .diagnostics-lane h3,
+body[data-theme="editorial"] .settings-lane h3 {
+  color: var(--ol-text) !important;
+  font-family: "Fraunces", Georgia, serif !important;
+}
+
+body[data-theme="editorial"] .research-lane p,
+body[data-theme="editorial"] .diagnostics-lane p,
+body[data-theme="editorial"] .settings-lane p {
+  color: var(--ol-text-soft) !important;
+}
+
+/* Overlays (modals + drawers) on cream — these stayed dark in the legacy pass */
+body[data-theme="editorial"] dialog.modal,
+body[data-theme="editorial"] .trade-drawer,
+body[data-theme="editorial"] .activity-drawer-body,
+body[data-theme="editorial"] .activity-drawer-toggle {
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border-strong) !important;
+  color: var(--ol-text) !important;
+  border-radius: 8px !important;
+}
+
+body[data-theme="editorial"] dialog.modal h3,
+body[data-theme="editorial"] .trade-drawer h3 {
+  color: var(--ol-text) !important;
+  font-style: normal !important;
+  font-family: "Fraunces", Georgia, serif !important;
+}
+
+body[data-theme="editorial"] dialog.modal p,
+body[data-theme="editorial"] dialog.modal li,
+body[data-theme="editorial"] dialog.modal .muted,
+body[data-theme="editorial"] .trade-drawer p,
+body[data-theme="editorial"] .trade-drawer .muted,
+body[data-theme="editorial"] .activity-drawer-body,
+body[data-theme="editorial"] .activity-drawer-body .muted {
+  color: var(--ol-text-soft) !important;
+}
+
+body[data-theme="editorial"] dialog.modal::backdrop {
+  background: rgba(26, 26, 26, 0.42) !important;
+  backdrop-filter: blur(2px);
+}
+
+body[data-theme="editorial"] .trade-drawer-tab.active {
+  border-bottom: 2px solid var(--ol-gold) !important;
+  color: var(--ol-accent) !important;
+}
+
+/* ============================================================
+   Old Logan polish pass — editorial typographic finish
+============================================================ */
+
+/* Display headings: subtle negative tracking, a touch more presence */
+body[data-theme="editorial"] .mode-header-title,
+body[data-theme="editorial"] h1,
+body[data-theme="editorial"] h2 {
+  letter-spacing: -0.012em !important;
+}
+body[data-theme="editorial"] .mode-header-title {
+  font-weight: 700 !important;
+}
+
+/* Eyebrows: quiet forest small-caps for brand cohesion */
+body[data-theme="editorial"] .workspace-eyebrow,
+body[data-theme="editorial"] .mode-header .workspace-eyebrow {
+  color: var(--ol-accent) !important;
+}
+
+/* Mode-header accent stripe in gold; KPI numerals in serif */
+body[data-theme="editorial"] .mode-header::before {
+  background: var(--ol-gold) !important;
+}
+body[data-theme="editorial"] .mode-header-kpis .hero-kpi-value {
+  font-family: "Fraunces", Georgia, serif !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* Tab numerals: quiet, monospaced; gold on the active tab */
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-num {
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+}
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
+  color: var(--ol-gold) !important;
+}
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:not([aria-selected="true"]):hover {
+  color: var(--ol-accent) !important;
+}
+
+/* Brand wordmark: tighter editorial tracking */
+body[data-theme="editorial"] .app-topbar-brand .brand-text {
+  letter-spacing: -0.01em !important;
+}
+
+/* Smooth control transitions */
+body[data-theme="editorial"] .btn,
+body[data-theme="editorial"] .screen-switch-btn,
+body[data-theme="editorial"] a {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* A bit more air between stacked sections */
+body[data-theme="editorial"] main.container {
+  gap: 18px !important;
+}
+
+/* Editorial text selection (ink-on-cream inverse) */
+body[data-theme="editorial"] ::selection {
+  background: var(--ol-accent);
+  color: #f5f1e8;
+}
+
+/* Thin editorial scrollbars (forest on cream) */
+body[data-theme="editorial"] * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 58, 46, 0.38) transparent;
+}
+body[data-theme="editorial"] ::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+body[data-theme="editorial"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+body[data-theme="editorial"] ::-webkit-scrollbar-thumb {
+  background: rgba(26, 58, 46, 0.32);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+body[data-theme="editorial"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(26, 58, 46, 0.5);
+  background-clip: padding-box;
+}
+
+/* ============================================================
+   Old Logan polish pass 2 — data legibility + brand cohesion
+============================================================ */
+
+/* Tabular, lining numerals for ledger-style data alignment */
+body[data-theme="editorial"] .mono-nums,
+body[data-theme="editorial"] .hero-kpi-value,
+body[data-theme="editorial"] .scan-detail-stat strong,
+body[data-theme="editorial"] table tbody td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fold the "info" status into the palette (muted slate, not bright blue) */
+body[data-theme="editorial"] .action-center.info,
+body[data-theme="editorial"] #actionCenter.info {
+  background: #eef1f3 !important;
+  border-left-color: #46586a !important;
+}
+
+/* Refined disabled controls */
+body[data-theme="editorial"] .btn:disabled,
+body[data-theme="editorial"] .btn[disabled] {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+}
+
+/* In-content links: editorial underline that warms to forest on hover */
+body[data-theme="editorial"] .mode-header-lead a,
+body[data-theme="editorial"] p a,
+body[data-theme="editorial"] li a {
+  text-decoration: none;
+  border-bottom: 1px solid rgba(26, 58, 46, 0.32);
+}
+body[data-theme="editorial"] .mode-header-lead a:hover,
+body[data-theme="editorial"] p a:hover,
+body[data-theme="editorial"] li a:hover {
+  border-bottom-color: var(--ol-accent);
+}
+
+/* Section titles: subtle gold bracket accent (echoes the marketing site) */
+body[data-theme="editorial"] .section-title {
+  border-left: 3px solid var(--ol-gold) !important;
+  padding-left: 14px !important;
+}
+
+/* Mode-header anchor links warm to forest on hover */
+body[data-theme="editorial"] .mode-header-anchors a:hover {
+  color: var(--ol-accent) !important;
+}
+
+/* Semantic status chips (good / caution / blocked / info) in palette tones.
+   Scoped with #scanSection too so they beat the generic scan-chip override. */
+body[data-theme="editorial"] .pill.good,
+body[data-theme="editorial"] .chip.good,
+body[data-theme="editorial"] #scanSection .pill.good,
+body[data-theme="editorial"] #scanSection .chip.good {
+  background: rgba(45, 90, 74, 0.14) !important;
+  color: #234c39 !important;
+  border-color: rgba(45, 90, 74, 0.42) !important;
+}
+body[data-theme="editorial"] .pill.warn,
+body[data-theme="editorial"] .chip.warn,
+body[data-theme="editorial"] #scanSection .pill.warn,
+body[data-theme="editorial"] #scanSection .chip.warn {
+  background: rgba(201, 169, 98, 0.22) !important;
+  color: #6f5410 !important;
+  border-color: rgba(176, 133, 42, 0.5) !important;
+}
+body[data-theme="editorial"] .pill.bad,
+body[data-theme="editorial"] .chip.bad,
+body[data-theme="editorial"] #scanSection .pill.bad,
+body[data-theme="editorial"] #scanSection .chip.bad {
+  background: rgba(201, 73, 73, 0.14) !important;
+  color: #9e3434 !important;
+  border-color: rgba(201, 73, 73, 0.44) !important;
+}
+body[data-theme="editorial"] .pill.neutral,
+body[data-theme="editorial"] .chip.neutral,
+body[data-theme="editorial"] #scanSection .pill.neutral,
+body[data-theme="editorial"] #scanSection .chip.neutral {
+  background: rgba(70, 88, 106, 0.12) !important;
+  color: #3f4d5c !important;
+  border-color: rgba(70, 88, 106, 0.42) !important;
+}
+
+/* Kanban lanes: neutral frame with a deliberate forest left edge (ledger cue) */
+body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  border-color: var(--ol-border) !important;
+  border-left: 3px solid rgba(26, 58, 46, 0.5) !important;
 }
 

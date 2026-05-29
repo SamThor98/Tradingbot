@@ -4,24 +4,24 @@
  */
 export const AUDIT_THEME_CONFIG = {
   palette: {
-    slate950: "#020617",
-    slate900: "#0f172a",
-    slate800: "#1e293b",
-    text: "#e2e8f0",
-    muted: "#94a3b8",
-    truth: "#10b981",      // Emerald-500
-    deception: "#f43f5e",  // Rose-500
-    caution: "#f59e0b",
-    neutral: "#64748b",
-    cardGlass: "rgba(15, 23, 42, 0.58)",
-    cardBorder: "rgba(148, 163, 184, 0.24)",
+    slate950: "#fffefb",
+    slate900: "#f5f1e8",
+    slate800: "#ebe5d6",
+    text: "#1a1a1a",
+    muted: "#5a5a5a",
+    truth: "#2d5a4a",      // forest green
+    deception: "#c94949",  // signal red
+    caution: "#b0852a",    // muted gold
+    neutral: "#6e6862",
+    cardGlass: "rgba(255, 254, 251, 0.85)",
+    cardBorder: "rgba(26, 26, 26, 0.12)",
   },
   chart: {
     gauge: {
-      strong: "#10b981",
-      watch: "#f59e0b",
-      weak: "#f43f5e",
-      track: "rgba(71, 85, 105, 0.38)",
+      strong: "#2d5a4a",
+      watch: "#b0852a",
+      weak: "#c94949",
+      track: "rgba(26, 26, 26, 0.12)",
     },
     heatmap: {
       high: "heat-high", // deception/failure pressure
@@ -38,12 +38,12 @@ export const AUDIT_THEME_CONFIG = {
     },
   },
   recharts: {
-    textColor: "#e2e8f0",
-    grid: "rgba(148, 163, 184, 0.22)",
-    truthSeries: "#10b981",
-    deceptionSeries: "#f43f5e",
-    neutralSeries: "#64748b",
-    tooltipBg: "rgba(2, 6, 23, 0.92)",
+    textColor: "#1a1a1a",
+    grid: "rgba(26, 26, 26, 0.14)",
+    truthSeries: "#2d5a4a",
+    deceptionSeries: "#c94949",
+    neutralSeries: "#6e6862",
+    tooltipBg: "rgba(255, 254, 251, 0.96)",
   },
   tremor: {
     colorMap: {

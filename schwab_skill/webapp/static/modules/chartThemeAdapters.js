@@ -115,9 +115,9 @@ export function getTremorClassMap(overrides = {}) {
     },
     ui: {
       cardClassName:
-        "rounded-xl border border-slate-500/30 bg-slate-950/55 shadow-xl shadow-slate-950/40 backdrop-blur-md",
-      valueClassName: "text-slate-100",
-      metricClassName: "text-slate-300",
+        "rounded-lg border border-stone-300/60 bg-white/70 shadow-sm backdrop-blur-md",
+      valueClassName: "text-stone-900",
+      metricClassName: "text-stone-600",
       deltaPositiveColor: "emerald",
       deltaNegativeColor: "rose",
     },

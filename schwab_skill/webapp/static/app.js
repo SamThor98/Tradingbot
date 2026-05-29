@@ -264,6 +264,8 @@ const SCREEN_SECTIONS = Object.freeze({
     "scanSection",
     "scanDetailPanel",
     "pendingSection",
+    "sectorsSection",
+    "moversSection",
   ],
   research: [
     "researchWorkspaceIntro",
@@ -277,8 +279,6 @@ const SCREEN_SECTIONS = Object.freeze({
     "secCompareSection",
     "activitySection",
     "portfolioSection",
-    "sectorsSection",
-    "moversSection",
     "performanceSection",
   ],
   diagnostics: [
@@ -433,7 +433,10 @@ function renderScreenContext(mode) {
 }
 
 function maybePrimeScreenData(mode) {
-  if (mode === "settings") {
+  if (mode === "operations") {
+    void runLazyApi("sectors");
+    void runLazyApi("movers");
+  } else if (mode === "settings") {
     void runLazyApi("onboarding");
     void runLazyApi("profiles");
   } else if (mode === "diagnostics") {
@@ -441,8 +444,6 @@ function maybePrimeScreenData(mode) {
   } else if (mode === "research") {
     void runLazyApi("backtest");
     void runLazyApi("portfolio");
-    void runLazyApi("sectors");
-    void runLazyApi("movers");
     void runLazyApi("performance");
   }
 }
@@ -1492,6 +1493,16 @@ function renderDiagnostics(diag = {}) {
   const summary = buildDiagnosticsSummary(diag);
   const headerChip = document.getElementById("scanBlockersChip");
   const headerChipCount = document.getElementById("scanBlockersChipCount");
+  if (headerChip && !headerChip.dataset.wired) {
+    headerChip.dataset.wired = "1";
+    headerChip.addEventListener("click", () => {
+      const panel = document.getElementById("scanDiagnosticsPanel");
+      if (!panel) return;
+      panel.open = true;
+      headerChip.setAttribute("aria-expanded", "true");
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
   if (!summary.blockers.length) {
     const empty = document.createElement("li");
     empty.className = "empty";
@@ -1855,21 +1866,21 @@ async function renderScanDetailChart(ticker) {
   const chart = LightweightCharts.createChart(container, {
     width: getScanDetailChartWidth(container),
     height: 240,
-    layout: { background: { type: "solid", color: "transparent" }, textColor: "#9ca3b8" },
+    layout: { background: { type: "solid", color: "transparent" }, textColor: "#5a5a5a" },
     grid: {
-      vertLines: { color: "rgba(99,120,200,0.06)" },
-      horzLines: { color: "rgba(99,120,200,0.06)" },
+      vertLines: { color: "rgba(26,26,26,0.06)" },
+      horzLines: { color: "rgba(26,26,26,0.06)" },
     },
-    rightPriceScale: { borderColor: "rgba(99,120,200,0.15)" },
-    timeScale: { borderColor: "rgba(99,120,200,0.15)", timeVisible: false },
+    rightPriceScale: { borderColor: "rgba(26,26,26,0.14)" },
+    timeScale: { borderColor: "rgba(26,26,26,0.14)", timeVisible: false },
   });
   const candleSeries = chart.addCandlestickSeries({
-    upColor: "#34d399",
-    downColor: "#fb7185",
-    borderUpColor: "#34d399",
-    borderDownColor: "#fb7185",
-    wickUpColor: "#34d399",
-    wickDownColor: "#fb7185",
+    upColor: "#2d5a4a",
+    downColor: "#c94949",
+    borderUpColor: "#2d5a4a",
+    borderDownColor: "#c94949",
+    wickUpColor: "#2d5a4a",
+    wickDownColor: "#c94949",
   });
   candleSeries.setData(out.data.candles);
   chart.timeScale().fitContent();

@@ -30,8 +30,8 @@ body[data-theme="editorial"] {
   --paper-warm: #e7d9b5;
   --paper-mute: rgba(231, 217, 181, 0.62);
 
-  --gold: #c9a66b;
-  --gold-soft: rgba(201, 166, 107, 0.18);
+  --gold: #c9a962;
+  --gold-soft: rgba(201, 169, 98, 0.18);
   --positive: #7fb47a;
   --positive-soft: rgba(127, 180, 122, 0.18);
   --negative: #c25450;
@@ -39,8 +39,8 @@ body[data-theme="editorial"] {
   --warn: #d9a441;
 
   --serif: "Fraunces", "Iowan Old Style", Georgia, "Times New Roman", serif;
-  --sans: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --rule: 1px solid var(--ink-line);
   --rule-strong: 1px solid var(--ink-line-strong);
@@ -2360,11 +2360,11 @@ body[data-theme="editorial"] .table-wrap {
 
 body[data-theme="editorial"] .table-wrap table {
   width: 100%;
-  min-width: 700px;
+  min-width: 0;
 }
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane {
-  min-height: clamp(380px, 46vh, 560px);
+  min-height: clamp(320px, 40vh, 520px);
 }
 
 body[data-theme="editorial"] .toast-container {
@@ -2410,12 +2410,12 @@ body[data-theme="editorial"] #workflowPrimary {
 }
 
 body[data-theme="editorial"] .operate-kanban {
-  grid-template-columns: minmax(420px, 1.32fr) minmax(360px, 1fr) minmax(360px, 1.05fr);
-  gap: clamp(14px, 1.6vw, 26px);
+  grid-template-columns: minmax(360px, 1.3fr) minmax(320px, 1fr) minmax(320px, 1.05fr);
+  gap: clamp(14px, 1.5vw, 24px);
 }
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane {
-  min-height: clamp(500px, 56vh, 760px);
+  min-height: clamp(320px, 42vh, 560px);
   padding: 14px 14px 16px;
 }
 
@@ -2452,24 +2452,28 @@ body[data-theme="editorial"] .operate-kanban #pendingSection .task-board {
    This single block replaces layered v6-v12 overrides.
 ============================================================ */
 body[data-theme="editorial"] {
-  --ui-bg: #f6f2ea;
-  --ui-surface: #fcfaf5;
-  --ui-surface-soft: #f4eee2;
-  --ui-border: rgba(22, 22, 22, 0.14);
-  --ui-border-strong: rgba(22, 22, 22, 0.22);
-  --ui-text: #202020;
-  --ui-muted: #585858;
-  --ui-accent: #7b6040;
+  /* Aliased to the canonical Old Logan palette (see readability.css) */
+  --ui-bg: #f5f1e8;
+  --ui-surface: #fffefb;
+  --ui-surface-soft: #ebe5d6;
+  --ui-border: rgba(26, 26, 26, 0.12);
+  --ui-border-strong: rgba(26, 26, 26, 0.22);
+  --ui-text: #1a1a1a;
+  --ui-muted: #5a5a5a;
+  --ui-accent: #1a3a2e; /* forest green — primary accent */
+  --ui-gold: #c9a962; /* secondary accent */
   background: var(--ui-bg) !important;
   color: var(--ui-text) !important;
 }
 
 body[data-theme="editorial"] main.container {
-  width: min(100%, 1320px);
-  max-width: 1320px;
-  margin: 18px auto 54px !important;
-  padding-left: clamp(16px, 2.2vw, 26px);
-  padding-right: clamp(16px, 2.2vw, 26px);
+  /* Fit to Chrome: full-width fluid, no centered reading cap */
+  width: 100%;
+  max-width: none;
+  margin: 14px auto 28px !important;
+  padding-left: clamp(16px, 2.4vw, 40px);
+  padding-right: clamp(16px, 2.4vw, 40px);
+  padding-bottom: 48px !important;
   gap: 14px !important;
 }
 
@@ -2638,7 +2642,7 @@ body[data-theme="editorial"] input:focus,
 body[data-theme="editorial"] select:focus,
 body[data-theme="editorial"] textarea:focus {
   border-color: var(--ui-accent) !important;
-  box-shadow: 0 0 0 1px rgba(123, 96, 64, 0.2) !important;
+  box-shadow: 0 0 0 1px rgba(26, 58, 46, 0.2) !important;
 }
 
 body[data-theme="editorial"] table thead th {
@@ -2661,9 +2665,9 @@ body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
 body[data-theme="editorial"] .pill,
 body[data-theme="editorial"] .chip,
 body[data-theme="editorial"] .health-badge {
-  background: #f4ecdf !important;
-  color: #5a4630 !important;
-  border: 1px solid rgba(123, 96, 64, 0.28) !important;
+  background: #ece5d5 !important;
+  color: #2a2a2a !important;
+  border: 1px solid rgba(26, 58, 46, 0.24) !important;
 }
 
 body[data-theme="editorial"] #pendingSection,
@@ -2740,6 +2744,6 @@ body[data-theme="editorial"] .site-footer {
 }
 
 body[data-theme="editorial"] .site-footer a {
-  color: #5f4a31 !important;
-  border-bottom-color: rgba(95, 74, 49, 0.3) !important;
+  color: var(--ui-accent) !important;
+  border-bottom-color: rgba(26, 58, 46, 0.3) !important;
 }

@@ -4,20 +4,21 @@
   --bg-elevated: #fdfaf4;
   --panel: rgba(253, 250, 244, 0.94);
   --panel-border: rgba(26, 26, 26, 0.16);
-  --text: #1f1f1f;
-  --muted: #55504a;
-  --accent: #6f5538;
-  --accent-2: #8a6a45;
+  --text: #1a1a1a;
+  --muted: #5a5a5a;
+  --accent: #1a3a2e;
+  --accent-2: #2d5a4a;
+  --gold: #c9a962;
   --good: #2f6b4f;
-  --bad: #9e3f36;
+  --bad: #c94949;
   --warn: #8a5c1f;
   --ring-good: #2f6b4f;
   --ring-warn: #8a5c1f;
-  --ring-bad: #9e3f36;
+  --ring-bad: #c94949;
   --ring-neutral: #6c6258;
-  --hero-glow: rgba(111, 85, 56, 0.08);
+  --hero-glow: rgba(26, 58, 46, 0.08);
   --font-sans: "DM Sans", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --sticky-offset: 12px;
@@ -3925,9 +3926,13 @@ body.ui-screen-research #settingsSection,
 body.ui-screen-research #settingsWorkflowStrip,
 body.ui-screen-research #diagnosticsWorkflowStrip,
 body.ui-screen-research #statusDetailsPanel,
+body.ui-screen-research #workflowPrimary,
 body.ui-screen-research #scanSection,
 body.ui-screen-research #scanDetailPanel,
-body.ui-screen-research #sectorsSection {
+body.ui-screen-research #pendingSection,
+body.ui-screen-research #sectorsSection,
+body.ui-screen-research #moversSection,
+body.ui-screen-research #calibrationSection {
   display: none !important;
 }
 
@@ -3944,11 +3949,7 @@ body.ui-screen-research #activitySection {
   display: none !important;
 }
 
-/* Keep calibration visible on Research so the page uses available space with
-   substantive analysis tooling rather than blank gutters. */
-body.ui-screen-research #calibrationSection {
-  display: block !important;
-}
+/* Calibration is a Diagnostics tool; it no longer leaks onto Research. */
 
 body.ui-screen-research #workflowPrimary .workflow-primary-heading,
 body.ui-screen-research #workflowPrimary .workflow-strapline {
@@ -3989,6 +3990,7 @@ body.ui-screen-settings #recoverySection,
 body.ui-screen-settings #statusDetailsPanel,
 body.ui-screen-settings #portfolioSection,
 body.ui-screen-settings #sectorsSection,
+body.ui-screen-settings #moversSection,
 body.ui-screen-settings #performanceSection,
 body.ui-screen-settings #learningSection,
 body.ui-screen-settings #backtestSection,
@@ -4032,7 +4034,9 @@ body.ui-standard .scan-col-advanced {
 body.ui-simple .layout-onboarding-presets {
   grid-template-columns: 1fr;
 }
-body.ui-simple #onboardingSection {
+/* Keep onboarding visible in Simple view, but only on its Settings home so it
+   does not leak onto Operations/Research/Diagnostics. */
+body.ui-simple.ui-screen-settings #onboardingSection {
   display: block !important;
 }
 
