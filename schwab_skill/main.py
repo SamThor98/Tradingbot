@@ -441,6 +441,15 @@ def run_scheduler() -> None:
         key = now.day * 10000 + now.hour * 60 + now.minute
         if now.weekday() == 6 and now.hour == 18 and now.minute == 0 and key != _last_weekly_minute:
             _last_weekly_minute = key
+            # Resolve matured decision packets (cockpit learning loop) before the
+            # digest so weekly diagnostics reflect newly-closed outcomes.
+            try:
+                from core.outcome_backfill import run_local_backfill
+
+                bf = run_local_backfill(SKILL_DIR, horizon_days=10)
+                log.info("Decision-packet backfill: resolved=%s/%s", bf.get("resolved"), bf.get("total"))
+            except Exception as e:
+                log.warning("Decision-packet backfill failed: %s", e)
             try:
                 build_weekly_digest()
             except Exception as e:

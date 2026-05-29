@@ -840,6 +840,10 @@ tbody tr:last-child td {
   padding: 6px 11px;
   width: fit-content;
 }
+.mover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 720px) { .mover-grid { grid-template-columns: 1fr; } }
+.mover-col-title { font-size: 0.8rem; opacity: 0.8; margin-bottom: 6px; }
+.mover-col-body { display: flex; flex-wrap: wrap; gap: 6px; }
 .pill.good { background: rgba(34, 197, 94, 0.18); color: #9ef2bd; }
 .pill.bad { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
 .pill.warn { background: rgba(245, 158, 11, 0.2); color: #fde68a; }

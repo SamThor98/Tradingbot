@@ -2264,6 +2264,19 @@ def cockpit_review() -> ApiResponse:
         return _err("cockpit_review", e)
 
 
+@app.post("/api/cockpit/review/backfill", response_model=ApiResponse)
+def cockpit_review_backfill(
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Resolve matured decision packets with realized 10-day returns."""
+    try:
+        from core import outcome_backfill
+
+        return _ok(outcome_backfill.run_local_backfill(SKILL_DIR, horizon_days=10))
+    except Exception as e:
+        return _err("cockpit_review_backfill", e)
+
+
 @app.get("/api/cockpit/execution/quality", response_model=ApiResponse)
 def cockpit_execution_quality(db: Session = Depends(get_db)) -> ApiResponse:
     """Execution-quality attribution: lifecycle counts, slippage, policy events."""

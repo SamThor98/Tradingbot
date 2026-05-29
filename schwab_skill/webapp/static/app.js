@@ -104,6 +104,7 @@ import {
   openTradeDrawerForTrade,
 } from "./panels/tradeDrawer.js";
 import { refreshSectors } from "./panels/sectors.js";
+import { refreshMovers } from "./panels/movers.js";
 import {
   renderQuickCheckCard,
   quickCheck,
@@ -208,6 +209,7 @@ const sendStrategyChat = () =>
 const lazyLoaded = {
   portfolio: false,
   sectors: false,
+  movers: false,
   performance: false,
   backtest: false,
   onboarding: false,
@@ -276,6 +278,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "activitySection",
     "portfolioSection",
     "sectorsSection",
+    "moversSection",
     "performanceSection",
   ],
   diagnostics: [
@@ -439,6 +442,7 @@ function maybePrimeScreenData(mode) {
     void runLazyApi("backtest");
     void runLazyApi("portfolio");
     void runLazyApi("sectors");
+    void runLazyApi("movers");
     void runLazyApi("performance");
   }
 }
@@ -541,6 +545,7 @@ async function runLazyApi(key) {
   try {
     if (key === "portfolio") await refreshPortfolio();
     else if (key === "sectors") await refreshSectors();
+    else if (key === "movers") await refreshMovers();
     else if (key === "performance") await refreshPerformance();
     else if (key === "backtest") await refreshBacktestRuns();
     else if (key === "onboarding") await refreshOnboarding();

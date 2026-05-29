@@ -50,7 +50,48 @@ async function loadLane(bodyId, fetchFn, renderFn, provKey) {
 }
 
 // --- Lane 1: Market Regime ------------------------------------------------ //
-function renderMarket(body, data) {
+async function loadMarket() {
+  const body = $("marketBody");
+  if (!body) return;
+  setAsyncState(body, ASYNC_LOADING, { message: "Loading…" });
+  const mkt = await api.get("/api/cockpit/market");
+  if (!mkt.ok) {
+    setAsyncState(body, ASYNC_ERROR, {
+      html: `<div class="async-state async-state--error" role="alert">
+        <div>${safeText(mkt.user_message || mkt.error || "Unavailable")}</div>
+        <button class="btn small secondary" type="button" data-async-retry>Retry</button>
+      </div>`,
+      onRetry: () => void loadMarket(),
+    });
+    setProv("market", null);
+    return;
+  }
+  // Render regime immediately; load movers separately so a slow/failing movers
+  // fetch (live Schwab call) never blocks the regime display.
+  renderMarket(body, mkt.data || {}, null);
+  api
+    .get("/api/cockpit/movers")
+    .then((mv) => {
+      const slot = document.getElementById("marketMovers");
+      if (slot && mv.ok && (mv.data || {}).movers) slot.innerHTML = moversHtml((mv.data).movers);
+    })
+    .catch(() => {});
+}
+
+function moversHtml(movers) {
+  if (!movers) return "";
+  const row = (label, arr) =>
+    (arr || []).length
+      ? `<div class="kv"><span>${label}</span><span>${(arr || []).slice(0, 6).map((s) => safeText(s)).join(", ")}</span></div>`
+      : "";
+  const g = row("Gainers", movers.gainers);
+  const l = row("Losers", movers.losers);
+  const a = row("Most active", movers.most_active);
+  if (!g && !l && !a) return "";
+  return `<div style="margin-top:8px; font-size:0.8rem; opacity:0.8;">Market movers</div>${g}${l}${a}`;
+}
+
+function renderMarket(body, data, movers) {
   setProv("market", data.provenance);
   const cls =
     data.regime_state === "bullish" ? "regime-bull" : data.regime_state === "bearish" ? "regime-bear" : "regime-neutral";
@@ -62,6 +103,7 @@ function renderMarket(body, data) {
     <div class="kv"><span>Volatility</span><span>${safeText(data.volatility_state || "—")}${data.vix_level != null ? ` (VIX ${formatDecimal(data.vix_level, 1, "—")})` : ""}</span></div>
     <div class="kv"><span>Scan blocked by regime</span><span>${data.scan_blocked_by_regime ? '<span class="pill bad">YES</span>' : '<span class="pill good">no</span>'}</span></div>
     <div class="kv"><span>Winning sectors</span><span>${(data.sector_breadth || []).map((s) => safeText(s.etf)).join(", ") || "—"}</span></div>
+    <div id="marketMovers">${moversHtml(movers)}</div>
   `;
 }
 
@@ -274,13 +316,71 @@ async function loadReview() {
   }
   const r = out.data || {};
   const props = (r.tuning_proposals || {}).count || 0;
-  el.textContent = `🧠 ${r.total_packets || 0} packets · ${safeNum(r.coverage_pct, 0)}% resolved · ${props} tuning proposal${props === 1 ? "" : "s"}`;
+  el.textContent = `🧠 ${r.total_packets || 0} pkts · ${safeNum(r.coverage_pct, 0)}% · ${props} prop`;
+  el.title = `${r.total_packets || 0} decision packets · ${safeNum(r.coverage_pct, 0)}% resolved · ${props} tuning proposal(s) — click for details`;
+}
+
+// --- Learning / Review drawer --------------------------------------------- //
+function _kvBlock(title, obj, fmt) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) return `<div class="muted small">${safeText(title)}: no data yet</div>`;
+  return `<div style="margin-top:8px;font-size:0.8rem;opacity:0.85;">${safeText(title)}</div>${entries
+    .map(([k, v]) => `<div class="kv"><span>${safeText(k)}</span><span>${fmt(v)}</span></div>`)
+    .join("")}`;
+}
+
+async function openReviewDrawer() {
+  const drawer = $("cockpitDrawer");
+  const bodyEl = $("drawerBody");
+  if (!drawer || !bodyEl) return;
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+  bodyEl.innerHTML = `<h3>🧠 Learning Review</h3><div class="muted">Loading diagnostics…</div>`;
+  const out = await api.get("/api/cockpit/review");
+  if (!out.ok) {
+    bodyEl.innerHTML = `<h3>🧠 Learning Review</h3><div class="pill bad">${safeText(out.user_message || out.error)}</div>`;
+    return;
+  }
+  const r = out.data || {};
+  const props = (r.tuning_proposals || {}).proposals || [];
+  bodyEl.innerHTML = `
+    <h3>🧠 Learning Review <span class="muted small">weekly</span></h3>
+    <div class="kv"><span>Decision packets</span><span>${r.total_packets || 0}</span></div>
+    <div class="kv"><span>Resolved (outcomes)</span><span>${r.resolved_packets || 0} (${safeNum(r.coverage_pct, 0)}%)</span></div>
+    ${r.resolved_packets ? "" : '<div class="muted small" style="margin-top:6px;">Outcomes backfill after trades mature (~10 trading days). Diagnostics populate then.</div>'}
+    ${_kvBlock(
+      "False positives by regime",
+      r.false_positives_by_regime,
+      (v) => `${v.losses}/${v.resolved}${v.fp_rate != null ? ` (${(v.fp_rate * 100).toFixed(0)}%)` : ""}`,
+    )}
+    ${_kvBlock(
+      "Edge decay by setup",
+      r.edge_decay_by_setup,
+      (v) => (v.edge_decay != null ? `${(v.edge_decay * 100).toFixed(1)} pts` : `${v.samples} samples`),
+    )}
+    ${_kvBlock(
+      "Execution drag by condition",
+      r.execution_drag_by_condition,
+      (v) => (v.avg_slippage_bps != null ? `${v.avg_slippage_bps} bps` : "—"),
+    )}
+    <div style="margin-top:10px;font-size:0.85rem;opacity:0.85;">Tuning proposals (${props.length}) — advisory</div>
+    ${
+      props.length
+        ? props
+            .map(
+              (p) =>
+                `<div class="preview-box"><strong>${safeText(p.target)}</strong> <span class="pill warn">${safeText(p.direction)}</span><div class="muted small">${safeText(p.scope)} — ${safeText(p.evidence)}</div></div>`,
+            )
+            .join("")
+        : '<div class="muted small">None yet — needs more resolved outcomes.</div>'
+    }
+  `;
 }
 
 async function refreshAll() {
   $("cockpitUpdated").textContent = "refreshing…";
   await Promise.all([
-    loadLane("marketBody", () => api.get("/api/cockpit/market"), renderMarket, "market"),
+    loadMarket(),
     loadLane("portfolioBody", () => api.get("/api/cockpit/portfolio"), renderPortfolio, "portfolio"),
     loadLane("opportunitiesBody", () => api.get("/api/cockpit/opportunities"), renderOpportunities, "opportunities"),
     loadLane("blotterBody", () => api.get("/api/cockpit/blotter"), renderBlotter, "blotter"),
@@ -293,6 +393,7 @@ async function refreshAll() {
 
 function init() {
   $("cockpitRefresh")?.addEventListener("click", () => void refreshAll());
+  $("cockpitReviewBtn")?.addEventListener("click", () => void openReviewDrawer());
   $("drawerClose")?.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeDrawer();

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from core import decision_packet, trade_review, weight_feedback
+from datetime import datetime, timedelta, timezone
+
+import pandas as pd
+
+from core import decision_packet, outcome_backfill, trade_review, weight_feedback
 from core.contracts import DecisionPacket
 
 
@@ -131,6 +135,63 @@ def test_execution_drag_uses_expected_only_when_realized_missing() -> None:
     }
     drag = trade_review.execution_drag_by_condition([pkt])
     assert drag["low"]["avg_slippage_bps"] == 25.0
+
+
+def _history(start: str, closes: list[float]) -> pd.DataFrame:
+    idx = pd.date_range(start=start, periods=len(closes), freq="D")
+    return pd.DataFrame({"close": closes}, index=idx)
+
+
+def test_outcome_backfill_resolves_matured_win() -> None:
+    created = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    packet = {"ticker": "AAPL", "created_at": created, "entry_price": 100.0, "outcome": {"label": "pending"}}
+    # 12 bars from the entry date: entry 100 -> exit (idx+10) 110 => +10%
+    closes = [100.0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110.0, 111]
+    hist = _history(packet["created_at"][:10], closes)
+    out = outcome_backfill.compute_outcome(packet, history_provider=lambda t: hist, horizon_days=10)
+    assert out is not None
+    assert out["label"] == "win"
+    assert out["realized_return_pct"] == 10.0
+    assert out["horizon_days"] == 10
+
+
+def test_outcome_backfill_skips_unmatured() -> None:
+    created = datetime.now(timezone.utc).isoformat()
+    packet = {"ticker": "AAPL", "created_at": created, "entry_price": 100.0, "outcome": {"label": "pending"}}
+    hist = _history(created[:10], [100.0, 101.0, 102.0])  # < horizon+1 bars
+    out = outcome_backfill.compute_outcome(packet, history_provider=lambda t: hist, horizon_days=10)
+    assert out is None
+
+
+def test_outcome_backfill_already_resolved_is_skipped() -> None:
+    packet = {"ticker": "AAPL", "created_at": "2026-01-01T00:00:00+00:00", "outcome": {"label": "win"}}
+    out = outcome_backfill.compute_outcome(packet, history_provider=lambda t: _history("2026-01-01", [1.0] * 20))
+    assert out is None
+
+
+def test_backfill_packets_then_review_has_coverage() -> None:
+    created = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    packets = [
+        {
+            "ticker": "AAPL",
+            "created_at": created,
+            "entry_price": 100.0,
+            "regime_state": "bullish",
+            "setup_type": "breakout",
+            "volatility_state": "low",
+            "edge_score": 80.0,
+            "outcome": {"label": "pending"},
+        },
+    ]
+    closes = [100.0, 99, 98, 97, 96, 95, 94, 93, 92, 91, 90.0, 89]  # -10% => loss
+    n = outcome_backfill.backfill_packets(
+        packets, history_provider=lambda t: _history(created[:10], closes), horizon_days=10
+    )
+    assert n == 1
+    assert packets[0]["outcome"]["label"] == "loss"
+    rep = trade_review.weekly_report(packets)
+    assert rep["resolved_packets"] == 1
+    assert rep["false_positives_by_regime"]["bullish"]["fp_rate"] == 1.0
 
 
 def test_weekly_report_coverage() -> None:

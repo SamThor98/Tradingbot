@@ -1531,7 +1531,15 @@ def place_order(
         return "Error: Schwab connection unstable (circuit breaker)"
 
     exec_quality_diag: dict[str, Any] = {"mode": exec_quality_mode}
-    if exec_quality_mode in {"shadow", "live"}:
+    try:
+        from core import execution_policies as _exec_policies
+
+        _policy_mode = _exec_policies.policy_mode(skill_dir)
+    except Exception:
+        _policy_mode = "off"
+    _policy_live = _policy_mode == "live"
+    _policy_enabled = _policy_mode != "off"
+    if exec_quality_mode in {"shadow", "live"} or _policy_enabled:
         _record_execution_metric(skill_dir, "exec_quality_evaluated")
         snap = _get_quote_quality_snapshot(ticker_n, auth, skill_dir)
         spread_bps = _safe_float(snap.get("spread_bps"))
@@ -1589,17 +1597,16 @@ def place_order(
         # order routing. Promotion to live happens via EXEC_POLICY_MODE=live in
         # a future change that consumes exec_quality_diag["policy"].
         try:
-            from core import execution_policies
-
-            if execution_policies.policy_mode(skill_dir) != "off":
-                policy_decision = execution_policies.decide(
+            if _policy_enabled:
+                _dq = (data_quality_payload or {}).get("data_quality") or snap.get("data_quality")
+                policy_decision = _exec_policies.decide(
                     side=side_n,
                     base_order_type=order_type_n,
                     spread_bps=spread_bps,
                     expected_slippage_bps=expected_slippage_bps,
                     liquid=bool(liquid),
                     preferred_limit_price=preferred_limit_price,
-                    data_quality=str(snap.get("data_quality") or "") or None,
+                    data_quality=str(_dq or "") or None,
                     is_risk_increasing=(side_n == "BUY"),
                     skill_dir=skill_dir,
                 )
@@ -1608,7 +1615,7 @@ def place_order(
                     skill_dir, "exec_policy_evaluated", reason=policy_decision.get("policy_id")
                 )
         except Exception as _pol_exc:
-            logging.getLogger(__name__).debug("exec policy shadow hook skipped: %s", _pol_exc)
+            logging.getLogger(__name__).debug("exec policy hook skipped: %s", _pol_exc)
 
         if exec_quality_mode == "shadow":
             if block_reasons:
@@ -1640,6 +1647,48 @@ def place_order(
                 )
                 _record_execution_metric(skill_dir, "exec_quality_live_limit_upgrade")
                 # Re-check guardrails using final adapted order payload/value.
+                guardrail_recheck = wrapper._check_guardrails(ticker_n, int(qty), primary, order_value)
+                if guardrail_recheck:
+                    _record_execution_metric(skill_dir, "guardrail_blocked_order")
+                    send_alert(
+                        f"Guardrail block: {guardrail_recheck}",
+                        kind="guardrail",
+                        env_path=skill_dir / ".env",
+                    )
+                    return guardrail_recheck
+
+        # Smart-execution-policy LIVE application (EXEC_POLICY_MODE=live). Reuses
+        # the same payload/guardrail/reprice machinery; the only net-new action
+        # is the fail-closed auto-throttle HOLD on degraded data. Limit upgrades
+        # are skipped if exec-quality already applied one (no double mutation).
+        _policy = exec_quality_diag.get("policy")
+        if _policy_live and isinstance(_policy, dict):
+            if _policy.get("recommend_hold"):
+                reason_txt = "; ".join(_policy.get("reasons") or []) or "degraded_data_quality"
+                _record_execution_metric(skill_dir, "exec_policy_live_throttle_hold", reason=reason_txt)
+                msg = f"EXECUTION POLICY HOLD (auto-throttle on degraded data): {reason_txt}"
+                send_alert(msg, kind="guardrail", env_path=skill_dir / ".env")
+                return msg
+            if (
+                _policy.get("recommended_order_type") == "LIMIT"
+                and order_type_n == "MARKET"
+                and preferred_limit_price is not None
+                and float(preferred_limit_price) > 0
+                and not exec_quality_diag.get("limit_upgrade_applied")
+            ):
+                limit_px = round(float(preferred_limit_price), 2)
+                primary = _equity_order_payload(ticker_n, int(qty), side_n, "LIMIT", limit_px)
+                order_type_n = "LIMIT"
+                limit_price = limit_px
+                order_value = abs(float(qty)) * abs(float(limit_px))
+                exec_quality_diag.update(
+                    {
+                        "limit_upgrade_applied": True,
+                        "limit_upgrade_price": limit_px,
+                        "limit_upgrade_source": "exec_policy",
+                    }
+                )
+                _record_execution_metric(skill_dir, "exec_policy_live_limit_upgrade")
                 guardrail_recheck = wrapper._check_guardrails(ticker_n, int(qty), primary, order_value)
                 if guardrail_recheck:
                     _record_execution_metric(skill_dir, "guardrail_blocked_order")
@@ -1808,7 +1857,7 @@ def place_order(
         order_location = resp.headers.get("Location", "")
         result = resp.json() if resp.text else {}
         order_id = order_location.split("/")[-1] if order_location else None
-        if exec_quality_mode == "live" and primary.get("orderType") == "LIMIT":
+        if (exec_quality_mode == "live" or _policy_live) and primary.get("orderType") == "LIMIT":
             order_id, primary, reprice_history = _run_limit_reprice_loop(
                 orders_url=url,
                 order_id=order_id,

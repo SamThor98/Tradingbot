@@ -91,6 +91,7 @@ def build_packet(
         edge_score=_f(sig.get("edge_score")),
         p_up_calibrated=_f(sig.get("p_up_calibrated") or (advisory or {}).get("p_up_10d")),
         expected_slippage_bps=_f(eq.get("realized_slippage_bps") or eq.get("expected_slippage_bps")),
+        entry_price=_f(sig.get("price")),
         outcome=PacketOutcome(),
         refs={"order_ref": execu.get("order_ref"), "state": execu.get("state")},
         provenance=Provenance(source="computed", as_of=utc_now(), confidence="high"),
@@ -119,6 +120,16 @@ def load_packets(skill_dir: Path | None = None, *, limit: int | None = None) -> 
     if limit is not None:
         return packets[-max(0, int(limit)) :]
     return packets
+
+
+def overwrite_packets(skill_dir: Path | None, packets: list[dict[str, Any]]) -> bool:
+    """Replace the full packet list (used by outcome backfill after mutation)."""
+    try:
+        _save_raw(_store_path(skill_dir), {"packets": list(packets)})
+        return True
+    except Exception as exc:  # pragma: no cover
+        LOG.debug("overwrite_packets skipped: %s", exc)
+        return False
 
 
 def backfill_outcome(

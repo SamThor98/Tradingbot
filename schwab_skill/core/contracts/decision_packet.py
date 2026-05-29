@@ -47,6 +47,7 @@ class DecisionPacket(BaseModel):
     edge_score: float | None = None
     p_up_calibrated: float | None = None
     expected_slippage_bps: float | None = None
+    entry_price: float | None = None  # decision-time price, anchors realized-return backfill
 
     # Resolved outcome (backfilled).
     outcome: PacketOutcome = Field(default_factory=PacketOutcome)

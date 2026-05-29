@@ -1494,23 +1494,43 @@ def get_pretrade_min_dollar_volume(skill_dir: Path | None = None) -> float:
 
 
 def get_market_movers_mode(skill_dir: Path | None = None) -> str:
-    """Schwab /movers (market internals) rollout mode (OFF|SHADOW|LIVE). Default off."""
-    return _get_mode("MARKET_MOVERS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    """Schwab /movers (market internals) rollout mode (OFF|SHADOW|LIVE). Default live."""
+    return _get_mode("MARKET_MOVERS_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_options_intel_mode(skill_dir: Path | None = None) -> str:
-    """Schwab options-chain intelligence rollout mode (OFF|SHADOW|LIVE). Default off."""
-    return _get_mode("OPTIONS_INTEL_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    """Schwab options-chain intelligence rollout mode (OFF|SHADOW|LIVE). Default live."""
+    return _get_mode("OPTIONS_INTEL_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_instruments_mode(skill_dir: Path | None = None) -> str:
-    """Schwab /instruments fundamentals+search rollout mode (OFF|SHADOW|LIVE). Default off."""
-    return _get_mode("INSTRUMENTS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    """Schwab /instruments fundamentals+search rollout mode (OFF|SHADOW|LIVE). Default live."""
+    return _get_mode("INSTRUMENTS_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_minute_history_mode(skill_dir: Path | None = None) -> str:
     """Schwab intraday (minute) pricehistory rollout mode (OFF|SHADOW|LIVE). Default off."""
     return _get_mode("MINUTE_HISTORY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_options_scoring_mode(skill_dir: Path | None = None) -> str:
+    """Feed options-chain intelligence into scan scoring (OFF|SHADOW|LIVE).
+
+    - off: no options scoring.
+    - shadow (default): compute + attach an options score delta to top survivors
+      for measurement, but DO NOT change ranking.
+    - live: apply the delta to rank/composite and re-sort survivors.
+
+    Requires OPTIONS_INTEL_MODE != off (the data source). Bounded to the top
+    OPTIONS_SCORING_MAX_SYMBOLS survivors to limit extra Schwab chain calls.
+    """
+    return _get_mode("OPTIONS_SCORING_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_options_scoring_max_symbols(skill_dir: Path | None = None) -> int:
+    """Max top-ranked survivors to fetch option chains for during scoring overlay."""
+    val = _get_int("OPTIONS_SCORING_MAX_SYMBOLS", 5, skill_dir)
+    return max(1, min(100, val))
 
 
 def get_scan_delta_improve_min(skill_dir: Path | None = None) -> float:
@@ -1528,7 +1548,10 @@ def get_exec_policy_mode(skill_dir: Path | None = None) -> str:
     - off: no policy decision computed.
     - shadow (default): policy decision computed, recorded, and attached to the
       order result as ``_execution_policy`` — but does NOT change order routing.
-    - live: callers may apply the recommended order type / throttle.
+      Watch the recorded metrics, then promote with EXEC_POLICY_MODE=live.
+    - live: place_order applies the decision — limit-vs-market preference,
+      reprice loop, and an auto-throttle HOLD (fail-closed block) on
+      risk-increasing orders when data quality is degraded/stale/conflict.
     """
     return _get_mode("EXEC_POLICY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 

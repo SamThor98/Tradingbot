@@ -2609,6 +2609,20 @@ def scan_for_signals_detailed(
         record_nonfatal=_record_nonfatal,
     )
 
+    # Options-chain scoring overlay (OPTIONS_SCORING_MODE; shadow by default).
+    # Attaches a bounded options score delta to top survivors for measurement;
+    # only re-ranks in live mode. Bounded to the top N to limit chain calls.
+    try:
+        from core.options_scoring import apply_options_scoring
+
+        signals = apply_options_scoring(signals, diagnostics, skill_dir=skill_dir)
+    except Exception as e:
+        _record_nonfatal(
+            "options_scoring_failures",
+            "Options scoring overlay failed: %s",
+            e,
+        )
+
     return signals, diagnostics
 
 

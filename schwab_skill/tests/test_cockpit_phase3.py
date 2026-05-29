@@ -47,6 +47,22 @@ def test_policy_no_throttle_for_risk_reducing() -> None:
     assert d["throttle"] is False
 
 
+def test_policy_live_recommends_hold_on_degraded(monkeypatch) -> None:
+    # In live mode, a throttled risk-increasing order becomes a hold (place_order blocks it).
+    monkeypatch.setenv("EXEC_POLICY_MODE", "live")
+    d = execution_policies.decide(side="BUY", base_order_type="MARKET", data_quality="stale", is_risk_increasing=True)
+    assert d["mode"] == "live"
+    assert d["throttle"] is True
+    assert d["recommend_hold"] is True
+
+
+def test_policy_shadow_does_not_recommend_hold(monkeypatch) -> None:
+    monkeypatch.setenv("EXEC_POLICY_MODE", "shadow")
+    d = execution_policies.decide(side="BUY", base_order_type="MARKET", data_quality="stale", is_risk_increasing=True)
+    assert d["throttle"] is True
+    assert d["recommend_hold"] is False
+
+
 # --------------------------------------------------------------------------- #
 # Post-fill risk
 # --------------------------------------------------------------------------- #

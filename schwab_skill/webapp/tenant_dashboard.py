@@ -1856,6 +1856,28 @@ def tenant_cockpit_review(user: User = Depends(get_current_user), db: OrmSession
         return _saas_error_response(exc, source="cockpit_review", fallback="Unable to load review.")
 
 
+@router.post("/api/cockpit/review/backfill", response_model=ApiResponse)
+def tenant_cockpit_review_backfill(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(_db)
+) -> ApiResponse:
+    """Resolve matured decision packets (AppState-backed) with realized 10-day returns."""
+    try:
+        from core import outcome_backfill
+
+        data = _load_state(db, user.id, "decision_packets", {"packets": []})
+        packets = [p for p in (data.get("packets") or []) if isinstance(p, dict)]
+        if not packets:
+            return _ok({"resolved": 0, "total": 0})
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            provider = outcome_backfill._default_history_provider(skill_dir)
+            resolved = outcome_backfill.backfill_packets(packets, history_provider=provider, horizon_days=10)
+        if resolved:
+            _save_state(db, user.id, "decision_packets", {"packets": packets})
+        return _ok({"resolved": resolved, "total": len(packets)})
+    except Exception as exc:
+        return _saas_error_response(exc, source="cockpit_review_backfill", fallback="Unable to backfill outcomes.")
+
+
 @router.post("/api/cockpit/order-intent/preview", response_model=ApiResponse)
 def tenant_cockpit_order_intent_preview(
     payload: CreatePendingTrade,
