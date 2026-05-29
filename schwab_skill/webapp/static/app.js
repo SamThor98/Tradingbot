@@ -3844,17 +3844,40 @@ async function waitForSaaScanCompletion(taskId) {
     const celeryStatus = safeText(data.status || "").toLowerCase();
     if (celeryStatus === "pending" || celeryStatus === "received") {
       if (firstPendingAt === null) firstPendingAt = Date.now();
-      metaEl.textContent = "Scan queued… waiting for worker.";
-      setJobProgress("scanJobProgress", "scanJobProgressLabel", 0.12, "Queued — waiting for worker");
+      // Distinguish "worker is reachable but busy with another scan" from
+      // "no worker is consuming the queue". A reachable worker with an active
+      // or reserved task means we're simply queued behind a running scan, so
+      // the "start a worker" hint would be misleading.
+      const wq = data.worker_queue || {};
+      const workerReachable = wq.inspect_available === true && wq.inspect_error !== true;
+      const workerBusy =
+        workerReachable && (safeNum(wq.active_total, 0) + safeNum(wq.reserved_total, 0)) > 0;
+      metaEl.textContent = workerBusy
+        ? "Scan queued… worker is busy finishing another scan."
+        : "Scan queued… waiting for worker.";
+      setJobProgress(
+        "scanJobProgress",
+        "scanJobProgressLabel",
+        0.12,
+        workerBusy ? "Queued — worker busy" : "Queued — waiting for worker",
+      );
       const queuedMs = Date.now() - firstPendingAt;
-      if (queuedMs > 50_000 && !workerHintShown) {
+      if (workerBusy) {
+        // Healthy queueing behind an in-flight scan — no operator action needed.
+        updateActionCenter({
+          title: "Scan Queued",
+          message:
+            "A worker is busy finishing another scan. Yours is next in line and this page will update automatically when it runs.",
+          severity: "info",
+        });
+      } else if (queuedMs > 50_000 && !workerHintShown) {
         workerHintShown = true;
         metaEl.textContent =
-          "Still queued — no worker yet. Confirm Celery is running with queue \"scan\" and REDIS_URL matches the API.";
+          "Still queued — no worker is consuming the \"scan\" queue. Confirm the Celery worker is running and shares the app's REDIS_URL.";
         updateActionCenter({
           title: "Scan waiting for worker",
           message:
-            "If this stays queued, start workers with: celery -A webapp.tasks worker -Q scan,orders,celery — and use the same REDIS_URL as the app.",
+            "No worker has picked this up. Ensure a Celery worker is running with: celery -A webapp.tasks worker -Q scan,orders,celery — using the same REDIS_URL as the app.",
           severity: "warn",
         });
       } else {
