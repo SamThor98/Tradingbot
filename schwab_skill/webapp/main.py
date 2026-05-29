@@ -11,6 +11,8 @@ import threading
 import time
 import urllib.parse
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,6 +150,37 @@ def _session_token_ok(session: Any) -> bool:
         return False
 
 
+# Sector heatmap is the one read endpoint that fans out across ~12 ETF symbols
+# over live market data. When Schwab market data is degraded (e.g. a 401
+# entitlement issue) each symbol burns Schwab retries + a yfinance fallback, so
+# the whole call can take minutes and the request hangs. We run it under a time
+# budget with single-flight semantics (one background computation at a time) and
+# serve the last good result while a slow refresh runs in the background.
+_SECTORS_TIME_BUDGET_SEC = float((os.getenv("SECTORS_TIME_BUDGET_SEC") or "8").strip() or "8")
+_sectors_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sectors-heatmap")
+_sectors_lock = threading.Lock()
+_sectors_future: Future | None = None
+_sectors_cache: dict[str, Any] = {"data": None, "at": None}
+
+
+def _compute_sector_heatmap() -> dict[str, Any]:
+    return get_sector_heatmap(auth=get_shared_auth(), skill_dir=SKILL_DIR)
+
+
+def _on_sectors_done(fut: Future) -> None:
+    """Cache a completed heatmap and clear the in-flight slot (runs in worker)."""
+    global _sectors_future
+    with _sectors_lock:
+        try:
+            _sectors_cache["data"] = fut.result()
+            _sectors_cache["at"] = datetime.now(timezone.utc).isoformat()
+        except Exception as exc:
+            LOG.warning("Sector heatmap computation failed: %s", exc)
+        finally:
+            if _sectors_future is fut:
+                _sectors_future = None
+
+
 def _ensure_local_dashboard_user() -> None:
     db = SessionLocal()
     try:
@@ -220,6 +253,10 @@ async def _lifespan(_app: "FastAPI"):
             _shared_auth.close()
         except Exception as exc:
             LOG.debug("shared auth close on shutdown failed: %s", exc)
+    try:
+        _sectors_executor.shutdown(wait=False, cancel_futures=True)
+    except Exception as exc:
+        LOG.debug("sectors executor shutdown failed: %s", exc)
 
 
 app = FastAPI(
@@ -2169,9 +2206,37 @@ def portfolio_risk() -> ApiResponse:
 @app.get("/api/sectors", response_model=ApiResponse)
 def sectors() -> ApiResponse:
     try:
-        auth = get_shared_auth()
-        heatmap = get_sector_heatmap(auth=auth, skill_dir=SKILL_DIR)
-        return _ok(heatmap)
+        global _sectors_future
+        with _sectors_lock:
+            fut = _sectors_future
+            if fut is None:
+                fut = _sectors_executor.submit(_compute_sector_heatmap)
+                fut.add_done_callback(_on_sectors_done)
+                _sectors_future = fut
+        try:
+            data = fut.result(timeout=_SECTORS_TIME_BUDGET_SEC)
+            return _ok(data)
+        except FutureTimeoutError:
+            # Don't hang the request. Serve last-good data (flagged stale) if we
+            # have it; otherwise return an honest, actionable degraded error.
+            cached = _sectors_cache.get("data")
+            if isinstance(cached, dict):
+                payload = dict(cached)
+                payload["stale"] = True
+                payload["as_of"] = _sectors_cache.get("at")
+                payload["degraded_reason"] = (
+                    "Live sector data is slow to refresh (Schwab market data may be "
+                    "degraded). Showing the last known values; it will update automatically."
+                )
+                return _ok(payload)
+            return ApiResponse(
+                ok=False,
+                error=(
+                    "Sector data is taking too long to load, which usually means Schwab "
+                    "market-data quotes are unavailable (often a Market Data entitlement "
+                    "issue). It will refresh automatically once market data recovers."
+                ),
+            )
     except Exception as e:
         return _err("sectors", e)
 
