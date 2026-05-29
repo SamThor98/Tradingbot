@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,43 @@ DEFAULT_UI_MODE = "standard"
 DEFAULT_PROFILE = "balanced"
 _LOCAL_OAUTH_STATE_TTL_SEC = 600
 
+# Process-wide shared Schwab auth. Read endpoints reuse a single
+# ``DualSchwabAuth`` so there is exactly one background refresh thread per
+# session for the whole process. Building a fresh ``DualSchwabAuth`` per
+# request (the previous behaviour) spawned a new 25-min refresh thread on the
+# first token read of each request; those orphan threads accumulated and raced
+# on Schwab's single-use refresh tokens, causing ``400 unsupported_token_type``
+# storms that invalidated both sessions intermittently.
+_shared_auth: DualSchwabAuth | None = None
+_shared_auth_lock = threading.Lock()
+
+
+def get_shared_auth() -> DualSchwabAuth:
+    """Return the process-wide shared ``DualSchwabAuth`` (lazily created).
+
+    The singleton keeps a single refresh thread per session alive for the
+    lifetime of the process. Never call ``.close()`` on the returned instance
+    from a request handler — that would stop the shared refresh threads.
+    """
+    global _shared_auth
+    with _shared_auth_lock:
+        if _shared_auth is None:
+            _shared_auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        return _shared_auth
+
+
+def _session_token_ok(session: Any) -> bool:
+    """Non-raising connection probe for a single Schwab session.
+
+    ``SchwabSession.get_access_token`` returns ``None`` (never raises) when the
+    session is unauthenticated, so one disconnected session can never mask the
+    other's state or blow up the whole status/health response.
+    """
+    try:
+        return bool(session.get_access_token())
+    except Exception:
+        return False
+
 
 def _ensure_local_dashboard_user() -> None:
     db = SessionLocal()
@@ -169,10 +207,26 @@ _run_alembic_upgrade_head_for_sqlite()
 _ensure_local_dashboard_user()
 _validate_startup_configuration()
 
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    """App lifespan: stop the shared auth's background refresh threads on shutdown.
+
+    Daemon threads exit with the process, but closing explicitly avoids a brief
+    orphan-thread window across ``--reload`` restarts in development.
+    """
+    yield
+    if _shared_auth is not None:
+        try:
+            _shared_auth.close()
+        except Exception as exc:
+            LOG.debug("shared auth close on shutdown failed: %s", exc)
+
+
 app = FastAPI(
     title="TradingBot Web Dashboard API",
     version="0.2.0",
     description="Web API for scanning, approvals, portfolio, and sector health.",
+    lifespan=_lifespan,
 )
 
 allowed_origins = build_allowed_origins()
@@ -1835,9 +1889,10 @@ def health_deep(
 ) -> ApiResponse:
     try:
         db_ok = bool(db.query(PendingTrade).limit(1).all() is not None)
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-        market_token_ok = bool(auth.get_market_token())
-        account_token_ok = bool(auth.get_account_token())
+        auth = get_shared_auth()
+        # Independent, non-raising per-session probes (see /api/status).
+        market_token_ok = _session_token_ok(auth.market_session)
+        account_token_ok = _session_token_ok(auth.account_session)
         quote, qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=SKILL_DIR)
         quote_ok = extract_schwab_last_price(quote) is not None
         with _metrics_lock:
@@ -1883,10 +1938,14 @@ def status(
     _auth: dict[str, str] = Depends(require_api_key_if_set),
 ) -> ApiResponse:
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         checked_at = datetime.now(timezone.utc).isoformat()
-        market_token_ok = bool(auth.get_market_token())
-        account_token_ok = bool(auth.get_account_token())
+        # Evaluate each session independently and non-raising so a single
+        # disconnected session can never mask the other's state or error out
+        # the whole endpoint (the dashboard polls this and would otherwise
+        # mark BOTH pills unavailable).
+        market_token_ok = _session_token_ok(auth.market_session)
+        account_token_ok = _session_token_ok(auth.account_session)
         market_state = "Connected" if market_token_ok else "Disconnected"
         account_state = "Connected" if account_token_ok else "Disconnected"
         # Refresh-token age health (per session + roll-up). Pure read from
@@ -2082,7 +2141,7 @@ def scan_lifecycle(db: Session = Depends(get_db)) -> ApiResponse:
 @app.get("/api/portfolio", response_model=ApiResponse)
 def portfolio() -> ApiResponse:
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(status_data, str):
             _record_endpoint_error("portfolio")
@@ -2096,7 +2155,7 @@ def portfolio() -> ApiResponse:
 def portfolio_risk() -> ApiResponse:
     """Portfolio risk analytics: sector allocation, concentration, and exposure metrics."""
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(status_data, str):
             _record_endpoint_error("portfolio_risk")
@@ -2110,7 +2169,7 @@ def portfolio_risk() -> ApiResponse:
 @app.get("/api/sectors", response_model=ApiResponse)
 def sectors() -> ApiResponse:
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         heatmap = get_sector_heatmap(auth=auth, skill_dir=SKILL_DIR)
         return _ok(heatmap)
     except Exception as e:
@@ -2203,7 +2262,7 @@ def cockpit_portfolio() -> ApiResponse:
     try:
         from core import cockpit_service
 
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(status_data, str):
             _record_endpoint_error("cockpit_portfolio")
@@ -2341,7 +2400,7 @@ def cockpit_movers(index: str = "$SPX") -> ApiResponse:
         from core import cockpit_service
         from market_data import get_market_movers_with_status
 
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         payload, meta = get_market_movers_with_status(index, auth=auth, skill_dir=SKILL_DIR)
         if payload is None:
             return _ok({"movers": {"gainers": [], "losers": [], "most_active": []}, "meta": meta})
@@ -2358,7 +2417,7 @@ def cockpit_symbol_options(ticker: str) -> ApiResponse:
         from market_data import get_options_chain_with_status
 
         symbol = ticker.upper().strip()
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         chain, meta = get_options_chain_with_status(symbol, auth=auth, skill_dir=SKILL_DIR)
         if chain is None:
             return _ok({"ticker": symbol, "options_intel": None, "meta": meta})
@@ -2387,7 +2446,7 @@ def cockpit_order_intent_preview(payload: CreatePendingTrade) -> ApiResponse:
         bid = ask = None
         quote_age_sec = None
         try:
-            auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+            auth = get_shared_auth()
             quote = get_current_quote(symbol, auth=auth, skill_dir=SKILL_DIR)
             bid, ask = _extract_bid_ask(quote)
         except Exception:
@@ -2435,7 +2494,7 @@ def create_pending_trade(
         ticker = payload.ticker.upper().strip()
         signal = payload.signal or {}
 
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        auth = get_shared_auth()
         quote = get_current_quote(ticker, auth=auth, skill_dir=SKILL_DIR)
         last_price = payload.price or extract_schwab_last_price(quote) or float(signal.get("price", 0) or 0)
 
@@ -2829,7 +2888,7 @@ def onboarding_step(
         }
     elif step_key == "verify_token_health":
         try:
-            auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+            auth = get_shared_auth()
             market_ok = bool(auth.get_market_token())
             account_ok = bool(auth.get_account_token())
             quote = get_current_quote("AAPL", auth=auth, skill_dir=SKILL_DIR)
@@ -2878,7 +2937,7 @@ def onboarding_step(
         previous_shadow = os.environ.get("EXECUTION_SHADOW_MODE")
         os.environ["EXECUTION_SHADOW_MODE"] = "1"
         try:
-            auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+            auth = get_shared_auth()
             quote = get_current_quote("AAPL", auth=auth, skill_dir=SKILL_DIR)
             price = extract_schwab_last_price(quote) or 100.0
             result = place_order(
