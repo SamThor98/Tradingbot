@@ -35,6 +35,26 @@ yfinance_lock = threading.Lock()
 T = TypeVar("T")
 
 
+def _quiet_noisy_yfinance_logging() -> None:
+    """Silence yfinance's own logger.
+
+    On transient failures (Yahoo rate-limits / 400 "Bad Request" HTML pages,
+    404 quoteSummary for option symbols, etc.) yfinance logs the *entire* HTTP
+    error body at ERROR level, which floods worker/web logs with multi-line HTML.
+    We already translate every yfinance outcome into an explicit reason code and
+    fall back to Schwab (or empty data), so this output carries no actionable
+    signal. Raise the library logger above ERROR and stop propagation; our own
+    module loggers (logger ``__name__``) are unaffected.
+    """
+    for name in ("yfinance", "yfinance.ticker", "yfinance.data", "yfinance.scraper"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.CRITICAL)
+        lg.propagate = False
+
+
+_quiet_noisy_yfinance_logging()
+
+
 def atomic_write_json(
     path: Path | str,
     data: Any,
