@@ -3411,8 +3411,12 @@ async function refreshStatus() {
   }
   renderValidationRecentSteps(validation);
   if (deepRes.ok) {
-    setStatusPill(quoteEl, deepRes.data.quote_ok ? "Connected" : "Degraded");
     const qh = deepRes.data.quote_health;
+    // Surface the operator hint (e.g. Schwab 401 market-data entitlement) on the
+    // pill tooltip so "Degraded" is actionable at a glance, not just in the log.
+    const quoteTooltip =
+      !deepRes.data.quote_ok && qh && qh.operator_hint ? qh.operator_hint : "";
+    setStatusPill(quoteEl, deepRes.data.quote_ok ? "Connected" : "Degraded", quoteTooltip);
     if (!deepRes.data.quote_ok && qh && qh.operator_hint) {
       const sig = `${qh.reason || ""}|${qh.operator_hint}`;
       if (sig !== state.lastQuoteHealthLogSig) {

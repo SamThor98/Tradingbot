@@ -95,7 +95,7 @@ export function healthBadgeClass(ok) {
   return ok ? "health-badge bg-green-900" : "health-badge bg-red-900";
 }
 
-export function setStatusPill(el, label) {
+export function setStatusPill(el, label, title = "") {
   if (!el) return;
   const status = (label || "").toLowerCase();
   el.className = statusClass(status);
@@ -105,6 +105,13 @@ export function setStatusPill(el, label) {
       ? "bad"
       : "warn";
   el.innerHTML = `<span class="status-dot ${dotClass}"></span>${safeText(label)}`;
+  // Optional hover tooltip explaining the state (e.g. why quotes are degraded).
+  // Clear any stale tooltip when no title is supplied so it never lingers.
+  if (title) {
+    el.title = String(title);
+  } else {
+    el.removeAttribute("title");
+  }
 }
 
 /** Diagnostics keys -> human labels. Used by `buildDiagnosticsSummary` and
