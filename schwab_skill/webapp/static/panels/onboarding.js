@@ -518,6 +518,24 @@ function wireInlineAuthUi() {
       showToast("Verification email sent.", "info", 4000);
     }
   });
+  const accountBtn = document.getElementById("connectAccountBtn");
+  accountBtn?.addEventListener("click", async () => {
+    accountBtn.disabled = true;
+    try {
+      await triggerSchwabAccountOAuth();
+    } finally {
+      accountBtn.disabled = false;
+    }
+  });
+  const marketBtn = document.getElementById("connectMarketBtn");
+  marketBtn?.addEventListener("click", async () => {
+    marketBtn.disabled = true;
+    try {
+      await triggerSchwabMarketOAuth();
+    } finally {
+      marketBtn.disabled = false;
+    }
+  });
   _refreshVerifyButtonState();
   const until = _readVerifyCooldownUntil();
   if (until > Date.now()) {
@@ -669,6 +687,13 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
     : "API: connect Schwab to probe tokens and quotes.";
   const haltLine = state.publicConfig.platform_live_trading_kill_switch ? " · Global operator halt: ON" : "";
   meta.textContent = `Connection: ${conn} · ${apiLine}${haltLine}`;
+
+  // Reflect per-link status on the explicit direct-connect buttons so the
+  // market step is obvious even after the account link completes.
+  const accountBtn = document.getElementById("connectAccountBtn");
+  if (accountBtn) accountBtn.textContent = ah.account_token_ok ? "Reconnect Account ✓" : "Connect Account";
+  const marketBtn = document.getElementById("connectMarketBtn");
+  if (marketBtn) marketBtn.textContent = ah.market_token_ok ? "Reconnect Market Data ✓" : "Connect Market Data";
 
   const currentStep = deriveCurrentStep(out.data);
   renderStepper(out.data, currentStep);
