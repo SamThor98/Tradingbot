@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from core import options_scoring
 
 
@@ -63,7 +65,7 @@ def test_overlay_off_is_noop(monkeypatch) -> None:
 def test_overlay_shadow_attaches_but_does_not_rerank(monkeypatch) -> None:
     monkeypatch.setenv("OPTIONS_SCORING_MODE", "shadow")
     monkeypatch.setenv("OPTIONS_INTEL_MODE", "live")
-    diag = {}
+    diag: dict[str, Any] = {}
     signals = [{"ticker": "AAPL", "rank_score": 80.0}]
     out = options_scoring.apply_options_scoring(signals, diag, chain_fetcher=lambda t: _chain())
     assert out[0]["rank_score"] == 80.0  # unchanged in shadow
@@ -77,7 +79,7 @@ def test_overlay_shadow_attaches_but_does_not_rerank(monkeypatch) -> None:
 def test_overlay_live_applies_delta_and_reranks(monkeypatch) -> None:
     monkeypatch.setenv("OPTIONS_SCORING_MODE", "live")
     monkeypatch.setenv("OPTIONS_INTEL_MODE", "live")
-    diag = {}
+    diag: dict[str, Any] = {}
     # AAPL rich IV+put skew (penalty) starts above MSFT; after penalty it may drop.
     signals = [
         {"ticker": "AAPL", "rank_score": 80.0},
@@ -98,7 +100,7 @@ def test_overlay_live_applies_delta_and_reranks(monkeypatch) -> None:
 def test_overlay_disabled_when_intel_off(monkeypatch) -> None:
     monkeypatch.setenv("OPTIONS_SCORING_MODE", "shadow")
     monkeypatch.setenv("OPTIONS_INTEL_MODE", "off")
-    diag = {}
+    diag: dict[str, Any] = {}
     signals = [{"ticker": "AAPL", "rank_score": 80.0}]
     out = options_scoring.apply_options_scoring(signals, diag, chain_fetcher=lambda t: _chain())
     assert "options_intel" not in out[0]

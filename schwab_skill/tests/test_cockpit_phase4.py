@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pandas as pd
 
@@ -144,7 +145,12 @@ def _history(start: str, closes: list[float]) -> pd.DataFrame:
 
 def test_outcome_backfill_resolves_matured_win() -> None:
     created = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    packet = {"ticker": "AAPL", "created_at": created, "entry_price": 100.0, "outcome": {"label": "pending"}}
+    packet: dict[str, Any] = {
+        "ticker": "AAPL",
+        "created_at": created,
+        "entry_price": 100.0,
+        "outcome": {"label": "pending"},
+    }
     # 12 bars from the entry date: entry 100 -> exit (idx+10) 110 => +10%
     closes = [100.0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110.0, 111]
     hist = _history(packet["created_at"][:10], closes)
@@ -171,7 +177,7 @@ def test_outcome_backfill_already_resolved_is_skipped() -> None:
 
 def test_backfill_packets_then_review_has_coverage() -> None:
     created = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    packets = [
+    packets: list[dict[str, Any]] = [
         {
             "ticker": "AAPL",
             "created_at": created,
