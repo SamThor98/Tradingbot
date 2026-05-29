@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -162,6 +163,15 @@ def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
         return "News fetch unavailable."
 
 
+# Process-wide circuit breaker for the LLM endpoint. When the endpoint is
+# unreachable (e.g. blocked egress or a misconfigured LLM_BASE_URL), the OpenAI
+# SDK otherwise retries on every shortlisted ticker, adding a timeout per call
+# and — in local mode where the scan runs in-process — starving the web server
+# so dashboard polls time out. After a few consecutive failures we stop calling
+# the LLM for the rest of the scan and fall back to the heuristic score.
+_LLM_CIRCUIT: dict[str, float] = {"consecutive_failures": 0.0, "open_until": 0.0}
+
+
 def _call_llm(prompt: str, system: str, env: dict) -> str:
     """Call LLM (OpenAI/Qwen) following env config."""
     api_key = (
@@ -175,9 +185,31 @@ def _call_llm(prompt: str, system: str, env: dict) -> str:
     if not api_key:
         LOG.warning("MIROFISH_API_KEY / OPENAI_API_KEY / OPENAI_KEY not set, using fallback score")
         return ""
+
+    now = time.monotonic()
+    if _LLM_CIRCUIT["open_until"] > now:
+        return ""
+
+    def _env_float(key: str, default: float) -> float:
+        try:
+            return float(os.environ.get(key, "") or default)
+        except (TypeError, ValueError):
+            return default
+
+    timeout_s = _env_float("LLM_TIMEOUT_SECONDS", 12.0)
+    cb_threshold = int(_env_float("LLM_CIRCUIT_FAILS", 3.0))
+    cb_cooldown = _env_float("LLM_CIRCUIT_COOLDOWN_SECONDS", 300.0)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
+
+        # Single attempt with a bounded timeout (no SDK retries) so a slow or
+        # unreachable endpoint cannot multiply scan latency.
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url if base_url else None,
+            timeout=timeout_s,
+            max_retries=0,
+        )
         resp = client.chat.completions.create(
             model=model,
             messages=[
@@ -186,8 +218,17 @@ def _call_llm(prompt: str, system: str, env: dict) -> str:
             ],
             max_tokens=200,
         )
+        _LLM_CIRCUIT["consecutive_failures"] = 0.0
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
+        _LLM_CIRCUIT["consecutive_failures"] += 1.0
+        if _LLM_CIRCUIT["consecutive_failures"] >= cb_threshold:
+            _LLM_CIRCUIT["open_until"] = now + cb_cooldown
+            LOG.warning(
+                "LLM circuit opened after %d consecutive failures; pausing LLM calls for %.0fs",
+                int(_LLM_CIRCUIT["consecutive_failures"]),
+                cb_cooldown,
+            )
         LOG.warning("LLM call failed: %s", e)
         return ""
 

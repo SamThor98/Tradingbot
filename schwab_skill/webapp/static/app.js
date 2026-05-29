@@ -4109,15 +4109,47 @@ async function waitForScanCompletion() {
   const maxPolls = 360;
   const metaEl = document.getElementById("scanMeta");
   let unknownStatusStreak = 0;
+  let transientFailures = 0;
   for (let i = 0; i < maxPolls; i++) {
-    const status = await api.get("/api/scan-lifecycle");
+    // Bounded per-poll timeout: a heavy in-process scan can make the single
+    // web instance slow to answer status checks. Abort a stuck poll and retry
+    // rather than letting the default client timeout surface as a hard failure.
+    const status = await api.get("/api/scan-lifecycle", { timeoutMs: 60000 });
     if (!status.ok) {
+      // The scan keeps running on the server even when a status poll fails
+      // (timeout, gateway blip, transient network). Treat these as transient
+      // and keep polling so a busy server doesn't abort the whole scan UX.
+      const errText = safeText(status.error || "").toLowerCase();
+      const statusCode = Number(status.status || 0);
+      const looksTransient =
+        errText.includes("timed out") ||
+        errText.includes("timeout") ||
+        errText.includes("gateway") ||
+        errText.includes("failed to fetch") ||
+        errText.includes("networkerror") ||
+        errText.includes("load failed") ||
+        statusCode === 502 ||
+        statusCode === 503 ||
+        statusCode === 504;
+      transientFailures += 1;
+      if (looksTransient && transientFailures <= 20) {
+        metaEl.textContent = "Scan running… (server busy, status check slow — retrying)";
+        updateActionCenter({
+          title: "Scan Running",
+          message:
+            "The server is busy running your scan, so status checks are slow. Still working — this page will update when results are ready.",
+          severity: "info",
+        });
+        await new Promise((r) => setTimeout(r, Math.min(3000 + transientFailures * 1000, 12000)));
+        continue;
+      }
       metaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
       logEvent({ kind: "scan", severity: "error", message: `Scan status failed: ${status.error}` });
       updateActionCenter({ title: "Scan Status Failed", message: status.error, severity: "error" });
       return;
     }
+    transientFailures = 0;
     const data = status.data || {};
     if (data.status === "running") {
       unknownStatusStreak = 0;
