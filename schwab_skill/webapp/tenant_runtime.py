@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from schwab_auth import read_encrypted_token_file, write_encrypted_token_file
 
+from .db import SessionLocal
 from .models import User, UserCredential
 from .security import decrypt_secret, encrypt_secret
 
@@ -370,9 +371,21 @@ def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> No
     never overwrite a newer token written by a concurrent process. The market
     token is only persisted for tenants that already use per-user market OAuth
     (never for those on the shared platform-market fallback).
+
+    Token persistence runs in its OWN session: the caller's ``db`` may already be
+    in a failed-transaction state from an unrelated flush error during the
+    operation, which would otherwise drop the refreshed token here and force a
+    repeated 401 -> re-auth loop. ``db`` is accepted for API compatibility but
+    only used to release the caller's poisoned transaction.
     """
     try:
-        row = db.query(UserCredential).filter(UserCredential.user_id == user_id).first()
+        db.rollback()
+    except Exception:
+        pass
+
+    session = SessionLocal()
+    try:
+        row = session.query(UserCredential).filter(UserCredential.user_id == user_id).first()
         if not row:
             return
 
@@ -401,13 +414,15 @@ def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> No
                     changed = True
 
         if changed:
-            db.commit()
+            session.commit()
     except Exception as exc:
         LOG.warning("persist_tenant_tokens_back failed for user_id=%s: %s", user_id, exc)
         try:
-            db.rollback()
+            session.rollback()
         except Exception:
             pass
+    finally:
+        session.close()
 
 
 @contextmanager

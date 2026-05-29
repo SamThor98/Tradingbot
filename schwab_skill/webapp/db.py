@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import math
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
@@ -9,6 +13,36 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SQLITE_PATH = BASE_DIR / "webapp.db"
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively replace non-finite floats (NaN/Infinity) with None.
+
+    Postgres ``json``/``jsonb`` rejects NaN/Infinity tokens with
+    ``invalid input syntax for type json``. A single such value anywhere in a
+    payload (e.g. an indicator that came back NaN in a scan result) poisons the
+    whole transaction, which then rolls back unrelated writes flushed in the
+    same session — including refreshed Schwab token persistence. Sanitizing at
+    the serialization boundary keeps every JSON/JSONB column write valid.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_serializer(value: Any) -> str:
+    """Engine-wide JSON serializer for all JSON/JSONB columns (NaN/Inf-safe)."""
+    return json.dumps(_json_safe(value), default=_json_default)
 
 
 def _strip_invalid_host_brackets(url: str) -> str:
@@ -146,7 +180,7 @@ else:
         pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
     )
 
-engine = create_engine(DATABASE_URL, **engine_kwargs)
+engine = create_engine(DATABASE_URL, json_serializer=_json_serializer, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
