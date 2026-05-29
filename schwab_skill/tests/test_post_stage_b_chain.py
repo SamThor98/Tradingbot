@@ -14,7 +14,7 @@ def _record_nonfatal_stub(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
-def _make_signal(ticker: str, rank: float) -> dict[str, Any]:
+def _make_signal(ticker: str, rank: float, sector: str | None = None) -> dict[str, Any]:
     return {
         "ticker": ticker,
         "rank_score": rank,
@@ -22,6 +22,7 @@ def _make_signal(ticker: str, rank: float) -> dict[str, Any]:
         "composite_score": rank,
         "ensemble_score": rank,
         "mirofish_conviction": 100.0,
+        "sector_etf": sector,
     }
 
 
@@ -120,3 +121,53 @@ def test_chain_top_n_zero_returns_all(tmp_path, hermetic_chain) -> None:
 
     assert len(out) == 2
     assert diagnostics["top_n_applied"] == 0
+
+
+def test_chain_materializes_rank_score_from_fallback(tmp_path, hermetic_chain) -> None:
+    # No rank_score present; the chain should derive one from the best
+    # available score and count the fallback so ranking is apples-to-apples.
+    signals = [
+        {"ticker": "AAA", "composite_score": 40.0, "mirofish_conviction": 100.0},
+        {"ticker": "BBB", "signal_score": 70.0, "mirofish_conviction": 100.0},
+    ]
+    out, diagnostics = _run_chain(signals, top_n=0, skill_dir=tmp_path)
+
+    assert diagnostics["ranked_on_fallback_basis"] == 2
+    by_ticker = {s["ticker"]: s for s in out}
+    assert by_ticker["AAA"]["rank_score"] == 40.0
+    assert by_ticker["AAA"]["rank_score_fallback"] is True
+    assert by_ticker["BBB"]["rank_score"] == 70.0
+    # BBB (70) outranks AAA (40) once both are on the same basis.
+    assert [s["ticker"] for s in out] == ["BBB", "AAA"]
+
+
+def test_chain_correlation_guard_live_demotes_overflow(tmp_path, hermetic_chain, monkeypatch) -> None:
+    monkeypatch.setenv("CORRELATION_GUARD_MODE", "live")
+    monkeypatch.setenv("CORRELATION_GUARD_MAX_PER_SECTOR", "1")
+
+    signals = [
+        _make_signal("TECH_HI", 90.0, sector="XLK"),
+        _make_signal("FIN", 85.0, sector="XLF"),
+        _make_signal("TECH_LO", 80.0, sector="XLK"),
+    ]
+    out, diagnostics = _run_chain(signals, top_n=2, skill_dir=tmp_path)
+
+    # With one XLK slot, the lower XLK name is demoted out of the top-2.
+    assert [s["ticker"] for s in out] == ["TECH_HI", "FIN"]
+    assert diagnostics["correlation_guard_demoted"] == 1
+
+
+def test_chain_correlation_guard_shadow_only_annotates(tmp_path, hermetic_chain, monkeypatch) -> None:
+    monkeypatch.setenv("CORRELATION_GUARD_MODE", "shadow")
+    monkeypatch.setenv("CORRELATION_GUARD_MAX_PER_SECTOR", "1")
+
+    signals = [
+        _make_signal("TECH_HI", 90.0, sector="XLK"),
+        _make_signal("TECH_LO", 80.0, sector="XLK"),
+    ]
+    out, diagnostics = _run_chain(signals, top_n=0, skill_dir=tmp_path)
+
+    # Shadow does not reorder; it only flags would-demote.
+    assert [s["ticker"] for s in out] == ["TECH_HI", "TECH_LO"]
+    assert diagnostics["correlation_guard_would_demote"] == 1
+    assert diagnostics["correlation_guard_demoted"] == 0

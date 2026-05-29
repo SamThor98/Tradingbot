@@ -291,7 +291,7 @@ def _compute_high_level_rank_score(
     return _clamp_float(rank_score, 0.0, 100.0)
 
 
-def _apply_score_stack(signal_row: dict[str, Any]) -> dict[str, Any]:
+def _apply_score_stack(signal_row: dict[str, Any], skill_dir: Path | None = None) -> dict[str, Any]:
     """
     Compute a reliability-aware score stack for UI + ranking:
       - edge_score
@@ -305,7 +305,24 @@ def _apply_score_stack(signal_row: dict[str, Any]) -> dict[str, Any]:
     Crowd conviction (MiroFish) contributes exactly once — via ``pts_mirofish``
     inside ``signal_score``. ``p_up_calibrated`` must not apply a second
     conviction nudge; reliability diagnostics still reference conviction directly.
+
+    The edge/composite blend weights are config-driven (defaults preserve the
+    original hardcoded blend) so the weight-feedback loop can tune them.
     """
+    from config import (
+        get_score_composite_edge_weight,
+        get_score_composite_execution_weight,
+        get_score_composite_reliability_weight,
+        get_score_edge_pup_weight,
+        get_score_edge_signal_weight,
+    )
+
+    edge_signal_w = get_score_edge_signal_weight(skill_dir)
+    edge_pup_w = get_score_edge_pup_weight(skill_dir)
+    composite_edge_w = get_score_composite_edge_weight(skill_dir)
+    composite_reliability_w = get_score_composite_reliability_weight(skill_dir)
+    composite_execution_w = get_score_composite_execution_weight(skill_dir)
+
     score = _safe_float(signal_row.get("signal_score"), 0.0)
     conviction_raw = signal_row.get("mirofish_conviction")
     conviction = None
@@ -319,8 +336,8 @@ def _apply_score_stack(signal_row: dict[str, Any]) -> dict[str, Any]:
     p_up_calibrated = _resolve_calibrated_p_up(signal_row, confidence_bucket)
 
     edge_score = (
-        (score * 0.65)
-        + ((p_up_calibrated * 100.0) * 0.35)
+        (score * edge_signal_w)
+        + ((p_up_calibrated * 100.0) * edge_pup_w)
     )
     edge_score = _clamp_float(edge_score, 0.0, 100.0)
 
@@ -399,7 +416,11 @@ def _apply_score_stack(signal_row: dict[str, Any]) -> dict[str, Any]:
     friction = 0.002 + ((100.0 - execution) / 100.0) * 0.01
     ev_10d = (p_up_calibrated * avg_win) - ((1.0 - p_up_calibrated) * avg_loss) - friction
 
-    composite = (edge_score * 0.5) + (reliability * 0.3) + (execution * 0.2)
+    composite = (
+        (edge_score * composite_edge_w)
+        + (reliability * composite_reliability_w)
+        + (execution * composite_execution_w)
+    )
     if reliability < 40.0:
         composite = min(composite, 55.0)
         reliability_reasons.append("composite_capped_low_reliability")
@@ -1670,15 +1691,66 @@ def _apply_post_stage_b_chain(
     except Exception as e:
         LOG.debug("Meta-policy evaluation skipped: %s", e)
 
-    # Rank by high-level score stack and take top N
+    # Rank by high-level score stack and take top N.
+    #
+    # Always materialize `rank_score` first so every signal is ranked on the
+    # same scale. Previously the sort key fell back across rank_score ->
+    # ensemble_score -> composite_score -> signal_score, which meant two
+    # signals in the same scan could be ordered on different bases when Stage B
+    # enrichment was partial. Here we derive a degraded rank_score for any
+    # signal missing one and count it (`ranked_on_fallback_basis`) so operators
+    # can see when ranking quality was compromised.
     diagnostics["rank_basis"] = "rank_score"
-    signals.sort(
-        key=lambda s: s.get(
-            "rank_score",
-            s.get("ensemble_score", s.get("composite_score", s.get("signal_score", 0))),
-        ),
-        reverse=True,
-    )
+    for s in signals:
+        if s.get("rank_score") is None:
+            fallback = s.get("ensemble_score")
+            if fallback is None:
+                fallback = s.get("composite_score")
+            if fallback is None:
+                fallback = s.get("signal_score", 0)
+            s["rank_score"] = float(fallback) if fallback is not None else 0.0
+            s["rank_score_fallback"] = True
+            diagnostics["ranked_on_fallback_basis"] += 1
+    signals.sort(key=lambda s: s.get("rank_score") or 0.0, reverse=True)
+
+    # De-correlation guard: prevent the final top-N from being concentrated in
+    # one sector. Real pairwise return correlation needs a return series that
+    # signals do not carry at ranking time, so we use a sector-diversity proxy:
+    # walk the rank-sorted list and demote names whose sector already holds
+    # `max_per_sector` higher-ranked picks. shadow only annotates/counts; live
+    # reorders the overflow below the diversified names (within-group order
+    # preserved) so it falls out of the top-N first. Gated by the existing
+    # CORRELATION_GUARD_MODE plugin flag (default off).
+    try:
+        from config import get_correlation_guard_max_per_sector, get_correlation_guard_mode
+
+        corr_mode = get_correlation_guard_mode(skill_dir)
+        diagnostics["correlation_guard_mode"] = corr_mode
+        if corr_mode in ("shadow", "live") and len(signals) > 1:
+            max_per_sector = max(1, int(get_correlation_guard_max_per_sector(skill_dir)))
+            kept: list[dict[str, Any]] = []
+            demoted: list[dict[str, Any]] = []
+            sector_counts: dict[str, int] = {}
+            for s in signals:
+                sector = str(s.get("sector_etf") or "UNKNOWN")
+                if sector_counts.get(sector, 0) >= max_per_sector:
+                    demoted.append(s)
+                else:
+                    sector_counts[sector] = sector_counts.get(sector, 0) + 1
+                    kept.append(s)
+            if demoted:
+                if corr_mode == "live":
+                    for s in demoted:
+                        s["correlation_guard_demoted"] = True
+                    signals = kept + demoted
+                    diagnostics["correlation_guard_demoted"] += len(demoted)
+                else:
+                    for s in demoted:
+                        s["correlation_guard_would_demote"] = True
+                    diagnostics["correlation_guard_would_demote"] += len(demoted)
+    except Exception as e:
+        LOG.debug("Correlation guard skipped: %s", e)
+
     if top_n > 0 and len(signals) > top_n:
         diagnostics["top_n_applied"] = len(signals) - top_n
         before_top_n = list(signals)
@@ -1832,6 +1904,9 @@ def scan_for_signals_detailed(
         "advisory_medium_confidence": 0,
         "advisory_low_confidence": 0,
         "top_n_applied": 0,
+        "ranked_on_fallback_basis": 0,
+        "correlation_guard_demoted": 0,
+        "correlation_guard_would_demote": 0,
         "event_risk_flagged": 0,
         "event_risk_blocked": 0,
         "event_risk_downsized": 0,

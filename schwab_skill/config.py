@@ -322,6 +322,34 @@ def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
     return _get_float("SCAN_STAGE_WALL_BUDGET_SEC", 600.0, skill_dir)
 
 
+# Signal score-stack weights (see signal_scanner._apply_score_stack).
+# Defaults preserve the original hardcoded blend; exposing them as config lets
+# the weight-feedback review loop propose tuning without code edits.
+def get_score_edge_signal_weight(skill_dir: Path | None = None) -> float:
+    """Weight of the raw signal_score within edge_score (default 0.65)."""
+    return _get_float("SCORE_EDGE_SIGNAL_WEIGHT", 0.65, skill_dir)
+
+
+def get_score_edge_pup_weight(skill_dir: Path | None = None) -> float:
+    """Weight of calibrated P(up) within edge_score (default 0.35)."""
+    return _get_float("SCORE_EDGE_PUP_WEIGHT", 0.35, skill_dir)
+
+
+def get_score_composite_edge_weight(skill_dir: Path | None = None) -> float:
+    """Weight of edge_score within composite_score (default 0.5)."""
+    return _get_float("SCORE_COMPOSITE_EDGE_WEIGHT", 0.5, skill_dir)
+
+
+def get_score_composite_reliability_weight(skill_dir: Path | None = None) -> float:
+    """Weight of reliability_score within composite_score (default 0.3)."""
+    return _get_float("SCORE_COMPOSITE_RELIABILITY_WEIGHT", 0.3, skill_dir)
+
+
+def get_score_composite_execution_weight(skill_dir: Path | None = None) -> float:
+    """Weight of execution_score within composite_score (default 0.2)."""
+    return _get_float("SCORE_COMPOSITE_EXECUTION_WEIGHT", 0.2, skill_dir)
+
+
 def get_scan_vcp_gate_mode(skill_dir: Path | None = None) -> str:
     """
     VCP gate mode for Stage A:
@@ -739,8 +767,20 @@ def get_event_downsize_factor(skill_dir: Path | None = None) -> float:
 
 
 def get_correlation_guard_max_pair_corr(skill_dir: Path | None = None) -> float:
-    """Correlation guard threshold (unused for now)."""
+    """Correlation guard pairwise-return threshold.
+
+    Retained for a future true-correlation implementation. The scanner's
+    final-ranking guard currently uses a sector-diversity proxy
+    (``CORRELATION_GUARD_MAX_PER_SECTOR``) because signals do not carry a
+    return series at ranking time.
+    """
     return _get_float("CORRELATION_GUARD_MAX_PAIR_CORR", 0.85, skill_dir)
+
+
+def get_correlation_guard_max_per_sector(skill_dir: Path | None = None) -> int:
+    """Max number of same-sector names allowed before the correlation guard
+    demotes (live) or flags (shadow) the overflow during final ranking."""
+    return _get_int("CORRELATION_GUARD_MAX_PER_SECTOR", 2, skill_dir)
 
 
 def get_regime_v2_min_confidence(skill_dir: Path | None = None) -> float:
