@@ -261,6 +261,15 @@ def quote_health_hint(meta: dict[str, Any], quote_ok: bool) -> str | None:
         return None
     reason = str(meta.get("reason") or "") if isinstance(meta, dict) else ""
     detail = str(meta.get("error_detail") or "") if isinstance(meta, dict) else ""
+    http_status = meta.get("http_status") if isinstance(meta, dict) else None
+    if http_status == 401 or "401" in detail or "unauthorized" in detail.lower():
+        return (
+            "Schwab returned 401 Unauthorized for market-data quotes while the market app is "
+            "linked. This is an entitlement problem, not a login problem: the Schwab market app "
+            "is authenticated but not authorized for the Market Data API. Re-authenticating will "
+            "NOT fix it. Verify the app has the 'Market Data Production' product with status "
+            "'Ready For Use' (not 'Approved - Pending') at developer.schwab.com, then re-auth once."
+        )
     if reason == "http_error":
         return (
             "Schwab returned an error for the market-data quotes request. "
