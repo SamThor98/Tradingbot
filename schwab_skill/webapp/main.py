@@ -150,6 +150,26 @@ def _session_token_ok(session: Any) -> bool:
         return False
 
 
+def _session_connection_state(present: bool, refresh_status: str) -> tuple[bool, str]:
+    """Map (token present, refresh-token health) to (usable, display state).
+
+    A present-but-expired refresh token cannot be refreshed, so the cached
+    access token will 401 on every call — surfacing "Connected" in that case is
+    misleading (the user reconnects and nothing works). Report it as
+    "Reauth needed" and treat the session as not usable so the health ribbon and
+    downstream gates are honest. ``refresh_status`` is the per-session value from
+    ``DualSchwabAuth.get_token_health()`` ("expired"|"critical"|"warn"|
+    "healthy"|"unknown"). Note: an age-based probe cannot detect a *revoked*
+    token that is still young; the live probe in ``/api/health/deep`` covers
+    that case.
+    """
+    if not present:
+        return False, "Disconnected"
+    if refresh_status == "expired":
+        return False, "Reauth needed"
+    return True, "Connected"
+
+
 # Sector heatmap is the one read endpoint that fans out across ~12 ETF symbols
 # over live market data. When Schwab market data is degraded (e.g. a 401
 # entitlement issue) each symbol burns Schwab retries + a yfinance fallback, so
@@ -1927,9 +1947,20 @@ def health_deep(
     try:
         db_ok = bool(db.query(PendingTrade).limit(1).all() is not None)
         auth = get_shared_auth()
-        # Independent, non-raising per-session probes (see /api/status).
-        market_token_ok = _session_token_ok(auth.market_session)
-        account_token_ok = _session_token_ok(auth.account_session)
+        # Independent, non-raising per-session probes (see /api/status). Fold in
+        # refresh-token expiry so a present-but-dead token isn't reported usable.
+        try:
+            _token_health = auth.get_token_health()
+        except Exception:
+            _token_health = {"market": {"status": "unknown"}, "account": {"status": "unknown"}}
+        market_token_ok, _ = _session_connection_state(
+            _session_token_ok(auth.market_session),
+            str((_token_health.get("market") or {}).get("status") or ""),
+        )
+        account_token_ok, _ = _session_connection_state(
+            _session_token_ok(auth.account_session),
+            str((_token_health.get("account") or {}).get("status") or ""),
+        )
         quote, qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=SKILL_DIR)
         quote_ok = extract_schwab_last_price(quote) is not None
         with _metrics_lock:
@@ -1977,14 +2008,6 @@ def status(
     try:
         auth = get_shared_auth()
         checked_at = datetime.now(timezone.utc).isoformat()
-        # Evaluate each session independently and non-raising so a single
-        # disconnected session can never mask the other's state or error out
-        # the whole endpoint (the dashboard polls this and would otherwise
-        # mark BOTH pills unavailable).
-        market_token_ok = _session_token_ok(auth.market_session)
-        account_token_ok = _session_token_ok(auth.account_session)
-        market_state = "Connected" if market_token_ok else "Disconnected"
-        account_state = "Connected" if account_token_ok else "Disconnected"
         # Refresh-token age health (per session + roll-up). Pure read from
         # the encrypted token file — never triggers a network refresh.
         # Wrapped in try/except so a malformed token file or new field
@@ -1998,6 +2021,20 @@ def status(
                 "account": {"status": "unknown"},
                 "error": str(exc)[:200],
             }
+        # Evaluate each session independently and non-raising so a single
+        # disconnected session can never mask the other's state or error out
+        # the whole endpoint (the dashboard polls this and would otherwise
+        # mark BOTH pills unavailable). Fold in refresh-token health so an
+        # expired token reads "Reauth needed" instead of a misleading
+        # "Connected" (a present-but-dead token 401s on every call).
+        market_health = str((schwab_token_health.get("market") or {}).get("status") or "")
+        account_health = str((schwab_token_health.get("account") or {}).get("status") or "")
+        market_token_ok, market_state = _session_connection_state(
+            _session_token_ok(auth.market_session), market_health
+        )
+        account_token_ok, account_state = _session_connection_state(
+            _session_token_ok(auth.account_session), account_health
+        )
         last_scan = _load_state(
             db,
             key="last_scan",

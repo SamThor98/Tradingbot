@@ -78,7 +78,7 @@ export function logEvent({ message, kind = "system", severity = "info" } = {}) {
 export function statusClass(status) {
   const s = (status || "").toLowerCase();
   if (["executed", "approved", "connected", "ok"].includes(s)) return "pill good";
-  if (["failed", "rejected", "expired", "disconnected", "fail"].includes(s)) return "pill bad";
+  if (["failed", "rejected", "expired", "disconnected", "fail", "reauth needed"].includes(s)) return "pill bad";
   if (["pending", "degraded", "warn"].includes(s)) return "pill warn";
   if (["info"].includes(s)) return "pill info";
   return "pill neutral";
@@ -99,11 +99,19 @@ export function setStatusPill(el, label, title = "") {
   if (!el) return;
   const status = (label || "").toLowerCase();
   el.className = statusClass(status);
-  const dotClass = status.includes("connect")
-    ? "good"
-    : status.includes("disconnect")
-      ? "bad"
-      : "warn";
+  // Order matters: check problem states before "connect" so labels like
+  // "Reauth needed" / "Disconnected" don't match the "connect" substring and
+  // render a misleading green dot.
+  let dotClass = "warn";
+  if (
+    status.includes("reauth") ||
+    status.includes("expired") ||
+    status.includes("disconnect")
+  ) {
+    dotClass = "bad";
+  } else if (status.includes("connect")) {
+    dotClass = "good";
+  }
   el.innerHTML = `<span class="status-dot ${dotClass}"></span>${safeText(label)}`;
   // Optional hover tooltip explaining the state (e.g. why quotes are degraded).
   // Clear any stale tooltip when no title is supplied so it never lingers.
