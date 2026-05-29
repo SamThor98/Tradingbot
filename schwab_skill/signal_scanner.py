@@ -1573,7 +1573,7 @@ def _apply_post_stage_b_chain(
                 )
                 _tag_shortlist_drop(before, signals, "filtered_self_study")
     except Exception as e:
-        LOG.debug("Self-study filter skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Self-study filter skipped: %s", e)
 
     # Optional quality gates (default off). When disabled, count would-filter diagnostics only.
     try:
@@ -1647,7 +1647,7 @@ def _apply_post_stage_b_chain(
             gated.append(s)
         signals = gated
     except Exception as e:
-        LOG.debug("Quality gate evaluation skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Quality gate evaluation skipped: %s", e)
 
     # Event-risk policy: can tag, suppress, or mark downsize intent.
     try:
@@ -1655,7 +1655,7 @@ def _apply_post_stage_b_chain(
         signals = _apply_event_risk_policy_to_signals(signals, diagnostics, skill_dir)
         _tag_shortlist_drop(before_event_risk, signals, "filtered_event_risk")
     except Exception as e:
-        LOG.debug("Event-risk policy evaluation skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Event-risk policy evaluation skipped: %s", e)
 
     # Strategy plugin ensemble (shadow by default): rank-ready score + attribution diagnostics.
     try:
@@ -1671,7 +1671,7 @@ def _apply_post_stage_b_chain(
         # Ensemble is documented as enrich-only, but defensively tag any drops.
         _tag_shortlist_drop(before_ensemble, signals, "filtered_ensemble")
     except Exception as e:
-        LOG.debug("Strategy ensemble evaluation skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Strategy ensemble evaluation skipped: %s", e)
 
     # Meta-policy/uncertainty combiner: optional final decision layer.
     try:
@@ -1689,7 +1689,7 @@ def _apply_post_stage_b_chain(
         signals = next_signals
         _tag_shortlist_drop(before_meta, signals, "filtered_meta_policy")
     except Exception as e:
-        LOG.debug("Meta-policy evaluation skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Meta-policy evaluation skipped: %s", e)
 
     # Rank by high-level score stack and take top N.
     #
@@ -1749,7 +1749,7 @@ def _apply_post_stage_b_chain(
                         s["correlation_guard_would_demote"] = True
                     diagnostics["correlation_guard_would_demote"] += len(demoted)
     except Exception as e:
-        LOG.debug("Correlation guard skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Correlation guard skipped: %s", e)
 
     if top_n > 0 and len(signals) > top_n:
         diagnostics["top_n_applied"] = len(signals) - top_n
@@ -1784,7 +1784,7 @@ def _apply_post_stage_b_chain(
     try:
         _record_quality_snapshot(skill_dir, diagnostics, signals)
     except Exception as e:
-        LOG.debug("Quality metrics snapshot skipped: %s", e)
+        record_nonfatal("chain_layer_failures", "Quality metrics snapshot skipped: %s", e)
 
     # Finalise the shortlist snapshot for the caller. Survivors keep their
     # default `_filter_status="kept"`; everything else has already been
@@ -1957,6 +1957,7 @@ def scan_for_signals_detailed(
         "regime_fail_closed_mode": None,
         "stage_a_logging_failures": 0,
         "stage_b_logging_failures": 0,
+        "chain_layer_failures": 0,
         "post_scan_observability_failures": 0,
     })
     diagnostics["prediction_market"] = {
