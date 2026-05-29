@@ -310,6 +310,18 @@ def get_scan_stage_task_timeout_sec(skill_dir: Path | None = None) -> float:
     return _get_float("SCAN_STAGE_TASK_TIMEOUT_SEC", 120.0, skill_dir)
 
 
+def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
+    """Hard wall-clock ceiling for a single scan stage (Stage A or Stage B).
+
+    The per-stage ``as_completed`` timeout was previously ``task_timeout *
+    num_futures``, which is effectively unbounded on a broad universe (e.g.
+    120s * 1500). This caps the worst-case wait so a stuck stage cannot hang
+    the whole scan; futures still pending at the budget are cancelled and
+    counted as timeouts by the existing handling.
+    """
+    return _get_float("SCAN_STAGE_WALL_BUDGET_SEC", 600.0, skill_dir)
+
+
 def get_scan_vcp_gate_mode(skill_dir: Path | None = None) -> str:
     """
     VCP gate mode for Stage A:

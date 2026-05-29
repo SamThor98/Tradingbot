@@ -873,14 +873,18 @@ def _scan_stage_a_one(
                 "fallback_reason": history_meta.get("fallback_reason"),
             }
 
-        quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
         price = float(df["close"].iloc[-1])
-        # Use the strict live-only extractor so a stale `closePrice` substitution
-        # cannot anchor a fresh breakout decision (would compare today's high
-        # against yesterday's close).
-        live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
-        if live is not None:
-            price = live
+        # The live quote is only needed to anchor an intraday breakout decision.
+        # When breakout confirmation is disabled we skip the per-ticker quote
+        # round-trip entirely (≈1 call/ticker across the broad universe), which
+        # materially reduces Schwab 429 pressure. Use the strict live-only
+        # extractor so a stale `closePrice` substitution cannot anchor a fresh
+        # breakout decision (would compare today's high against yesterday's close).
+        if breakout_enabled:
+            quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
+            live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
+            if live is not None:
+                price = live
 
         prior_high = (
             float(df["high"].iloc[-2])
@@ -2094,6 +2098,7 @@ def scan_for_signals_detailed(
         get_scan_stage_a_shortlist_multiplier,
         get_scan_stage_b_max_workers,
         get_scan_stage_task_timeout_sec,
+        get_scan_stage_wall_budget_sec,
         get_scan_vcp_gate_mode,
         get_scan_vcp_penalty_points,
         get_sec_cache_hours,
@@ -2212,6 +2217,7 @@ def scan_for_signals_detailed(
     shortlist_cap = get_scan_stage_a_shortlist_cap(skill_dir)
     shortlist_nocap_limit = get_scan_stage_a_nocap_limit(skill_dir)
     task_timeout_sec = max(5.0, float(get_scan_stage_task_timeout_sec(skill_dir)))
+    stage_wall_budget_sec = max(task_timeout_sec, float(get_scan_stage_wall_budget_sec(skill_dir)))
     vcp_gate_mode = get_scan_vcp_gate_mode(skill_dir)
     sector_gate_mode = get_scan_sector_gate_mode(skill_dir)
     vcp_penalty_points = float(get_scan_vcp_penalty_points(skill_dir))
@@ -2286,7 +2292,10 @@ def scan_for_signals_detailed(
         try:
             for fut in cf.as_completed(
                 future_map_a.keys(),
-                timeout=max(task_timeout_sec, task_timeout_sec * max(1, len(future_map_a))),
+                timeout=min(
+                    stage_wall_budget_sec,
+                    max(task_timeout_sec, task_timeout_sec * max(1, len(future_map_a))),
+                ),
             ):
                 ticker = future_map_a[fut]
                 try:
@@ -2370,6 +2379,15 @@ def scan_for_signals_detailed(
     diagnostics["stage_a_shortlisted"] = len(shortlist)
     diagnostics["stage_a_pruned"] = max(0, len(stage_a_candidates) - len(shortlist))
 
+    # Free the per-ticker DataFrames carried on pruned (non-shortlisted)
+    # candidates before Stage B. On a broad universe this releases ~1500 frames
+    # that Stage B never touches, cutting peak memory; shortlisted candidates
+    # keep their `df` for enrichment.
+    _shortlist_ids = {id(c) for c in shortlist}
+    for _cand in stage_a_candidates:
+        if id(_cand) not in _shortlist_ids:
+            _cand.pop("df", None)
+
     # Stage B: expensive enrichment/ranking on shortlist only.
     stage_b_start = time.perf_counter()
     future_map_b: dict[cf.Future[Any], str] = {}
@@ -2416,7 +2434,10 @@ def scan_for_signals_detailed(
         try:
             for fut in cf.as_completed(
                 future_map_b.keys(),
-                timeout=max(task_timeout_sec, task_timeout_sec * max(1, len(future_map_b))),
+                timeout=min(
+                    stage_wall_budget_sec,
+                    max(task_timeout_sec, task_timeout_sec * max(1, len(future_map_b))),
+                ),
             ):
                 ticker = future_map_b[fut]
                 try:
