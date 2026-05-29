@@ -14,9 +14,10 @@ def test_yfinance_logger_silenced_on_import() -> None:
 def test_yfinance_error_record_is_suppressed() -> None:
     lg = logging.getLogger("yfinance")
     # An ERROR-level record (yfinance dumps HTTP error bodies here) must not pass.
-    assert lg.isEnabledFor(logging.ERROR) is False
-    # CRITICAL still passes so genuinely fatal library issues are not hidden.
-    assert lg.isEnabledFor(logging.CRITICAL) is True
+    # (We assert via the logger's own level, not isEnabledFor, because a global
+    # logging.disable() in some test/CI setups would otherwise mask the check.)
+    assert lg.level == logging.CRITICAL
+    assert logging.ERROR < lg.level
 
 
 def test_reapply_is_idempotent() -> None:
