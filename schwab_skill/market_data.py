@@ -11,6 +11,7 @@ stay on a split/dividend-adjusted basis comparable to typical TA workflows.
 
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -70,6 +71,64 @@ def _emit_obs(fn_name: str, *args: Any, **kwargs: Any) -> None:
         pass
 
 
+class _TokenBucket:
+    """Thread-safe token bucket so all scan threads in this process share one
+    global Schwab market-data request budget.
+
+    A full-universe scan fans out per-ticker ``pricehistory``/``quotes`` calls
+    across worker threads; without a shared limiter the aggregate rate blows
+    past Schwab's per-minute cap and every call gets HTTP 429 (then degrades to
+    the slower yfinance fallback). Pacing under the cap lets the scan actually
+    use Schwab data instead of stampeding into throttling.
+    """
+
+    def __init__(self, rate_per_sec: float, capacity: float) -> None:
+        self._rate = max(rate_per_sec, 0.0001)
+        self._capacity = max(capacity, 1.0)
+        self._tokens = self._capacity
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Block until one token is available, refilling by elapsed time."""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._tokens = min(self._capacity, self._tokens + (now - self._last) * self._rate)
+                self._last = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait_s = (1.0 - self._tokens) / self._rate
+            time.sleep(min(max(wait_s, 0.0), 5.0))
+
+
+def _build_market_rate_limiter() -> "_TokenBucket | None":
+    enabled = (os.getenv("SCHWAB_MARKET_RATE_LIMIT_ENABLED", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if not enabled:
+        return None
+
+    def _env_float(key: str, default: float) -> float:
+        try:
+            return float(os.getenv(key, "") or default)
+        except (TypeError, ValueError):
+            return default
+
+    # Schwab market-data apps are capped near ~120 requests/min; default a bit
+    # under that and allow a small burst. Both are env-tunable.
+    rpm = max(1.0, _env_float("SCHWAB_MARKET_MAX_RPM", 110.0))
+    burst = max(1.0, _env_float("SCHWAB_MARKET_RATE_BURST", 10.0))
+    return _TokenBucket(rate_per_sec=rpm / 60.0, capacity=burst)
+
+
+_MARKET_RATE_LIMITER = _build_market_rate_limiter()
+
+
 def _request_with_backoff(
     auth: DualSchwabAuth,
     method: str,
@@ -89,6 +148,10 @@ def _request_with_backoff(
     refreshed_on_401 = False
     endpoint = _obs_endpoint_label(url)
     for attempt in range(MAX_RETRIES):
+        # Global pacing: keep the process-wide Schwab request rate under the
+        # provider cap so concurrent scan threads don't trigger 429 storms.
+        if _MARKET_RATE_LIMITER is not None:
+            _MARKET_RATE_LIMITER.acquire()
         _t0 = time.perf_counter()
         try:
             resp = requests.request(method, url, params=params, **kwargs)
