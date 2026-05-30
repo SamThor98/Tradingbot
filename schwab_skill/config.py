@@ -1249,10 +1249,11 @@ def get_kronos_sample_count(skill_dir: Path | None = None) -> int:
 
     >1 averages multiple autoregressive draws into a smoother central forecast,
     removing the wild single-draw swings that make a lone sample look extreme.
-    Higher is steadier but slower on CPU (clamped 1..64). Default favors a
-    steady central forecast for the on-demand tab.
+    Higher is steadier but slower on CPU (clamped 1..64). Default is tuned so
+    Kronos-base finishes within the request budget on a single-CPU box; raise it
+    if you move to a multi-CPU instance.
     """
-    val = _get_int("KRONOS_SAMPLE_COUNT", 25, skill_dir)
+    val = _get_int("KRONOS_SAMPLE_COUNT", 10, skill_dir)
     return max(1, min(64, val))
 
 

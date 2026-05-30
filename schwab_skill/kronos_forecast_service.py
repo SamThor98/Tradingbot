@@ -81,7 +81,9 @@ def build_forecast_payload(
     if interval in INTRADAY:
         from market_data import get_intraday_history_with_meta
 
-        lookback = 480  # fill most of the 512 context with dense intraday bars
+        # Cap context: 512 intraday bars on a single-CPU box pushes base inference
+        # past the request timeout. 256 still gives ample intraday context.
+        lookback = 256
         df, meta = get_intraday_history_with_meta(
             symbol, interval=interval, days=get_kronos_intraday_days(skill_dir), auth=auth, skill_dir=skill_dir
         )
