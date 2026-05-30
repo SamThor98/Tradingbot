@@ -59,12 +59,22 @@
         <button
           type="button"
           class="screen-switch-btn"
+          data-screen-mode="kronos"
+          role="tab"
+          aria-selected="false"
+          aria-controls="kronosWorkspaceIntro"
+        >
+          <span class="tab-num" aria-hidden="true">3</span>Kronos
+        </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
           data-screen-mode="diagnostics"
           role="tab"
           aria-selected="false"
           aria-controls="diagnosticsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">3</span>Diagnostics
+          <span class="tab-num" aria-hidden="true">4</span>Diagnostics
         </button>
         <button
           type="button"
@@ -74,7 +84,7 @@
           aria-selected="false"
           aria-controls="settingsWorkspaceIntro"
         >
-          <span class="tab-num" aria-hidden="true">4</span>Settings
+          <span class="tab-num" aria-hidden="true">5</span>Settings
         </button>
       </nav>
 
@@ -146,6 +156,8 @@
             <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
             <a href="#backtestSection" data-nav-screens="research">Backtest + chat</a>
             <a href="#reportSectionCard" data-nav-screens="research">Dossier + SEC compare</a>
+            <a href="#kronosForecastSection" data-nav-screens="kronos">Run forecast</a>
+            <a href="#kronosAboutSection" data-nav-screens="kronos">How Kronos works</a>
             <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
             <a href="#decisionDashboardCard" data-nav-screens="diagnostics">Decision readiness</a>
             <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Detailed status</a>
@@ -400,6 +412,13 @@
           <div id="scanDetailChartContainer" class="scan-detail-chart">
             <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
           </div>
+          <div class="scan-detail-forecast-controls">
+            <button id="scanDetailForecastBtn" type="button" class="btn-ghost" disabled
+              title="Overlay a Kronos K-line forecast on the chart (advisory)">
+              Forecast (Kronos)
+            </button>
+          </div>
+          <div id="scanDetailForecast" class="scan-detail-forecast" aria-live="polite"></div>
           <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
             <h4>Decision brief</h4>
             <div id="scanDetailBrief" class="scan-brief-content">
@@ -951,6 +970,109 @@
             Recovery mapping shares the slide-in <strong>Trade Drawer</strong> with the decision card.
           </p>
         </article>
+      </section>
+
+      <section id="kronosWorkspaceIntro" class="card workspace-intro kronos-surface kronos-workspace-intro" aria-label="Kronos forecast workspace">
+        <div>
+          <p class="workspace-eyebrow">Kronos</p>
+          <h2>Forecast the next moves</h2>
+          <p class="muted">
+            Kronos is an open-source foundation model for financial candlesticks. Enter a ticker to
+            project the next sessions of price action — advisory only, never an order.
+          </p>
+        </div>
+        <div class="inline-form compact">
+          <a class="btn small secondary" href="#kronosForecastSection">Run a forecast</a>
+          <a class="btn small secondary" href="#kronosAboutSection">How it works</a>
+        </div>
+      </section>
+
+      <section
+        id="kronosForecastSection"
+        class="card kronos-surface kronos-forecast-card"
+        aria-labelledby="kronosForecastHeading"
+      >
+        <div class="section-title">
+          <h2 id="kronosForecastHeading">Kronos forecast</h2>
+          <small class="muted">Projected candles, direction, and confidence for a single symbol.</small>
+        </div>
+
+        <form id="kronosForecastForm" class="kronos-form" aria-describedby="kronosFormHint">
+          <div class="kronos-form-row">
+            <div class="kronos-field">
+              <label class="field-label" for="kronosTickerInput">Ticker</label>
+              <input
+                id="kronosTickerInput"
+                name="ticker"
+                type="text"
+                placeholder="AAPL"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                maxlength="12"
+                aria-describedby="kronosFormHint"
+                required
+              />
+            </div>
+            <div class="kronos-field">
+              <label class="field-label" for="kronosHorizonSelect">Horizon</label>
+              <select id="kronosHorizonSelect" name="horizon" aria-label="Forecast horizon in trading days">
+                <option value="10">10 trading days</option>
+                <option value="24" selected>24 trading days</option>
+                <option value="40">40 trading days</option>
+                <option value="60">60 trading days</option>
+              </select>
+            </div>
+            <div class="kronos-field kronos-field-action">
+              <button id="kronosRunBtn" class="btn primary" type="submit">Run forecast</button>
+            </div>
+          </div>
+          <p id="kronosFormHint" class="muted small">
+            Forecasts are advisory model output, not trade signals. Latency depends on the inference service.
+          </p>
+        </form>
+
+        <div id="kronosServiceStatus" class="kronos-service-status" role="status" aria-live="polite"></div>
+
+        <div
+          id="kronosChartContainer"
+          class="kronos-chart"
+          role="img"
+          aria-label="Historical and forecast price chart"
+        >
+          <p class="muted">Enter a ticker and run a forecast to see history with the projected path.</p>
+        </div>
+
+        <div id="kronosForecastSummary" class="kronos-summary-host" aria-live="polite"></div>
+      </section>
+
+      <section
+        id="kronosAboutSection"
+        class="card kronos-surface section-advanced"
+        aria-labelledby="kronosAboutHeading"
+      >
+        <div class="section-title">
+          <h2 id="kronosAboutHeading">How Kronos works</h2>
+          <small class="muted">Context for interpreting the forecast responsibly.</small>
+        </div>
+        <ul class="kronos-about-list">
+          <li>
+            <strong>Inputs.</strong> Recent daily OHLCV candles (the same data feeding the scanner) are
+            tokenized and fed to a decoder-only transformer pre-trained on global K-line sequences.
+          </li>
+          <li>
+            <strong>Output.</strong> A projected candle path, a net direction, an expected percentage move
+            over the horizon, and a confidence proxy derived from the predicted path.
+          </li>
+          <li>
+            <strong>Advisory only.</strong> Forecasts never place or modify orders. In the scanner they run
+            in shadow mode by default, attaching context without changing ranking.
+          </li>
+          <li>
+            <strong>Degrades safely.</strong> If the inference service is offline, the workspace shows a
+            clear status message instead of failing.
+          </li>
+        </ul>
       </section>
 
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">

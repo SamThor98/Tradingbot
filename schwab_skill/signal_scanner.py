@@ -8,6 +8,7 @@ from __future__ import annotations
 import concurrent.futures as cf
 import json
 import logging
+import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -1034,6 +1035,7 @@ def _scan_stage_b_enrich(
     prediction_market_mode: str,
     scan_started_at: datetime,
     regime_is_bullish: bool | None,
+    kronos_ctx: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from stage_analysis import compute_signal_components
 
@@ -1054,6 +1056,13 @@ def _scan_stage_b_enrich(
         "advisory_high_confidence": 0,
         "advisory_medium_confidence": 0,
         "advisory_low_confidence": 0,
+        "kronos_scored": 0,
+        "kronos_high_confidence": 0,
+        "kronos_medium_confidence": 0,
+        "kronos_low_confidence": 0,
+        "kronos_errors": 0,
+        "kronos_skipped_budget": 0,
+        "kronos_live_adjustments": 0,
         "low_breakout_volume": 0,
         "weak_mirofish_alignment": 0,
         "forensic_sloan_flags": 0,
@@ -1339,6 +1348,62 @@ def _scan_stage_b_enrich(
                     diag_delta["advisory_low_confidence"] += 1
         except Exception as e:
             LOG.debug("Advisory scoring skipped for %s: %s", ticker, e)
+
+        # Kronos forecast enrichment (OFF|SHADOW|LIVE). Budget-capped per scan
+        # and fully degrade-safe: any failure leaves the signal untouched.
+        if kronos_ctx is not None:
+            try:
+                proceed = False
+                lock = kronos_ctx.get("lock")
+                budget = kronos_ctx.get("budget")
+                if lock is not None and isinstance(budget, list):
+                    with lock:
+                        if budget[0] > 0:
+                            budget[0] -= 1
+                            proceed = True
+                if not proceed:
+                    diag_delta["kronos_skipped_budget"] += 1
+                else:
+                    from kronos_client import forecast_signal_kronos
+
+                    kf = forecast_signal_kronos(
+                        ticker,
+                        df,
+                        skill_dir=skill_dir,
+                        regime_is_bullish=regime_is_bullish,
+                    )
+                    if kf is not None:
+                        kf_dict = kf.to_dict()
+                        signal_row["kronos_forecast"] = kf_dict
+                        diag_delta["kronos_scored"] += 1
+                        kbucket = str(kf_dict.get("confidence_bucket", "low")).lower()
+                        if kbucket == "high":
+                            diag_delta["kronos_high_confidence"] += 1
+                        elif kbucket == "medium":
+                            diag_delta["kronos_medium_confidence"] += 1
+                        else:
+                            diag_delta["kronos_low_confidence"] += 1
+                        # LIVE: small clamped score nudge, gated by regime + high
+                        # confidence. SHADOW only attaches the forecast.
+                        if (
+                            str(kronos_ctx.get("mode")) == "live"
+                            and kbucket == "high"
+                            and regime_is_bullish is not False
+                        ):
+                            from config import get_kronos_score_delta_clamp
+
+                            clamp = float(get_kronos_score_delta_clamp(skill_dir))
+                            direction = str(kf_dict.get("direction", "flat")).lower()
+                            sign = 1.0 if direction == "up" else (-1.0 if direction == "down" else 0.0)
+                            delta = max(-clamp, min(clamp, sign * clamp))
+                            if delta:
+                                score = max(0.0, min(100.0, score + delta))
+                                signal_row["signal_score"] = score
+                                signal_row["kronos_score_delta"] = round(delta, 3)
+                                diag_delta["kronos_live_adjustments"] += 1
+            except Exception as e:
+                diag_delta["kronos_errors"] += 1
+                LOG.debug("Kronos scoring skipped for %s: %s", ticker, e)
 
         prediction_eval = None
         if prediction_market_mode != "off" and prediction_market_engine is not None:
@@ -1903,6 +1968,13 @@ def scan_for_signals_detailed(
         "advisory_high_confidence": 0,
         "advisory_medium_confidence": 0,
         "advisory_low_confidence": 0,
+        "kronos_scored": 0,
+        "kronos_high_confidence": 0,
+        "kronos_medium_confidence": 0,
+        "kronos_low_confidence": 0,
+        "kronos_errors": 0,
+        "kronos_skipped_budget": 0,
+        "kronos_live_adjustments": 0,
         "top_n_applied": 0,
         "ranked_on_fallback_basis": 0,
         "correlation_guard_demoted": 0,
@@ -2155,6 +2227,8 @@ def scan_for_signals_detailed(
         get_guidance_score_boost,
         get_guidance_score_enabled,
         get_guidance_score_penalty,
+        get_kronos_max_symbols,
+        get_kronos_mode,
         get_meta_policy_mode,
         get_pead_enabled,
         get_pead_lookback_days,
@@ -2218,6 +2292,24 @@ def scan_for_signals_detailed(
     prediction_market_mode = get_pred_market_mode(skill_dir)
     prediction_market_engine = None
     scan_started_at = datetime.now(timezone.utc)
+
+    # Kronos forecast plugin context (shared, thread-safe budget across Stage B).
+    kronos_mode = get_kronos_mode(skill_dir)
+    kronos_ctx: dict[str, Any] | None = None
+    if kronos_mode != "off":
+        kronos_ctx = {
+            "mode": kronos_mode,
+            "lock": threading.Lock(),
+            "budget": [int(get_kronos_max_symbols(skill_dir))],
+        }
+    diagnostics["kronos"] = {
+        "enabled": kronos_mode != "off",
+        "mode": kronos_mode,
+        "scored": 0,
+        "errors": 0,
+        "skipped_budget": 0,
+        "live_adjustments": 0,
+    }
     try:
         from prediction_market import (
             PredictionMarketOverlayEngine,
@@ -2505,6 +2597,7 @@ def scan_for_signals_detailed(
                 prediction_market_mode,
                 scan_started_at,
                 diagnostics.get("regime_bullish"),
+                kronos_ctx,
             )
             future_map_b[fut] = ticker
         try:
@@ -2560,6 +2653,17 @@ def scan_for_signals_detailed(
         "applied": int(diagnostics.get("prediction_market_applied", 0) or 0),
         "skipped": int(diagnostics.get("prediction_market_skipped", 0) or 0),
         "errors": int(diagnostics.get("prediction_market_errors", 0) or 0),
+    }
+    diagnostics["kronos"] = {
+        "enabled": bool((diagnostics.get("kronos") or {}).get("enabled", False)),
+        "mode": str((diagnostics.get("kronos") or {}).get("mode") or "off"),
+        "scored": int(diagnostics.get("kronos_scored", 0) or 0),
+        "errors": int(diagnostics.get("kronos_errors", 0) or 0),
+        "skipped_budget": int(diagnostics.get("kronos_skipped_budget", 0) or 0),
+        "live_adjustments": int(diagnostics.get("kronos_live_adjustments", 0) or 0),
+        "high_confidence": int(diagnostics.get("kronos_high_confidence", 0) or 0),
+        "medium_confidence": int(diagnostics.get("kronos_medium_confidence", 0) or 0),
+        "low_confidence": int(diagnostics.get("kronos_low_confidence", 0) or 0),
     }
     diagnostics["meta_policy"] = {
         "enabled": bool((diagnostics.get("meta_policy") or {}).get("enabled", False)),

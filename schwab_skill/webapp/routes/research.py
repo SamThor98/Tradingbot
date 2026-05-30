@@ -1737,6 +1737,88 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
         return _err_response("chart_data", e)
 
 
+@router.get("/api/forecast/{ticker}", response_model=ApiResponse)
+def forecast_data(ticker: str, days: int = 220, pred_len: int = 0) -> ApiResponse:
+    """Kronos K-line forecast for ``ticker`` (history + predicted candles).
+
+    On-demand and read-only: works regardless of the scanner KRONOS_MODE. If the
+    inference service is unavailable, returns a clear degraded response rather
+    than raising (degraded-mode policy).
+    """
+    try:
+        from config import get_kronos_lookback_bars, get_kronos_mode, get_kronos_pred_len
+        from kronos_client import forecast as kronos_forecast
+        from market_data import get_daily_history_with_meta
+
+        symbol = ticker.upper().strip()
+        lookback = get_kronos_lookback_bars(SKILL_DIR)
+        horizon = int(pred_len) if int(pred_len) > 0 else get_kronos_pred_len(SKILL_DIR)
+        # Pull enough history to cover the model lookback window.
+        fetch_days = min(365, max(int(days), lookback + 20))
+
+        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        df, meta = get_daily_history_with_meta(
+            symbol, days=fetch_days, auth=auth, skill_dir=SKILL_DIR
+        )
+        if df is None or df.empty:
+            return ApiResponse(
+                ok=False,
+                error=f"No price data for {symbol}",
+                data={"ticker": symbol, "provider": meta.get("provider")},
+            )
+
+        history_candles: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            ts = row.get("datetime") or row.get("date") or row.name
+            try:
+                if hasattr(ts, "timestamp"):
+                    epoch = int(ts.timestamp())
+                else:
+                    from datetime import datetime as _dt
+
+                    epoch = int(_dt.fromisoformat(str(ts)).timestamp())
+            except Exception:
+                continue
+            history_candles.append(
+                {
+                    "time": epoch,
+                    "open": round(float(row.get("open", 0)), 2),
+                    "high": round(float(row.get("high", 0)), 2),
+                    "low": round(float(row.get("low", 0)), 2),
+                    "close": round(float(row.get("close", 0)), 2),
+                    "volume": int(row.get("volume", 0) or 0),
+                }
+            )
+        history_candles.sort(key=lambda c: c["time"])
+
+        fc = kronos_forecast(symbol, df, skill_dir=SKILL_DIR, pred_len=horizon, lookback=lookback)
+        if fc is None:
+            return ApiResponse(
+                ok=False,
+                error="Kronos forecast unavailable (inference service offline or degraded).",
+                data={
+                    "ticker": symbol,
+                    "degraded": True,
+                    "scanner_mode": get_kronos_mode(SKILL_DIR),
+                    "history_candles": history_candles,
+                },
+            )
+
+        payload = fc.to_dict()
+        payload.update(
+            {
+                "ticker": symbol,
+                "scanner_mode": get_kronos_mode(SKILL_DIR),
+                "history_candles": history_candles,
+                "provider": meta.get("provider"),
+                "used_fallback": meta.get("used_fallback"),
+            }
+        )
+        return _ok(payload)
+    except Exception as e:
+        return _err_response("forecast", e)
+
+
 @router.get("/api/check/{ticker}", response_model=ApiResponse)
 def check_ticker(ticker: str) -> ApiResponse:
     try:

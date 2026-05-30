@@ -179,6 +179,8 @@ import {
 } from "./panels/strategyChat.js";
 import { renderValidationRecentSteps } from "./modules/validationView.js";
 import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
+import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
+import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
 
 // Thin wrappers preserve the call signatures used by `wireEvents`,
 // `connectSSE`, `runLazyApi`, etc. without leaking the panel-module
@@ -219,7 +221,7 @@ const lazyLoaded = {
 let _ablationCyclePollTimer = null;
 let _lastAblationRunStatus = "idle";
 
-const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
+const SCREEN_MODES = Object.freeze(["operations", "research", "kronos", "diagnostics", "settings"]);
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
     title: "Built to endure.",
@@ -236,6 +238,14 @@ const SCREEN_CONTEXT = Object.freeze({
     ctaHref: "#quickCheckSection",
     altCtaLabel: "Open backtests",
     altCtaHref: "#backtestSection",
+  },
+  kronos: {
+    title: "Forecast with foundation models.",
+    text: "Project the next sessions of price action for a symbol with Kronos — advisory context to pressure-test a thesis, never an order.",
+    ctaLabel: "Run a forecast",
+    ctaHref: "#kronosForecastSection",
+    altCtaLabel: "How it works",
+    altCtaHref: "#kronosAboutSection",
   },
   diagnostics: {
     title: "Resilience first.",
@@ -281,6 +291,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "portfolioSection",
     "performanceSection",
   ],
+  kronos: ["kronosWorkspaceIntro", "kronosForecastSection", "kronosAboutSection"],
   diagnostics: [
     "dashboardToday",
     "diagnosticsWorkspaceIntro",
@@ -421,7 +432,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Diagnostics, 4 Settings.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Kronos, 4 Diagnostics, 5 Settings.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -445,6 +456,8 @@ function maybePrimeScreenData(mode) {
     void runLazyApi("backtest");
     void runLazyApi("portfolio");
     void runLazyApi("performance");
+  } else if (mode === "kronos") {
+    void primeKronosWorkspace();
   }
 }
 
@@ -476,7 +489,13 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
     document.body.classList.remove("ui-screen-switching");
     screenSwitchTimer = null;
   }, 170);
-  document.body.classList.remove("ui-screen-operations", "ui-screen-research", "ui-screen-diagnostics", "ui-screen-settings");
+  document.body.classList.remove(
+    "ui-screen-operations",
+    "ui-screen-research",
+    "ui-screen-kronos",
+    "ui-screen-diagnostics",
+    "ui-screen-settings",
+  );
   document.body.classList.add(`ui-screen-${m}`);
   refreshScreenSwitchUi(m);
   refreshSectionNavForScreen(m);
@@ -1592,6 +1611,9 @@ function renderDiagnostics(diag = {}) {
 let _scanDetailChart = null;
 let _scanDetailResizeObserver = null;
 let _scanDetailSignal = null;
+let _scanDetailChartTicker = null;
+let _scanDetailForecastSeries = null;
+let _scanDetailForecastBtnBound = false;
 
 function syncScanDetailStageButton(signal) {
   const btn = document.getElementById("scanDetailStageBtn");
@@ -1847,6 +1869,9 @@ async function renderScanDetailChart(ticker) {
     }
     _scanDetailChart = null;
   }
+  _scanDetailForecastSeries = null;
+  _scanDetailChartTicker = null;
+  resetScanDetailForecastUi(null);
   if (!ticker) {
     renderScanDetailChartMessage("Select a ticker to load chart data.");
     return;
@@ -1885,10 +1910,83 @@ async function renderScanDetailChart(ticker) {
   candleSeries.setData(out.data.candles);
   chart.timeScale().fitContent();
   _scanDetailChart = chart;
+  _scanDetailForecastSeries = null;
+  _scanDetailChartTicker = ticker;
   _scanDetailResizeObserver = new ResizeObserver(() => {
     if (_scanDetailChart) _scanDetailChart.applyOptions({ width: getScanDetailChartWidth(container) });
   });
   _scanDetailResizeObserver.observe(container);
+  resetScanDetailForecastUi(ticker);
+}
+
+function resetScanDetailForecastUi(ticker) {
+  const summary = document.getElementById("scanDetailForecast");
+  if (summary) summary.innerHTML = "";
+  const btn = document.getElementById("scanDetailForecastBtn");
+  if (!btn) return;
+  btn.disabled = !ticker;
+  btn.textContent = "Forecast (Kronos)";
+  if (!_scanDetailForecastBtnBound) {
+    btn.addEventListener("click", () => loadScanDetailForecast());
+    _scanDetailForecastBtnBound = true;
+  }
+}
+
+async function loadScanDetailForecast() {
+  const ticker = _scanDetailChartTicker;
+  const summary = document.getElementById("scanDetailForecast");
+  const btn = document.getElementById("scanDetailForecastBtn");
+  if (!ticker) return;
+  if (summary) summary.innerHTML = '<p class="muted">Requesting Kronos forecast…</p>';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Forecasting…";
+  }
+  try {
+    const out = await api.get(`/api/forecast/${encodeURIComponent(ticker)}`);
+    if (!out.ok || !out.data) {
+      if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Kronos forecast unavailable.");
+      return;
+    }
+    const data = out.data;
+    if (summary) summary.innerHTML = buildForecastSummary(data);
+    // Overlay predicted candles onto the existing chart, if any.
+    const candles = Array.isArray(data.forecast_candles) ? data.forecast_candles : [];
+    if (_scanDetailChart && typeof LightweightCharts !== "undefined" && candles.length) {
+      try {
+        if (_scanDetailForecastSeries) {
+          _scanDetailChart.removeSeries(_scanDetailForecastSeries);
+          _scanDetailForecastSeries = null;
+        }
+        const series = _scanDetailChart.addCandlestickSeries({
+          upColor: "rgba(46,110,170,0.55)",
+          downColor: "rgba(150,90,170,0.55)",
+          borderUpColor: "#2e6eaa",
+          borderDownColor: "#965aaa",
+          wickUpColor: "#2e6eaa",
+          wickDownColor: "#965aaa",
+        });
+        series.setData(candles.map((c) => ({
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        })));
+        _scanDetailForecastSeries = series;
+        _scanDetailChart.timeScale().fitContent();
+      } catch {
+        // overlay is best-effort; summary still renders
+      }
+    }
+  } catch (err) {
+    if (summary) summary.innerHTML = buildForecastUnavailable(`Forecast error: ${err}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Forecast (Kronos)";
+    }
+  }
 }
 
 async function renderScanDetail(sig) {
@@ -5087,6 +5185,7 @@ function wireEvents() {
   }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
   sections.forEach((section) => observer.observe(section));
 
+  initKronosWorkspace();
   const screenSwitchButtons = [...document.querySelectorAll(".screen-switch-btn[data-screen-mode]")];
   screenSwitchButtons.forEach((btn, idx) => {
     btn.addEventListener("click", () => {

@@ -3458,6 +3458,55 @@ tr.scan-row--filtered td:first-child strong {
   max-width: 100%;
 }
 
+.scan-detail-forecast-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.scan-detail-forecast {
+  margin-top: 8px;
+}
+
+.scan-detail-forecast .forecast-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.scan-detail-forecast .forecast-metric {
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.scan-detail-forecast .forecast-metric-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.scan-detail-forecast .forecast-metric strong {
+  font-size: 15px;
+}
+
+.scan-detail-forecast .forecast-up strong {
+  color: #2d8a5f;
+}
+
+.scan-detail-forecast .forecast-down strong {
+  color: #c94949;
+}
+
+.scan-detail-forecast .forecast-foot {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  margin: 2px 0 0;
+}
+
 .scan-brief-card {
   border: 1px solid rgba(71, 85, 105, 0.5);
   border-radius: 10px;
@@ -3899,6 +3948,176 @@ body.ui-screen-operations .diagnostics-surface,
 body.ui-screen-research .diagnostics-surface,
 body.ui-screen-settings .diagnostics-surface {
   display: none !important;
+}
+
+/* ── Kronos screen visibility ─────────────────────────────────────────── */
+/* Hide Kronos surfaces on every other screen. */
+body.ui-screen-operations .kronos-surface,
+body.ui-screen-research .kronos-surface,
+body.ui-screen-diagnostics .kronos-surface,
+body.ui-screen-settings .kronos-surface {
+  display: none !important;
+}
+/* On the Kronos screen, hide all other workspaces' content. */
+body.ui-screen-kronos .operations-surface,
+body.ui-screen-kronos .diagnostics-surface,
+body.ui-screen-kronos #dashboardToday,
+body.ui-screen-kronos #operationsWorkspaceIntro,
+body.ui-screen-kronos #workflowPrimary,
+body.ui-screen-kronos #scanSection,
+body.ui-screen-kronos #scanDetailPanel,
+body.ui-screen-kronos #pendingSection,
+body.ui-screen-kronos #sectorsSection,
+body.ui-screen-kronos #moversSection,
+body.ui-screen-kronos #researchWorkspaceIntro,
+body.ui-screen-kronos #researchWorkflowStrip,
+body.ui-screen-kronos #quickCheckSection,
+body.ui-screen-kronos #toolsSection,
+body.ui-screen-kronos #recoverySection,
+body.ui-screen-kronos #learningSection,
+body.ui-screen-kronos #backtestSection,
+body.ui-screen-kronos #reportSectionCard,
+body.ui-screen-kronos #secCompareSection,
+body.ui-screen-kronos #activitySection,
+body.ui-screen-kronos #portfolioSection,
+body.ui-screen-kronos #performanceSection,
+body.ui-screen-kronos #diagnosticsWorkspaceIntro,
+body.ui-screen-kronos #diagnosticsWorkflowStrip,
+body.ui-screen-kronos #healthRibbon,
+body.ui-screen-kronos #decisionDashboardCard,
+body.ui-screen-kronos #statusDetailsPanel,
+body.ui-screen-kronos #calibrationSection,
+body.ui-screen-kronos #settingsWorkspaceIntro,
+body.ui-screen-kronos #settingsWorkflowStrip,
+body.ui-screen-kronos #onboardingSection,
+body.ui-screen-kronos #settingsSection,
+body.ui-screen-kronos #decisionSection {
+  display: none !important;
+}
+body.ui-screen-kronos #kronosWorkspaceIntro {
+  display: flex !important;
+}
+
+/* ── Kronos workspace styling ─────────────────────────────────────────── */
+.kronos-workspace-intro {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: linear-gradient(145deg, rgba(12, 40, 72, 0.46), rgba(15, 23, 42, 0.84));
+}
+
+.kronos-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.kronos-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.kronos-field {
+  display: grid;
+  gap: 4px;
+}
+
+.kronos-field input,
+.kronos-field select {
+  min-width: 160px;
+}
+
+.kronos-field-action {
+  align-self: flex-end;
+}
+
+.kronos-service-status {
+  font-size: 0.82rem;
+  margin: 0 0 10px;
+  min-height: 1.1em;
+}
+
+.kronos-service-status.kronos-status-ok {
+  color: #34d399;
+}
+
+.kronos-service-status.kronos-status-warn {
+  color: #fbbf24;
+}
+
+.kronos-service-status.kronos-status-neutral {
+  color: #94a3b8;
+}
+
+.kronos-chart {
+  width: 100%;
+  min-height: 320px;
+  border-radius: 12px;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.kronos-chart > * {
+  max-width: 100%;
+}
+
+.kronos-summary-host {
+  margin-top: 12px;
+}
+
+.kronos-summary-host .forecast-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.kronos-summary-host .forecast-metric {
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.kronos-summary-host .forecast-metric-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.kronos-summary-host .forecast-metric strong {
+  font-size: 17px;
+}
+
+.kronos-summary-host .forecast-up strong {
+  color: #34d399;
+}
+
+.kronos-summary-host .forecast-down strong {
+  color: #f87171;
+}
+
+.kronos-summary-host .forecast-foot {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  margin: 2px 0 0;
+}
+
+.kronos-about-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.kronos-about-list li {
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 body.ui-screen-operations #onboardingSection,
 body.ui-screen-operations #settingsSection,

@@ -1163,6 +1163,78 @@ def get_advisory_require_model(skill_dir: Path | None = None) -> bool:
     return _get_bool("ADVISORY_REQUIRE_MODEL", False, skill_dir)
 
 
+# --- Kronos forecast plugin (OFF|SHADOW|LIVE; default off) ---
+
+
+def get_kronos_mode(skill_dir: Path | None = None) -> str:
+    """Kronos forecast rollout mode (OFF|SHADOW|LIVE).
+
+    OFF — no scanner integration. SHADOW — attach forecasts to signals without
+    altering ranking. LIVE — allow a small, clamped rank adjustment.
+    """
+    return _get_mode("KRONOS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_kronos_enabled(skill_dir: Path | None = None) -> bool:
+    """True when the Kronos plugin is active in the scanner (mode != off)."""
+    return get_kronos_mode(skill_dir) != "off"
+
+
+def get_kronos_inference_url(skill_dir: Path | None = None) -> str:
+    """Base URL of the Kronos inference microservice."""
+    env = _load_env(skill_dir)
+    raw = _env_value("KRONOS_INFERENCE_URL", env).strip().rstrip("/")
+    return raw or "http://localhost:8100"
+
+
+def get_kronos_model_id(skill_dir: Path | None = None) -> str:
+    """Hugging Face model id reported alongside forecasts (display only)."""
+    env = _load_env(skill_dir)
+    raw = _env_value("KRONOS_MODEL_ID", env).strip()
+    return raw or "NeoQuasar/Kronos-small"
+
+
+def get_kronos_lookback_bars(skill_dir: Path | None = None) -> int:
+    """Number of historical daily bars fed to the model (clamped 32..512)."""
+    val = _get_int("KRONOS_LOOKBACK_BARS", 256, skill_dir)
+    return max(32, min(512, val))
+
+
+def get_kronos_pred_len(skill_dir: Path | None = None) -> int:
+    """Forecast horizon in trading days (clamped 1..120)."""
+    val = _get_int("KRONOS_PRED_LEN", 24, skill_dir)
+    return max(1, min(120, val))
+
+
+def get_kronos_max_symbols(skill_dir: Path | None = None) -> int:
+    """Per-scan cap on Stage B Kronos calls to bound latency."""
+    return max(1, _get_int("KRONOS_MAX_SYMBOLS", 20, skill_dir))
+
+
+def get_kronos_timeout_s(skill_dir: Path | None = None) -> float:
+    """Per-request timeout (seconds) for the inference service (clamped 1..120)."""
+    val = _get_float("KRONOS_TIMEOUT_S", 20.0, skill_dir)
+    return max(1.0, min(120.0, val))
+
+
+def get_kronos_confidence_high(skill_dir: Path | None = None) -> float:
+    """High-confidence threshold for the Kronos confidence proxy (0..1)."""
+    val = _get_float("KRONOS_CONFIDENCE_HIGH", 0.66, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_kronos_confidence_low(skill_dir: Path | None = None) -> float:
+    """Medium-confidence threshold for the Kronos confidence proxy (0..1)."""
+    val = _get_float("KRONOS_CONFIDENCE_LOW", 0.4, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_kronos_score_delta_clamp(skill_dir: Path | None = None) -> float:
+    """Absolute clamp on the LIVE-mode score nudge from a Kronos forecast."""
+    val = _get_float("KRONOS_SCORE_DELTA_CLAMP", 1.5, skill_dir)
+    return max(0.0, min(10.0, val))
+
+
 # --- Data quality & degraded execution (default off: no behavior change) ---
 
 

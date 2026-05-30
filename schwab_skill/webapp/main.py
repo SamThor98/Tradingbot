@@ -1983,11 +1983,41 @@ def health_deep(
                 "account_token_ok": account_token_ok,
                 "quote_ok": quote_ok,
                 "quote_health": qh,
+                "kronos": _probe_kronos_health(),
                 "metrics": metrics,
             }
         )
     except Exception as e:
         return _err("health_deep", e)
+
+
+def _probe_kronos_health() -> dict[str, Any]:
+    """Lightweight probe of the Kronos inference service for /api/health/deep.
+
+    Only reaches out when the scanner plugin is active (mode != off); otherwise
+    reports the configured mode without a network call. Never raises.
+    """
+    try:
+        from config import get_kronos_inference_url, get_kronos_mode
+
+        mode = get_kronos_mode(SKILL_DIR)
+    except Exception:
+        return {"enabled": False, "mode": "off", "service_ok": None}
+    status: dict[str, Any] = {"enabled": mode != "off", "mode": mode, "service_ok": None}
+    if mode == "off":
+        return status
+    try:
+        import requests
+
+        url = get_kronos_inference_url(SKILL_DIR)
+        resp = requests.get(f"{url}/health", timeout=2.5)
+        body = resp.json() if resp.ok else {}
+        status["service_ok"] = bool(body.get("ok"))
+        status["model_id"] = body.get("model_id")
+    except Exception as exc:
+        status["service_ok"] = False
+        status["error"] = str(exc)[:200]
+    return status
 
 
 @app.get("/api/config", response_model=ApiResponse)
