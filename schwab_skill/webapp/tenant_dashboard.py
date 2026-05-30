@@ -3540,6 +3540,35 @@ def schwab_diag(
         return out
 
     result: dict[str, Any] = {"ok": True, "user_id": uid}
+
+    # Ground-truth: decrypt the DB payloads directly (bypassing materialize) to
+    # see exactly what is stored vs. what gets materialized into the skill dir.
+    def _peek(enc: str | None) -> dict:
+        try:
+            raw = decrypt_secret(enc)
+            d = json.loads(raw) if raw else {}
+            if not isinstance(d, dict):
+                return {"note": "non-dict"}
+            return {
+                "last_refresh_at": d.get("_last_refresh_at"),
+                "access_head": str(d.get("access_token") or "")[:10],
+                "refresh_head": str(d.get("refresh_token") or "")[:10],
+            }
+        except Exception as e:
+            return {"err": str(e)[:140]}
+
+    try:
+        _row = db.query(UserCredential).filter(UserCredential.user_id == uid).first()
+        if _row is not None:
+            result["db_account_payload"] = _peek(_row.account_token_payload_enc)
+            result["db_market_payload"] = _peek(_row.market_token_payload_enc)
+            result["db_legacy_access_head"] = str(decrypt_secret(_row.access_token_enc) or "")[:10]
+            result["db_legacy_refresh_head"] = str(decrypt_secret(_row.refresh_token_enc) or "")[:10]
+            result["db_expires_at"] = str(_row.expires_at)
+            result["db_updated_at"] = str(_row.updated_at)
+    except Exception as e:
+        result["db_peek_error"] = str(e)[:200]
+
     try:
         with tenant_skill_dir(db, uid) as skill_dir:
             with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
