@@ -3557,6 +3557,25 @@ def schwab_diag(
         except Exception as e:
             return {"err": str(e)[:140]}
 
+    def _full_access(enc: str | None) -> str:
+        try:
+            raw = decrypt_secret(enc)
+            d = json.loads(raw) if raw else {}
+            return str(d.get("access_token") or "") if isinstance(d, dict) else ""
+        except Exception:
+            return ""
+
+    def _raw_call(access_token: str, url: str, params: dict | None) -> dict:
+        if not access_token:
+            return {"skipped": "no_access_token"}
+        r = _requests.get(
+            url,
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            params=params,
+            timeout=30,
+        )
+        return {"status": r.status_code, "body": (r.text or "")[:300]}
+
     try:
         _row = db.query(UserCredential).filter(UserCredential.user_id == uid).first()
         if _row is not None:
@@ -3566,6 +3585,18 @@ def schwab_diag(
             result["db_legacy_refresh_head"] = str(decrypt_secret(_row.refresh_token_enc) or "")[:10]
             result["db_expires_at"] = str(_row.expires_at)
             result["db_updated_at"] = str(_row.updated_at)
+            # Definitive: call Schwab with the FRESH token decrypted straight from
+            # the DB payload (bypassing materialize/DualSchwabAuth).
+            result["direct_market"] = _raw_call(
+                _full_access(_row.market_token_payload_enc),
+                f"{sb}/marketdata/v1/quotes",
+                {"symbols": "AAPL"},
+            )
+            result["direct_account"] = _raw_call(
+                _full_access(_row.account_token_payload_enc),
+                f"{sb}/trader/v1/accounts/accountNumbers",
+                None,
+            )
     except Exception as e:
         result["db_peek_error"] = str(e)[:200]
 
