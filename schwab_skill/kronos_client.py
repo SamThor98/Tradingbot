@@ -120,7 +120,10 @@ def forecast(
             get_kronos_lookback_bars,
             get_kronos_model_id,
             get_kronos_pred_len,
+            get_kronos_sample_count,
+            get_kronos_temperature,
             get_kronos_timeout_s,
+            get_kronos_top_p,
         )
 
         url = get_kronos_inference_url(skill_dir)
@@ -128,6 +131,9 @@ def forecast(
         pred_len = int(pred_len or get_kronos_pred_len(skill_dir))
         timeout = float(timeout or get_kronos_timeout_s(skill_dir))
         model_id = get_kronos_model_id(skill_dir)
+        sample_count = get_kronos_sample_count(skill_dir)
+        temperature = get_kronos_temperature(skill_dir)
+        top_p = get_kronos_top_p(skill_dir)
     except Exception as exc:  # noqa: BLE001
         LOG.debug("Kronos config unavailable for %s: %s", ticker, exc)
         return None
@@ -144,6 +150,9 @@ def forecast(
         "ohlcv": candles,
         "pred_len": pred_len,
         "lookback": lookback,
+        "sample_count": sample_count,
+        "temperature": temperature,
+        "top_p": top_p,
     }
 
     try:

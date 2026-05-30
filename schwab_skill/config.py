@@ -1235,6 +1235,29 @@ def get_kronos_score_delta_clamp(skill_dir: Path | None = None) -> float:
     return max(0.0, min(10.0, val))
 
 
+def get_kronos_sample_count(skill_dir: Path | None = None) -> int:
+    """Number of forecast paths to sample and average.
+
+    >1 averages multiple autoregressive draws into a smoother central forecast,
+    removing the wild single-draw swings that make a lone sample look extreme.
+    Higher is steadier but slower on CPU (clamped 1..64).
+    """
+    val = _get_int("KRONOS_SAMPLE_COUNT", 10, skill_dir)
+    return max(1, min(64, val))
+
+
+def get_kronos_temperature(skill_dir: Path | None = None) -> float:
+    """Sampling temperature. Lower = less erratic/extreme paths (clamped 0.1..2.0)."""
+    val = _get_float("KRONOS_TEMPERATURE", 0.7, skill_dir)
+    return max(0.1, min(2.0, val))
+
+
+def get_kronos_top_p(skill_dir: Path | None = None) -> float:
+    """Nucleus-sampling top-p for Kronos (clamped 0.1..1.0)."""
+    val = _get_float("KRONOS_TOP_P", 0.9, skill_dir)
+    return max(0.1, min(1.0, val))
+
+
 # --- Data quality & degraded execution (default off: no behavior change) ---
 
 
