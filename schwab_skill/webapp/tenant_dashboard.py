@@ -3476,3 +3476,82 @@ def schwab_market_oauth_callback(
         request_id=_request_id(request),
     )
     return red("schwab_oauth=ok&schwab_market_oauth=ok")
+
+
+@router.get("/api/admin/schwab-diag")
+def schwab_diag(
+    key: str = Query(""),
+    user_id: str = Query(""),
+    db: OrmSession = Depends(_db),
+):
+    """TEMPORARY diagnostic: with the live server's key + a freshly-refreshed
+    per-user token, make raw Schwab calls and return the exact status/body/
+    correlation-id. Key-gated; remove after use. Refreshed tokens are persisted
+    back via tenant_skill_dir so the server stays consistent."""
+    import requests as _requests
+
+    expected = (os.getenv("SCHWAB_DIAG_KEY") or "").strip()
+    if not expected or not hmac.compare_digest((key or "").strip(), expected):
+        raise HTTPException(status_code=404, detail="not found")
+
+    sb = "https://api.schwabapi.com"
+    uid = (user_id or "").strip()
+    if not uid:
+        row = db.query(UserCredential).order_by(UserCredential.updated_at.desc()).first()
+        uid = row.user_id if row else ""
+    if not uid:
+        return {"ok": False, "error": "no_user_credentials"}
+
+    def _hdr(tok: str) -> dict:
+        return {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+
+    def _probe(get_token, force_refresh, url, params):
+        out: dict[str, Any] = {}
+        try:
+            tok = get_token()
+        except Exception as e:
+            return {"error": f"token_unavailable: {str(e)[:160]}"}
+        r = _requests.get(url, headers=_hdr(tok), params=params, timeout=30)
+        out["status_first"] = r.status_code
+        if r.status_code == 401:
+            refreshed = False
+            try:
+                refreshed = bool(force_refresh())
+            except Exception as e:
+                out["refresh_error"] = str(e)[:200]
+            out["force_refresh_ok"] = refreshed
+            if refreshed:
+                tok = get_token()
+                r = _requests.get(url, headers=_hdr(tok), params=params, timeout=30)
+        out["status"] = r.status_code
+        out["body"] = (r.text or "")[:500]
+        out["correlid"] = (
+            r.headers.get("Schwab-Client-CorrelId")
+            or r.headers.get("schwab-client-correlid")
+        )
+        return out
+
+    result: dict[str, Any] = {"ok": True, "user_id": uid}
+    try:
+        with tenant_skill_dir(db, uid) as skill_dir:
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                try:
+                    result["token_health"] = auth.get_token_health()
+                except Exception as e:
+                    result["token_health_error"] = str(e)[:200]
+                result["market"] = _probe(
+                    auth.get_market_token,
+                    auth.market_session.force_refresh,
+                    f"{sb}/marketdata/v1/quotes",
+                    {"symbols": "AAPL"},
+                )
+                result["account"] = _probe(
+                    auth.get_account_token,
+                    auth.account_session.force_refresh,
+                    f"{sb}/trader/v1/accounts/accountNumbers",
+                    None,
+                )
+    except Exception as e:
+        result["ok"] = False
+        result["error"] = str(e)[:300]
+    return result
