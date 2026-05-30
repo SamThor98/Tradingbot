@@ -91,6 +91,20 @@ from .tenant_runtime import (
 # before startup config and module imports read os.getenv.
 bootstrap_dotenv_into_environ()
 
+# Multi-tenant safety: SCHWAB_TOKEN_DIR is a single-user (local) setting that
+# pins DualSchwabAuth's token files to one directory. In SaaS, tokens are
+# per-tenant — materialized into an ephemeral skill dir from the DB. If this var
+# is set on a SaaS host it overrides the per-tenant skill dir, so every request
+# (and every tenant) reads/writes ONE shared token file on disk -> stale tokens,
+# failed refreshes, and cross-tenant bleed. Strip it so per-tenant resolution
+# always wins. (Root cause of a prod incident where re-auth never "stuck".)
+_stray_token_dir = (os.environ.pop("SCHWAB_TOKEN_DIR", "") or "").strip()
+if _stray_token_dir:
+    logging.getLogger("webapp.saas").warning(
+        "Ignoring SCHWAB_TOKEN_DIR=%s in SaaS mode; Schwab tokens are per-tenant.",
+        _stray_token_dir,
+    )
+
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 _ALEMBIC_INI = APP_DIR.parent / "alembic.ini"
