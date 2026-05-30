@@ -2302,6 +2302,96 @@ def tenant_chart_data(
         return _saas_error_response(exc, source="chart_data", fallback="Chart data lookup failed.")
 
 
+@router.get("/api/forecast/{ticker}", response_model=ApiResponse)
+def tenant_forecast_data(
+    ticker: str,
+    days: int = 220,
+    pred_len: int = 0,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    """Tenant-scoped Kronos forecast (history + projected candles).
+
+    Mirrors the local ``/api/forecast`` route but resolves the caller's
+    per-tenant skill dir and Schwab auth. Read-only; degrades to a clear
+    payload when the inference service is offline.
+    """
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before running a forecast.")
+    try:
+        from config import get_kronos_lookback_bars, get_kronos_mode, get_kronos_pred_len
+        from kronos_client import forecast as kronos_forecast
+
+        symbol = ticker.upper().strip()
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            lookback = get_kronos_lookback_bars(skill_dir)
+            horizon = int(pred_len) if int(pred_len) > 0 else get_kronos_pred_len(skill_dir)
+            fetch_days = min(365, max(int(days), lookback + 20))
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                df, meta = get_daily_history_with_meta(
+                    symbol, days=fetch_days, auth=auth, skill_dir=skill_dir
+                )
+            if df is None or df.empty:
+                return ApiResponse(
+                    ok=False,
+                    error=f"No price data for {symbol}",
+                    data={"ticker": symbol, "provider": meta.get("provider")},
+                )
+
+            history_candles: list[dict[str, Any]] = []
+            for _, row in df.iterrows():
+                ts = row.get("datetime") or row.get("date") or row.name
+                try:
+                    if hasattr(ts, "timestamp"):
+                        epoch = int(ts.timestamp())
+                    else:
+                        from datetime import datetime as _dt
+
+                        epoch = int(_dt.fromisoformat(str(ts)).timestamp())
+                except Exception:
+                    continue
+                history_candles.append(
+                    {
+                        "time": epoch,
+                        "open": round(float(row.get("open", 0)), 2),
+                        "high": round(float(row.get("high", 0)), 2),
+                        "low": round(float(row.get("low", 0)), 2),
+                        "close": round(float(row.get("close", 0)), 2),
+                        "volume": int(row.get("volume", 0) or 0),
+                    }
+                )
+            history_candles.sort(key=lambda c: c["time"])
+
+            fc = kronos_forecast(symbol, df, skill_dir=skill_dir, pred_len=horizon, lookback=lookback)
+            scanner_mode = get_kronos_mode(skill_dir)
+
+        if fc is None:
+            return ApiResponse(
+                ok=False,
+                error="Kronos forecast unavailable (inference service offline or degraded).",
+                data={
+                    "ticker": symbol,
+                    "degraded": True,
+                    "scanner_mode": scanner_mode,
+                    "history_candles": history_candles,
+                },
+            )
+
+        payload = fc.to_dict()
+        payload.update(
+            {
+                "ticker": symbol,
+                "scanner_mode": scanner_mode,
+                "history_candles": history_candles,
+                "provider": meta.get("provider"),
+                "used_fallback": meta.get("used_fallback"),
+            }
+        )
+        return _ok(payload)
+    except Exception as exc:
+        return _saas_error_response(exc, source="forecast", fallback="Kronos forecast failed.")
+
+
 @router.get("/api/report/{ticker}", response_model=ApiResponse)
 def tenant_report_ticker(
     ticker: str,
