@@ -358,7 +358,48 @@ def _tokens_refreshed(fresh: dict[str, Any], current: dict[str, Any] | None) -> 
     return _refresh_at_value(fresh) >= _refresh_at_value(cur)
 
 
-def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> None:
+def _capture_materialized_access(skill_dir: Path) -> dict[str, str]:
+    """Snapshot the access tokens just materialized into the skill dir.
+
+    Used as a baseline so ``persist_tenant_tokens_back`` only writes a token
+    back to the DB when it actually changed during the operation (a real
+    in-process refresh) — never when an unrefreshed token would otherwise
+    clobber a token a concurrent request/OAuth callback updated in the DB.
+    """
+    out: dict[str, str] = {}
+    a_sec = (os.environ.get("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+    m_sec = (os.environ.get("SCHWAB_MARKET_APP_SECRET") or "").strip()
+    try:
+        if a_sec:
+            t = read_encrypted_token_file(Path(skill_dir) / "tokens_account.enc", a_sec)
+            if t and t.get("access_token"):
+                out["account"] = str(t["access_token"])
+        if m_sec:
+            t = read_encrypted_token_file(Path(skill_dir) / "tokens_market.enc", m_sec)
+            if t and t.get("access_token"):
+                out["market"] = str(t["access_token"])
+    except Exception as exc:
+        LOG.debug("baseline capture failed for %s: %s", skill_dir, exc)
+    return out
+
+
+def _refreshed_in_process(fresh: dict[str, Any], baseline_access: str | None) -> bool:
+    """True if ``fresh`` represents a real in-process refresh.
+
+    ``baseline_access`` is the access token materialized at the start of the
+    operation. If it changed, a refresh happened during the operation and the
+    new token should be persisted. ``None`` means the baseline is unknown
+    (legacy callers / tests) — fall back to permissive behavior.
+    """
+    if baseline_access is None:
+        return True
+    fresh_access = fresh.get("access_token")
+    return bool(fresh_access and fresh_access != baseline_access)
+
+
+def persist_tenant_tokens_back(
+    db: Session, user_id: str, skill_dir: Path, baseline: dict[str, str] | None = None
+) -> None:
     """Write Schwab tokens refreshed during an operation back into the DB.
 
     Tokens are materialized into an ephemeral per-tenant skill dir; any refresh
@@ -398,7 +439,8 @@ def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> No
             fresh = read_encrypted_token_file(Path(skill_dir) / "tokens_account.enc", account_secret)
             if fresh and fresh.get("access_token") and fresh.get("refresh_token"):
                 current = _account_token_dict(row)
-                if _tokens_refreshed(fresh, current):
+                base_access = (baseline or {}).get("account")
+                if _refreshed_in_process(fresh, base_access) and _tokens_refreshed(fresh, current):
                     row.account_token_payload_enc = encrypt_secret(json.dumps(fresh, default=str))
                     row.access_token_enc = encrypt_secret(str(fresh["access_token"]))
                     row.refresh_token_enc = encrypt_secret(str(fresh["refresh_token"]))
@@ -409,7 +451,8 @@ def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> No
             fresh_m = read_encrypted_token_file(Path(skill_dir) / "tokens_market.enc", market_secret)
             if fresh_m and fresh_m.get("access_token") and fresh_m.get("refresh_token"):
                 current_m = _market_token_dict(row)
-                if _tokens_refreshed(fresh_m, current_m):
+                base_access_m = (baseline or {}).get("market")
+                if _refreshed_in_process(fresh_m, base_access_m) and _tokens_refreshed(fresh_m, current_m):
                     row.market_token_payload_enc = encrypt_secret(json.dumps(fresh_m, default=str))
                     changed = True
 
@@ -428,11 +471,16 @@ def persist_tenant_tokens_back(db: Session, user_id: str, skill_dir: Path) -> No
 @contextmanager
 def tenant_skill_dir(db: Session, user_id: str) -> Iterator[Path]:
     root = Path(tempfile.mkdtemp(prefix=f"tb_saas_{user_id[:24]}_"))
+    baseline: dict[str, str] = {}
     try:
         materialize_tenant_skill_dir(db, user_id, root)
+        # Snapshot what we materialized so persist_tenant_tokens_back only writes
+        # back tokens that actually rotated during this operation — never an
+        # unrefreshed token that would clobber a freshly re-authed DB token.
+        baseline = _capture_materialized_access(root)
         yield root
     finally:
         # Persist any in-operation token refresh back to the DB before the
         # ephemeral dir is deleted, so the shared source of truth stays fresh.
-        persist_tenant_tokens_back(db, user_id, root)
+        persist_tenant_tokens_back(db, user_id, root, baseline=baseline)
         shutil.rmtree(root, ignore_errors=True)

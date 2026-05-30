@@ -3350,7 +3350,11 @@ def schwab_oauth_callback(
             row.scopes = parse_scopes(parts)
         else:
             row.scopes = parse_scopes(None)
-        row.account_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
+        # Stamp freshness so a just-authorized token can't be regressed by an
+        # in-flight request's stale materialized token in persist_tenant_tokens_back.
+        _acct_tok = dict(tok)
+        _acct_tok["_last_refresh_at"] = datetime.now(timezone.utc).isoformat()
+        row.account_token_payload_enc = encrypt_secret(json.dumps(_acct_tok, default=_json_default))
 
         db.commit()
         db.refresh(row)
@@ -3452,7 +3456,11 @@ def schwab_market_oauth_callback(
             row = UserCredential(user_id=user_id)
             db.add(row)
 
-        row.market_token_payload_enc = encrypt_secret(json.dumps(tok, default=_json_default))
+        # Stamp freshness (see account callback) so the just-authorized market
+        # token survives concurrent persist_tenant_tokens_back writes.
+        _mkt_tok = dict(tok)
+        _mkt_tok["_last_refresh_at"] = datetime.now(timezone.utc).isoformat()
+        row.market_token_payload_enc = encrypt_secret(json.dumps(_mkt_tok, default=_json_default))
 
         db.commit()
         db.refresh(row)
