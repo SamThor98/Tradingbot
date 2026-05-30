@@ -22,7 +22,7 @@ SKILL_DIR = Path(__file__).resolve().parent
 
 @dataclass
 class KronosForecast:
-    """Parsed forecast from the Kronos service (advisory only)."""
+    """Parsed forecast distribution from the Kronos service (advisory only)."""
 
     direction: str
     expected_return_pct: float
@@ -30,9 +30,13 @@ class KronosForecast:
     confidence_bucket: str
     model_version: str
     pred_len: int
+    interval: str = "daily"
+    prob_up: float = 0.0
     last_close: float = 0.0
     final_close: float = 0.0
-    forecast_candles: list[dict[str, Any]] = field(default_factory=list)
+    median_candles: list[dict[str, Any]] = field(default_factory=list)
+    band: list[dict[str, Any]] = field(default_factory=list)
+    baseline: str = "random_walk_flat"
     degraded: bool = False
     source: str = "kronos"
 
@@ -42,11 +46,17 @@ class KronosForecast:
             "expected_return_pct": round(float(self.expected_return_pct), 4),
             "confidence": round(float(self.confidence), 3),
             "confidence_bucket": self.confidence_bucket,
+            "prob_up": round(float(self.prob_up), 4),
             "model_version": self.model_version,
+            "interval": self.interval,
             "pred_len": int(self.pred_len),
             "last_close": round(float(self.last_close), 4),
             "final_close": round(float(self.final_close), 4),
-            "forecast_candles": self.forecast_candles,
+            "median_candles": self.median_candles,
+            # back-compat alias for the existing scan-detail chart overlay
+            "forecast_candles": self.median_candles,
+            "band": self.band,
+            "baseline": self.baseline,
             "degraded": bool(self.degraded),
             "source": self.source,
         }
@@ -107,11 +117,13 @@ def forecast(
     pred_len: int | None = None,
     lookback: int | None = None,
     timeout: float | None = None,
+    interval: str = "daily",
 ) -> KronosForecast | None:
     """Request a forecast for ``ticker`` from the Kronos service.
 
     Returns ``None`` on any failure (graceful degradation). ``df`` is an OHLCV
     DataFrame with a DatetimeIndex (as produced by ``market_data``).
+    ``interval`` is one of ``daily``, ``5m``, ``15m``.
     """
     skill_dir = skill_dir or SKILL_DIR
     try:
@@ -150,6 +162,7 @@ def forecast(
         "ohlcv": candles,
         "pred_len": pred_len,
         "lookback": lookback,
+        "interval": interval if interval in ("daily", "5m", "15m") else "daily",
         "sample_count": sample_count,
         "temperature": temperature,
         "top_p": top_p,
@@ -176,16 +189,21 @@ def forecast(
     data = body.get("data") or {}
     try:
         confidence = float(data.get("confidence", 0.0) or 0.0)
+        median_candles = list(data.get("median_candles") or data.get("forecast_candles") or [])
         return KronosForecast(
             direction=str(data.get("direction", "flat")),
             expected_return_pct=float(data.get("expected_return_pct", 0.0) or 0.0),
             confidence=confidence,
             confidence_bucket=_bucket(confidence, skill_dir),
+            prob_up=float(data.get("prob_up", 0.0) or 0.0),
             model_version=str(data.get("model_id") or model_id),
+            interval=str(data.get("interval") or interval),
             pred_len=int(data.get("pred_len", pred_len) or pred_len),
             last_close=float(data.get("last_close", 0.0) or 0.0),
-            final_close=float(data.get("final_close", 0.0) or 0.0),
-            forecast_candles=list(data.get("forecast_candles") or []),
+            final_close=float(data.get("median_final_close", data.get("final_close", 0.0)) or 0.0),
+            median_candles=median_candles,
+            band=list(data.get("band") or []),
+            baseline=str(data.get("baseline") or "random_walk_flat"),
             degraded=False,
             source="kronos",
         )

@@ -1015,12 +1015,20 @@
               />
             </div>
             <div class="kronos-field">
+              <label class="field-label" for="kronosIntervalSelect">Timeframe</label>
+              <select id="kronosIntervalSelect" name="interval" aria-label="Bar timeframe">
+                <option value="daily" selected>Daily</option>
+                <option value="15m">15 min (intraday)</option>
+                <option value="5m">5 min (intraday)</option>
+              </select>
+            </div>
+            <div class="kronos-field">
               <label class="field-label" for="kronosHorizonSelect">Horizon</label>
-              <select id="kronosHorizonSelect" name="horizon" aria-label="Forecast horizon in trading days">
-                <option value="10">10 trading days</option>
-                <option value="24" selected>24 trading days</option>
-                <option value="40">40 trading days</option>
-                <option value="60">60 trading days</option>
+              <select id="kronosHorizonSelect" name="horizon" aria-label="Forecast horizon in bars">
+                <option value="10">10 bars</option>
+                <option value="24" selected>24 bars</option>
+                <option value="40">40 bars</option>
+                <option value="60">60 bars</option>
               </select>
             </div>
             <div class="kronos-field kronos-field-action">
@@ -1028,7 +1036,9 @@
             </div>
           </div>
           <p id="kronosFormHint" class="muted small">
-            Forecasts are advisory model output, not trade signals. Latency depends on the inference service.
+            Advisory model output, not a trade signal. Shows the median path, a p10-p90 range cone, and
+            P(up) vs a flat baseline. Intraday (5m/15m) is Schwab-sourced (~10 trading days). Base model
+            on CPU can take up to ~90s.
           </p>
         </form>
 

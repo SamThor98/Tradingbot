@@ -1212,9 +1212,18 @@ def get_kronos_max_symbols(skill_dir: Path | None = None) -> int:
 
 
 def get_kronos_timeout_s(skill_dir: Path | None = None) -> float:
-    """Per-request timeout (seconds) for the inference service (clamped 1..120)."""
-    val = _get_float("KRONOS_TIMEOUT_S", 20.0, skill_dir)
-    return max(1.0, min(120.0, val))
+    """Per-request timeout (seconds) for the inference service (clamped 1..300).
+
+    Default is generous because Kronos-base + steady sampling on CPU, with a
+    full intraday context, can take ~60-90s per request.
+    """
+    val = _get_float("KRONOS_TIMEOUT_S", 90.0, skill_dir)
+    return max(1.0, min(300.0, val))
+
+
+def get_kronos_intraday_days(skill_dir: Path | None = None) -> int:
+    """Trading days of intraday history to request (Schwab caps minute data ~10)."""
+    return max(1, min(10, _get_int("KRONOS_INTRADAY_DAYS", 10, skill_dir)))
 
 
 def get_kronos_confidence_high(skill_dir: Path | None = None) -> float:
@@ -1240,9 +1249,10 @@ def get_kronos_sample_count(skill_dir: Path | None = None) -> int:
 
     >1 averages multiple autoregressive draws into a smoother central forecast,
     removing the wild single-draw swings that make a lone sample look extreme.
-    Higher is steadier but slower on CPU (clamped 1..64).
+    Higher is steadier but slower on CPU (clamped 1..64). Default favors a
+    steady central forecast for the on-demand tab.
     """
-    val = _get_int("KRONOS_SAMPLE_COUNT", 10, skill_dir)
+    val = _get_int("KRONOS_SAMPLE_COUNT", 25, skill_dir)
     return max(1, min(64, val))
 
 

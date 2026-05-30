@@ -1738,83 +1738,27 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
 
 
 @router.get("/api/forecast/{ticker}", response_model=ApiResponse)
-def forecast_data(ticker: str, days: int = 220, pred_len: int = 0) -> ApiResponse:
-    """Kronos K-line forecast for ``ticker`` (history + predicted candles).
+def forecast_data(ticker: str, days: int = 220, pred_len: int = 0, interval: str = "daily") -> ApiResponse:
+    """Kronos K-line forecast for ``ticker`` (history + distribution forecast).
 
-    On-demand and read-only: works regardless of the scanner KRONOS_MODE. If the
-    inference service is unavailable, returns a clear degraded response rather
-    than raising (degraded-mode policy).
+    On-demand and read-only: works regardless of the scanner KRONOS_MODE. Supports
+    ``interval`` = daily | 5m | 15m. Intraday is Schwab-sourced (no yfinance).
+    Returns a clear degraded response when the inference service is unavailable.
     """
     try:
-        from config import get_kronos_lookback_bars, get_kronos_mode, get_kronos_pred_len
-        from kronos_client import forecast as kronos_forecast
-        from market_data import get_daily_history_with_meta
+        from kronos_forecast_service import build_forecast_payload
 
-        symbol = ticker.upper().strip()
-        lookback = get_kronos_lookback_bars(SKILL_DIR)
-        horizon = int(pred_len) if int(pred_len) > 0 else get_kronos_pred_len(SKILL_DIR)
-        # Pull enough history to cover the model lookback window.
-        fetch_days = min(365, max(int(days), lookback + 20))
-
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-        df, meta = get_daily_history_with_meta(
-            symbol, days=fetch_days, auth=auth, skill_dir=SKILL_DIR
+        result = build_forecast_payload(
+            ticker,
+            interval=interval,
+            days=days,
+            pred_len=pred_len,
+            skill_dir=SKILL_DIR,
+            auth=DualSchwabAuth(skill_dir=SKILL_DIR),
         )
-        if df is None or df.empty:
-            return ApiResponse(
-                ok=False,
-                error=f"No price data for {symbol}",
-                data={"ticker": symbol, "provider": meta.get("provider")},
-            )
-
-        history_candles: list[dict[str, Any]] = []
-        for _, row in df.iterrows():
-            ts = row.get("datetime") or row.get("date") or row.name
-            try:
-                if hasattr(ts, "timestamp"):
-                    epoch = int(ts.timestamp())
-                else:
-                    from datetime import datetime as _dt
-
-                    epoch = int(_dt.fromisoformat(str(ts)).timestamp())
-            except Exception:
-                continue
-            history_candles.append(
-                {
-                    "time": epoch,
-                    "open": round(float(row.get("open", 0)), 2),
-                    "high": round(float(row.get("high", 0)), 2),
-                    "low": round(float(row.get("low", 0)), 2),
-                    "close": round(float(row.get("close", 0)), 2),
-                    "volume": int(row.get("volume", 0) or 0),
-                }
-            )
-        history_candles.sort(key=lambda c: c["time"])
-
-        fc = kronos_forecast(symbol, df, skill_dir=SKILL_DIR, pred_len=horizon, lookback=lookback)
-        if fc is None:
-            return ApiResponse(
-                ok=False,
-                error="Kronos forecast unavailable (inference service offline or degraded).",
-                data={
-                    "ticker": symbol,
-                    "degraded": True,
-                    "scanner_mode": get_kronos_mode(SKILL_DIR),
-                    "history_candles": history_candles,
-                },
-            )
-
-        payload = fc.to_dict()
-        payload.update(
-            {
-                "ticker": symbol,
-                "scanner_mode": get_kronos_mode(SKILL_DIR),
-                "history_candles": history_candles,
-                "provider": meta.get("provider"),
-                "used_fallback": meta.get("used_fallback"),
-            }
-        )
-        return _ok(payload)
+        if result.get("ok"):
+            return _ok(result.get("data"))
+        return ApiResponse(ok=False, error=result.get("error"), data=result.get("data"))
     except Exception as e:
         return _err_response("forecast", e)
 

@@ -437,6 +437,85 @@ def get_daily_history(
     return df
 
 
+# Native Schwab minute frequencies usable for intraday forecasting. 1H/4H are
+# intentionally excluded: they are non-native (would need resampling) and too
+# sparse within Schwab's ~10 trading-day minute window to forecast credibly.
+INTRADAY_INTERVALS: dict[str, int] = {"5m": 5, "15m": 15}
+
+
+def get_intraday_history_with_meta(
+    ticker: str,
+    interval: str = "5m",
+    days: int = 10,
+    auth: DualSchwabAuth | None = None,
+    skill_dir: Path | str | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Fetch intraday OHLCV from Schwab (5m/15m only). No yfinance fallback.
+
+    Schwab serves minute history for ~10 trading days, which is dense enough at
+    5m (~780 bars) and 15m (~260 bars) to fill the model context. Returns a
+    tz-naive (UTC wall-clock) intraday DatetimeIndex so time-of-day is preserved
+    for the model's temporal embedding and for charting.
+
+    On any failure this degrades to an empty frame (advisory feature; never
+    raises into the request path).
+    """
+    if interval not in INTRADAY_INTERVALS:
+        raise ValueError(f"Unsupported intraday interval: {interval!r} (use 5m or 15m)")
+    frequency = INTRADAY_INTERVALS[interval]
+    auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
+    ticker = ticker.upper().strip()
+    skill_dir = Path(skill_dir or SKILL_DIR)
+    period = max(1, min(10, int(days)))
+
+    url = f"{SCHWAB_BASE}/marketdata/v1/pricehistory"
+    params = {
+        "symbol": ticker,
+        "periodType": "day",
+        "period": period,
+        "frequencyType": "minute",
+        "frequency": frequency,
+        "needExtendedHoursData": "false",
+    }
+    meta: dict[str, Any] = {
+        "provider": "schwab",
+        "used_fallback": False,
+        "fallback_reason": None,
+        "rows": 0,
+        "interval": interval,
+    }
+
+    try:
+        resp = _request_with_backoff(auth, "GET", url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        candles = data.get("candles")
+        if not candles:
+            meta["fallback_reason"] = "no_candles"
+            return _empty_ohlcv(), meta
+
+        df = pd.DataFrame(candles)
+        required = ["open", "high", "low", "close", "volume"]
+        for c in required:
+            if c not in df.columns:
+                raise ValueError(f"API missing column: {c}")
+        dt_series = pd.to_datetime(df["datetime"], unit="ms", utc=True)
+        df = df[required].copy().astype({c: float for c in required})
+        # Keep intraday time-of-day; drop tz so .timestamp() is consistent with
+        # the daily path (pandas treats tz-naive as UTC).
+        df.index = pd.DatetimeIndex(dt_series).tz_localize(None)
+        df.index.name = "datetime"
+        out = df[OHLCV_COLUMNS].sort_index().drop_duplicates()
+        meta["rows"] = int(len(out))
+        meta["history_price_basis"] = f"schwab_vendor_{interval}"
+        return out, meta
+    except Exception as e:
+        meta["fallback_reason"] = f"{type(e).__name__}"
+        meta["rows"] = 0
+        LOG.warning("Schwab intraday (%s) failed for %s: %s", interval, ticker, e)
+        return _empty_ohlcv(), meta
+
+
 # Quote payload keys we consider "live" (today's print) vs "stale" (prior
 # close). Keeping `extract_schwab_last_price` permissive preserves the
 # existing call sites that explicitly want a best-effort price for display

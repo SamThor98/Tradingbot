@@ -11,6 +11,7 @@
  */
 
 import { api } from "../modules/api.js";
+import { safeText } from "../modules/format.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./forecast.js";
 
 let _kronosChart = null;
@@ -27,7 +28,7 @@ function chartWidth(container) {
   return Math.max(240, Math.min(safe, viewportCap));
 }
 
-function renderKronosChart(container, history, forecast) {
+function renderKronosChart(container, data) {
   if (!container) return;
   if (_kronosResizeObserver) {
     _kronosResizeObserver.disconnect();
@@ -45,22 +46,28 @@ function renderKronosChart(container, history, forecast) {
     container.innerHTML = '<p class="muted">Chart library unavailable.</p>';
     return;
   }
-  if (!Array.isArray(history) || !history.length) {
+  const history = Array.isArray(data?.history_candles) ? data.history_candles : [];
+  if (!history.length) {
     container.innerHTML = '<p class="muted">No price history available for this symbol.</p>';
     return;
   }
+  const median = Array.isArray(data?.median_candles) ? data.median_candles : data?.forecast_candles || [];
+  const band = Array.isArray(data?.band) ? data.band : [];
+  const intraday = safeText(data?.interval) !== "daily" && safeText(data?.interval) !== "";
+
   container.innerHTML = "";
   const chart = LightweightCharts.createChart(container, {
     width: chartWidth(container),
-    height: 320,
+    height: 340,
     layout: { background: { type: "solid", color: "transparent" }, textColor: "#94a3b8" },
     grid: {
       vertLines: { color: "rgba(148,163,184,0.10)" },
       horzLines: { color: "rgba(148,163,184,0.10)" },
     },
     rightPriceScale: { borderColor: "rgba(148,163,184,0.22)" },
-    timeScale: { borderColor: "rgba(148,163,184,0.22)", timeVisible: false },
+    timeScale: { borderColor: "rgba(148,163,184,0.22)", timeVisible: intraday, secondsVisible: false },
   });
+
   const histSeries = chart.addCandlestickSeries({
     upColor: "#2d8a5f",
     downColor: "#c94949",
@@ -70,25 +77,20 @@ function renderKronosChart(container, history, forecast) {
     wickDownColor: "#c94949",
   });
   histSeries.setData(history);
-  if (Array.isArray(forecast) && forecast.length) {
-    const fcSeries = chart.addCandlestickSeries({
-      upColor: "rgba(46,110,170,0.6)",
-      downColor: "rgba(150,90,170,0.6)",
-      borderUpColor: "#2e6eaa",
-      borderDownColor: "#965aaa",
-      wickUpColor: "#2e6eaa",
-      wickDownColor: "#965aaa",
-    });
-    fcSeries.setData(
-      forecast.map((c) => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
+
+  // p10/p90 cone as two thin lines (Lightweight Charts has no native band fill).
+  if (band.length) {
+    const upper = chart.addLineSeries({ color: "rgba(46,110,170,0.55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+    const lower = chart.addLineSeries({ color: "rgba(46,110,170,0.55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+    upper.setData(band.map((b) => ({ time: b.time, value: b.upper })));
+    lower.setData(band.map((b) => ({ time: b.time, value: b.lower })));
   }
+  // Median forecast path.
+  if (median.length) {
+    const med = chart.addLineSeries({ color: "#2e6eaa", lineWidth: 2, priceLineVisible: false });
+    med.setData(median.map((c) => ({ time: c.time, value: c.close })));
+  }
+
   chart.timeScale().fitContent();
   _kronosChart = chart;
   _kronosResizeObserver = new ResizeObserver(() => {
@@ -100,6 +102,7 @@ function renderKronosChart(container, history, forecast) {
 async function runKronosForecast() {
   const input = document.getElementById("kronosTickerInput");
   const horizonSel = document.getElementById("kronosHorizonSelect");
+  const intervalSel = document.getElementById("kronosIntervalSelect");
   const btn = document.getElementById("kronosRunBtn");
   const summary = document.getElementById("kronosForecastSummary");
   const container = document.getElementById("kronosChartContainer");
@@ -110,21 +113,26 @@ async function runKronosForecast() {
     return;
   }
   const horizon = parseInt(horizonSel?.value || "24", 10) || 24;
+  const interval = intervalSel?.value || "daily";
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Forecasting…";
   }
-  if (summary) summary.innerHTML = `<p class="muted">Requesting Kronos forecast for ${ticker}…</p>`;
+  if (summary) {
+    summary.innerHTML = `<p class="muted">Requesting Kronos forecast for ${ticker} (${interval})… base model on CPU can take up to ~90s.</p>`;
+  }
   try {
-    const out = await api.get(`/api/forecast/${encodeURIComponent(ticker)}?pred_len=${horizon}`);
+    const qs = `pred_len=${horizon}&interval=${encodeURIComponent(interval)}`;
+    // base + steady sampling on CPU can take ~90s; allow generous headroom.
+    const out = await api.get(`/api/forecast/${encodeURIComponent(ticker)}?${qs}`, { timeoutMs: 150000 });
     const data = out?.data || {};
     if (!out.ok || !data.direction) {
       if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Kronos forecast unavailable.");
-      renderKronosChart(container, data.history_candles || [], []);
+      renderKronosChart(container, data);
       return;
     }
     if (summary) summary.innerHTML = buildForecastSummary(data);
-    renderKronosChart(container, data.history_candles || [], data.forecast_candles || []);
+    renderKronosChart(container, data);
   } catch (err) {
     if (summary) summary.innerHTML = buildForecastUnavailable(`Forecast error: ${err}`);
   } finally {
