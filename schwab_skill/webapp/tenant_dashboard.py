@@ -3600,9 +3600,13 @@ def schwab_diag(
     except Exception as e:
         result["db_peek_error"] = str(e)[:200]
 
+    result["env_schwab_token_dir"] = os.getenv("SCHWAB_TOKEN_DIR")
     try:
         with tenant_skill_dir(db, uid) as skill_dir:
             with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                result["skill_dir"] = str(skill_dir)
+                result["account_token_path"] = str(auth.account_session.token_path)
+                result["market_token_path"] = str(auth.market_session.token_path)
                 try:
                     result["token_health"] = auth.get_token_health()
                 except Exception as e:
