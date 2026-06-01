@@ -28,6 +28,36 @@ export function getSupabaseClient() {
   return supabaseClient;
 }
 
+/**
+ * One-time "this browser has verified an email" flag. Email verification in
+ * Supabase happens once (OTP/magic link); after that, a lapsed session only
+ * needs a *sign-in*, not re-verification. Persisting this locally lets the UI
+ * stop showing the confusing "Verify email" prompt forever once the user has
+ * verified, relabelling it to "Sign in" instead.
+ */
+const EMAIL_VERIFIED_ONCE_KEY = "tradingbot.auth.email_verified_once";
+
+export function markEmailVerifiedOnce() {
+  try {
+    localStorage.setItem(EMAIL_VERIFIED_ONCE_KEY, "1");
+  } catch {
+    /* ignore storage failures (private mode, etc.) */
+  }
+}
+
+export function hasVerifiedEmailOnce() {
+  try {
+    return localStorage.getItem(EMAIL_VERIFIED_ONCE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Label for the email auth button: first-timers verify, returning users sign in. */
+export function authActionLabel() {
+  return hasVerifiedEmailOnce() ? "Sign in" : "Verify email";
+}
+
 /** Set by /static/auth-jwt-utils.js (loaded before this file). */
 const AuthJwt = (typeof window !== "undefined" && window.TradingBotAuthJwt) || {
   normalizeUserJwt(raw) {
@@ -188,6 +218,7 @@ export function updateSupabaseAuthUI(session) {
   const label = document.getElementById("supabaseUserLabel");
   if (!out || !inn) return;
   if (session?.user) {
+    markEmailVerifiedOnce();
     out.classList.add("hidden");
     inn.classList.remove("hidden");
     if (label) label.textContent = session.user.email || session.user.id || "Signed in";
@@ -195,6 +226,9 @@ export function updateSupabaseAuthUI(session) {
     inn.classList.add("hidden");
     out.classList.remove("hidden");
     if (label) label.textContent = "";
+    // Returning verified users see "Sign in", not the confusing "Verify email".
+    const verifyBtn = document.getElementById("supabaseVerifyBtn");
+    if (verifyBtn && hasVerifiedEmailOnce()) verifyBtn.textContent = "Sign in";
   }
 }
 

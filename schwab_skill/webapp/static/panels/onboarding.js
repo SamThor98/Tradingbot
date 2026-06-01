@@ -16,7 +16,14 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { createCookieAuthSession, ensureCookieAuthSession, getSupabaseClient } from "../modules/auth.js";
+import {
+  authActionLabel,
+  createCookieAuthSession,
+  ensureCookieAuthSession,
+  getSupabaseClient,
+  hasVerifiedEmailOnce,
+  markEmailVerifiedOnce,
+} from "../modules/auth.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { showToast } from "../modules/notifications.js";
@@ -237,11 +244,29 @@ function deriveCurrentStep(data) {
   return "done";
 }
 
+// A connection is only "live-confirmed" when the deep probe actually reached
+// Schwab (a quote came back). Token presence alone is NOT enough — a saved but
+// revoked token still reports present. Prefer the server-rolled connection_state
+// when available, otherwise derive it from the live probe fields.
+function liveConnected(ah) {
+  if (ah && typeof ah.connection_state === "string") return ah.connection_state === "connected";
+  return Boolean(ah && ah.market_token_ok && ah.account_token_ok && ah.quote_ok);
+}
+
 function stepStatus(step, data) {
   const ah = data?.api_health || {};
   const steps = data?.steps || {};
-  if (step === "account") return ah.account_token_ok ? "done" : "pending";
-  if (step === "market") return ah.market_token_ok ? "done" : "pending";
+  // account/market turn green only when the live probe confirms the API works.
+  // Present-but-unconfirmed renders "verifying" (amber) so a once-verified token
+  // that later breaks no longer shows a misleading permanent green.
+  if (step === "account") {
+    if (!ah.account_token_ok) return "pending";
+    return liveConnected(ah) ? "done" : "verifying";
+  }
+  if (step === "market") {
+    if (!ah.market_token_ok) return "pending";
+    return liveConnected(ah) ? "done" : "verifying";
+  }
   const s = steps[step] || {};
   if (s.ok) return "done";
   if (s.at) return "failed";
@@ -259,11 +284,20 @@ function renderStepper(data, currentStep) {
     li.dataset.status = status;
     li.classList.toggle("current", isCurrent && currentStep !== "done");
     li.classList.toggle("done", status === "done");
+    li.classList.toggle("verifying", status === "verifying");
     li.classList.toggle("failed", status === "failed");
     const label = li.querySelector(".step-state");
     if (label) {
       label.textContent =
-        status === "done" ? "done" : status === "failed" ? "retry" : isCurrent ? "next" : "pending";
+        status === "done"
+          ? "done"
+          : status === "verifying"
+            ? "verifying"
+            : status === "failed"
+              ? "retry"
+              : isCurrent
+                ? "next"
+                : "pending";
     }
   }
   // Mark "done" by adding `complete` to the whole stepper for styling.
@@ -361,15 +395,20 @@ async function getSessionStatus() {
       credentials: "same-origin",
       headers: { Accept: "application/json" },
     });
-    if (!out.ok) return { authenticated: false, email: "" };
+    if (!out.ok) return { authenticated: false, email: "", emailVerified: false };
     const body = await out.json();
     const data = body?.data && typeof body.data === "object" ? body.data : {};
+    const authenticated = Boolean(data.authenticated);
+    // An authenticated session proves the email was verified — remember it so
+    // we never re-prompt "Verify email" again on this browser.
+    if (authenticated || data.email_verified) markEmailVerifiedOnce();
     return {
-      authenticated: Boolean(data.authenticated),
+      authenticated,
       email: String(data.email || "").trim(),
+      emailVerified: Boolean(data.email_verified) || authenticated,
     };
   } catch {
-    return { authenticated: false, email: "" };
+    return { authenticated: false, email: "", emailVerified: false };
   }
 }
 
@@ -380,6 +419,14 @@ async function renderConnectAuthStatus() {
   const who = document.getElementById("connectSignedInEmail");
   if (!wrap || !signedIn || !signedOut || !who) return;
 
+  // Local / non-Supabase installs have no email step at all. Hide the whole
+  // block so single-user users are never shown a confusing email prompt.
+  if (!getSupabaseClient()) {
+    wrap.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+
   const session = await getSessionStatus();
   if (session.authenticated) {
     signedIn.classList.remove("hidden");
@@ -389,6 +436,13 @@ async function renderConnectAuthStatus() {
     signedIn.classList.add("hidden");
     signedOut.classList.remove("hidden");
     who.textContent = "";
+    // Returning verified users: relabel button + copy to "sign in" framing.
+    _refreshVerifyButtonState();
+    _setVerifyStatusMessage(
+      hasVerifiedEmailOnce()
+        ? "Your email is already verified. Sign in to reconnect."
+        : "Verify once, then connect Schwab.",
+    );
   }
 }
 
@@ -425,16 +479,17 @@ function _formatCooldownLabel(msLeft) {
 function _refreshVerifyButtonState() {
   const btn = document.getElementById("connectVerifyEmailBtn");
   if (!btn) return;
+  const label = authActionLabel();
   const until = _readVerifyCooldownUntil();
   const now = Date.now();
   const msLeft = until - now;
   if (msLeft > 0) {
     btn.disabled = true;
-    btn.textContent = `Verify email (${_formatCooldownLabel(msLeft)})`;
+    btn.textContent = `${label} (${_formatCooldownLabel(msLeft)})`;
     return;
   }
   btn.disabled = false;
-  btn.textContent = "Verify email";
+  btn.textContent = label;
 }
 
 function _startVerifyCooldown(ms, reason = "") {
@@ -453,7 +508,7 @@ function _startVerifyCooldown(ms, reason = "") {
       _verifyCooldownTimer = null;
       _writeVerifyCooldownUntil(0);
       _refreshVerifyButtonState();
-      if (!reason) _setVerifyStatusMessage("You can request another verification email.");
+      if (!reason) _setVerifyStatusMessage("You can request another email.");
     }
   }, 1000);
 }
@@ -503,7 +558,9 @@ async function requestInlineEmailVerification() {
   }
   _startVerifyCooldown(
     VERIFY_EMAIL_COOLDOWN_MS,
-    "Verification email sent. Open the link, then return here.",
+    hasVerifiedEmailOnce()
+      ? "Sign-in link sent. Open the link, then return here."
+      : "Verification email sent. Open the link, then return here.",
   );
   return true;
 }
@@ -515,7 +572,7 @@ function wireInlineAuthUi() {
   verifyBtn?.addEventListener("click", async () => {
     const ok = await requestInlineEmailVerification();
     if (ok) {
-      showToast("Verification email sent.", "info", 4000);
+      showToast(hasVerifiedEmailOnce() ? "Sign-in link sent." : "Verification email sent.", "info", 4000);
     }
   });
   const accountBtn = document.getElementById("connectAccountBtn");
@@ -579,12 +636,19 @@ async function ensureSessionForSchwabConnect() {
   signedOut?.classList.remove("hidden");
   const input = document.getElementById("connectVerifyEmailInput");
   input?.focus();
+  const returning = hasVerifiedEmailOnce();
   updateActionCenter({
-    title: "Email verification required",
-    message: "Verify with the inline email form in Connect Schwab, then click Connect again.",
+    title: returning ? "Sign in required" : "Email verification required",
+    message: returning
+      ? "Sign in with the inline email form in Connect Schwab, then click Connect again."
+      : "Verify with the inline email form in Connect Schwab, then click Connect again.",
     severity: "warn",
   });
-  showToast("Verify your email in the Connect panel first.", "warn", 4500);
+  showToast(
+    returning ? "Sign in via the Connect panel first." : "Verify your email in the Connect panel first.",
+    "warn",
+    4500,
+  );
   return false;
 }
 

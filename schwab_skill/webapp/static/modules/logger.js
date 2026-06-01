@@ -95,6 +95,18 @@ export function healthBadgeClass(ok) {
   return ok ? "health-badge bg-green-900" : "health-badge bg-red-900";
 }
 
+// Tri-state badge class for the diagnostics ribbon. Keeps green honest:
+// only an explicit "connected"/"good" maps to green; "unverified"/"warn"
+// renders amber, everything else red.
+export function healthBadgeStateClass(state) {
+  const s = String(state || "").toLowerCase();
+  if (s === "connected" || s === "good" || s === "ok") return "health-badge bg-green-900";
+  if (s === "unverified" || s === "warn" || s === "verifying" || s === "pending") {
+    return "health-badge bg-amber-900";
+  }
+  return "health-badge bg-red-900";
+}
+
 export function setStatusPill(el, label, title = "") {
   if (!el) return;
   const status = (label || "").toLowerCase();

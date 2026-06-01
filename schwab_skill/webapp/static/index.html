@@ -1104,11 +1104,20 @@
         aria-label="System health ribbon"
         data-async-state="loading"
       >
+        <p
+          id="healthRibbonSummary"
+          class="health-ribbon-summary muted"
+          data-unavailable="true"
+          style="grid-column: 1 / -1; margin: 0 0 2px"
+        >
+          System status: running first health check…
+        </p>
         <div class="health-tile" id="healthTileAuth" data-state="unknown" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
             <span class="health-label">Auth</span>
             <strong id="ribbonAuth" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+            <small id="ribbonAuthReason" class="health-reason muted">Broker connection not checked yet.</small>
             <small id="ribbonAuthFresh" data-freshness="unknown">awaiting /api/status</small>
           </div>
         </div>
@@ -1117,6 +1126,7 @@
           <div class="health-tile-copy">
             <span class="health-label">Quotes</span>
             <strong id="ribbonQuotes" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
+            <small id="ribbonQuotesReason" class="health-reason muted">Live market-data probe not run yet.</small>
             <small id="ribbonQuotesFresh" data-freshness="unknown">awaiting /api/health/deep</small>
           </div>
         </div>

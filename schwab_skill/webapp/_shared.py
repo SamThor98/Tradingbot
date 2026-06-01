@@ -295,6 +295,30 @@ def quote_health_hint(meta: dict[str, Any], quote_ok: bool) -> str | None:
     return "Quote check failed for an unknown reason. See trading_bot.log for details."
 
 
+def rollup_connection_state(market_ok: bool, account_ok: bool, quote_ok: bool) -> str:
+    """Roll up live Schwab health into a tri-state for the diagnostics UI.
+
+    This is the single source of truth for the honest Green/Yellow/Red model the
+    dashboard renders. It is intentionally driven by a *live* probe (the AAPL
+    quote in ``/api/health/deep``) rather than token presence, so a token that
+    was saved once but is now revoked no longer reads as "Connected".
+
+    - ``"connected"`` (GREEN): both sessions are usable AND the live market-data
+      probe returned a quote. This is the only state that should render green.
+    - ``"disconnected"`` (RED): a required session is missing or its refresh
+      token is expired / needs reauth (``market_ok``/``account_ok`` already fold
+      that in upstream).
+    - ``"unverified"`` (YELLOW): tokens are present but the live probe has not
+      confirmed the API is actually working yet (revoked-but-young token,
+      transient outage, entitlement gap, or the probe has not run).
+    """
+    if market_ok and account_ok and quote_ok:
+        return "connected"
+    if not market_ok or not account_ok:
+        return "disconnected"
+    return "unverified"
+
+
 def manual_jwt_entry_enabled(default: bool) -> bool:
     """Resolve the `WEB_ALLOW_MANUAL_JWT` flag.
 

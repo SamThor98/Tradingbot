@@ -52,6 +52,9 @@ from ._shared import (
     quote_health_hint as _quote_health_hint,
 )
 from ._shared import (
+    rollup_connection_state as _rollup_connection_state,
+)
+from ._shared import (
     trade_to_dict as _trade_to_dict,
 )
 from .checklist_language import with_plain_language
@@ -1982,6 +1985,10 @@ def health_deep(
                 "market_token_ok": market_token_ok,
                 "account_token_ok": account_token_ok,
                 "quote_ok": quote_ok,
+                # Honest tri-state for the diagnostics ribbon. "connected" only
+                # when the live quote probe actually succeeded (see
+                # rollup_connection_state); otherwise "unverified"/"disconnected".
+                "connection_state": _rollup_connection_state(market_token_ok, account_token_ok, quote_ok),
                 "quote_health": qh,
                 "kronos": _probe_kronos_health(),
                 "metrics": metrics,

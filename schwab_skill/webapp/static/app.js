@@ -60,6 +60,7 @@ import {
   SUPABASE_ESM,
   isProbablyAccessJwt,
   JWT_BAD_SHAPE_HINT,
+  hasVerifiedEmailOnce,
 } from "./modules/auth.js";
 import { showToast, addNotification, setupNotifications } from "./modules/notifications.js";
 import { setupScrollToTop } from "./modules/scrollToTop.js";
@@ -80,6 +81,7 @@ import {
   statusClass,
   sentimentTagClass,
   healthBadgeClass,
+  healthBadgeStateClass,
   setStatusPill,
   DIAG_LABELS,
 } from "./modules/logger.js";
@@ -825,10 +827,13 @@ async function initSupabaseAuth(url, anonKey) {
     });
     if (error) logEvent({ kind: "system", severity: "error", message: error.message });
     else {
+      const returning = hasVerifiedEmailOnce();
       logEvent({
         kind: "system",
         severity: "info",
-        message: "Verification email sent. Open your inbox and continue from the sign-in link.",
+        message: returning
+          ? "Sign-in link sent. Open your inbox and continue from the link."
+          : "Verification email sent. Open your inbox and continue from the sign-in link.",
       });
       void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
         source: "supabase_email_verification",
@@ -1114,14 +1119,23 @@ function setHealthRibbonUnavailable(reason) {
   void noteIso;
 }
 
-function setHealthRibbonTiles(authOk, quoteOk, errRate, validation) {
+function setHealthRibbonTiles(authState, quoteOk, errRate, validation) {
   const setTile = (id, stateName, gauge) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.dataset.state = stateName;
     el.style.setProperty("--gauge", String(gauge));
   };
-  setTile("healthTileAuth", authOk ? "good" : "bad", authOk ? 1 : 0);
+  // authState may be a tri-state string ("connected"/"unverified"/"disconnected")
+  // or a legacy boolean. Map to the tile's good/warn/bad states.
+  const authTileState =
+    authState === "connected" || authState === true
+      ? "good"
+      : authState === "unverified"
+        ? "warn"
+        : "bad";
+  const authGauge = authTileState === "good" ? 1 : authTileState === "warn" ? 0.55 : 0;
+  setTile("healthTileAuth", authTileState, authGauge);
   setTile("healthTileQuotes", quoteOk ? "good" : "bad", quoteOk ? 1 : 0);
   const er = safeNum(errRate, 0);
   const apiGaugeHealth = Math.max(0, Math.min(1, 1 - er / 18));
@@ -1149,14 +1163,48 @@ function setHealthRibbonTiles(authOk, quoteOk, errRate, validation) {
   setTile("healthTileValidation", vState, vGauge);
 }
 
-function prioritizeActionCenterFromHealth({ authOk, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
+// Plain-language one-liner rolling up the broker, market data, and scan state.
+// Keeps the diagnostics page understandable at a glance without reading tiles.
+function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, lastScan }) {
+  const el = document.getElementById("healthRibbonSummary");
+  if (!el) return;
+  clearUnavailable(el);
+  const broker =
+    authState === "connected"
+      ? "Broker connected"
+      : authState === "unverified"
+        ? "Broker verifying"
+        : "Broker disconnected";
+  const market = !deepReachable ? "market data unknown" : quoteOk ? "market data live" : "market data degraded";
+  let scan = "no scan yet this session";
+  const scanAt = lastScan?.at;
+  if (scanAt) {
+    const ts = new Date(scanAt).getTime();
+    if (Number.isFinite(ts)) {
+      const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
+      scan = mins < 1 ? "last scan just now" : mins < 60 ? `last scan ${mins}m ago` : `last scan ${Math.round(mins / 60)}h ago`;
+    }
+  }
+  el.textContent = `System status: ${broker}, ${market}, ${scan}.`;
+}
+
+function prioritizeActionCenterFromHealth({ authState, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
   const runStatus = safeText(validation?.run_status || "").toLowerCase();
   const blocker = safeText(topBlocker || "").trim();
-  if (!authOk) {
+  if (authState === "disconnected") {
     updateActionCenter({
       title: "P0: Broker Authentication Blocked",
       message: "Reconnect Schwab account and market sessions before running scans or approving orders.",
       severity: "error",
+    });
+    return;
+  }
+  if (authState === "unverified") {
+    updateActionCenter({
+      title: "P1: Broker Connection Unverified",
+      message:
+        "Schwab tokens are saved but the live API hasn't confirmed a response yet. Run a quick health check, and reconnect if this persists.",
+      severity: "warn",
     });
     return;
   }
@@ -3542,7 +3590,23 @@ async function refreshStatus() {
     errEl.textContent = "--";
   }
 
-  const authOk = Boolean(status.market_token_ok && status.account_token_ok);
+  // Tri-state broker auth: green is reserved for a *live*-confirmed connection.
+  // Token presence (from /api/status) alone is "Verifying" (amber), never green,
+  // so a saved-but-revoked token no longer reads as Connected.
+  const authPresent = Boolean(status.market_token_ok && status.account_token_ok);
+  let authState; // "connected" | "unverified" | "disconnected"
+  if (deepRes.ok && deepRes.data && typeof deepRes.data.connection_state === "string") {
+    authState = deepRes.data.connection_state;
+  } else if (deepRes.ok && deepRes.data) {
+    const liveOk = Boolean(
+      deepRes.data.market_token_ok && deepRes.data.account_token_ok && deepRes.data.quote_ok,
+    );
+    authState = liveOk ? "connected" : authPresent ? "unverified" : "disconnected";
+  } else {
+    // Deep probe unreachable: we can confirm presence but not a live response.
+    authState = authPresent ? "unverified" : "disconnected";
+  }
+  const authOk = authState === "connected";
   const quoteOk = Boolean(deepRes.ok && deepRes.data?.quote_ok);
   const req = safeNum(deepRes?.data?.metrics?.requests_total, 0);
   const srvErrRibbon = safeNum(deepRes?.data?.metrics?.errors_total, 0);
@@ -3556,8 +3620,27 @@ async function refreshStatus() {
   state.lastStatusAt = nowIso;
   if (ribbonAuth) {
     clearUnavailable(ribbonAuth);
-    ribbonAuth.className = healthBadgeClass(authOk);
-    ribbonAuth.textContent = authOk ? "Connected" : "Disconnected";
+    ribbonAuth.className = healthBadgeStateClass(authState);
+    if (authState === "connected") {
+      ribbonAuth.textContent = "Connected";
+      ribbonAuth.title = "Schwab market data and account APIs responded successfully just now.";
+    } else if (authState === "unverified") {
+      ribbonAuth.textContent = "Verifying";
+      ribbonAuth.title =
+        "Schwab tokens are saved but a live API response hasn't been confirmed yet. If this persists, reconnect Schwab.";
+    } else {
+      ribbonAuth.textContent = "Disconnected";
+      ribbonAuth.title = "No usable Schwab session. Connect or re-authenticate Schwab to continue.";
+    }
+  }
+  const ribbonAuthReason = document.getElementById("ribbonAuthReason");
+  if (ribbonAuthReason) {
+    ribbonAuthReason.textContent =
+      authState === "connected"
+        ? "Schwab market data and account APIs are responding."
+        : authState === "unverified"
+          ? "Tokens saved, but the live API hasn't confirmed yet. Reconnect if this persists."
+          : "No usable Schwab session — connect or re-authenticate.";
   }
   applyFreshness(document.getElementById("ribbonAuthFresh"), {
     asOf: nowIso,
@@ -3573,6 +3656,20 @@ async function refreshStatus() {
       markUnavailable(ribbonQuotes, deepRes.error || "/api/health/deep failed");
       ribbonQuotes.className = "health-badge bg-slate-900";
       ribbonQuotes.textContent = "Unknown";
+    }
+  }
+  const ribbonQuotesReason = document.getElementById("ribbonQuotesReason");
+  if (ribbonQuotesReason) {
+    const qh = deepRes?.data?.quote_health || {};
+    if (!deepRes.ok) {
+      ribbonQuotesReason.textContent = "Live market-data probe is unreachable.";
+    } else if (quoteOk) {
+      ribbonQuotesReason.textContent = "Live AAPL quote returned successfully.";
+    } else {
+      const reason = safeText(qh.operator_hint || qh.reason || "").trim();
+      ribbonQuotesReason.textContent = reason
+        ? `Quote check failed: ${reason}`
+        : "Quote check failed. See logs for details.";
     }
   }
   applyFreshness(document.getElementById("ribbonQuotesFresh"), {
@@ -3618,7 +3715,8 @@ async function refreshStatus() {
     budgetSec: 24 * 3600,
     unavailable: "no validation artifact",
   });
-  setHealthRibbonTiles(authOk, quoteOk, errRate, validation);
+  setHealthRibbonTiles(authState, quoteOk, errRate, validation);
+  renderHealthRibbonSummary({ authState, quoteOk, deepReachable: deepRes.ok, lastScan: status?.last_scan });
   // Mark the ribbon container as success now that it has rendered real data.
   const ribbonContainer = document.getElementById("healthRibbon");
   if (ribbonContainer) ribbonContainer.setAttribute("data-async-state", "success");
@@ -3627,7 +3725,7 @@ async function refreshStatus() {
     status?.last_scan?.diagnostics_summary?.headline ||
     "";
   prioritizeActionCenterFromHealth({
-    authOk,
+    authState,
     quoteOk,
     errRate,
     validation,
@@ -5346,10 +5444,13 @@ function connectSSE() {
     safeInit("markDeferredDataPlaceholders", markDeferredDataPlaceholders);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else if (state.config?.auth_mode === "supabase") {
+    const returning = hasVerifiedEmailOnce();
     updateActionCenter({
-      title: "Email verification required",
-      message: "Verify your email with Supabase to load portfolio, pending trades, and billing-protected actions.",
-      severity: "warn",
+      title: returning ? "Sign in to continue" : "Verify your email to get started",
+      message: returning
+        ? "Your session expired. Sign in with your email link to load portfolio, pending trades, and billing-protected actions."
+        : "Verify your email once with the link we send to load portfolio, pending trades, and billing-protected actions. You only do this once.",
+      severity: "info",
     });
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   } else {

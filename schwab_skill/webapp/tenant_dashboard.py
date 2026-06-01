@@ -57,6 +57,9 @@ from ._shared import (
     quote_health_hint as _quote_health_hint,  # noqa: F401  (re-export)
 )
 from ._shared import (
+    rollup_connection_state as _rollup_connection_state,
+)
+from ._shared import (
     trade_to_dict as _trade_to_dict,  # noqa: F401  (re-export)
 )
 from .audit import log_audit
@@ -620,6 +623,7 @@ def _compute_tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[st
                 "market_token_ok": False,
                 "account_token_ok": False,
                 "quote_ok": False,
+                "connection_state": "disconnected",
                 "error": err_msg,
                 "quote_health": {
                     "symbol": "AAPL",
@@ -639,6 +643,7 @@ def _compute_tenant_api_health_snapshot(db: OrmSession, user_id: str) -> dict[st
         "market_token_ok": market_ok,
         "account_token_ok": account_ok,
         "quote_ok": quote_ok,
+        "connection_state": _rollup_connection_state(market_ok, account_ok, quote_ok),
         "quote_health": qh,
     }
 
@@ -1608,6 +1613,10 @@ def tenant_health_deep(user: User = Depends(get_current_user), db: OrmSession = 
                 "market_token_ok": market_token_ok,
                 "account_token_ok": account_token_ok,
                 "quote_ok": quote_ok,
+                # Honest tri-state for the diagnostics ribbon. "connected" only
+                # when the live quote probe actually succeeded (see
+                # rollup_connection_state); otherwise "unverified"/"disconnected".
+                "connection_state": _rollup_connection_state(market_token_ok, account_token_ok, quote_ok),
                 "quote_health": qh,
                 "metrics": {"requests_total": 0, "errors_total": 0},
             }

@@ -704,9 +704,18 @@ def auth_session_status(
 ) -> ApiResponse:
     token = (request.cookies.get(auth_session_cookie_name()) or "").strip()
     if not token:
-        return _ok({"authenticated": False})
+        return _ok({"authenticated": False, "email_verified": False})
     claims = decode_supabase_jwt(token)
-    return _ok({"authenticated": True, "sub": claims.get("sub"), "email": claims.get("email")})
+    # A valid session implies the email was confirmed (OTP/magic link), so the UI
+    # can treat the user as verified and never re-prompt "Verify email".
+    return _ok(
+        {
+            "authenticated": True,
+            "sub": claims.get("sub"),
+            "email": claims.get("email"),
+            "email_verified": True,
+        }
+    )
 
 
 @app.get("/api/health/live", response_model=ApiResponse)
@@ -778,6 +787,10 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(_db)) -> Ap
         {
             "id": user.id,
             "email": user.email,
+            "email_verified": getattr(user, "email_verified_at", None) is not None,
+            "email_verified_at": (
+                user.email_verified_at.isoformat() if getattr(user, "email_verified_at", None) else None
+            ),
             "provider": user.auth_provider,
             "schwab_linked": linked,
             "onboarding_required": not linked,

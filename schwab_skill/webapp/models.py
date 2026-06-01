@@ -22,6 +22,10 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # One-time stamp: set the first time we observe a valid Supabase session for
+    # this user (a session proves the email was confirmed via OTP/magic link).
+    # Once set it never reverts, so the UI can stop re-prompting "Verify email".
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     auth_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="supabase")
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

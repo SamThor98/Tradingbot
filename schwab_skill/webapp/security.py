@@ -307,11 +307,16 @@ def get_current_user(
     if not user_id:
         raise HTTPException(status_code=401, detail="JWT missing subject claim.")
 
+    # Reaching here means a valid Supabase session, which implies the email was
+    # already confirmed (OTP/magic link). Stamp a one-time verification time so
+    # the UI never has to re-prompt the user to "verify" their email again.
+    now = datetime.now(timezone.utc)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         user = User(
             id=user_id,
             email=claims.get("email"),
+            email_verified_at=now,
             auth_provider="supabase",
             live_execution_enabled=False,
         )
@@ -319,9 +324,15 @@ def get_current_user(
         db.commit()
         db.refresh(user)
     else:
+        dirty = False
         maybe_email = claims.get("email")
         if maybe_email and maybe_email != user.email:
             user.email = maybe_email
+            dirty = True
+        if getattr(user, "email_verified_at", None) is None:
+            user.email_verified_at = now
+            dirty = True
+        if dirty:
             db.commit()
             db.refresh(user)
     return user

@@ -524,7 +524,18 @@ html, body {
 }
 .bg-green-900 { background: rgba(6, 78, 59, 0.68); color: #d1fae5; }
 .bg-red-900 { background: rgba(127, 29, 29, 0.68); color: #fee2e2; }
+.bg-amber-900 { background: rgba(120, 53, 15, 0.68); color: #fef3c7; }
 .bg-slate-900 { background: rgba(51, 65, 85, 0.55); color: #e2e8f0; }
+
+.health-ribbon-summary {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.health-reason {
+  font-size: 0.72rem;
+  line-height: 1.25;
+  opacity: 0.85;
+}
 
 .blockers-alert {
   padding: 12px 16px;
@@ -4327,6 +4338,17 @@ body.ui-simple.ui-screen-settings #onboardingSection {
 }
 .onboarding-stepper li.done .step-state {
   color: #6ee7b7;
+}
+.onboarding-stepper li.verifying {
+  border-color: rgba(251, 191, 36, 0.6);
+  background: rgba(120, 53, 15, 0.2);
+}
+.onboarding-stepper li.verifying .step-num {
+  background: rgba(251, 191, 36, 0.85);
+  color: #451a03;
+}
+.onboarding-stepper li.verifying .step-state {
+  color: #fcd34d;
 }
 .onboarding-stepper li.failed {
   border-color: rgba(251, 113, 133, 0.6);
