@@ -113,17 +113,42 @@ _CELERY_INSPECT_CACHE_TTL_SEC = max(0.0, float(os.getenv("SAAS_CELERY_INSPECT_CA
 _CELERY_QUEUE_ESTIMATE_CACHE: tuple[float, dict[str, Any]] | None = None
 _CELERY_WORKER_HEALTH_CACHE: tuple[float, dict[str, Any]] | None = None
 
+def _alembic_config() -> Any:
+    """Alembic Config pointing at this repo's migrations regardless of cwd.
+
+    The web service may start from any working directory, so resolve
+    ``script_location`` to an absolute path instead of relying on the relative
+    value in ``alembic.ini``. The DB URL is supplied by ``alembic/env.py`` via
+    ``webapp.db.DATABASE_URL``.
+    """
+    from alembic.config import Config
+
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(APP_DIR.parent / "alembic"))
+    return cfg
+
+
 if os.getenv("SAAS_BOOTSTRAP_SCHEMA", "").lower() in ("1", "true", "yes"):
     Base.metadata.create_all(bind=engine)
     if _ALEMBIC_INI.is_file():
-        from alembic.config import Config
-
         from alembic import command
 
-        command.stamp(Config(str(_ALEMBIC_INI)), "saas006")
-# Production DB migrations: `docker-entrypoint-web.sh` when SAAS_RUN_ALEMBIC is set (not at import).
+        command.stamp(_alembic_config(), "saas006")
 elif DATABASE_URL.startswith("sqlite"):
     Base.metadata.create_all(bind=engine)
+# Production DB migrations: the Docker entrypoint runs Alembic when
+# SAAS_RUN_ALEMBIC is set, but the live web service may run uvicorn directly.
+# Self-heal by applying pending migrations at web startup so a deploy can never
+# run new ORM models against an older schema. Idempotent (`upgrade head` is a
+# no-op when current) and safe with a single web instance; if it fails the app
+# refuses to start and Render keeps the previous (working) version live.
+# Disable with SAAS_WEB_AUTO_MIGRATE=0 when migrations are applied out-of-band.
+elif os.getenv("SAAS_WEB_AUTO_MIGRATE", "1").lower() in ("1", "true", "yes", "on") and _ALEMBIC_INI.is_file():
+    from alembic import command
+
+    LOG.info("Applying Alembic migrations on web startup (SAAS_WEB_AUTO_MIGRATE).")
+    command.upgrade(_alembic_config(), "head")
+    LOG.info("Alembic migrations are up to date.")
 
 
 def _validate_startup_configuration() -> None:
