@@ -1,7 +1,7 @@
 ---
 source: n/a (wiki catalog)
 created: 2026-04-30
-updated: 2026-04-30
+updated: 2026-06-10
 tags: [wiki, index, catalog]
 ---
 
@@ -33,6 +33,13 @@ tags: [wiki, index, catalog]
 - [[webapp-dashboard]] — FastAPI local dashboard
 - [[saas-api]] — Multi-tenant production API
 - [[static-module-layout]] — Frontend ES module map (`/static/modules/*.js`)
+
+## Frontend Redesign
+
+- [[ux-kpi-baseline]] — Locked UX KPIs and instrumentation event taxonomy
+- [[frontend-route-contract]] — Frozen screen map, hash, and `?section=` alias contract
+- [[section-migration-map]] — Section-to-screen migration map and rollout checkpoints
+- [[usability-test-script]] — Moderated 5-task usability script for 3-5 users
 
 ## Trading Strategies
 

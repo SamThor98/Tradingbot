@@ -49,6 +49,8 @@ export const SECTION_ALIASES = Object.freeze({
   diagnostics: "diagnosticsWorkspaceIntro",
   health: "healthRibbon",
   operations: "operationsWorkspaceIntro",
+  sectors: "sectorsSection",
+  movers: "moversSection",
   research: "researchWorkspaceIntro",
   kronos: "kronosWorkspaceIntro",
   forecast: "kronosForecastSection",
@@ -85,6 +87,9 @@ export function handleRouteHash() {
   if (!id) return;
   const el = window.document.getElementById?.(id);
   if (!el) return;
+  // The deep-link target itself may be a collapsed <details> (e.g. the
+  // demoted sectors/movers disclosures) — open it before scrolling.
+  if (el.tagName === "DETAILS") el.open = true;
   openAncestorDetails(el);
   const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 0));
   raf(() => {

@@ -42,7 +42,10 @@ from config import (
     get_backtest_portfolio_starting_equity,
     get_backtest_position_size_pct,
     get_backtest_risk_per_trade_pct,
+    get_breakout_confirm_bars,
     get_breakout_confirm_enabled,
+    get_confluence_gate_mode,
+    get_confluence_require_count,
     get_forensic_altman_min,
     get_forensic_beneish_max,
     get_forensic_cache_hours,
@@ -61,7 +64,7 @@ from config import (
 )
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
-from signal_scanner import _apply_score_stack, _evaluate_quality_gates, _load_watchlist
+from signal_scanner import _apply_score_stack, _evaluate_confluence, _evaluate_quality_gates, _load_watchlist
 from stage_analysis import add_indicators, check_vcp_volume, compute_signal_components, is_stage_2
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -1001,6 +1004,9 @@ def _run_backtest_core(
         "event_risk_shadow_would_block": 0,
         "event_risk_shadow_would_downsize": 0,
         "exit_manager_partial_done": 0,
+        "confluence_confirmed": 0,
+        "confluence_blocked": 0,
+        "confluence_would_block": 0,
         "exits_trailing_stop": 0,
         "exits_time_exit": 0,
         "exits_sma50_break": 0,
@@ -1009,6 +1015,9 @@ def _run_backtest_core(
     }
 
     breakout_enabled = get_breakout_confirm_enabled(sd)
+    breakout_confirm_bars = int(get_breakout_confirm_bars(sd))
+    confluence_mode = get_confluence_gate_mode(sd)
+    confluence_require_count = int(get_confluence_require_count(sd))
     quality_mode = get_quality_gates_mode(sd)
     adaptive_stop_enabled = get_adaptive_stop_enabled(sd)
     stop_pct_base = float(get_adaptive_stop_base_pct(sd))
@@ -1294,9 +1303,17 @@ def _run_backtest_core(
             if not check_vcp_volume(window, sd):
                 diagnostics["vcp_fail"] = int(diagnostics["vcp_fail"]) + 1
                 continue
-            if breakout_enabled and idx >= 1 and float(df["close"].iloc[idx]) < float(df["high"].iloc[idx - 1]):
-                diagnostics["breakout_not_confirmed"] = int(diagnostics["breakout_not_confirmed"]) + 1
-                continue
+            if breakout_enabled and idx >= breakout_confirm_bars:
+                # Each of the last BREAKOUT_CONFIRM_BARS closes must hold above
+                # the prior bar's high (bars=1 preserves legacy behavior).
+                breakout_ok = True
+                for j in range(breakout_confirm_bars):
+                    if float(df["close"].iloc[idx - j]) < float(df["high"].iloc[idx - j - 1]):
+                        breakout_ok = False
+                        break
+                if not breakout_ok:
+                    diagnostics["breakout_not_confirmed"] = int(diagnostics["breakout_not_confirmed"]) + 1
+                    continue
 
             sector_ok, sector_reason = _sector_filter_pass(ticker, idx, context)
             if not sector_ok:
@@ -1435,6 +1452,21 @@ def _run_backtest_core(
             if _quality_mode_should_filter(reasons, sd):
                 diagnostics["quality_gates_filtered"] = int(diagnostics["quality_gates_filtered"]) + 1
                 continue
+
+            # Confluence gate: mirror of the live scanner's post-Stage-B gate.
+            # Requires an independent confirmation (PEAD-positive or
+            # advisory-high) beyond the Stage 2 + VCP base setup.
+            if confluence_mode in ("shadow", "live"):
+                confirmations = _evaluate_confluence(signal, sd)
+                signal["confluence_confirmations"] = confirmations
+                if len(confirmations) >= confluence_require_count:
+                    diagnostics["confluence_confirmed"] = int(diagnostics["confluence_confirmed"]) + 1
+                elif confluence_mode == "live":
+                    diagnostics["confluence_blocked"] = int(diagnostics["confluence_blocked"]) + 1
+                    continue
+                else:
+                    signal["confluence_would_block"] = True
+                    diagnostics["confluence_would_block"] = int(diagnostics["confluence_would_block"]) + 1
 
             meta_size_mult = 1.0
             event_size_mult = 1.0

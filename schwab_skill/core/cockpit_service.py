@@ -271,3 +271,139 @@ def build_execution_quality(
             "shadow_would_prefer_limit": prefer_limit,
         },
     }
+
+
+# --------------------------------------------------------------------------- #
+# Shadow scoreboard: would-have counters across all shadow-mode plugins
+# --------------------------------------------------------------------------- #
+def build_shadow_scoreboard(
+    diagnostics: dict[str, Any] | None,
+    execution_summary: dict[str, Any] | None,
+    *,
+    modes: dict[str, str] | None = None,
+    scan_at: str | None = None,
+) -> dict[str, Any]:
+    """Merge last-scan diagnostics counters with execution-side shadow events.
+
+    ``diagnostics`` is the last scan's diagnostics dict; ``execution_summary``
+    is ``execution_persistence.get_execution_safety_summary`` output. ``modes``
+    is the caller-resolved {plugin_id: mode} map from config getters, so this
+    builder stays pure/offline-testable.
+    """
+    diag = diagnostics or {}
+    events = (execution_summary or {}).get("events") or {}
+    modes = modes or {}
+
+    def _i(src: dict[str, Any], key: str) -> int:
+        try:
+            return int(src.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    kronos = diag.get("kronos") if isinstance(diag.get("kronos"), dict) else {}
+
+    plugins: list[dict[str, Any]] = [
+        {
+            "id": "confluence_gate",
+            "label": "Confluence gate",
+            "mode": str(diag.get("confluence_gate_mode") or modes.get("confluence_gate") or "off"),
+            "scope": "scan",
+            "counters": {
+                "confirmed": _i(diag, "confluence_confirmed"),
+                "would_block": _i(diag, "confluence_would_block"),
+                "blocked": _i(diag, "confluence_blocked"),
+            },
+        },
+        {
+            "id": "correlation_guard",
+            "label": "Correlation guard",
+            "mode": str(diag.get("correlation_guard_mode") or modes.get("correlation_guard") or "off"),
+            "scope": "scan",
+            "counters": {
+                "would_demote": _i(diag, "correlation_guard_would_demote"),
+                "demoted": _i(diag, "correlation_guard_demoted"),
+            },
+        },
+        {
+            "id": "regime_v2",
+            "label": "Regime v2",
+            "mode": str(diag.get("regime_v2_mode") or modes.get("regime_v2") or "off"),
+            "scope": "scan+execution",
+            "counters": {
+                "scan_blocked": _i(diag, "regime_v2_blocked"),
+                "exec_blocked": _i(events, "regime_v2_blocked"),
+                "exec_sized": _i(events, "regime_v2_sized"),
+            },
+            "context": {
+                "score": diag.get("regime_v2_score"),
+                "bucket": diag.get("regime_v2_bucket"),
+            },
+        },
+        {
+            "id": "kronos",
+            "label": "Kronos forecaster",
+            "mode": str((kronos or {}).get("mode") or modes.get("kronos") or "off"),
+            "scope": "scan",
+            "counters": {
+                "scored": _i(kronos or {}, "scored"),
+                "high_confidence": _i(kronos or {}, "high_confidence"),
+                "medium_confidence": _i(kronos or {}, "medium_confidence"),
+                "low_confidence": _i(kronos or {}, "low_confidence"),
+                "live_adjustments": _i(kronos or {}, "live_adjustments"),
+                "errors": _i(kronos or {}, "errors"),
+                "skipped_budget": _i(kronos or {}, "skipped_budget"),
+            },
+        },
+        {
+            "id": "management_integrity",
+            "label": "Management integrity",
+            "mode": str(
+                (diag.get("management_integrity") or {}).get("mode")
+                or modes.get("management_integrity")
+                or "off"
+            ),
+            "scope": "scan",
+            "counters": {
+                "scored": _i(diag.get("management_integrity") or {}, "scored"),
+                "high": _i(diag.get("management_integrity") or {}, "high"),
+                "medium": _i(diag.get("management_integrity") or {}, "medium"),
+                "low": _i(diag.get("management_integrity") or {}, "low"),
+                "would_filter": _i(diag.get("management_integrity") or {}, "would_filter"),
+                "unavailable": _i(diag.get("management_integrity") or {}, "unavailable"),
+                "errors": _i(diag.get("management_integrity") or {}, "errors"),
+            },
+        },
+        {
+            "id": "exit_manager",
+            "label": "Exit manager",
+            "mode": str(modes.get("exit_manager") or "off"),
+            "scope": "execution",
+            "counters": {
+                "would_partial_tp": _i(events, "exit_manager_shadow_would_partial_tp"),
+                "would_move_stop": _i(events, "exit_manager_shadow_would_move_stop"),
+                "would_time_stop": _i(events, "exit_manager_shadow_would_time_stop"),
+            },
+        },
+        {
+            "id": "quality_gates",
+            "label": "Quality gates",
+            "mode": str(diag.get("quality_gates_mode") or modes.get("quality_gates") or "off"),
+            "scope": "scan",
+            "counters": {
+                "would_filter": _i(diag, "quality_gates_would_filter"),
+                "filtered": _i(diag, "quality_gates_filtered"),
+            },
+        },
+    ]
+
+    return {
+        "scan_at": scan_at,
+        "execution_window_days": int((execution_summary or {}).get("window_days") or 0) or None,
+        "execution_days_present": int((execution_summary or {}).get("days_present") or 0),
+        "plugins": plugins,
+        "provenance": Provenance.computed(
+            confidence="high",
+            scan_diagnostics=bool(diag),
+            execution_metrics=bool(events),
+        ).model_dump(mode="json"),
+    }

@@ -49,6 +49,14 @@ class DecisionPacket(BaseModel):
     expected_slippage_bps: float | None = None
     entry_price: float | None = None  # decision-time price, anchors realized-return backfill
 
+    # Entry-time Kronos forecast snapshot (shadow evidence). Compact subset of
+    # the forecast — direction/confidence/expected move — so outcome attribution
+    # can ask "do bearish high-confidence forecasts predict early stop-outs?".
+    kronos: dict[str, Any] | None = None
+
+    # Entry-time management integrity scorecard (shadow evidence).
+    management_integrity: dict[str, Any] | None = None
+
     # Resolved outcome (backfilled).
     outcome: PacketOutcome = Field(default_factory=PacketOutcome)
 

@@ -15,6 +15,8 @@
 
 import { state, AUTH_TOKEN_KEY, LEGACY_AUTH_TOKEN_KEYS } from "./state.js";
 import { safeText } from "./format.js";
+import { isFlagEnabled } from "./featureFlags.js";
+import { renderAuthState } from "./authPresentation.js";
 
 /** Reference to the lazily-loaded Supabase JS client. Read-only outside this
  * module; use `setSupabaseClient` to mutate. */
@@ -217,8 +219,24 @@ export function updateSupabaseAuthUI(session) {
   const inn = document.getElementById("supabaseSignedIn");
   const label = document.getElementById("supabaseUserLabel");
   if (!out || !inn) return;
+  if (session?.user) markEmailVerifiedOnce();
+  if (isFlagEnabled("unified_auth_block")) {
+    renderAuthState(
+      {
+        signedOutEl: out,
+        signedInEl: inn,
+        labelEl: label,
+        verifyBtn: document.getElementById("supabaseVerifyBtn"),
+      },
+      {
+        state: session?.user ? "signed-in" : "signed-out",
+        email: session?.user ? session.user.email || session.user.id || "Signed in" : "",
+        verified: hasVerifiedEmailOnce(),
+      },
+    );
+    return;
+  }
   if (session?.user) {
-    markEmailVerifiedOnce();
     out.classList.add("hidden");
     inn.classList.remove("hidden");
     if (label) label.textContent = session.user.email || session.user.id || "Signed in";

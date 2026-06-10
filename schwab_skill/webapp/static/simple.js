@@ -1,6 +1,7 @@
 /**
  * Minimal scan UI for external users: auth, status, scan, blockers, small results table.
- * Works with local webapp (threaded scan + /api/scan/status) and SaaS (Celery + /api/scan/{id}).
+ * Works with both backends via the shared /api/scan-lifecycle and /api/scan-results
+ * endpoints (local = threaded scan, SaaS = Celery task tracked by task_id).
  */
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";

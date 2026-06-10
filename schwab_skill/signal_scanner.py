@@ -677,6 +677,41 @@ def _evaluate_quality_gates(signal: dict[str, Any], skill_dir: Path) -> list[str
     return reasons
 
 
+def _evaluate_confluence(signal: dict[str, Any], skill_dir: Path) -> list[str]:
+    """Independent confirmations supporting the base Stage 2 + VCP setup.
+
+    Returns the confirmation tags present on the signal:
+    - ``pead_positive`` — PEAD enrichment produced a positive score delta
+    - ``advisory_high`` — advisory bucket is high or p_up_10d clears
+      CONFLUENCE_ADVISORY_MIN_PUP
+
+    Shared by the confluence gate (CONFLUENCE_GATE_MODE) in the live scanner
+    and in ``backtest.py`` so sweep configs exercise identical logic.
+    """
+    from config import get_confluence_advisory_min_pup
+
+    confirmations: list[str] = []
+    try:
+        if float(signal.get("pead_score_delta") or 0.0) > 0:
+            confirmations.append("pead_positive")
+    except (TypeError, ValueError):
+        pass
+    advisory = signal.get("advisory")
+    if isinstance(advisory, dict):
+        bucket = str(advisory.get("confidence_bucket", "")).lower()
+        advisory_high = bucket == "high"
+        if not advisory_high:
+            try:
+                p_up = advisory.get("p_up_10d")
+                if p_up is not None:
+                    advisory_high = float(p_up) >= float(get_confluence_advisory_min_pup(skill_dir))
+            except (TypeError, ValueError):
+                pass
+        if advisory_high:
+            confirmations.append("advisory_high")
+    return confirmations
+
+
 def _quality_mode_should_filter(reasons: list[str], skill_dir: Path) -> bool:
     from config import (
         get_forensic_filter_mode,
@@ -921,14 +956,27 @@ def _scan_stage_a_one(
 
             now_et = datetime.now(ZoneInfo("America/New_York"))
             current_minutes = now_et.hour * 60 + now_et.minute
-            if current_minutes >= breakout_min_time and price < prior_high:
-                return {
-                    "ok": False,
-                    "reason": "breakout_not_confirmed",
-                    "provider": provider,
-                    "used_fallback": used_fallback,
-                    "fallback_reason": history_meta.get("fallback_reason"),
-                }
+            if current_minutes >= breakout_min_time:
+                from config import get_breakout_confirm_bars
+
+                breakout_confirm_bars = int(get_breakout_confirm_bars(skill_dir))
+                breakout_ok = price >= prior_high
+                # Multi-bar follow-through (BREAKOUT_CONFIRM_BARS >= 2): each
+                # prior daily close must have held above its own previous
+                # bar's high, mirroring the backtest's consecutive-bar check.
+                if breakout_ok and breakout_confirm_bars >= 2 and len(df) >= breakout_confirm_bars + 1:
+                    for j in range(1, breakout_confirm_bars):
+                        if float(df["close"].iloc[-1 - j]) < float(df["high"].iloc[-2 - j]):
+                            breakout_ok = False
+                            break
+                if not breakout_ok:
+                    return {
+                        "ok": False,
+                        "reason": "breakout_not_confirmed",
+                        "provider": provider,
+                        "used_fallback": used_fallback,
+                        "fallback_reason": history_meta.get("fallback_reason"),
+                    }
 
         try:
             from engine_analysis import compute_seed_fingerprint, get_cached_conviction
@@ -1036,6 +1084,8 @@ def _scan_stage_b_enrich(
     scan_started_at: datetime,
     regime_is_bullish: bool | None,
     kronos_ctx: dict[str, Any] | None = None,
+    mgmt_integrity_mode: str = "off",
+    mgmt_integrity_filter_min_score: int = 50,
 ) -> dict[str, Any]:
     from stage_analysis import compute_signal_components
 
@@ -1063,6 +1113,13 @@ def _scan_stage_b_enrich(
         "kronos_errors": 0,
         "kronos_skipped_budget": 0,
         "kronos_live_adjustments": 0,
+        "mgmt_integrity_scored": 0,
+        "mgmt_integrity_high": 0,
+        "mgmt_integrity_medium": 0,
+        "mgmt_integrity_low": 0,
+        "mgmt_integrity_would_filter": 0,
+        "mgmt_integrity_unavailable": 0,
+        "mgmt_integrity_errors": 0,
         "low_breakout_volume": 0,
         "weak_mirofish_alignment": 0,
         "forensic_sloan_flags": 0,
@@ -1405,6 +1462,45 @@ def _scan_stage_b_enrich(
                 diag_delta["kronos_errors"] += 1
                 LOG.debug("Kronos scoring skipped for %s: %s", ticker, e)
 
+        # Management integrity (OFF|SHADOW|LIVE). SHADOW attaches scorecard
+        # evidence; LIVE score nudges stay deferred until packet lift is proven.
+        if mgmt_integrity_mode != "off" and sec_enrichment_enabled:
+            try:
+                from management_integrity import fetch_management_integrity_snapshot
+
+                mi_snap = fetch_management_integrity_snapshot(
+                    ticker,
+                    skill_dir=skill_dir,
+                    user_agent=edgar_user_agent,
+                    cache_hours=sec_filing_cache_hours,
+                    max_chars=sec_filing_max_chars,
+                )
+                if mi_snap:
+                    signal_row["management_integrity"] = mi_snap
+                    diag_delta["mgmt_integrity_scored"] += 1
+                    bucket = str(mi_snap.get("score_bucket") or "unknown").lower()
+                    if bucket == "high":
+                        diag_delta["mgmt_integrity_high"] += 1
+                    elif bucket == "medium":
+                        diag_delta["mgmt_integrity_medium"] += 1
+                    else:
+                        diag_delta["mgmt_integrity_low"] += 1
+                    score_val = mi_snap.get("score")
+                    try:
+                        if score_val is not None and int(score_val) < int(mgmt_integrity_filter_min_score):
+                            if mgmt_integrity_mode == "shadow":
+                                diag_delta["mgmt_integrity_would_filter"] += 1
+                                mi_snap["shadow_action"] = "would_filter"
+                            elif mgmt_integrity_mode == "live":
+                                mi_snap["shadow_action"] = "would_filter"
+                    except (TypeError, ValueError):
+                        pass
+                else:
+                    diag_delta["mgmt_integrity_unavailable"] += 1
+            except Exception as e:
+                diag_delta["mgmt_integrity_errors"] += 1
+                LOG.debug("Management integrity skipped for %s: %s", ticker, e)
+
         prediction_eval = None
         if prediction_market_mode != "off" and prediction_market_engine is not None:
             diag_delta["prediction_market_processed"] += 1
@@ -1714,6 +1810,37 @@ def _apply_post_stage_b_chain(
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Quality gate evaluation skipped: %s", e)
 
+    # Confluence gate: require at least CONFLUENCE_REQUIRE_COUNT independent
+    # confirmations (PEAD-positive or advisory-high) on top of the Stage 2 +
+    # VCP base setup. shadow only annotates/counts would-blocks; live drops
+    # unconfirmed signals. Gated by CONFLUENCE_GATE_MODE (default off).
+    try:
+        from config import get_confluence_gate_mode, get_confluence_require_count
+
+        confluence_mode = get_confluence_gate_mode(skill_dir)
+        diagnostics["confluence_gate_mode"] = confluence_mode
+        if confluence_mode in ("shadow", "live"):
+            require_count = int(get_confluence_require_count(skill_dir))
+            before_confluence = list(signals)
+            kept_confluence: list[dict[str, Any]] = []
+            for s in signals:
+                confirmations = _evaluate_confluence(s, skill_dir)
+                s["confluence_confirmations"] = confirmations
+                if len(confirmations) >= require_count:
+                    diagnostics["confluence_confirmed"] += 1
+                    kept_confluence.append(s)
+                    continue
+                if confluence_mode == "live":
+                    diagnostics["confluence_blocked"] += 1
+                else:
+                    s["confluence_would_block"] = True
+                    diagnostics["confluence_would_block"] += 1
+                    kept_confluence.append(s)
+            signals = kept_confluence
+            _tag_shortlist_drop(before_confluence, signals, "filtered_confluence")
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Confluence gate skipped: %s", e)
+
     # Event-risk policy: can tag, suppress, or mark downsize intent.
     try:
         before_event_risk = list(signals)
@@ -1902,7 +2029,8 @@ def scan_for_signals_detailed(
         tagged with `_filter_status` describing how it was disposed:
         ``kept`` (made the final cut), ``filtered_self_study``,
         ``filtered_quality_gates`` (with ``_filter_reasons``),
-        ``filtered_event_risk``, ``filtered_meta_policy``, ``trimmed_top_n``.
+        ``filtered_confluence``, ``filtered_event_risk``,
+        ``filtered_meta_policy``, ``trimmed_top_n``.
         The dashboard uses this to render the full shortlist with disposition
         badges instead of just the post-filter survivors. Existing callers
         that only use the 2-tuple return are unaffected.
@@ -1950,6 +2078,9 @@ def scan_for_signals_detailed(
         "quality_gates_filtered": 0,
         "forensic_filtered": 0,
         "quality_gates_would_filter": 0,
+        "confluence_confirmed": 0,
+        "confluence_blocked": 0,
+        "confluence_would_block": 0,
         "weak_mirofish_alignment": 0,
         "low_breakout_volume": 0,
         "forensic_sloan_flags": 0,
@@ -1975,6 +2106,13 @@ def scan_for_signals_detailed(
         "kronos_errors": 0,
         "kronos_skipped_budget": 0,
         "kronos_live_adjustments": 0,
+        "mgmt_integrity_scored": 0,
+        "mgmt_integrity_high": 0,
+        "mgmt_integrity_medium": 0,
+        "mgmt_integrity_low": 0,
+        "mgmt_integrity_would_filter": 0,
+        "mgmt_integrity_unavailable": 0,
+        "mgmt_integrity_errors": 0,
         "top_n_applied": 0,
         "ranked_on_fallback_basis": 0,
         "correlation_guard_demoted": 0,
@@ -2229,6 +2367,8 @@ def scan_for_signals_detailed(
         get_guidance_score_penalty,
         get_kronos_max_symbols,
         get_kronos_mode,
+        get_management_integrity_filter_min_score,
+        get_management_integrity_mode,
         get_meta_policy_mode,
         get_pead_enabled,
         get_pead_lookback_days,
@@ -2309,6 +2449,16 @@ def scan_for_signals_detailed(
         "errors": 0,
         "skipped_budget": 0,
         "live_adjustments": 0,
+    }
+    mgmt_integrity_mode = get_management_integrity_mode(skill_dir)
+    mgmt_integrity_filter_min_score = int(get_management_integrity_filter_min_score(skill_dir))
+    diagnostics["management_integrity"] = {
+        "enabled": mgmt_integrity_mode != "off",
+        "mode": mgmt_integrity_mode,
+        "scored": 0,
+        "would_filter": 0,
+        "unavailable": 0,
+        "errors": 0,
     }
     try:
         from prediction_market import (
@@ -2598,6 +2748,8 @@ def scan_for_signals_detailed(
                 scan_started_at,
                 diagnostics.get("regime_bullish"),
                 kronos_ctx,
+                mgmt_integrity_mode,
+                mgmt_integrity_filter_min_score,
             )
             future_map_b[fut] = ticker
         try:
@@ -2664,6 +2816,18 @@ def scan_for_signals_detailed(
         "high_confidence": int(diagnostics.get("kronos_high_confidence", 0) or 0),
         "medium_confidence": int(diagnostics.get("kronos_medium_confidence", 0) or 0),
         "low_confidence": int(diagnostics.get("kronos_low_confidence", 0) or 0),
+    }
+    mgmt = diagnostics.get("management_integrity") if isinstance(diagnostics.get("management_integrity"), dict) else {}
+    diagnostics["management_integrity"] = {
+        "enabled": bool(mgmt.get("enabled", False)),
+        "mode": str(mgmt.get("mode") or "off"),
+        "scored": int(diagnostics.get("mgmt_integrity_scored", 0) or 0),
+        "high": int(diagnostics.get("mgmt_integrity_high", 0) or 0),
+        "medium": int(diagnostics.get("mgmt_integrity_medium", 0) or 0),
+        "low": int(diagnostics.get("mgmt_integrity_low", 0) or 0),
+        "would_filter": int(diagnostics.get("mgmt_integrity_would_filter", 0) or 0),
+        "unavailable": int(diagnostics.get("mgmt_integrity_unavailable", 0) or 0),
+        "errors": int(diagnostics.get("mgmt_integrity_errors", 0) or 0),
     }
     diagnostics["meta_policy"] = {
         "enabled": bool((diagnostics.get("meta_policy") or {}).get("enabled", False)),

@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Plugin Modes Config.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-06-10
 tags: [config, plugins]
 ---
 
@@ -9,11 +9,17 @@ tags: [config, plugins]
 
 > All environment variables for the plugin mode system.
 
+**Current deployment note (2026-06-10):** `REGIME_V2_MODE`, `EXIT_MANAGER_MODE`,
+and `CORRELATION_GUARD_MODE` are set to `shadow` via the local `.env` override
+(config defaults remain `off`). Live promotion is blocked by the Phase 2 edge
+audit verdict `halt_fix_signal_first` — see [[plugin-modes]] for details and
+ledger references.
+
 ## Execution Quality
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `EXEC_QUALITY_MODE` | off | off / shadow / live |
+| `EXEC_QUALITY_MODE` | live | off / shadow / live (promoted to live 2026-04-18, see promotion ledger) |
 | `EXEC_SPREAD_MAX_BPS` | 35 | Max spread in basis points |
 | `EXEC_SLIPPAGE_MAX_BPS` | 20 | Max slippage in bps |
 | `EXEC_REPRICE_ATTEMPTS` | 2 | Cancel/replace attempts |
@@ -33,7 +39,7 @@ tags: [config, plugins]
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `EVENT_RISK_MODE` | off | off / shadow / live |
+| `EVENT_RISK_MODE` | live | off / shadow / live (promoted to live 2026-04-18, see promotion ledger) |
 | `EVENT_BLOCK_EARNINGS_DAYS` | 2 | Flag symbols near earnings |
 | `EVENT_ACTION` | block | `block` or `downsize` |
 | `EVENT_DOWNSIZE_FACTOR` | 0.5 | Position multiplier for downsize |

@@ -1855,10 +1855,11 @@ def tenant_cockpit_decision_packets(
 @router.get("/api/cockpit/review", response_model=ApiResponse)
 def tenant_cockpit_review(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
     try:
-        from core import trade_review, weight_feedback
+        from core import packet_feature_analysis, trade_review, weight_feedback
 
         packets = _cockpit_load_packets(db, user.id)
         report = trade_review.weekly_report(packets)
+        report["feature_lift"] = packet_feature_analysis.feature_lift_report(packets)
         report["tuning_proposals"] = weight_feedback.propose(report)
         return _ok(report)
     except Exception as exc:

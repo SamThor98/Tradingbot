@@ -550,20 +550,20 @@
         </article>
         </div>
       </section>
-      <article id="sectorsSection" class="card operations-surface" data-lazy-api="sectors">
-        <div class="section-title">
-          <h2>Sector Performance</h2>
-          <small class="muted">21-day relative performance vs SPY</small>
-        </div>
+      <details id="sectorsSection" class="card operations-surface panel-disclosure ops-context-disclosure" data-lazy-api="sectors" open>
+        <summary class="panel-disclosure-summary">
+          <span class="ops-disclosure-title">Sector Performance</span>
+          <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
+        </summary>
         <div id="sectorGrid" class="sector-grid"></div>
-      </article>
-      <article id="moversSection" class="card operations-surface" data-lazy-api="movers">
-        <div class="section-title">
-          <h2>Market Movers</h2>
-          <small class="muted">Top gainers, losers, and most active <a href="/cockpit" class="muted">· open cockpit</a></small>
-        </div>
+      </details>
+      <details id="moversSection" class="card operations-surface panel-disclosure ops-context-disclosure" data-lazy-api="movers" open>
+        <summary class="panel-disclosure-summary">
+          <span class="ops-disclosure-title">Market Movers</span>
+          <span class="disclosure-hint muted">Top gainers, losers, and most active <a href="/cockpit" class="muted">· open cockpit</a></span>
+        </summary>
         <div id="moversGrid" data-async-state="idle"></div>
-      </article>
+      </details>
 
       <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced" aria-label="Research workspace">
         <div>
@@ -831,78 +831,21 @@
           </div>
           <details class="panel-disclosure" style="margin-top: 0.75rem">
             <summary class="panel-disclosure-summary">
-              Full settings logic guide
+              Settings logic guide
               <span class="disclosure-hint muted">what each control changes</span>
             </summary>
             <div class="onboarding-help-body muted">
-              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
-                <summary class="panel-disclosure-summary">
-                  Onboarding logic
-                  <span class="disclosure-hint muted">connect + verify sequence</span>
-                </summary>
-                <ul class="onboarding-help-list">
-                  <li><strong>Connect account:</strong> links brokerage permissions used for orders and account context.</li>
-                  <li><strong>Connect market data:</strong> links quote access used by scanning, charts, and checks.</li>
-                  <li><strong>Verify tokens:</strong> confirms auth tokens are present and usable before live workflows.</li>
-                  <li><strong>Test scan / paper order:</strong> validates end-to-end flow without risking live capital.</li>
-                </ul>
-              </details>
-              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
-                <summary class="panel-disclosure-summary">
-                  Preset control logic
-                  <span class="disclosure-hint muted">how profile settings apply</span>
-                </summary>
-                <ul class="onboarding-help-list">
-                  <li><strong>Profile:</strong> selects the risk/behavior template (conservative, balanced, aggressive).</li>
-                  <li><strong>Mode:</strong> standard shows plain-language values; expert also shows raw runtime env values.</li>
-                  <li><strong>Rank explain:</strong> controls how score rationale renders in scan tables (compact tooltip vs inline text).</li>
-                  <li><strong>Automation opt-in:</strong> stores whether live automation can proceed without the extra confirmation gate.</li>
-                  <li><strong>Apply preset:</strong> persists selected settings to backend profile config and reloads panel state.</li>
-                  <li><strong>Open feature guide:</strong> manually reopens the initial website walkthrough popup.</li>
-                </ul>
-              </details>
-              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
-                <summary class="panel-disclosure-summary">
-                  Preset guardrails (trust + safety)
-                  <span class="disclosure-hint muted">actual enforced values + why each exists</span>
-                </summary>
-                <ul class="onboarding-help-list">
-                  <li><strong>Guardrails are fixed presets, not free-form:</strong> users can only apply <code>conservative</code>, <code>balanced</code>, or <code>aggressive</code> templates. Reason: removes accidental misconfiguration and keeps behavior auditable.</li>
-                  <li><strong>Position size caps by preset:</strong> conservative <code>$300</code>, balanced <code>$500</code>, aggressive <code>$900</code> per new buy. Reason: hard-limits single-trade blast radius by risk profile.</li>
-                  <li><strong>Daily trade cap by preset:</strong> conservative <code>3</code>, balanced <code>5</code>, aggressive <code>8</code> new live trades/day. Reason: prevents over-trading and limits damage from bad market regimes.</li>
-                  <li><strong>Quality-gate strictness:</strong> conservative uses <code>QUALITY_GATES_MODE=hard</code>; balanced/aggressive use <code>soft</code>. Reason: tighter profile rejects weaker setups; looser profiles allow more opportunity flow.</li>
-                  <li><strong>Event-risk policy:</strong> conservative/balanced use <code>EVENT_RISK_MODE=live</code>; aggressive uses <code>shadow</code>. Conservative uses <code>EVENT_ACTION=block</code>, balanced/aggressive use <code>downsize</code>. Reason: earnings/macro risk is either blocked or size-reduced based on desired aggressiveness.</li>
-                  <li><strong>Execution-quality policy:</strong> conservative/balanced use <code>EXEC_QUALITY_MODE=live</code>; aggressive uses <code>shadow</code>. Reason: stricter profiles enforce spread/slippage checks live; aggressive logs would-block signals without hard blocking.</li>
-                  <li><strong>Automation defaults fail-safe:</strong> <code>automation_opt_in</code> defaults to off, so approvals require explicit live confirmation unless intentionally enabled. Reason: avoids silent automation on first use.</li>
-                  <li><strong>Apply is explicit and reviewable:</strong> the UI shows a before/after preview, then persists profile + mode + automation state with an update timestamp. Reason: clear operator intent and change traceability.</li>
-                </ul>
-              </details>
-              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
-                <summary class="panel-disclosure-summary">
-                  What the screener looks for (trading rationale)
-                  <span class="disclosure-hint muted">overall signal thesis in plain English</span>
-                </summary>
-                <ul class="onboarding-help-list">
-                  <li><strong>Core edge thesis:</strong> the screener targets <em>trend-continuation breakouts</em> (Stage 2 + VCP behavior), not random short-term mean reversion. Reason: continuation setups historically provide cleaner follow-through when trend, structure, and participation align.</li>
-                  <li><strong>Stage A (fast filter):</strong> quickly narrows the universe to candidates with Stage 2/VCP characteristics so capital is not spent evaluating weak names. Reason: speed + discipline — most symbols should fail fast.</li>
-                  <li><strong>Stage B (enrichment):</strong> shortlisted names are stress-tested with deeper context (quality gates, event/forensic checks, SEC context, advisory probabilities, and strategy ensemble inputs). Reason: avoid false breakouts that look good on price alone.</li>
-                  <li><strong>Regime awareness:</strong> market-regime gates can block or suppress risk when broad conditions are unfavorable. Reason: even good single-name setups underperform in weak tape, so the system is designed to reduce exposure then.</li>
-                  <li><strong>Score = prioritization, not blind execution:</strong> score/edge/reliability/execution components rank opportunities by quality and tradeability. Reason: highest-ranked names should combine signal strength with practical execution quality, not just chart shape.</li>
-                  <li><strong>Near-miss visibility:</strong> names that fail thresholds remain visible with reasons. Reason: transparency builds trust and helps users see that exclusions are rule-driven, not arbitrary.</li>
-                </ul>
-              </details>
-              <details class="panel-disclosure panel-disclosure--advanced" style="margin-top: 0.5rem">
-                <summary class="panel-disclosure-summary">
-                  Live trading logic
-                  <span class="disclosure-hint muted">activation, pause, security, billing</span>
-                </summary>
-                <ul class="onboarding-help-list">
-                  <li><strong>Enable live trading:</strong> requires risk acknowledgment + typing <code>ENABLE</code> before activation.</li>
-                  <li><strong>Pause new live orders:</strong> blocks new approval execution until pause is removed and saved.</li>
-                  <li><strong>2FA panel:</strong> adds extra approval protection for sensitive/high-value actions.</li>
-                  <li><strong>Billing controls:</strong> checkout starts subscription; portal manages payment method and plan lifecycle.</li>
-                </ul>
-              </details>
+              <ul class="onboarding-help-list">
+                <li><strong>Onboarding:</strong> connect account (orders) and market data (quotes), verify tokens, then test with a scan or paper order before going live.</li>
+                <li><strong>Presets:</strong> profile picks a fixed risk template; apply shows a before/after preview, then persists it. Mode toggles plain vs raw values; rank explain sets tooltip vs inline rationale.</li>
+                <li><strong>Guardrails (enforced per preset):</strong> position cap <code>$300/$500/$900</code> and daily trade cap <code>3/5/8</code> for conservative/balanced/aggressive. Conservative runs hard quality gates and blocks event risk; aggressive shadows event and execution checks instead of blocking.</li>
+                <li><strong>Screener thesis:</strong> trend-continuation breakouts (Stage 2 + VCP), fast Stage A filter, deeper Stage B enrichment, regime gates, and visible near-misses with reasons.</li>
+                <li><strong>Live trading:</strong> enabling requires risk acknowledgment plus typing <code>ENABLE</code>; pause blocks new approvals; 2FA protects sensitive actions; automation stays off until you opt in.</li>
+              </ul>
+              <p class="muted small">
+                Full risk and legal context: <a href="/static/legal.html">legal &amp; risk disclosures</a>.
+                Connection help: <a href="/static/connect-schwab-guide.html">Schwab connect guide</a>.
+              </p>
             </div>
           </details>
           <div id="presetApplyPreview" class="preset-apply-preview" aria-live="polite"></div>
@@ -1036,9 +979,8 @@
             </div>
           </div>
           <p id="kronosFormHint" class="muted small">
-            Advisory model output, not a trade signal. Shows the median path, a p10-p90 range cone, and
-            P(up) vs a flat baseline. Intraday (5m/15m) is Schwab-sourced (~10 trading days). Base model
-            on CPU can take up to ~90s.
+            Shows the median path, a p10-p90 range cone, and P(up) vs a flat baseline. Intraday (5m/15m)
+            is Schwab-sourced (~10 trading days). Base model on CPU can take up to ~90s.
           </p>
         </form>
 
@@ -1075,8 +1017,8 @@
             over the horizon, and a confidence proxy derived from the predicted path.
           </li>
           <li>
-            <strong>Advisory only.</strong> Forecasts never place or modify orders. In the scanner they run
-            in shadow mode by default, attaching context without changing ranking.
+            <strong>Shadow mode.</strong> In the scanner, forecasts attach context without changing
+            ranking or placing orders.
           </li>
           <li>
             <strong>Degrades safely.</strong> If the inference service is offline, the workspace shows a
@@ -1356,9 +1298,8 @@
             <h2>Run a historical backtest</h2>
           </div>
           <p class="backtest-intro muted">
-            This replays the <strong>Stage 2 + VCP</strong> rules on past prices. It does <strong>not</strong> place live trades.
-            Results use your account&rsquo;s saved scanner settings unless you change the advanced options below.
-            Use the <strong>form</strong> for precise control, or <strong>chat</strong> to describe what you want in plain language (server needs an OpenAI API key).
+            Replays the <strong>Stage 2 + VCP</strong> rules on past prices using your saved scanner settings — no live trades.
+            Use the <strong>form</strong> for precise control or <strong>chat</strong> to describe a run in plain language.
           </p>
           <div class="tab-bar" role="tablist" aria-label="Backtest entry mode">
             <button type="button" id="btHubTabForm" class="tab-btn tab-btn-active" role="tab" aria-selected="true" aria-controls="btHubPanelForm">
@@ -1608,6 +1549,37 @@
         </article>
       </section>
 
+      <section class="section-advanced">
+        <article id="shadowScoreboardSection" class="card" data-lazy-api="shadowScoreboard">
+          <div class="section-title">
+            <h2>Shadow scoreboard</h2>
+            <small class="muted">Would-have counters for every shadow-mode plugin (scan + 7-day execution window)</small>
+          </div>
+          <div class="inline-form">
+            <button id="shadowScoreboardRefreshBtn" type="button" class="btn secondary">Refresh scoreboard</button>
+          </div>
+          <div id="shadowScoreboardPanel" class="performance-panel" aria-live="polite">
+            <div class="report-empty">Scroll here or refresh to load shadow counters.</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="section-advanced">
+        <article id="reviewLoopSection" class="card" data-lazy-api="reviewLoop">
+          <div class="section-title">
+            <h2>Trade review loop</h2>
+            <small class="muted">Weekly false-positive diagnostics, tuning proposals, and recent decision packets</small>
+          </div>
+          <div class="inline-form">
+            <button id="reviewLoopRefreshBtn" type="button" class="btn secondary">Refresh report</button>
+            <button id="reviewBackfillBtn" type="button" class="btn secondary">Run outcome backfill</button>
+          </div>
+          <div id="reviewLoopPanel" class="performance-panel" aria-live="polite">
+            <div class="report-empty">Scroll here or refresh to load the trade-review report.</div>
+          </div>
+        </article>
+      </section>
+
       <section class="layout-2 section-advanced">
         <article id="reportSectionCard" class="card">
           <div class="section-title">
@@ -1803,10 +1775,7 @@
 
       <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
         <p>
-          <strong>Not investment advice.</strong> Scans, backtests, and reports are informational only. Past or hypothetical
-          performance does not guarantee future results. You are responsible for your trades and compliance with applicable law.
-          Charles Schwab and Schwab are trademarks of their respective owners; this software is not affiliated with or endorsed
-          by them.
+          <strong>Not investment advice.</strong> Informational only; past performance does not guarantee future results.
           <a href="/static/legal.html">Full legal &amp; risk disclosures</a>
         </p>
       </footer>

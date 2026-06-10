@@ -109,6 +109,21 @@ export async function sendStrategyChat({ refreshBacktestRuns = async () => {}, s
   const text = input?.value?.trim() || "";
   if (!text) return;
   if (!Array.isArray(state.strategyChatMessages)) state.strategyChatMessages = [];
+  // `/api/strategy-chat` only exists on the SaaS backend; answer locally
+  // instead of letting the request 404.
+  if (!state.publicConfig?.saas_mode) {
+    hideScQueueCallout();
+    state.strategyChatMessages.push({ role: "user", content: text });
+    state.strategyChatMessages.push({
+      role: "assistant",
+      content:
+        "Strategy chat requires the hosted (SaaS) backend and is not available on this local install. " +
+        "Use the Form tab to configure a backtest, or run `python backtest.py` from the command line.",
+    });
+    input.value = "";
+    renderStrategyChatMessages();
+    return;
+  }
   hideScQueueCallout();
   state.strategyChatMessages.push({ role: "user", content: text });
   input.value = "";

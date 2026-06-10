@@ -20,7 +20,27 @@
 
 import { safeText } from "./format.js";
 
+/**
+ * Optional intercept for action-center writes. The priority feed
+ * (modules/priorityFeed.js, behind the `priority_feed` flag) installs a sink
+ * so every legacy `updateActionCenter` caller lands in the ranked feed
+ * without changing call sites. A sink returning truthy suppresses the
+ * legacy single-banner DOM write.
+ */
+let actionCenterSink = null;
+
+export function setActionCenterSink(fn) {
+  actionCenterSink = typeof fn === "function" ? fn : null;
+}
+
 export function updateActionCenter({ title = "Next Action", message = "", severity = "info" } = {}) {
+  if (actionCenterSink) {
+    try {
+      if (actionCenterSink({ title, message, severity })) return;
+    } catch {
+      /* sink failure must never block the legacy banner */
+    }
+  }
   const wrap = document.getElementById("actionCenter");
   const titleEl = document.getElementById("actionCenterTitle");
   const textEl = document.getElementById("actionCenterText");

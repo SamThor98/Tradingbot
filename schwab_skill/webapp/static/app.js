@@ -61,13 +61,27 @@ import {
   isProbablyAccessJwt,
   JWT_BAD_SHAPE_HINT,
   hasVerifiedEmailOnce,
+  authActionLabel,
 } from "./modules/auth.js";
 import { showToast, addNotification, setupNotifications } from "./modules/notifications.js";
 import { setupScrollToTop } from "./modules/scrollToTop.js";
 import {
   clearOAuthQueryParams,
+  handleRouteHash,
   installRouter,
 } from "./modules/router.js";
+import { initFeatureFlags, isFlagEnabled } from "./modules/featureFlags.js";
+import {
+  attachVerifyCooldownButton,
+  requestVerificationEmail,
+  wireManualJwtBlock,
+} from "./modules/authPresentation.js";
+import {
+  initPriorityFeed,
+  pushPriorityItem,
+  removePriorityItem,
+  isPriorityFeedActive,
+} from "./modules/priorityFeed.js";
 import {
   setupCommandPalette,
   openCommandPalette,
@@ -99,6 +113,8 @@ import {
   refreshCalibration,
   submitTradingHaltSave as _submitTradingHaltSavePanel,
 } from "./panels/calibration.js";
+import { refreshShadowScoreboard } from "./panels/shadowScoreboard.js";
+import { refreshReviewLoop, runReviewBackfill } from "./panels/reviewLoop.js";
 import {
   loadDecisionCard,
   mapRecovery,
@@ -183,6 +199,11 @@ import { renderValidationRecentSteps } from "./modules/validationView.js";
 import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
 import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
+import { createOperationsController } from "./screens/operations.js";
+import { createResearchController } from "./screens/research.js";
+import { createKronosController } from "./screens/kronos.js";
+import { createDiagnosticsController } from "./screens/diagnostics.js";
+import { createSettingsController } from "./screens/settings.js";
 
 // Thin wrappers preserve the call signatures used by `wireEvents`,
 // `connectSSE`, `runLazyApi`, etc. without leaking the panel-module
@@ -219,6 +240,8 @@ const lazyLoaded = {
   onboarding: false,
   profiles: false,
   calibration: false,
+  shadowScoreboard: false,
+  reviewLoop: false,
 };
 let _ablationCyclePollTimer = null;
 let _lastAblationRunStatus = "idle";
@@ -302,6 +325,8 @@ const SCREEN_SECTIONS = Object.freeze({
     "decisionDashboardCard",
     "statusDetailsPanel",
     "calibrationSection",
+    "shadowScoreboardSection",
+    "reviewLoopSection",
   ],
   settings: ["settingsWorkspaceIntro", "settingsWorkflowStrip", "onboardingSection", "settingsSection"],
 });
@@ -314,6 +339,10 @@ const SECTION_TO_SCREEN = Object.freeze(
   }, {}),
 );
 let currentScreenMode = "operations";
+// Screen controller registry (static/screens/*). Populated by wireEvents via
+// buildScreenControllers(); prime() dispatch is gated by the
+// screen_controllers flag (see wiki [[section-migration-map]]).
+let screenControllers = {};
 let screenSwitchTimer = null;
 let connectFirstFocused = false;
 
@@ -347,6 +376,20 @@ async function trackFunnelMilestoneOnce(eventName, properties = {}) {
   const sent = await trackProductEvent(key, properties);
   if (sent) state.funnelMilestonesSent[key] = true;
   return sent;
+}
+
+/**
+ * KPI instrumentation wrapper (wiki [[ux-kpi-baseline]]). Sends through the
+ * existing SaaS analytics route when available and always emits a local
+ * console.debug so usability sessions can be traced without backend access.
+ */
+function trackUiEvent(eventName, properties = {}) {
+  void trackProductEvent(eventName, properties);
+  try {
+    console.debug("[ui-event]", safeText(eventName).toLowerCase(), properties);
+  } catch {
+    /* ignore */
+  }
 }
 
 function scheduleRetainedSessionTracking() {
@@ -446,14 +489,26 @@ function renderScreenContext(mode) {
 }
 
 function maybePrimeScreenData(mode) {
+  const controller = screenControllers[mode];
+  if (isFlagEnabled("screen_controllers") && controller) {
+    // New path: each screen controller owns its prime() (same lazy-api keys).
+    controller.prime();
+    return;
+  }
   if (mode === "operations") {
-    void runLazyApi("sectors");
-    void runLazyApi("movers");
+    // Slim Operations: sectors/movers are collapsed disclosures that load on
+    // first expand instead of priming with the screen (flag: ops_slim_default).
+    if (!isFlagEnabled("ops_slim_default")) {
+      void runLazyApi("sectors");
+      void runLazyApi("movers");
+    }
   } else if (mode === "settings") {
     void runLazyApi("onboarding");
     void runLazyApi("profiles");
   } else if (mode === "diagnostics") {
     void runLazyApi("calibration");
+    void runLazyApi("shadowScoreboard");
+    void runLazyApi("reviewLoop");
   } else if (mode === "research") {
     void runLazyApi("backtest");
     void runLazyApi("portfolio");
@@ -482,8 +537,14 @@ function maybeShowScreenNudge(mode) {
   showToast(`${cfg.title}: ${hint}`, "info", 2800);
 }
 
+let lastTrackedScreen = null;
+
 function applyScreenMode(mode, { updateUrl = false } = {}) {
   const m = normalizeScreenMode(mode);
+  if (m !== lastTrackedScreen) {
+    trackUiEvent("screen_view", { screen: m, initial: lastTrackedScreen === null });
+    lastTrackedScreen = m;
+  }
   currentScreenMode = m;
   document.body.classList.add("ui-screen-switching");
   if (screenSwitchTimer) clearTimeout(screenSwitchTimer);
@@ -575,6 +636,10 @@ async function runLazyApi(key) {
       await loadProfiles();
     } else if (key === "calibration") {
       await refreshCalibration();
+    } else if (key === "shadowScoreboard") {
+      await refreshShadowScoreboard();
+    } else if (key === "reviewLoop") {
+      await refreshReviewLoop();
     }
   } catch (err) {
     console.warn("lazy load failed", key, err);
@@ -589,13 +654,25 @@ function setupLazySectionLoading() {
     (entries) => {
       entries.forEach((e) => {
         if (!e.isIntersecting) return;
+        // Collapsed disclosures load on first expand (toggle listener below),
+        // not on scroll-by — keeps the slim Operations landing cheap.
+        if (e.target.tagName === "DETAILS" && !e.target.open) return;
         const k = e.target.getAttribute("data-lazy-api");
         if (k) void runLazyApi(k);
       });
     },
     { rootMargin: "120px 0px", threshold: 0.04 }
   );
-  nodes.forEach((n) => io.observe(n));
+  nodes.forEach((n) => {
+    io.observe(n);
+    if (n.tagName === "DETAILS") {
+      n.addEventListener("toggle", () => {
+        if (!n.open) return;
+        const k = n.getAttribute("data-lazy-api");
+        if (k) void runLazyApi(k);
+      });
+    }
+  });
 }
 
 function markDeferredDataPlaceholders() {
@@ -615,8 +692,20 @@ function renderLiveTradingSaasPanel() {
     const freshEl = document.getElementById("platformKillSwitchBannerFresh");
     if (state.publicConfig.platform_live_trading_kill_switch) {
       killBanner.classList.remove("hidden");
+      // Mirror into the priority feed (banner stays for regulatory prominence).
+      if (isPriorityFeedActive()) {
+        pushPriorityItem({
+          key: "platform_kill_switch",
+          title: "Platform kill switch active",
+          message: "New risk-increasing orders are blocked until the host clears the kill switch.",
+          severity: "error",
+          href: "#platformKillSwitchBanner",
+          hrefLabel: "Details",
+        });
+      }
     } else {
       killBanner.classList.add("hidden");
+      if (isPriorityFeedActive()) removePriorityItem("platform_kill_switch");
     }
     // Stamp freshness whenever we re-evaluate, even if hidden — so toggling
     // the banner on/off carries a "verified at" label.
@@ -811,8 +900,32 @@ async function initSupabaseAuth(url, anonKey) {
     void refreshAuthDebugPanel();
   });
 
-  document.getElementById("supabaseVerifyBtn")?.addEventListener("click", async () => {
+  const verifyBtn = document.getElementById("supabaseVerifyBtn");
+  if (verifyBtn && isFlagEnabled("unified_auth_block")) {
+    // Shared cooldown keeps the topbar and onboarding inline buttons in sync.
+    attachVerifyCooldownButton(verifyBtn, { label: authActionLabel });
+  }
+  verifyBtn?.addEventListener("click", async () => {
     const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
+    if (isFlagEnabled("unified_auth_block")) {
+      const result = await requestVerificationEmail({
+        supabase: sb,
+        email,
+        redirectTo: `${window.location.origin}/?section=connect`,
+        verified: hasVerifiedEmailOnce(),
+      });
+      logEvent({
+        kind: "system",
+        severity: result.ok ? "info" : "warn",
+        message: result.message,
+      });
+      if (result.ok) {
+        void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
+          source: "supabase_email_verification",
+        });
+      }
+      return;
+    }
     if (!email) {
       logEvent({ kind: "system", severity: "warn", message: "Enter an email address first." });
       return;
@@ -2040,6 +2153,9 @@ async function loadScanDetailForecast() {
 async function renderScanDetail(sig) {
   const row = normalizeScanSignal(sig || {});
   const ticker = safeText(row.ticker || row.symbol || "");
+  if (ticker && ticker !== state.selectedScanTicker) {
+    trackUiEvent("candidate_opened", { ticker, source: "scan_table" });
+  }
   _scanDetailSignal = ticker ? row : null;
   state.selectedScanTicker = ticker;
   highlightSelectedScanRow(ticker);
@@ -2132,11 +2248,8 @@ function updateScanModeHelperText() {
   if (!helperEl) return;
   const mode = getScanMode();
   const profile = getScanModeProfile(mode);
-  const otherMode = mode === "strict" ? "balanced" : "strict";
-  const other = getScanModeProfile(otherMode);
   helperEl.textContent =
-    `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}.` +
-    ` ${other.label} uses score >= ${other.minScore}, volume ratio >= ${other.minVolumeRatio.toFixed(1)}.`;
+    `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}.`;
 }
 
 function mergeScanRunOptionsWithMode(baseOptions) {
@@ -3095,51 +3208,75 @@ async function loadConfig() {
     markAuthReady();
   }
 
-  if (tokenInput) {
-    tokenInput.value = manualJwtAllowed ? readStoredApiJwt() : "";
-    tokenInput.disabled = !manualJwtAllowed;
-  }
-  if (saveBtn) {
-    saveBtn.disabled = !manualJwtAllowed;
-    saveBtn.addEventListener("click", () => {
-      if (!manualJwtAllowed) return;
-      const val = normalizeUserJwt(tokenInput?.value);
-      if (val) {
-        if (!isProbablyAccessJwt(val)) {
-          logEvent({ kind: "system", severity: "error", message: JWT_BAD_SHAPE_HINT });
-          return;
-        }
-        localStorage.setItem(AUTH_TOKEN_KEY, val);
+  if (isFlagEnabled("unified_auth_block")) {
+    // Single manual-JWT block implementation shared with login.html.
+    wireManualJwtBlock({
+      input: tokenInput,
+      saveBtn,
+      copyBtn,
+      allowManual: manualJwtAllowed,
+      normalizeJwt: normalizeUserJwt,
+      isProbablyJwt: isProbablyAccessJwt,
+      badShapeHint: JWT_BAD_SHAPE_HINT,
+      readStoredToken: readStoredApiJwt,
+      saveToken: (token) => {
+        localStorage.setItem(AUTH_TOKEN_KEY, token);
         clearLegacyApiJwtKeys();
-        void createCookieAuthSession(val);
-        logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
-      } else {
+        void createCookieAuthSession(token);
+      },
+      clearToken: () => {
         clearStoredApiJwt();
         void clearCookieAuthSession();
-        logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
-      }
+      },
+      onMessage: (text, severity) => logEvent({ kind: "system", severity, message: text }),
     });
-  }
-  if (copyBtn) {
-    copyBtn.disabled = !manualJwtAllowed;
-    copyBtn.addEventListener("click", async () => {
-      if (!manualJwtAllowed) return;
-      const token = normalizeUserJwt(tokenInput?.value || readStoredApiJwt());
-      if (!token) {
-        logEvent({ kind: "system", severity: "warn", message: "No JWT token found to copy." });
-        return;
-      }
-      try {
-        const ok = await copyTextToClipboard(token);
-        logEvent({
-          kind: "system",
-          severity: ok ? "info" : "warn",
-          message: ok ? "JWT token copied to clipboard." : "Copy was blocked by this browser.",
-        });
-      } catch {
-        logEvent({ kind: "system", severity: "error", message: "Copy failed. Browser denied clipboard access." });
-      }
-    });
+  } else {
+    if (tokenInput) {
+      tokenInput.value = manualJwtAllowed ? readStoredApiJwt() : "";
+      tokenInput.disabled = !manualJwtAllowed;
+    }
+    if (saveBtn) {
+      saveBtn.disabled = !manualJwtAllowed;
+      saveBtn.addEventListener("click", () => {
+        if (!manualJwtAllowed) return;
+        const val = normalizeUserJwt(tokenInput?.value);
+        if (val) {
+          if (!isProbablyAccessJwt(val)) {
+            logEvent({ kind: "system", severity: "error", message: JWT_BAD_SHAPE_HINT });
+            return;
+          }
+          localStorage.setItem(AUTH_TOKEN_KEY, val);
+          clearLegacyApiJwtKeys();
+          void createCookieAuthSession(val);
+          logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
+        } else {
+          clearStoredApiJwt();
+          void clearCookieAuthSession();
+          logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
+        }
+      });
+    }
+    if (copyBtn) {
+      copyBtn.disabled = !manualJwtAllowed;
+      copyBtn.addEventListener("click", async () => {
+        if (!manualJwtAllowed) return;
+        const token = normalizeUserJwt(tokenInput?.value || readStoredApiJwt());
+        if (!token) {
+          logEvent({ kind: "system", severity: "warn", message: "No JWT token found to copy." });
+          return;
+        }
+        try {
+          const ok = await copyTextToClipboard(token);
+          logEvent({
+            kind: "system",
+            severity: ok ? "info" : "warn",
+            message: ok ? "JWT token copied to clipboard." : "Copy was blocked by this browser.",
+          });
+        } catch {
+          logEvent({ kind: "system", severity: "error", message: "Copy failed. Browser denied clipboard access." });
+        }
+      });
+    }
   }
   state.config = { auth_mode: hasSupabaseUi ? "supabase" : "jwt" };
   await refreshAuthDebugPanel();
@@ -3958,6 +4095,15 @@ function readScanOptionsFromForm() {
 async function fillScanOptionsFromLatestBacktest() {
   const ta = document.getElementById("scanOptionsJson");
   if (!ta) return;
+  // `/api/backtest-runs` is SaaS-only; locally this would 404.
+  if (!state.publicConfig?.saas_mode) {
+    updateActionCenter({
+      title: "Backtests",
+      message: "Hosted backtest history is SaaS-only. Paste scan options manually, or run python backtest.py locally.",
+      severity: "info",
+    });
+    return;
+  }
   const out = await api.get("/api/backtest-runs?limit=1");
   if (!out.ok) {
     logEvent({ kind: "scan", severity: "error", message: `Backtest list failed: ${out.error}` });
@@ -4252,6 +4398,7 @@ async function runScan() {
   btn.textContent = "Scanning...";
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
+  trackUiEvent("scan_started", { mode });
   updateActionCenter({
     title: "Scan Running",
     message: `${profile.label} scan running (score >= ${profile.minScore}, vol ratio >= ${profile.minVolumeRatio.toFixed(1)}).`,
@@ -4666,7 +4813,22 @@ async function refreshPending() {
 
   const strip = document.getElementById("pendingSummaryStrip");
   const stripText = document.getElementById("pendingSummaryText");
-  if (strip && stripText) {
+  if (isPriorityFeedActive()) {
+    // Feed replaces the strip: one surface, deduped by key, with a deep link.
+    if (strip) strip.classList.add("hidden");
+    if (pendingN > 0) {
+      pushPriorityItem({
+        key: "pending_decision",
+        title: "Pending trades need a decision",
+        message: `${pendingN} staged trade(s) are waiting for approval or rejection.`,
+        severity: "warn",
+        href: "#pendingSection",
+        hrefLabel: "Review pending",
+      });
+    } else {
+      removePriorityItem("pending_decision");
+    }
+  } else if (strip && stripText) {
     if (pendingN > 0) {
       strip.classList.remove("hidden");
       stripText.textContent = `${pendingN} pending trade(s) need a decision.`;
@@ -4712,6 +4874,7 @@ async function approveTradeById(id) {
     return false;
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Approved ${id}: order submitted.` });
+    trackUiEvent("trade_approved", { trade_id: id });
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_APPROVED_TRADE, {
       source: "approve_dialog",
       trade_id: id,
@@ -4777,6 +4940,7 @@ async function confirmQueueScanDialog() {
     updateActionCenter({ title: "Queue failed", message: out.error, severity: "error" });
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Queued ${payload.ticker} (${out.data.id})` });
+    trackUiEvent("trade_staged", { source: "queue_scan_dialog" });
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
       source: "queue_scan_dialog",
       ticker: safeText(payload.ticker),
@@ -4818,6 +4982,7 @@ async function submitManualPendingTrade() {
     updateActionCenter({ title: "Could not stage trade", message: out.error, severity: "error" });
   } else {
     logEvent({ kind: "trade", severity: "info", message: `Queued ${ticker} (${out.data.id})` });
+    trackUiEvent("trade_staged", { source: "manual_pending_trade" });
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
       source: "manual_pending_trade",
       ticker: safeText(ticker),
@@ -4846,6 +5011,8 @@ async function refreshAll() {
     ["profiles", loadProfiles()],
     ["performance", refreshPerformance()],
     ["calibration", refreshCalibration()],
+    ["shadow_scoreboard", refreshShadowScoreboard()],
+    ["review_loop", refreshReviewLoop()],
     ["backtest", refreshBacktestRuns()],
     ["ablation_cycle", refreshAblationCycleStatus({ quiet: true })],
   ];
@@ -4964,61 +5131,125 @@ function bindEvent(elementId, eventName, handler, options) {
   return el;
 }
 
+/**
+ * Constructs the per-screen controllers (static/screens/*) with their shared
+ * dependency context. app.js stays the shell (auth/config boot, router,
+ * flags, priority feed, shared topbar/drawer wiring); each controller owns
+ * the one-time wiring and prime() loading for its screen. The order of the
+ * returned map matters: research wiring restores the persisted backtest form
+ * first, matching the legacy wireEvents sequence.
+ */
+function buildScreenControllers() {
+  const ctx = {
+    // Shared utilities
+    bindEvent,
+    state,
+    api,
+    safeText,
+    logEvent,
+    updateActionCenter,
+    isFlagEnabled,
+    runLazyApi,
+    // Operations
+    runScan,
+    refreshPending,
+    updateScanModeHelperText,
+    renderScanRows,
+    bindScanSortHandlers,
+    fillScanOptionsFromLatestBacktest,
+    closeQueueScanDialog,
+    confirmQueueScanDialog,
+    submitManualPendingTrade,
+    normalizeScanSignal,
+    openQueueScanDialog,
+    getScanDetailSignal: () => _scanDetailSignal,
+    approveTradeById,
+    syncApproveDialogGuardrails,
+    // Research
+    restoreBacktestFormFromStorage,
+    setDefaultBacktestDates,
+    syncBtUniverseRow,
+    wireBacktestFormPersistence,
+    renderStrategyChatMessages,
+    switchBacktestHubTab,
+    applyBacktestPresetYears,
+    sendStrategyChat,
+    queueUserBacktest,
+    refreshBacktestRuns,
+    resetBacktestFormToDefaults,
+    quickCheck,
+    runReport,
+    runResearchDossier,
+    downloadResearchDossier,
+    downloadResearchFundamentalWorkbook,
+    runSecCompare,
+    applySecCompareMode,
+    resetSecCompareProfileOverride,
+    renderSecCompareVisual,
+    applyReportViewMode,
+    mapRecovery,
+    refreshPerformance,
+    loadPortfolioRisk,
+    renderEvolvePanel,
+    renderChallengerPanel,
+    runAblationCycle,
+    refreshAblationCycleStatus,
+    // Diagnostics
+    refreshCalibration,
+    refreshShadowScoreboard,
+    refreshReviewLoop,
+    runReviewBackfill,
+    loadDecisionCard,
+    // Settings
+    applyProfile,
+    openFeatureGuide,
+    closeFeatureGuide,
+    markFeatureGuideSeen,
+    submitEnableLiveTrading,
+    submitTradingHaltSave,
+    beginBillingCheckout,
+    openBillingPortal,
+    loadProfiles,
+    setRankExplainMode,
+    renderPresetApplyPreview,
+    // Kronos
+    initKronosWorkspace,
+    primeKronosWorkspace,
+  };
+  return {
+    research: createResearchController(ctx),
+    operations: createOperationsController(ctx),
+    settings: createSettingsController(ctx),
+    diagnostics: createDiagnosticsController(ctx),
+    kronos: createKronosController(ctx),
+  };
+}
+
 function wireEvents() {
   setupFeatureGuideFirstClick();
-  restoreBacktestFormFromStorage();
-  setDefaultBacktestDates();
-  syncBtUniverseRow();
-  wireBacktestFormPersistence();
-  renderStrategyChatMessages();
-  document.getElementById("btHubTabForm")?.addEventListener("click", () => switchBacktestHubTab("form"));
-  document.getElementById("btHubTabChat")?.addEventListener("click", () => switchBacktestHubTab("chat"));
-  document.getElementById("btUniverse")?.addEventListener("change", syncBtUniverseRow);
-  document.querySelectorAll(".bt-preset").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const y = btn.getAttribute("data-years");
-      if (y) applyBacktestPresetYears(y);
-    });
-  });
-  document.querySelectorAll(".sc-chip").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const t = btn.getAttribute("data-text") || "";
-      const input = document.getElementById("scInput");
-      if (input) input.value = t;
-      input?.focus();
-    });
-  });
-  document.getElementById("scInput")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendStrategyChat();
+  // Per-screen wiring lives in static/screens/* controllers (same handlers,
+  // same element ids). With the screen_controllers flag ON each controller
+  // initializes in isolation so one failing screen cannot break the others;
+  // with the flag OFF they run inline, matching the legacy single-pass
+  // wireEvents semantics (any throw aborts the rest of this function).
+  screenControllers = buildScreenControllers();
+  const isolateControllerInit = isFlagEnabled("screen_controllers");
+  Object.values(screenControllers).forEach((controller) => {
+    if (!isolateControllerInit) {
+      controller.init();
+      return;
+    }
+    try {
+      controller.init();
+    } catch (err) {
+      console.error(`[init] screen:${controller.id} wiring failed`, err);
+      logEvent({
+        kind: "system",
+        severity: "error",
+        message: `Screen wiring failed (${controller.id}): ${String(err?.message || err)}`,
+      });
     }
   });
-  document.getElementById("btQueueBtn")?.addEventListener("click", queueUserBacktest);
-  document.getElementById("btRefreshListBtn")?.addEventListener("click", refreshBacktestRuns);
-  document.getElementById("btResetFormBtn")?.addEventListener("click", resetBacktestFormToDefaults);
-  document.getElementById("queueScanCancelBtn")?.addEventListener("click", closeQueueScanDialog);
-  document.getElementById("queueScanConfirmBtn")?.addEventListener("click", () => void confirmQueueScanDialog());
-  document.getElementById("manualPendingBtn")?.addEventListener("click", () => void submitManualPendingTrade());
-  document.getElementById("scanDetailStageBtn")?.addEventListener("click", () => {
-    if (!_scanDetailSignal) return;
-    const normalized = normalizeScanSignal(_scanDetailSignal);
-    const status = safeText(normalized._filter_status || "kept").toLowerCase();
-    if (status !== "kept") return;
-    openQueueScanDialog(normalized);
-  });
-  document.getElementById("queueScanDialog")?.addEventListener("click", (e) => {
-    if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
-  });
-  document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
-  bindEvent("scanBtn", "click", runScan);
-  document.getElementById("scanModeSelect")?.addEventListener("change", () => {
-    state.scanRowsExpanded = false;
-    updateScanModeHelperText();
-    const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
-    renderScanRows(Array.isArray(rows) ? rows : []);
-  });
-  bindScanSortHandlers();
   document.querySelectorAll("[data-forward-click]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const targetId = safeText(btn.getAttribute("data-forward-click"));
@@ -5026,73 +5257,7 @@ function wireEvents() {
       document.getElementById(targetId)?.click();
     });
   });
-  document.getElementById("scanApplyBacktestSpecBtn")?.addEventListener("click", () => void fillScanOptionsFromLatestBacktest());
-  document.getElementById("scanClearOptionsBtn")?.addEventListener("click", () => {
-    const ta = document.getElementById("scanOptionsJson");
-    if (ta) ta.value = "";
-    state.scanRunOptions = null;
-  });
   bindEvent("refreshBtn", "click", refreshAll);
-  bindEvent("applyProfileBtn", "click", applyProfile);
-  document.getElementById("featureGuideBtn")?.addEventListener("click", () => openFeatureGuide({ markSeen: true }));
-  document.getElementById("featureGuideCloseBtn")?.addEventListener("click", closeFeatureGuide);
-  document.getElementById("featureGuideDialog")?.addEventListener("close", markFeatureGuideSeen);
-  document.getElementById("featureGuideDialog")?.addEventListener("click", (e) => {
-    if (e.target?.id === "featureGuideDialog") closeFeatureGuide();
-  });
-  document.getElementById("enableLiveTradingBtn")?.addEventListener("click", () => void submitEnableLiveTrading());
-  document.getElementById("saveTradingHaltBtn")?.addEventListener("click", () => void submitTradingHaltSave());
-  document.getElementById("billingCheckoutBtn")?.addEventListener("click", () => void beginBillingCheckout());
-  document.getElementById("billingPortalBtn")?.addEventListener("click", () => void openBillingPortal());
-  document.getElementById("calibrationRefreshBtn")?.addEventListener("click", () => void refreshCalibration());
-  document.getElementById("portfolioRiskPanel")?.addEventListener("toggle", (e) => {
-    if (e.target.open) void loadPortfolioRisk();
-  });
-  bindEvent("settingsModeSelect", "change", loadProfiles);
-  document.getElementById("rankExplainModeSelect")?.addEventListener("change", (e) => {
-    setRankExplainMode(e.currentTarget?.value);
-  });
-  document.getElementById("profileSelect")?.addEventListener("change", renderPresetApplyPreview);
-  document.getElementById("automationOptIn")?.addEventListener("change", renderPresetApplyPreview);
-  bindEvent("decisionBtn", "click", loadDecisionCard);
-  bindEvent("recoveryBtn", "click", mapRecovery);
-  bindEvent("performanceRefreshBtn", "click", refreshPerformance);
-  document.getElementById("evolveBtn")?.addEventListener("click", async () => {
-    const btn = document.getElementById("evolveBtn");
-    const panel = document.getElementById("learningPanel");
-    if (btn) { btn.disabled = true; btn.textContent = "Analyzing..."; }
-    try {
-      const out = await api.post("/api/evolve/run");
-      if (out.ok) {
-        renderEvolvePanel(panel, out.data);
-      } else {
-        if (panel) panel.innerHTML = `<div class="panel-error">${safeText(out.error || "Analysis failed")}</div>`;
-      }
-    } catch (e) {
-      if (panel) panel.innerHTML = `<div class="panel-error">Error: ${safeText(String(e))}</div>`;
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Run Post-Mortem Analysis"; }
-    }
-  });
-  document.getElementById("challengerBtn")?.addEventListener("click", async () => {
-    const btn = document.getElementById("challengerBtn");
-    const panel = document.getElementById("challengerPanel");
-    if (btn) { btn.disabled = true; btn.textContent = "Running scans..."; }
-    try {
-      const out = await api.post("/api/challenger/run");
-      if (out.ok && out.data && out.data.comparison) {
-        renderChallengerPanel(panel, { available: true, latest: out.data.comparison, win_rate: out.data.win_rate || {} });
-      } else {
-        if (panel) panel.innerHTML = `<div class="panel-error">${safeText((out.data && out.data.message) || out.error || "Challenger scan failed")}</div>`;
-      }
-    } catch (e) {
-      if (panel) panel.innerHTML = `<div class="panel-error">Error: ${safeText(String(e))}</div>`;
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Run Challenger Scan"; }
-    }
-  });
-  document.getElementById("ablationCycleBtn")?.addEventListener("click", () => void runAblationCycle());
-  document.getElementById("ablationStatusRefreshBtn")?.addEventListener("click", () => void refreshAblationCycleStatus());
   // Close button + Esc + backdrop are wired inside panels/tradeDrawer.js.
   bindEvent("activityDrawerToggle", "click", () => {
     const body = document.getElementById("activityDrawerBody");
@@ -5120,151 +5285,6 @@ function wireEvents() {
     drawer.classList.remove("open");
     document.body.classList.remove("activity-drawer-open");
   });
-  bindEvent("checkBtn", "click", quickCheck);
-  bindEvent("reportBtn", "click", runReport);
-  bindEvent("dossierBtn", "click", runResearchDossier);
-  bindEvent("dossierDownloadJsonBtn", "click", () => downloadResearchDossier("json"));
-  bindEvent("dossierDownloadMdBtn", "click", () => downloadResearchDossier("md"));
-  bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
-  bindEvent("dossierDownloadModelWorkbookBtn", "click", downloadResearchFundamentalWorkbook);
-  document.querySelectorAll("#reportTemplateButtons button[data-template]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const node = e.currentTarget;
-      const template = node.getAttribute("data-template") || "institutional_quick_read";
-      const section = node.getAttribute("data-section") || "";
-      const skipMirofish = node.getAttribute("data-skip-mirofish") === "true";
-      const skipEdgar = node.getAttribute("data-skip-edgar") === "true";
-      const sectionEl = document.getElementById("reportSection");
-      const skipMiroEl = document.getElementById("skipMirofish");
-      const skipEdgarEl = document.getElementById("skipEdgar");
-      const templateMeta = document.getElementById("reportTemplateMeta");
-      const advanced = document.getElementById("reportAdvancedOptions");
-      if (sectionEl) sectionEl.value = section;
-      if (skipMiroEl) skipMiroEl.checked = skipMirofish;
-      if (skipEdgarEl) skipEdgarEl.checked = skipEdgar;
-      if (templateMeta) {
-        const sectionLabel = section || "all sections";
-        templateMeta.textContent = `Template loaded: ${template} (${sectionLabel}, skip_mirofish=${skipMirofish}, skip_edgar=${skipEdgar})`;
-      }
-      if (advanced && (section || skipMirofish || skipEdgar)) {
-        advanced.open = true;
-      }
-      updateActionCenter({
-        title: "Report Template Loaded",
-        message: `${template} template loaded. Generate dossier when ready.`,
-        severity: "info",
-      });
-    });
-  });
-  bindEvent("secCompareBtn", "click", runSecCompare);
-  bindEvent("secCompareMode", "change", applySecCompareMode);
-  bindEvent("secCompareResetProfileBtn", "click", resetSecCompareProfileOverride);
-  bindEvent("secCompareRuthlessMode", "change", () => {
-    state.secRuthlessMode = Boolean(document.getElementById("secCompareRuthlessMode")?.checked);
-    if (state.secCompareResult) renderSecCompareVisual(state.secCompareResult);
-  });
-  document.querySelectorAll("#secComparePresetButtons button[data-a]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const node = e.currentTarget;
-      const mode = node.getAttribute("data-mode") || "ticker_vs_ticker";
-      const a = node.getAttribute("data-a") || "";
-      const b = node.getAttribute("data-b") || "";
-      document.getElementById("secCompareMode").value = mode;
-      document.getElementById("secCompareTickerA").value = a;
-      document.getElementById("secCompareTickerB").value = b;
-      applySecCompareMode();
-      updateActionCenter({
-        title: "Preset Loaded",
-        message: `${a}${b ? ` vs ${b}` : " over time"} template loaded. Click Run SEC Compare.`,
-        severity: "info",
-      });
-    });
-  });
-  bindEvent("toggleReportViewBtn", "click", () => {
-    state.reportRawView = !state.reportRawView;
-    applyReportViewMode();
-  });
-  bindEvent("pendingFilter", "change", refreshPending);
-  bindEvent("pendingSort", "change", refreshPending);
-  document.getElementById("clearPendingBtn")?.addEventListener("click", async () => {
-    const btn = document.getElementById("clearPendingBtn");
-    if (!btn || btn.disabled) return;
-    if (
-      !confirm(
-        "Reject all pending trades? They will move to rejected status and disappear from the pending queue.",
-      )
-    ) {
-      return;
-    }
-    btn.disabled = true;
-    const out = await api.post("/api/pending-trades/clear-pending", {});
-    if (!out.ok) {
-      logEvent({ kind: "trade", severity: "error", message: `Clear pending failed: ${out.error}` });
-      updateActionCenter({ title: "Clear pending failed", message: out.error, severity: "error" });
-      await refreshPending();
-      return;
-    }
-    const n = typeof out.data?.cleared === "number" ? out.data.cleared : 0;
-    logEvent({ kind: "trade", severity: "info", message: `Cleared ${n} pending trade(s).` });
-    updateActionCenter({
-      title: n ? "Pending queue cleared" : "Nothing to clear",
-      message: n ? `Rejected ${n} pending trade(s).` : "There were no pending trades.",
-      severity: n ? "warn" : "info",
-    });
-    await refreshPending();
-  });
-
-  document.getElementById("deleteAllTradesBtn")?.addEventListener("click", async () => {
-    if (!confirm("Permanently delete ALL trades from history? This cannot be undone.")) return;
-    const btn = document.getElementById("deleteAllTradesBtn");
-    if (btn) btn.disabled = true;
-    const out = await api.post("/api/pending-trades/delete-all", {});
-    if (!out.ok) {
-      logEvent({ kind: "trade", severity: "error", message: `Delete all failed: ${out.error}` });
-      updateActionCenter({ title: "Delete failed", message: out.error, severity: "error" });
-    } else {
-      const n = typeof out.data?.deleted === "number" ? out.data.deleted : 0;
-      logEvent({ kind: "trade", severity: "info", message: `Deleted ${n} trade(s) from history.` });
-      updateActionCenter({ title: "History cleared", message: `Permanently deleted ${n} trade(s).`, severity: "success" });
-    }
-    if (btn) btn.disabled = false;
-    await refreshPending();
-  });
-
-  const dialog = document.getElementById("approveDialog");
-  bindEvent("confirmApproveBtn", "click", async (e) => {
-    e.preventDefault();
-    const id = state.approvingTradeId;
-    if (!id) {
-      dialog?.close();
-      return;
-    }
-    const confirmBtn = document.getElementById("confirmApproveBtn");
-    if (confirmBtn) confirmBtn.disabled = true;
-    const approved = await approveTradeById(id);
-    syncApproveDialogGuardrails();
-    if (!approved && confirmBtn) confirmBtn.disabled = false;
-    if (approved) {
-      state.approvingTradeId = null;
-      state.approvingExpectedTicker = "";
-      dialog?.close();
-    }
-  });
-  bindEvent("cancelApproveBtn", "click", () => {
-    state.approvingTradeId = null;
-    state.approvingExpectedTicker = "";
-    dialog?.close();
-  });
-  dialog?.addEventListener("close", () => {
-    state.approvingTradeId = null;
-    state.approvingExpectedTicker = "";
-    const riskAck = document.getElementById("approveRiskAck");
-    if (riskAck) riskAck.checked = false;
-    syncApproveDialogGuardrails();
-  });
-  document.getElementById("approveTickerInput")?.addEventListener("input", syncApproveDialogGuardrails);
-  document.getElementById("approveRiskAck")?.addEventListener("change", syncApproveDialogGuardrails);
-
   const navLinks = [...document.querySelectorAll(".section-nav a")]
     .filter((a) => String(a.getAttribute("href") || "").startsWith("#"));
   const sections = navLinks
@@ -5283,7 +5303,6 @@ function wireEvents() {
   }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
   sections.forEach((section) => observer.observe(section));
 
-  initKronosWorkspace();
   const screenSwitchButtons = [...document.querySelectorAll(".screen-switch-btn[data-screen-mode]")];
   screenSwitchButtons.forEach((btn, idx) => {
     btn.addEventListener("click", () => {
@@ -5412,6 +5431,30 @@ function connectSSE() {
     }
   }
 
+  // Resolve UI feature flags first so all downstream wiring can gate on them
+  // (rollout contract: see wiki [[section-migration-map]]).
+  safeInit("initFeatureFlags", () => {
+    const flags = initFeatureFlags();
+    const on = Object.entries(flags).filter(([, v]) => v).map(([k]) => k);
+    if (on.length) {
+      logEvent({ kind: "system", severity: "info", message: `UI flags enabled: ${on.join(", ")}` });
+    }
+  });
+  safeInit("applyOpsSlimDefault", () => {
+    if (!isFlagEnabled("ops_slim_default")) return;
+    // Demote context cards to collapsed disclosures on the Operations landing.
+    // Deep links still work: the router force-opens ancestor/target <details>.
+    ["sectorsSection", "moversSection"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && el.tagName === "DETAILS") el.open = false;
+    });
+  });
+  safeInit("initPriorityFeed", () => {
+    if (!isFlagEnabled("priority_feed")) return;
+    initPriorityFeed({
+      onAction: ({ key, severity }) => trackUiEvent("priority_feed_action_clicked", { item_key: key, severity }),
+    });
+  });
   safeInit("wireEvents", wireEvents);
   safeInit("setupScrollToTop", setupScrollToTop);
   safeInit("setupCommandPalette", () =>
@@ -5458,7 +5501,18 @@ function connectSSE() {
     await safeInit("maybeAutoRunScanOnLoad", maybeAutoRunScanOnLoad);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   }
-  safeInit("installRouter", installRouter);
+  safeInit("installRouter", () => {
+    installRouter();
+    // installRouter rewrites ?section= deep links into a #hash via
+    // history.replaceState, which does NOT fire hashchange. The boot-time
+    // applyScreenMode above ran before the rewrite, so re-infer the screen
+    // from the (possibly new) hash and re-run the route handler once.
+    const inferred = inferScreenFromHash();
+    if (inferred && inferred !== currentScreenMode) {
+      applyScreenMode(inferred, { updateUrl: true });
+    }
+    if (window.location.hash) handleRouteHash();
+  });
   safeInit("updateActivityBadge", updateActivityBadge);
   logEvent({ kind: "system", severity: "info", message: "Dashboard loaded." });
 })();

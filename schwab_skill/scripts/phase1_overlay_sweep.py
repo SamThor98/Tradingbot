@@ -170,6 +170,65 @@ def _build_configs() -> list[SweepConfig]:
                 "EVENT_ACTION": "block",
             },
         ))
+    # ── Signal-gate sweep (base-signal fix program) ─────────────────────────
+    # Phase 2 verdict: base signal PF mean 1.005, killed by <20-day false
+    # breakouts. These configs attack entry quality directly. All overlays off
+    # (control_legacy baseline) so the gate effect is isolated.
+    _signal_gate_base = {
+        "META_POLICY_MODE": "off",
+        "UNCERTAINTY_MODE": "off",
+        "EVENT_RISK_MODE": "off",
+        "EXIT_MANAGER_MODE": "off",
+        "EXEC_QUALITY_MODE": "off",
+    }
+    # Confluence gate: Stage2+VCP must be confirmed by PEAD-positive or
+    # advisory-high (require_count=1) / by both (require_count=2).
+    for require_count, tag in ((1, "either"), (2, "both")):
+        configs.append(SweepConfig(
+            config_id=f"confluence_{tag}",
+            description=(
+                f"Confluence gate live: require {require_count} independent confirmation(s) "
+                "(PEAD-positive / advisory-high) on top of Stage 2 + VCP."
+            ),
+            env={
+                **_signal_gate_base,
+                "CONFLUENCE_GATE_MODE": "live",
+                "CONFLUENCE_REQUIRE_COUNT": str(require_count),
+            },
+        ))
+    # Breakout follow-through: require 2 consecutive closes above prior high.
+    configs.append(SweepConfig(
+        config_id="breakout_2bar",
+        description="Breakout confirmation window: 2 consecutive bars of follow-through.",
+        env={
+            **_signal_gate_base,
+            "BREAKOUT_CONFIRM_BARS": "2",
+        },
+    ))
+    # Breakout volume confirmation: hard-require latest/avg50 volume ratio.
+    for ratio in ("1.00", "1.20", "1.50"):
+        configs.append(SweepConfig(
+            config_id=f"breakout_vol_{ratio.replace('.', '')}",
+            description=f"Hard breakout-volume gate: latest/avg50 volume >= {ratio}.",
+            env={
+                **_signal_gate_base,
+                "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
+                "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": ratio,
+            },
+        ))
+    # Combined best-guess: confluence (either) + 2-bar follow-through + 1.2x volume.
+    configs.append(SweepConfig(
+        config_id="signal_gate_combo",
+        description="Combo: confluence(either) + 2-bar breakout + 1.2x volume gate.",
+        env={
+            **_signal_gate_base,
+            "CONFLUENCE_GATE_MODE": "live",
+            "CONFLUENCE_REQUIRE_COUNT": "1",
+            "BREAKOUT_CONFIRM_BARS": "2",
+            "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
+            "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": "1.20",
+        },
+    ))
     return configs
 
 

@@ -437,19 +437,16 @@ async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruth
   if (tickerB) qs.set("ticker_b", tickerB);
   if (ruthlessMode) qs.set("ruthless_mode", "true");
   if (profileOverride) qs.set("profile_override", profileOverride);
-  const endpointCandidates = [
-    `/api/sec/management-dashboard?${qs.toString()}`,
-    `/api/financial-modeling/management-execution?${qs.toString()}`,
-    `/api/fmp/management-execution?${qs.toString()}`,
-  ];
+  // Only /api/sec/management-dashboard exists on the backend; the old
+  // financial-modeling/fmp candidates were never implemented and only
+  // added timeout latency before the fallback kicked in.
+  const endpoint = `/api/sec/management-dashboard?${qs.toString()}`;
   let backendData = null;
   let source = "fallback";
-  for (const endpoint of endpointCandidates) {
-    const out = await api.get(endpoint, { timeoutMs: 120000 });
-    if (!out.ok) continue;
+  const out = await api.get(endpoint, { timeoutMs: 120000 });
+  if (out.ok) {
     backendData = normalizeManagementPayload(out.data, fallbackData);
     source = endpoint;
-    break;
   }
   const analystOut = await calculateManagementIntegrityScore(tickerA);
   const analystData = analystOut?.ok ? analystOut.data : null;

@@ -19,11 +19,13 @@ def _make_df(rows: int = 60) -> pd.DataFrame:
     return pd.DataFrame(data, index=idx)
 
 
-def test_kronos_mode_defaults_off(monkeypatch):
+def test_kronos_mode_defaults_off(monkeypatch, tmp_path):
+    # Use an empty skill_dir so a developer's local .env (which may legitimately
+    # set KRONOS_MODE=shadow) cannot leak into the default-value assertion.
     monkeypatch.delenv("KRONOS_MODE", raising=False)
     config.clear_env_cache()
-    assert config.get_kronos_mode() == "off"
-    assert config.get_kronos_enabled() is False
+    assert config.get_kronos_mode(tmp_path) == "off"
+    assert config.get_kronos_enabled(tmp_path) is False
 
 
 def test_kronos_mode_shadow(monkeypatch):

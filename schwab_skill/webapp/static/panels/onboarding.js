@@ -27,6 +27,12 @@ import {
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { showToast } from "../modules/notifications.js";
+import { isFlagEnabled } from "../modules/featureFlags.js";
+import {
+  attachVerifyCooldownButton,
+  renderAuthState,
+  requestVerificationEmail,
+} from "../modules/authPresentation.js";
 
 let _authUiWired = false;
 let _verifyCooldownTimer = null;
@@ -151,9 +157,11 @@ function renderAuthBootstrapSection(portalConfig) {
 
 function buildPortalConfigFallback() {
   const origin = window?.location?.origin || "";
-  const saasMode = Boolean(state.publicConfig?.saas_mode);
-  const accountAuthorizeStartPath = saasMode ? "/api/oauth/schwab/start" : "/api/oauth/schwab/authorize-start";
-  const marketAuthorizeStartPath = saasMode ? "/api/oauth/schwab/market/start" : "/api/oauth/schwab/market/authorize-start";
+  // Both the local server (main.py) and the SaaS tenant routes expose
+  // /api/oauth/schwab/start and /api/oauth/schwab/market/start; the older
+  // "authorize-start" paths never existed on either backend.
+  const accountAuthorizeStartPath = "/api/oauth/schwab/start";
+  const marketAuthorizeStartPath = "/api/oauth/schwab/market/start";
   return {
     frontend_return_url: origin ? `${origin}/?section=connect` : "",
     account_callback_url: origin ? `${origin}/api/oauth/schwab/callback` : "",
@@ -428,6 +436,23 @@ async function renderConnectAuthStatus() {
   wrap.classList.remove("hidden");
 
   const session = await getSessionStatus();
+  if (isFlagEnabled("unified_auth_block")) {
+    // Unified renderer; the cooldown manager owns the verify button label.
+    renderAuthState(
+      {
+        signedOutEl: signedOut,
+        signedInEl: signedIn,
+        labelEl: who,
+        statusEl: session.authenticated ? null : document.getElementById("connectVerifyStatus"),
+      },
+      {
+        state: session.authenticated ? "signed-in" : "signed-out",
+        email: session.email || "this session",
+        verified: hasVerifiedEmailOnce(),
+      },
+    );
+    return;
+  }
   if (session.authenticated) {
     signedIn.classList.remove("hidden");
     signedOut.classList.add("hidden");
@@ -525,6 +550,17 @@ async function requestInlineEmailVerification() {
   const input = document.getElementById("connectVerifyEmailInput");
   const status = document.getElementById("connectVerifyStatus");
   const cleanEmail = String(input?.value || "").trim();
+  if (isFlagEnabled("unified_auth_block")) {
+    // Shared verify flow: same cooldown key/labels as the topbar shelf.
+    const result = await requestVerificationEmail({
+      supabase: sb,
+      email: cleanEmail,
+      redirectTo: `${window.location.origin}/?section=connect`,
+      verified: hasVerifiedEmailOnce(),
+      onStatus: _setVerifyStatusMessage,
+    });
+    return result.ok;
+  }
   if (!cleanEmail) {
     if (status) status.textContent = "Enter your email first.";
     return false;
@@ -593,10 +629,15 @@ function wireInlineAuthUi() {
       marketBtn.disabled = false;
     }
   });
-  _refreshVerifyButtonState();
-  const until = _readVerifyCooldownUntil();
-  if (until > Date.now()) {
-    _startVerifyCooldown(until - Date.now());
+  if (isFlagEnabled("unified_auth_block")) {
+    // Shared cooldown manager owns label/disabled state (synced with topbar).
+    attachVerifyCooldownButton(verifyBtn, { label: authActionLabel });
+  } else {
+    _refreshVerifyButtonState();
+    const until = _readVerifyCooldownUntil();
+    if (until > Date.now()) {
+      _startVerifyCooldown(until - Date.now());
+    }
   }
 }
 

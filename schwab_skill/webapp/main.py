@@ -2452,10 +2452,11 @@ def cockpit_decision_packets(limit: int = 50) -> ApiResponse:
 def cockpit_review() -> ApiResponse:
     """Weekly learning diagnostics + advisory tuning proposals."""
     try:
-        from core import decision_packet, trade_review, weight_feedback
+        from core import decision_packet, packet_feature_analysis, trade_review, weight_feedback
 
         packets = decision_packet.load_packets(SKILL_DIR)
         report = trade_review.weekly_report(packets)
+        report["feature_lift"] = packet_feature_analysis.feature_lift_report(packets)
         report["tuning_proposals"] = weight_feedback.propose(report)
         return _ok(report)
     except Exception as e:
@@ -2494,6 +2495,50 @@ def cockpit_execution_quality(db: Session = Depends(get_db)) -> ApiResponse:
         return _ok(cockpit_service.build_execution_quality(summary, blotter))
     except Exception as e:
         return _err("cockpit_execution_quality", e)
+
+
+@app.get("/api/cockpit/shadow-scoreboard", response_model=ApiResponse)
+def cockpit_shadow_scoreboard(db: Session = Depends(get_db)) -> ApiResponse:
+    """Would-have counters for every shadow-mode plugin (scan + execution)."""
+    try:
+        from config import (
+            get_confluence_gate_mode,
+            get_correlation_guard_mode,
+            get_exit_manager_mode,
+            get_kronos_mode,
+            get_management_integrity_mode,
+            get_regime_v2_mode,
+        )
+        from core import cockpit_service
+        from execution_persistence import get_execution_safety_summary
+
+        snapshot = _scan_snapshot()
+        diagnostics = snapshot.get("diagnostics")
+        scan_at = None
+        if not isinstance(diagnostics, dict) or not diagnostics:
+            last_scan = _load_state(db, "last_scan", {})
+            if isinstance(last_scan, dict):
+                diagnostics = last_scan.get("diagnostics")
+                scan_at = last_scan.get("at")
+        summary = get_execution_safety_summary(skill_dir=SKILL_DIR, days=7)
+        modes = {
+            "confluence_gate": get_confluence_gate_mode(SKILL_DIR),
+            "correlation_guard": get_correlation_guard_mode(SKILL_DIR),
+            "regime_v2": get_regime_v2_mode(SKILL_DIR),
+            "kronos": get_kronos_mode(SKILL_DIR),
+            "management_integrity": get_management_integrity_mode(SKILL_DIR),
+            "exit_manager": get_exit_manager_mode(SKILL_DIR),
+        }
+        return _ok(
+            cockpit_service.build_shadow_scoreboard(
+                diagnostics if isinstance(diagnostics, dict) else {},
+                summary,
+                modes=modes,
+                scan_at=scan_at,
+            )
+        )
+    except Exception as e:
+        return _err("cockpit_shadow_scoreboard", e)
 
 
 @app.get("/api/cockpit/deltas", response_model=ApiResponse)

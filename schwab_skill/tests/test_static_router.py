@@ -81,6 +81,8 @@ EXPECTED_ALIASES = {
     "research": "researchWorkspaceIntro",
     "kronos": "kronosWorkspaceIntro",
     "forecast": "kronosForecastSection",
+    "sectors": "sectorsSection",
+    "movers": "moversSection",
 }
 
 

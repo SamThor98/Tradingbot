@@ -359,6 +359,140 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
     log.info("Weekly digest sent")
 
 
+def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | None:
+    """Weekly false-positive report over decision packets -- Sundays 6:15 PM ET.
+
+    Closes the Phase 4 feedback loop: backfill matured packet outcomes, run the
+    trade-review diagnostics (false positives by regime, edge decay by setup,
+    execution drag by condition), derive advisory tuning proposals, send a
+    Discord embed, and persist a JSON artifact under ``validation_artifacts/``.
+    """
+    import json
+    from datetime import timezone
+
+    from notifier import send_embed_alert
+
+    skill_dir = Path(skill_dir or SKILL_DIR)
+    env_path = skill_dir / ".env"
+    log = get_logger(__name__)
+
+    # Resolve matured packets first so the report reflects fresh outcomes.
+    # (Idempotent with the 6 PM digest backfill -- already-resolved packets skip.)
+    backfill: dict = {}
+    try:
+        from core.outcome_backfill import run_local_backfill
+
+        backfill = run_local_backfill(skill_dir, horizon_days=10)
+        log.info(
+            "FP report backfill: resolved=%s/%s", backfill.get("resolved"), backfill.get("total")
+        )
+    except Exception as e:
+        log.warning("FP report backfill failed: %s", e)
+
+    try:
+        from core import decision_packet
+        from core.trade_review import weekly_report
+        from core.weight_feedback import propose
+
+        packets = decision_packet.load_packets(skill_dir)
+        report = weekly_report(packets)
+        proposals = propose(report)
+    except Exception as e:
+        log.warning("False-positive report failed: %s", e)
+        return None
+
+    artifact = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "backfill": backfill,
+        "report": report,
+        "tuning_proposals": proposals,
+    }
+
+    try:
+        artifacts_dir = skill_dir / "validation_artifacts"
+        artifacts_dir.mkdir(exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        (artifacts_dir / f"weekly_false_positive_report_{stamp}.json").write_text(
+            json.dumps(artifact, indent=2), encoding="utf-8"
+        )
+        (artifacts_dir / "latest_weekly_false_positive_report.json").write_text(
+            json.dumps(artifact, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        log.warning("FP report artifact write failed: %s", e)
+
+    embed: dict = {
+        "title": "Weekly False-Positive Report",
+        "color": 0xE67E22,
+        "fields": [],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "footer": {"text": "Decision-packet learning loop - proposals are advisory only"},
+    }
+    embed["fields"].append({
+        "name": "Coverage",
+        "value": (
+            f"**{report.get('resolved_packets', 0)}**/{report.get('total_packets', 0)} packets resolved "
+            f"({report.get('coverage_pct', 0)}%)"
+        ),
+        "inline": False,
+    })
+
+    fp_lines = [
+        f"{regime}: {stats.get('fp_rate')} ({stats.get('losses')}/{stats.get('resolved')})"
+        for regime, stats in (report.get("false_positives_by_regime") or {}).items()
+    ]
+    if fp_lines:
+        embed["fields"].append({
+            "name": "False positives by regime",
+            "value": "\n".join(fp_lines[:6]),
+            "inline": False,
+        })
+
+    decay_lines = [
+        f"{setup}: decay={stats.get('edge_decay')} (n={stats.get('resolved')})"
+        for setup, stats in (report.get("edge_decay_by_setup") or {}).items()
+        if stats.get("edge_decay") is not None
+    ]
+    if decay_lines:
+        embed["fields"].append({
+            "name": "Edge decay by setup",
+            "value": "\n".join(decay_lines[:6]),
+            "inline": False,
+        })
+
+    drag_lines = [
+        f"{cond}: {stats.get('avg_slippage_bps')} bps (n={stats.get('samples')})"
+        for cond, stats in (report.get("execution_drag_by_condition") or {}).items()
+        if stats.get("avg_slippage_bps") is not None
+    ]
+    if drag_lines:
+        embed["fields"].append({
+            "name": "Execution drag by condition",
+            "value": "\n".join(drag_lines[:6]),
+            "inline": False,
+        })
+
+    top_proposals = (proposals.get("proposals") or [])[:3]
+    if top_proposals:
+        embed["fields"].append({
+            "name": f"Tuning proposals ({proposals.get('count', 0)})",
+            "value": "\n".join(
+                f"{p.get('target')} -> {p.get('direction')} [{p.get('scope')}]" for p in top_proposals
+            ),
+            "inline": False,
+        })
+    else:
+        embed["fields"].append({
+            "name": "Tuning proposals",
+            "value": "None (insufficient resolved samples or all metrics within bounds)",
+            "inline": False,
+        })
+
+    send_embed_alert(embed, env_path=env_path)
+    log.info("Weekly false-positive report sent (proposals=%s)", proposals.get("count", 0))
+    return artifact
+
+
 def run_scheduler() -> None:
     """Run main loop with Morning Brief (9:25 AM ET), scan (9:30), hold reminders, self-study, and weekly digest."""
     setup_logging()
@@ -455,6 +589,19 @@ def run_scheduler() -> None:
             except Exception as e:
                 log.warning("Weekly digest failed: %s", e)
 
+    _last_fp_report_minute: int | None = None
+
+    def _run_false_positive_report_if_scheduled() -> None:
+        nonlocal _last_fp_report_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if now.weekday() == 6 and now.hour == 18 and now.minute == 15 and key != _last_fp_report_minute:
+            _last_fp_report_minute = key
+            try:
+                build_false_positive_report()
+            except Exception as e:
+                log.warning("Weekly false-positive report failed: %s", e)
+
     _last_evolve_minute: int | None = None
 
     def _run_evolve_if_scheduled() -> None:
@@ -512,6 +659,7 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_hold_reminder_if_scheduled)
     schedule.every().minute.do(_run_self_study_if_scheduled)
     schedule.every().minute.do(_run_weekly_digest_if_scheduled)
+    schedule.every().minute.do(_run_false_positive_report_if_scheduled)
     schedule.every().minute.do(_run_evolve_if_scheduled)
     schedule.every().minute.do(_run_challenger_if_scheduled)
     build_morning_brief()

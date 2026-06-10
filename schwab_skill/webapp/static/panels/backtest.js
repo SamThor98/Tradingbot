@@ -34,6 +34,21 @@ import {
 import { logEvent } from "../modules/logger.js";
 import { scrollStrategyChatToEnd } from "./strategyChat.js";
 
+/**
+ * The hosted backtest queue (`/api/backtest-runs*`) only exists on the SaaS
+ * backend (`webapp/main_saas.py`). On the local single-user server those
+ * routes 404, so every entrypoint below short-circuits with this notice
+ * instead of surfacing a raw "resource not found" error.
+ */
+export const LOCAL_BACKTEST_NOTICE =
+  "Hosted backtest queue is available in SaaS mode only. On this local install, run " +
+  "`python backtest.py` (or scripts/phase1_overlay_sweep.py for multi-era sweeps); " +
+  "results are written to .backtest_results.json and validation_artifacts/.";
+
+export function isHostedBacktestAvailable() {
+  return Boolean(state.publicConfig?.saas_mode);
+}
+
 export function setDefaultBacktestDates() {
   const startEl = document.getElementById("btStart");
   const endEl = document.getElementById("btEnd");
@@ -374,6 +389,10 @@ export function switchBacktestHubTab(which) {
 export async function refreshBacktestRuns() {
   const list = document.getElementById("btRunList");
   if (!list) return;
+  if (!isHostedBacktestAvailable()) {
+    list.innerHTML = `<li class="muted">${escapeHtml(LOCAL_BACKTEST_NOTICE)}</li>`;
+    return;
+  }
   list.innerHTML = `<li class="muted">Loading backtest runs...</li>`;
   const out = await api.get("/api/backtest-runs?limit=15");
   if (!out.ok) {
@@ -463,6 +482,10 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
 
 export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
   if (state.backtestQueueBusy) return;
+  if (!isHostedBacktestAvailable()) {
+    setBtMetaMessage(LOCAL_BACKTEST_NOTICE, { sticky: true });
+    return;
+  }
   const start = document.getElementById("btStart")?.value;
   const end = document.getElementById("btEnd")?.value;
   if (!start || !end) {

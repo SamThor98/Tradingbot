@@ -76,6 +76,34 @@ def build_packet(
     attribution = sig.get("strategy_attribution") if isinstance(sig.get("strategy_attribution"), dict) else {}
     eq = execu.get("quality") if isinstance(execu.get("quality"), dict) else {}
 
+    # Entry-time Kronos forecast snapshot (shadow evidence): keep only the
+    # compact directional fields, not the full candle paths/bands.
+    kronos_snapshot: dict[str, Any] | None = None
+    kf = sig.get("kronos_forecast")
+    if isinstance(kf, dict) and kf:
+        kronos_snapshot = {
+            "direction": kf.get("direction"),
+            "confidence": _f(kf.get("confidence")),
+            "confidence_bucket": kf.get("confidence_bucket"),
+            "expected_return_pct": _f(kf.get("expected_return_pct")),
+            "prob_up": _f(kf.get("prob_up")),
+            "model_version": kf.get("model_version"),
+            "interval": kf.get("interval"),
+            "pred_len": kf.get("pred_len"),
+            "degraded": bool(kf.get("degraded", False)),
+        }
+
+    mgmt_snapshot: dict[str, Any] | None = None
+    mi = sig.get("management_integrity")
+    if isinstance(mi, dict) and mi:
+        mgmt_snapshot = {
+            "score": mi.get("score"),
+            "score_bucket": mi.get("score_bucket"),
+            "profile": mi.get("profile"),
+            "red_flag_count": mi.get("red_flag_count"),
+            "source": mi.get("source"),
+        }
+
     return DecisionPacket(
         packet_id=uuid.uuid4().hex[:12],
         created_at=utc_now(),
@@ -92,6 +120,8 @@ def build_packet(
         p_up_calibrated=_f(sig.get("p_up_calibrated") or (advisory or {}).get("p_up_10d")),
         expected_slippage_bps=_f(eq.get("realized_slippage_bps") or eq.get("expected_slippage_bps")),
         entry_price=_f(sig.get("price")),
+        kronos=kronos_snapshot,
+        management_integrity=mgmt_snapshot,
         outcome=PacketOutcome(),
         refs={"order_ref": execu.get("order_ref"), "state": execu.get("state")},
         provenance=Provenance(source="computed", as_of=utc_now(), confidence="high"),

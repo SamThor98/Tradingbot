@@ -406,6 +406,17 @@ def get_breakout_confirm_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("BREAKOUT_CONFIRM_ENABLED", True, skill_dir)
 
 
+def get_breakout_confirm_bars(skill_dir: Path | None = None) -> int:
+    """Consecutive bars of breakout follow-through required to confirm.
+
+    1 preserves the legacy single-bar check (latest close/price above the
+    prior bar's high). 2 additionally requires the previous daily close to
+    have held above its own prior high. Clamped to 1..3.
+    """
+    val = _get_int("BREAKOUT_CONFIRM_BARS", 1, skill_dir)
+    return max(1, min(3, val))
+
+
 # Data: prefer Schwab, only use yfinance on explicit failure
 def get_prefer_schwab_data(skill_dir: Path | None = None) -> bool:
     return _get_bool("PREFER_SCHWAB_DATA", True, skill_dir)
@@ -634,6 +645,27 @@ def get_event_risk_mode(skill_dir: Path | None = None) -> str:
 def get_correlation_guard_mode(skill_dir: Path | None = None) -> str:
     """Correlation guard plugin mode (OFF|SHADOW|LIVE)."""
     return _get_mode("CORRELATION_GUARD_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_confluence_gate_mode(skill_dir: Path | None = None) -> str:
+    """Confluence gate plugin mode (OFF|SHADOW|LIVE).
+
+    Requires at least CONFLUENCE_REQUIRE_COUNT independent confirmations
+    (PEAD-positive or advisory-high) on top of the Stage 2 + VCP base setup.
+    SHADOW annotates and counts would-blocks without dropping signals;
+    LIVE drops unconfirmed signals from the scan results.
+    """
+    return _get_mode("CONFLUENCE_GATE_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_confluence_advisory_min_pup(skill_dir: Path | None = None) -> float:
+    """Minimum advisory p_up_10d that counts as an advisory-high confirmation."""
+    return _get_float("CONFLUENCE_ADVISORY_MIN_PUP", 0.60, skill_dir)
+
+
+def get_confluence_require_count(skill_dir: Path | None = None) -> int:
+    """Independent confirmations required by the confluence gate (min 1)."""
+    return max(1, _get_int("CONFLUENCE_REQUIRE_COUNT", 1, skill_dir))
 
 
 def get_regime_v2_mode(skill_dir: Path | None = None) -> str:
@@ -1242,6 +1274,23 @@ def get_kronos_score_delta_clamp(skill_dir: Path | None = None) -> float:
     """Absolute clamp on the LIVE-mode score nudge from a Kronos forecast."""
     val = _get_float("KRONOS_SCORE_DELTA_CLAMP", 1.5, skill_dir)
     return max(0.0, min(10.0, val))
+
+
+# --- Management integrity plugin (OFF|SHADOW|LIVE; default off) ---
+
+
+def get_management_integrity_mode(skill_dir: Path | None = None) -> str:
+    """Management integrity rollout mode (OFF|SHADOW|LIVE).
+
+    OFF — no Stage B enrichment. SHADOW — attach scorecard evidence only.
+    LIVE — score nudges deferred until packet cohort lift is confirmed.
+    """
+    return _get_mode("MANAGEMENT_INTEGRITY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_management_integrity_filter_min_score(skill_dir: Path | None = None) -> int:
+    """Integrity score below this triggers a shadow would-filter counter."""
+    return max(0, min(100, _get_int("MANAGEMENT_INTEGRITY_FILTER_MIN_SCORE", 50, skill_dir)))
 
 
 def get_kronos_sample_count(skill_dir: Path | None = None) -> int:

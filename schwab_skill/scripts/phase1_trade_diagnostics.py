@@ -200,6 +200,41 @@ def _hold_buckets(trades: list[Trade]) -> list[dict[str, Any]]:
     return out
 
 
+def _signal_cohorts(trades: list[Trade]) -> dict[str, Any]:
+    """Base-signal verdict cohorts: <=20d stop-outs vs 21-40d winners.
+
+    The Phase 2 edge audit showed the strategy's PF is built by 21-40 day
+    winners and destroyed by losers stopped out inside 20 days. This is the
+    success metric for the signal-gate sweep: a config wins when it shrinks
+    the early-stop-out cohort (count and loss mass) without losing the
+    21-40 day winners.
+    """
+    if not trades:
+        return {"n": 0}
+    early_losers = [t for t in trades if t.hold_days <= 20 and t.net_ret < 0]
+    mid_winners = [t for t in trades if 21 <= t.hold_days <= 40 and t.net_ret > 0]
+    loss_mass = sum(t.net_ret for t in early_losers)
+    win_mass = sum(t.net_ret for t in mid_winners)
+    return {
+        "n": len(trades),
+        "pf_all": _profit_factor(trades),
+        "early_stopouts_lte20d": {
+            "n": len(early_losers),
+            "share_pct": round(100 * len(early_losers) / len(trades), 2),
+            "loss_mass": round(loss_mass, 4),
+            "avg_loss": round(loss_mass / len(early_losers), 4) if early_losers else None,
+        },
+        "winners_21_40d": {
+            "n": len(mid_winners),
+            "share_pct": round(100 * len(mid_winners) / len(trades), 2),
+            "win_mass": round(win_mass, 4),
+            "avg_win": round(win_mass / len(mid_winners), 4) if mid_winners else None,
+        },
+        "hold_lte20d": _bucket_summary([t for t in trades if t.hold_days <= 20]),
+        "hold_21_40d": _bucket_summary([t for t in trades if 21 <= t.hold_days <= 40]),
+    }
+
+
 def _equity_curve(trades: list[Trade], starting_equity: float = 100_000.0,
                   position_pct: float = 0.10) -> list[dict[str, Any]]:
     """Replay trades in entry-date order, sizing each at ``position_pct`` of equity."""
@@ -392,6 +427,30 @@ def _markdown_report(run_id: str, trades: list[Trade], analysis: dict[str, Any])
             )
         lines.append("")
 
+    # Signal cohorts — the sweep success metric
+    cohorts_data = analysis.get("signal_cohorts", {})
+    if cohorts_data:
+        lines.append("## Signal cohorts — <=20d stop-outs vs 21-40d winners (per era)")
+        lines.append("")
+        lines.append(
+            "Sweep success metric: shrink the early stop-out cohort (count and "
+            "loss mass) without losing the 21-40 day winners."
+        )
+        lines.append("")
+        lines.append("| Era | Trades | PF | Early stops N | Early share | Loss mass | 21-40d wins N | Win mass |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for era, c in cohorts_data.items():
+            if not c or not c.get("n"):
+                continue
+            es = c.get("early_stopouts_lte20d", {})
+            mw = c.get("winners_21_40d", {})
+            lines.append(
+                f"| {era} | {c['n']} | {_format_pf(c.get('pf_all'))} "
+                f"| {es.get('n', 0)} | {es.get('share_pct', 0):.1f}% | {_format_signed_pct(es.get('loss_mass'))} "
+                f"| {mw.get('n', 0)} | {_format_signed_pct(mw.get('win_mass'))} |"
+            )
+        lines.append("")
+
     # Q2 — counterfactual regime suppression
     cf = analysis.get("counterfactual_regime", {})
     if cf:
@@ -456,13 +515,68 @@ def _markdown_report(run_id: str, trades: list[Trade], analysis: dict[str, Any])
     return "\n".join(lines)
 
 
+def _compare_signal_cohorts(run_ids: list[str]) -> int:
+    """Side-by-side signal-cohort table for multiple sweep configs.
+
+    Loads each config's chunk trades and emits one row per config so the
+    sweep verdict (<=20d stop-out cohort shrinks, 21-40d winners survive)
+    is a single glance instead of N separate reports.
+    """
+    rows: list[dict[str, Any]] = []
+    for run_id in run_ids:
+        trades = _load_trades(run_id)
+        if not trades:
+            print(f"[diag] WARN no trades found for {run_id}")
+            continue
+        rows.append({"run_id": run_id, **_signal_cohorts(trades)})
+    if not rows:
+        print("[diag] nothing to compare")
+        return 1
+    lines: list[str] = []
+    lines.append("# Signal-gate sweep — cohort comparison")
+    lines.append("")
+    lines.append(f"_Generated: {datetime.now(timezone.utc).isoformat()}_")
+    lines.append("")
+    lines.append(
+        "Success metric: early stop-out cohort (<=20d losers) shrinks in count "
+        "and loss mass vs control without losing the 21-40d winners."
+    )
+    lines.append("")
+    lines.append("| Config | Trades | PF | Early stops N | Early share | Loss mass | 21-40d wins N | Win mass | 21-40d PF |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for r in rows:
+        es = r.get("early_stopouts_lte20d", {})
+        mw = r.get("winners_21_40d", {})
+        mid = r.get("hold_21_40d", {})
+        lines.append(
+            f"| {r['run_id']} | {r['n']} | {_format_pf(r.get('pf_all'))} "
+            f"| {es.get('n', 0)} | {es.get('share_pct', 0):.1f}% | {_format_signed_pct(es.get('loss_mass'))} "
+            f"| {mw.get('n', 0)} | {_format_signed_pct(mw.get('win_mass'))} "
+            f"| {_format_pf(mid.get('pf'))} |"
+        )
+    lines.append("")
+    out_md = ARTIFACT_DIR / "phase1_signal_cohorts_compare.md"
+    out_json = ARTIFACT_DIR / "phase1_signal_cohorts_compare.json"
+    out_md.write_text("\n".join(lines), encoding="utf-8")
+    out_json.write_text(json.dumps({"configs": rows}, indent=2, default=str), encoding="utf-8")
+    print(f"[diag] wrote {out_md}")
+    print(f"[diag] wrote {out_json}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 trade diagnostics on existing chunks.")
     parser.add_argument("--run-id", default="control_legacy",
                         help="Sub-directory of multi_era_chunks/ to analyse.")
     parser.add_argument("--no-spy", action="store_true",
                         help="Skip the SPY-fetch counterfactual regime analysis (offline mode).")
+    parser.add_argument("--compare", nargs="*", default=None,
+                        help="Compare signal cohorts across multiple run_ids and exit "
+                             "(writes phase1_signal_cohorts_compare.{md,json}).")
     args = parser.parse_args()
+
+    if args.compare:
+        return _compare_signal_cohorts(list(args.compare))
 
     print(f"[diag] loading trades for run_id={args.run_id} ...")
     trades = _load_trades(args.run_id)
@@ -477,6 +591,11 @@ def main() -> int:
             era: _hold_buckets([t for t in trades if t.era == era])
             for era in ERA_BOUNDS
         },
+        "signal_cohorts": {
+            era: _signal_cohorts([t for t in trades if t.era == era])
+            for era in ERA_BOUNDS
+        },
+        "signal_cohorts_overall": _signal_cohorts(trades),
     }
     if not args.no_spy:
         print("[diag] running counterfactual regime suppression (fetches SPY) ...")

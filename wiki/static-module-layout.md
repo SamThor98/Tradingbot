@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/app.js
 created: 2026-04-17
-updated: 2026-04-30
+updated: 2026-06-10
 tags: [frontend, refactor, modules, dashboard]
 ---
 
@@ -51,7 +51,16 @@ webapp/static/
 │  ├─ commandPalette.js           Cmd-K palette (action callbacks injected by app.js)
 │  ├─ shortcuts.js                global keyboard shortcuts (callbacks injected by app.js)
 │  ├─ logger.js                   logEvent, action center, activity badge, status pills
+│  ├─ featureFlags.js             frontend-only flags (defaults → localStorage → ?ff=)
+│  ├─ priorityFeed.js             unified ranked status feed (flag: priority_feed)
+│  ├─ authPresentation.js         shared auth UI: verify cooldown, OTP request, JWT block (flag: unified_auth_block)
 │  └─ validationView.js           validation recent-steps renderer
+├─ screens/                       per-screen controllers (init() wiring + prime() loading)
+│  ├─ operations.js               scan workflow, pending queue, approve dialog
+│  ├─ research.js                 quick check, backtest hub, dossiers, SEC compare, learning
+│  ├─ kronos.js                   thin adapter over panels/kronosWorkspace.js
+│  ├─ diagnostics.js              calibration, shadow scoreboard, review loop, decision card
+│  └─ settings.js                 profiles, feature guide, live trading, billing
 └─ panels/
    ├─ twoFa.js                    2FA enable-live-trading panel
    ├─ onboarding.js               Schwab onboarding wizard (5-step stepper + auto-derived next CTA)
@@ -244,9 +253,12 @@ wiring layer or that are read by every other panel:
 
 * Top-level routing / lazy section loading (`runLazyApi`,
   `applySectionFromQuery`, `applyDisplayMode`).
-* `wireEvents()` — the ~290-line single source of truth for all DOM
-  event listeners. Each panel module exports its handlers; `wireEvents`
-  binds them.
+* `wireEvents()` — now the shared-shell wiring only (topbar, activity
+  drawer, section nav, screen switcher, display mode). Per-screen
+  wiring/priming was extracted to `screens/*` controllers built by
+  `buildScreenControllers()`; with the `screen_controllers` flag ON each
+  controller initializes in isolation, and `maybePrimeScreenData`
+  dispatches to `controller.prime()` (see [[section-migration-map]]).
 * `connectSSE()` — pushes events into `addNotification`, `showToast`,
   `refreshStatus`, `refreshPending`, `updateActionCenter`.
 * Scan pipeline (`runScan`, scan-results renderer, queue-scan dialog,
