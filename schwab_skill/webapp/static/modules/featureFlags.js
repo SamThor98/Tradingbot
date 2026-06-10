@@ -1,17 +1,17 @@
 /**
- * Frontend-only UI feature flags for the phased redesign rollout.
+ * Frontend-only UI feature flags for gradual rollout of dashboard changes.
  *
  * Resolution order (later wins):
- *   1. `FLAG_DEFAULTS` below (all redesign flags ship OFF),
+ *   1. `FLAG_DEFAULTS` below,
  *   2. `localStorage["tradingbot.flags"]` — JSON object of overrides that
  *      persist across reloads (set via `setFlagOverride` or devtools),
  *   3. `?ff=flag_a,!flag_b` URL param — comma-separated session overrides;
  *      a leading `!` disables the flag. URL overrides are also persisted to
  *      localStorage so a tester can share one link and keep the state.
  *
- * Rollback contract: flipping a flag requires no deploy — clear the override
- * (`?ff=!flag` or `clearFlagOverrides()`) and reload. See the wiki page
- * [[section-migration-map]] for the rollout checkpoints each flag gates.
+ * Checkpoint C (2026-06-10) removed the redesign rollout flags; behavior they
+ * gated is now unconditional. Add new flags here when the next rollout needs
+ * a frontend-only kill switch.
  *
  * No backend involvement by design (front-end-design skill: frontend-only).
  */
@@ -19,16 +19,7 @@
 export const FLAGS_STORAGE_KEY = "tradingbot.flags";
 
 /** Known flags and their shipped defaults. Unknown flag names are ignored. */
-export const FLAG_DEFAULTS = Object.freeze({
-  /** Unified ranked status feed replacing the action-center fan-out. */
-  priority_feed: false,
-  /** Slim Operations landing: sectors/movers demoted to collapsed disclosures. */
-  ops_slim_default: false,
-  /** Single auth/session presentation shared by topbar, onboarding, login. */
-  unified_auth_block: false,
-  /** Per-screen controller bootstrap (init/prime) instead of monolith wiring. */
-  screen_controllers: false,
-});
+export const FLAG_DEFAULTS = Object.freeze({});
 
 /** Resolved flag map for this session. Populated by `initFeatureFlags()`. */
 let resolved = { ...FLAG_DEFAULTS };

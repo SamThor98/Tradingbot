@@ -4,3 +4,7 @@ pytest-cov
 ruff
 mypy
 pip-audit
+# E2E route-contract suite (tests/e2e). After install, fetch the browser
+# once with: python -m playwright install chromium
+pytest-playwright
+playwright

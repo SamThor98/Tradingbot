@@ -27,7 +27,6 @@ import {
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { showToast } from "../modules/notifications.js";
-import { isFlagEnabled } from "../modules/featureFlags.js";
 import {
   attachVerifyCooldownButton,
   renderAuthState,
@@ -35,11 +34,6 @@ import {
 } from "../modules/authPresentation.js";
 
 let _authUiWired = false;
-let _verifyCooldownTimer = null;
-
-const VERIFY_EMAIL_COOLDOWN_KEY = "tradingbot.connect.verify_email_cooldown_until_ms";
-const VERIFY_EMAIL_COOLDOWN_MS = 60 * 1000;
-const VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 
 const STEP_NAMES = {
   connect: "Link Schwab",
@@ -436,106 +430,25 @@ async function renderConnectAuthStatus() {
   wrap.classList.remove("hidden");
 
   const session = await getSessionStatus();
-  if (isFlagEnabled("unified_auth_block")) {
-    // Unified renderer; the cooldown manager owns the verify button label.
-    renderAuthState(
-      {
-        signedOutEl: signedOut,
-        signedInEl: signedIn,
-        labelEl: who,
-        statusEl: session.authenticated ? null : document.getElementById("connectVerifyStatus"),
-      },
-      {
-        state: session.authenticated ? "signed-in" : "signed-out",
-        email: session.email || "this session",
-        verified: hasVerifiedEmailOnce(),
-      },
-    );
-    return;
-  }
-  if (session.authenticated) {
-    signedIn.classList.remove("hidden");
-    signedOut.classList.add("hidden");
-    who.textContent = session.email || "this session";
-  } else {
-    signedIn.classList.add("hidden");
-    signedOut.classList.remove("hidden");
-    who.textContent = "";
-    // Returning verified users: relabel button + copy to "sign in" framing.
-    _refreshVerifyButtonState();
-    _setVerifyStatusMessage(
-      hasVerifiedEmailOnce()
-        ? "Your email is already verified. Sign in to reconnect."
-        : "Verify once, then connect Schwab.",
-    );
-  }
-}
-
-function _readVerifyCooldownUntil() {
-  const raw = localStorage.getItem(VERIFY_EMAIL_COOLDOWN_KEY) || "";
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n);
-}
-
-function _writeVerifyCooldownUntil(tsMs) {
-  const safe = Number(tsMs);
-  if (!Number.isFinite(safe) || safe <= Date.now()) {
-    localStorage.removeItem(VERIFY_EMAIL_COOLDOWN_KEY);
-    return;
-  }
-  localStorage.setItem(VERIFY_EMAIL_COOLDOWN_KEY, String(Math.floor(safe)));
+  renderAuthState(
+    {
+      signedOutEl: signedOut,
+      signedInEl: signedIn,
+      labelEl: who,
+      statusEl: session.authenticated ? null : document.getElementById("connectVerifyStatus"),
+    },
+    {
+      state: session.authenticated ? "signed-in" : "signed-out",
+      email: session.email || "this session",
+      verified: hasVerifiedEmailOnce(),
+    },
+  );
 }
 
 function _setVerifyStatusMessage(text) {
   const status = document.getElementById("connectVerifyStatus");
   if (!status) return;
   status.textContent = String(text || "").trim();
-}
-
-function _formatCooldownLabel(msLeft) {
-  const totalSec = Math.max(1, Math.ceil(msLeft / 1000));
-  if (totalSec < 60) return `${totalSec}s`;
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
-}
-
-function _refreshVerifyButtonState() {
-  const btn = document.getElementById("connectVerifyEmailBtn");
-  if (!btn) return;
-  const label = authActionLabel();
-  const until = _readVerifyCooldownUntil();
-  const now = Date.now();
-  const msLeft = until - now;
-  if (msLeft > 0) {
-    btn.disabled = true;
-    btn.textContent = `${label} (${_formatCooldownLabel(msLeft)})`;
-    return;
-  }
-  btn.disabled = false;
-  btn.textContent = label;
-}
-
-function _startVerifyCooldown(ms, reason = "") {
-  const cooldownMs = Math.max(1000, Number(ms) || 0);
-  _writeVerifyCooldownUntil(Date.now() + cooldownMs);
-  if (_verifyCooldownTimer) {
-    clearInterval(_verifyCooldownTimer);
-    _verifyCooldownTimer = null;
-  }
-  _refreshVerifyButtonState();
-  if (reason) _setVerifyStatusMessage(reason);
-  _verifyCooldownTimer = window.setInterval(() => {
-    _refreshVerifyButtonState();
-    if (_readVerifyCooldownUntil() <= Date.now()) {
-      clearInterval(_verifyCooldownTimer);
-      _verifyCooldownTimer = null;
-      _writeVerifyCooldownUntil(0);
-      _refreshVerifyButtonState();
-      if (!reason) _setVerifyStatusMessage("You can request another email.");
-    }
-  }, 1000);
 }
 
 async function requestInlineEmailVerification() {
@@ -548,57 +461,15 @@ async function requestInlineEmailVerification() {
     return false;
   }
   const input = document.getElementById("connectVerifyEmailInput");
-  const status = document.getElementById("connectVerifyStatus");
   const cleanEmail = String(input?.value || "").trim();
-  if (isFlagEnabled("unified_auth_block")) {
-    // Shared verify flow: same cooldown key/labels as the topbar shelf.
-    const result = await requestVerificationEmail({
-      supabase: sb,
-      email: cleanEmail,
-      redirectTo: `${window.location.origin}/?section=connect`,
-      verified: hasVerifiedEmailOnce(),
-      onStatus: _setVerifyStatusMessage,
-    });
-    return result.ok;
-  }
-  if (!cleanEmail) {
-    if (status) status.textContent = "Enter your email first.";
-    return false;
-  }
-  const until = _readVerifyCooldownUntil();
-  if (until > Date.now()) {
-    _setVerifyStatusMessage(`Please wait ${_formatCooldownLabel(until - Date.now())} before requesting another email.`);
-    _refreshVerifyButtonState();
-    return false;
-  }
-  const redirectTo = `${window.location.origin}/?section=connect`;
-  const { error } = await sb.auth.signInWithOtp({
+  const result = await requestVerificationEmail({
+    supabase: sb,
     email: cleanEmail,
-    options: {
-      shouldCreateUser: true,
-      emailRedirectTo: redirectTo,
-    },
+    redirectTo: `${window.location.origin}/?section=connect`,
+    verified: hasVerifiedEmailOnce(),
+    onStatus: _setVerifyStatusMessage,
   });
-  if (error) {
-    const msg = error.message || "Verification request failed.";
-    const lower = String(msg).toLowerCase();
-    if (lower.includes("rate limit") || lower.includes("email rate limit exceeded")) {
-      _startVerifyCooldown(
-        VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS,
-        `Email rate limit reached. Please wait ${_formatCooldownLabel(VERIFY_EMAIL_RATE_LIMIT_COOLDOWN_MS)} before retrying.`,
-      );
-    } else {
-      if (status) status.textContent = msg;
-    }
-    return false;
-  }
-  _startVerifyCooldown(
-    VERIFY_EMAIL_COOLDOWN_MS,
-    hasVerifiedEmailOnce()
-      ? "Sign-in link sent. Open the link, then return here."
-      : "Verification email sent. Open the link, then return here.",
-  );
-  return true;
+  return result.ok;
 }
 
 function wireInlineAuthUi() {
@@ -629,16 +500,7 @@ function wireInlineAuthUi() {
       marketBtn.disabled = false;
     }
   });
-  if (isFlagEnabled("unified_auth_block")) {
-    // Shared cooldown manager owns label/disabled state (synced with topbar).
-    attachVerifyCooldownButton(verifyBtn, { label: authActionLabel });
-  } else {
-    _refreshVerifyButtonState();
-    const until = _readVerifyCooldownUntil();
-    if (until > Date.now()) {
-      _startVerifyCooldown(until - Date.now());
-    }
-  }
+  attachVerifyCooldownButton(verifyBtn, { label: authActionLabel });
 }
 
 async function ensureSessionForSchwabConnect() {

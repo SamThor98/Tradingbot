@@ -4,7 +4,6 @@
  * Operations screen: scan workflow, pending queue, and the approve dialog.
  * All dependencies are injected via ctx from app.js so behavior is identical
  * to the previous inline wireEvents/maybePrimeScreenData code.
- * Rollout flag: screen_controllers (see wiki [[section-migration-map]]).
  */
 
 export function createOperationsController(ctx) {
@@ -29,8 +28,6 @@ export function createOperationsController(ctx) {
     getScanDetailSignal,
     approveTradeById,
     syncApproveDialogGuardrails,
-    isFlagEnabled,
-    runLazyApi,
   } = ctx;
 
   function init() {
@@ -145,12 +142,7 @@ export function createOperationsController(ctx) {
   }
 
   function prime() {
-    // Slim Operations: sectors/movers are collapsed disclosures that load on
-    // first expand instead of priming with the screen (flag: ops_slim_default).
-    if (!isFlagEnabled("ops_slim_default")) {
-      void runLazyApi("sectors");
-      void runLazyApi("movers");
-    }
+    // Sectors/movers are collapsed disclosures that load on first expand.
   }
 
   return { id: "operations", init, prime };

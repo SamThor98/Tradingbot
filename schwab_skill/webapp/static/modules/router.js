@@ -54,6 +54,7 @@ export const SECTION_ALIASES = Object.freeze({
   research: "researchWorkspaceIntro",
   kronos: "kronosWorkspaceIntro",
   forecast: "kronosForecastSection",
+  cockpit: "cockpitWorkspaceIntro",
 });
 
 /**

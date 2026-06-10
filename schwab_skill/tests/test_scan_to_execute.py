@@ -468,9 +468,16 @@ class TestHealthAndStatus:
         assert contract["api_envelope"] == "ApiResponse"
 
     def test_static_pages(self, client: TestClient):
-        for path in ["/", "/simple"]:
-            resp = client.get(path)
-            assert resp.status_code == 200
+        resp = client.get("/")
+        assert resp.status_code == 200
+        # /simple retired into the dashboard's display-mode preset.
+        simple_resp = client.get("/simple", follow_redirects=False)
+        assert simple_resp.status_code == 302
+        assert simple_resp.headers.get("location") == "/?display=simple"
+        # /cockpit folded into the dashboard as a screen.
+        cockpit_resp = client.get("/cockpit", follow_redirects=False)
+        assert cockpit_resp.status_code == 302
+        assert cockpit_resp.headers.get("location") == "/?screen=cockpit"
         login_resp = client.get("/login", follow_redirects=False)
         assert login_resp.status_code == 302
         assert login_resp.headers.get("location") == "/?section=connect"

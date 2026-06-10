@@ -1,3 +1,116 @@
+/* ---- Preflight reset (replaces cdn.tailwindcss.com, removed 2026-06-10) ----
+   The dashboard rendered with Tailwind's preflight normalize for its entire
+   life, so the rest of this stylesheet assumes these resets (zeroed heading
+   margins, unstyled lists, transparent buttons, block-level media). Keep this
+   block first in the cascade — it mirrors Tailwind v3 preflight. */
+*,
+::before,
+::after {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: currentColor;
+}
+hr {
+  height: 0;
+  color: inherit;
+  border-top-width: 1px;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+b, strong {
+  font-weight: bolder;
+}
+small {
+  font-size: 80%;
+}
+sub, sup {
+  font-size: 75%;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+sub { bottom: -0.25em; }
+sup { top: -0.5em; }
+table {
+  text-indent: 0;
+  border-color: inherit;
+  border-collapse: collapse;
+}
+button, input, optgroup, select, textarea {
+  font-family: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+}
+button, select {
+  text-transform: none;
+}
+button,
+[type="button"],
+[type="reset"],
+[type="submit"] {
+  -webkit-appearance: button;
+  background-color: transparent;
+  background-image: none;
+}
+progress {
+  vertical-align: baseline;
+}
+summary {
+  display: list-item;
+}
+blockquote, dl, dd, h1, h2, h3, h4, h5, h6, hr, figure, p, pre {
+  margin: 0;
+}
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
+}
+ol, ul, menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+textarea {
+  resize: vertical;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+  color: #9ca3af;
+}
+button,
+[role="button"] {
+  cursor: pointer;
+}
+:disabled {
+  cursor: default;
+}
+img, svg, video, canvas, audio, iframe, embed, object {
+  display: block;
+  vertical-align: middle;
+}
+img, video {
+  max-width: 100%;
+  height: auto;
+}
+[hidden] {
+  display: none;
+}
+
 :root {
   color-scheme: light;
   --bg: #f6f2ea;
@@ -131,6 +244,11 @@ html, body {
 .layout-onboarding-presets > * {
   animation: card-enter 0.5s var(--ease-out-expo) both;
 }
+/* Fixed-position slide-in panels must not inherit card-enter: its fill-mode
+   pins transform and breaks translateX slide behavior. */
+.container > .cockpit-drawer {
+  animation: none;
+}
 .container > :nth-child(2) { animation-delay: 0.04s; }
 .container > :nth-child(3) { animation-delay: 0.08s; }
 .container > :nth-child(4) { animation-delay: 0.12s; }
@@ -142,21 +260,6 @@ html, body {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.04) 25%,
-    rgba(255, 255, 255, 0.08) 50%,
-    rgba(255, 255, 255, 0.04) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.8s ease infinite;
-  border-radius: 8px;
-  min-height: 1em;
-}
-.skeleton-line { height: 14px; margin-bottom: 8px; border-radius: 6px; }
-.skeleton-line:last-child { width: 60%; }
-.skeleton-block { height: 80px; border-radius: 12px; }
 
 .hidden { display: none !important; }
 
@@ -201,49 +304,6 @@ html, body {
 .hero {
   padding: 24px;
 }
-.hero-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
-  grid-template-areas: "main aside";
-  gap: 1rem 1.75rem;
-  align-items: start;
-  position: relative;
-  overflow: hidden;
-}
-.hero-shell::before {
-  content: "";
-  position: absolute;
-  top: -40%;
-  right: -20%;
-  width: min(55%, 420px);
-  height: 140%;
-  background: radial-gradient(ellipse at center, var(--hero-glow), transparent 70%);
-  pointer-events: none;
-}
-.hero-main {
-  grid-area: main;
-  position: relative;
-  z-index: 1;
-}
-.hero-aside {
-  grid-area: aside;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  position: relative;
-  z-index: 1;
-}
-.hero-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  position: relative;
-  z-index: 1;
-  margin-top: 0.9rem;
-}
-.hero-actions a.btn {
-  text-decoration: none;
-}
 .hero h1 {
   margin: 10px 0 8px;
   font-size: clamp(1.72rem, 2.2vw, 2.2rem);
@@ -260,26 +320,6 @@ html, body {
   font-weight: 600;
   margin: 0;
 }
-.hero-chart {
-  border-radius: 16px;
-  border: 1px solid rgba(129, 140, 248, 0.25);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.75) 0%, rgba(8, 12, 24, 0.9) 100%);
-  padding: 12px 14px 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-}
-.hero-chart-svg {
-  width: 100%;
-  height: auto;
-  display: block;
-  max-height: 100px;
-}
-.hero-chart-line {
-  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.35));
-}
-.hero-chart-dot {
-  filter: drop-shadow(0 0 4px rgba(224, 231, 255, 0.8));
-  animation: hero-dot-pulse 2.8s ease-in-out infinite;
-}
 @keyframes hero-dot-pulse {
   0%,
   100% {
@@ -288,20 +328,6 @@ html, body {
   50% {
     opacity: 0.55;
   }
-}
-.hero-chart-caption {
-  display: block;
-  margin-top: 6px;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  text-align: center;
-}
-.hero-kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
 }
 .hero-kpi {
   border-radius: 14px;
@@ -362,14 +388,6 @@ html, body {
   background: linear-gradient(180deg, rgba(20, 24, 38, 0.95) 0%, rgba(14, 16, 26, 0.88) 100%);
   pointer-events: none;
 }
-.screen-switch {
-  width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 2px;
-  pointer-events: auto;
-}
 .screen-switch-btn {
   border: 1px solid rgba(141, 165, 231, 0.3);
   border-radius: var(--radius-pill);
@@ -390,36 +408,6 @@ html, body {
   border-color: rgba(122, 141, 255, 0.8);
   background: rgba(64, 84, 180, 0.38);
   color: #fff;
-}
-.screen-context {
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.screen-context-copy {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-.screen-context-copy strong {
-  font-size: 0.84rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #c7d2fe;
-}
-.screen-context-copy p {
-  margin: 0;
-}
-.screen-context-hint {
-  font-size: 0.74rem;
-}
-.screen-context-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
 }
 
 .health-ribbon {
@@ -526,6 +514,29 @@ html, body {
 .bg-red-900 { background: rgba(127, 29, 29, 0.68); color: #fee2e2; }
 .bg-amber-900 { background: rgba(120, 53, 15, 0.68); color: #fef3c7; }
 .bg-slate-900 { background: rgba(51, 65, 85, 0.55); color: #e2e8f0; }
+.bg-blue-900 { background: rgba(30, 58, 138, 0.68); color: #dbeafe; }
+
+/* Utility shim for the SEC compare cards (replaces cdn.tailwindcss.com,
+   removed 2026-06-10). Values mirror the Tailwind v3 utilities of the same
+   name; only the classes actually used in index.html are defined. */
+.rounded-xl { border-radius: 0.75rem; }
+.border { border-width: 1px; }
+.border-slate-500\/30 { border-color: rgb(100 116 139 / 0.3); }
+.border-rose-500\/30 { border-color: rgb(244 63 94 / 0.3); }
+.bg-slate-950\/55 { background-color: rgb(2 6 23 / 0.55); }
+.p-4 { padding: 1rem; }
+.shadow-xl {
+  box-shadow:
+    0 20px 25px -5px var(--tw-shadow-color, rgb(0 0 0 / 0.1)),
+    0 8px 10px -6px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
+}
+.shadow-emerald-500\/10 { --tw-shadow-color: rgb(16 185 129 / 0.1); }
+.shadow-rose-500\/10 { --tw-shadow-color: rgb(244 63 94 / 0.1); }
+.shadow-rose-500\/20 { --tw-shadow-color: rgb(244 63 94 / 0.2); }
+.backdrop-blur-md { backdrop-filter: blur(12px); }
+.font-semibold { font-weight: 600; }
+.tracking-wide { letter-spacing: 0.025em; }
+.text-slate-100 { color: #f1f5f9; }
 
 .health-ribbon-summary {
   font-size: 0.82rem;
@@ -1068,26 +1079,6 @@ select:focus-visible,
   color: var(--muted);
   background: rgba(10, 16, 32, 0.45);
 }
-.report-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
-  gap: 8px;
-}
-.report-kpi {
-  border-radius: 10px;
-  border: 1px solid rgba(130, 153, 221, 0.25);
-  background: rgba(10, 16, 34, 0.6);
-  padding: 10px;
-}
-.report-kpi .label {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.report-kpi .value {
-  margin-top: 4px;
-  font-size: 1rem;
-  font-weight: 700;
-}
 .report-section {
   border-radius: 12px;
   border: 1px solid rgba(130, 153, 221, 0.3);
@@ -1158,18 +1149,6 @@ select:focus-visible,
   border-radius: 10px;
   border: 1px solid rgba(130, 153, 221, 0.24);
   background: rgba(9, 16, 35, 0.48);
-  padding: 8px;
-}
-.ic-snapshot-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.ic-snapshot-grid > div {
-  border-radius: 10px;
-  border: 1px solid rgba(130, 153, 221, 0.24);
-  background: rgba(9, 16, 35, 0.44);
   padding: 8px;
 }
 .report-split-grid {
@@ -1598,11 +1577,6 @@ select:focus-visible,
 .compare-narrative-card {
   border-color: rgba(148, 163, 184, 0.34);
   background: rgba(12, 20, 42, 0.72);
-}
-.compare-paragraph {
-  margin: 8px 0;
-  color: #dbe6ff;
-  line-height: 1.55;
 }
 .compare-changes-card {
   border-color: rgba(130, 153, 221, 0.35);
@@ -2387,14 +2361,6 @@ select:focus-visible,
 .modal-form-grid {
   flex-wrap: wrap;
   align-items: flex-end;
-}
-.hero-quick-links {
-  font-size: 0.92rem;
-  margin-top: 0.35rem;
-  line-height: 1.5;
-}
-.hero-quick-links a {
-  white-space: nowrap;
 }
 .stage-trade-panel {
   margin-bottom: 12px;
@@ -3376,17 +3342,13 @@ body.trade-drawer-open .trade-drawer-backdrop {
   padding: 8px 4px;
 }
 
-/* —— Task-first layout, progressive disclosure, view modes —— */
-.hero-toolbar {
+/* —— Task-first layout,
+progressive disclosure {
   margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-.hero-toolbar select {
-  margin-left: 0;
-  min-width: 140px;
 }
 
 .dashboard-today-stack {
@@ -3808,13 +3770,6 @@ tr.scan-row--filtered td:first-child strong {
   line-height: 1.5;
   font-size: 0.97rem;
 }
-.hero-actions #scanBtn {
-  font-weight: 700;
-  box-shadow: 0 10px 26px rgba(59, 130, 246, 0.35);
-}
-.hero-actions #refreshBtn {
-  opacity: 0.92;
-}
 
 .section-nav a:not(.nav-advanced) {
   font-weight: 650;
@@ -3863,70 +3818,6 @@ body.ui-pro .section-advanced {
 .onboarding-next-row {
   border-color: rgba(56, 189, 248, 0.42);
   box-shadow: 0 10px 22px rgba(8, 47, 73, 0.22);
-}
-
-.app-rail {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.rail-quick-actions {
-  display: grid;
-  gap: 10px;
-  border: 1px solid rgba(56, 189, 248, 0.26);
-  background: linear-gradient(140deg, rgba(8, 47, 73, 0.4), rgba(15, 23, 42, 0.82));
-}
-
-.rail-quick-actions strong {
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-}
-
-/* .workflow-toolbar removed in cleanup pass: was duplicate of topbar
-   actions with marketing copy and no live data binding. */
-
-.flow-stepper {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px;
-  margin-bottom: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  background: linear-gradient(120deg, rgba(8, 47, 73, 0.24), rgba(15, 23, 42, 0.76));
-}
-
-.flow-stepper a {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  border: 1px solid rgba(141, 165, 231, 0.28);
-  border-radius: 10px;
-  padding: 6px 10px;
-  color: #dbe6ff;
-  text-decoration: none;
-  font-size: 0.78rem;
-  font-weight: 600;
-  background: rgba(15, 23, 42, 0.5);
-}
-
-.flow-stepper a span {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.68rem;
-  background: rgba(56, 189, 248, 0.22);
-  color: #dbeafe;
-  border: 1px solid rgba(125, 211, 252, 0.45);
-}
-
-.flow-stepper a:hover {
-  border-color: rgba(125, 211, 252, 0.62);
-  background: rgba(30, 41, 59, 0.62);
 }
 
 .workflow-strapline {
@@ -4065,7 +3956,8 @@ body.ui-screen-settings .diagnostics-surface {
 body.ui-screen-operations .kronos-surface,
 body.ui-screen-research .kronos-surface,
 body.ui-screen-diagnostics .kronos-surface,
-body.ui-screen-settings .kronos-surface {
+body.ui-screen-settings .kronos-surface,
+body.ui-screen-cockpit .kronos-surface {
   display: none !important;
 }
 /* On the Kronos screen, hide all other workspaces' content. */
@@ -4108,6 +4000,68 @@ body.ui-screen-kronos #decisionSection {
 }
 body.ui-screen-kronos #kronosWorkspaceIntro {
   display: flex !important;
+}
+body.ui-screen-kronos .cockpit-surface {
+  display: none !important;
+}
+
+/* ── Cockpit screen visibility ────────────────────────────────────────── */
+/* Hide cockpit surfaces on every other screen. */
+body.ui-screen-operations .cockpit-surface,
+body.ui-screen-research .cockpit-surface,
+body.ui-screen-diagnostics .cockpit-surface,
+body.ui-screen-settings .cockpit-surface,
+body.ui-screen-kronos .cockpit-surface {
+  display: none !important;
+}
+/* On the Cockpit screen, hide all other workspaces' content (mirror of the
+   Kronos deny list, plus the Kronos surfaces themselves). */
+body.ui-screen-cockpit .operations-surface,
+body.ui-screen-cockpit .diagnostics-surface,
+body.ui-screen-cockpit #dashboardToday,
+body.ui-screen-cockpit #operationsWorkspaceIntro,
+body.ui-screen-cockpit #workflowPrimary,
+body.ui-screen-cockpit #scanSection,
+body.ui-screen-cockpit #scanDetailPanel,
+body.ui-screen-cockpit #pendingSection,
+body.ui-screen-cockpit #sectorsSection,
+body.ui-screen-cockpit #moversSection,
+body.ui-screen-cockpit #researchWorkspaceIntro,
+body.ui-screen-cockpit #researchWorkflowStrip,
+body.ui-screen-cockpit #quickCheckSection,
+body.ui-screen-cockpit #toolsSection,
+body.ui-screen-cockpit #recoverySection,
+body.ui-screen-cockpit #learningSection,
+body.ui-screen-cockpit #backtestSection,
+body.ui-screen-cockpit #reportSectionCard,
+body.ui-screen-cockpit #secCompareSection,
+body.ui-screen-cockpit #activitySection,
+body.ui-screen-cockpit #portfolioSection,
+body.ui-screen-cockpit #performanceSection,
+body.ui-screen-cockpit #diagnosticsWorkspaceIntro,
+body.ui-screen-cockpit #diagnosticsWorkflowStrip,
+body.ui-screen-cockpit #healthRibbon,
+body.ui-screen-cockpit #decisionDashboardCard,
+body.ui-screen-cockpit #statusDetailsPanel,
+body.ui-screen-cockpit #calibrationSection,
+body.ui-screen-cockpit #shadowScoreboardSection,
+body.ui-screen-cockpit #reviewLoopSection,
+body.ui-screen-cockpit #settingsWorkspaceIntro,
+body.ui-screen-cockpit #settingsWorkflowStrip,
+body.ui-screen-cockpit #onboardingSection,
+body.ui-screen-cockpit #settingsSection,
+body.ui-screen-cockpit #decisionSection {
+  display: none !important;
+}
+body.ui-screen-cockpit #cockpitWorkspaceIntro {
+  display: flex !important;
+}
+body.ui-screen-cockpit #cockpitSection {
+  display: grid !important;
+}
+/* The slide-in drawer only exists on the cockpit screen. */
+body:not(.ui-screen-cockpit) .cockpit-drawer {
+  display: none !important;
 }
 
 /* ── Kronos workspace styling ─────────────────────────────────────────── */
@@ -4377,19 +4331,6 @@ body.ui-simple.ui-screen-settings #onboardingSection {
   display: block !important;
 }
 
-.onboarding-user-hint {
-  margin-bottom: 0.75rem;
-  font-size: 0.95rem;
-  line-height: 1.45;
-}
-.onboarding-user-hint p {
-  margin: 0;
-}
-.onboarding-connect-row {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
 /* Schwab onboarding stepper -------------------------------------------- */
 .onboarding-stepper {
   list-style: none;
@@ -4518,33 +4459,10 @@ body.ui-simple.ui-screen-settings #onboardingSection {
   flex-wrap: wrap;
 }
 
-@media (min-width: 1120px) {
-  .app-rail {
-    position: sticky;
-    top: 10px;
-    z-index: 5;
-  }
-}
-
 @media (max-width: 900px) {
   .workspace-intro {
     flex-direction: column;
   }
-  .flow-stepper {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-/* Operations-first layout refinements */
-.layout-workflow {
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
-  align-items: start;
-  gap: 14px;
-}
-
-.layout-workflow > #pendingSection {
-  position: sticky;
-  top: var(--sticky-offset);
 }
 
 .scan-results-layout {
@@ -4595,11 +4513,7 @@ body.ui-simple.ui-screen-settings #onboardingSection {
 }
 
 @media (max-width: 1200px) {
-  .layout-workflow {
-    grid-template-columns: 1fr;
-  }
 
-  .layout-workflow > #pendingSection,
   .scan-detail-panel {
     position: static;
     max-height: none;
@@ -4610,23 +4524,20 @@ body.ui-simple.ui-screen-settings #onboardingSection {
   }
 }
 
-.onboarding-help,
-.onboarding-advanced {
+.onboarding-help {
   margin-bottom: 12px;
   border-radius: 10px;
   border: 1px solid rgba(100, 116, 139, 0.25);
   background: rgba(10, 16, 34, 0.4);
   padding: 0 12px;
 }
-.onboarding-help summary,
-.onboarding-advanced summary {
+.onboarding-help summary {
   cursor: pointer;
   padding: 10px 0;
   font-weight: 600;
   color: #cbd5f5;
 }
-.onboarding-help[open],
-.onboarding-advanced[open] {
+.onboarding-help[open] {
   padding-bottom: 12px;
 }
 .onboarding-help-body h3 {
@@ -4669,17 +4580,6 @@ body.ui-pro .panel-disclosure--advanced {
   .research-workflow-strip { grid-template-columns: 1fr; }
   .diagnostics-workflow-strip,
   .settings-workflow-strip { grid-template-columns: 1fr; }
-  .hero-shell {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "main"
-      "aside";
-  }
-  .hero-aside { max-width: 100%; }
-  .hero-kpi-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .report-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .compare-grid { grid-template-columns: 1fr; }
   .mgmt-dashboard { grid-template-columns: 1fr; }
   .integrity-score-wrap { grid-template-columns: 1fr; }
@@ -4697,11 +4597,10 @@ body.ui-pro .panel-disclosure--advanced {
   .funnel-grid {
     grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   }
-  .ic-snapshot-grid,
   .report-split-grid,
-  .report-claim-grid,
-  .report-scenario-kpis,
-  .perf-attribution-grid {
+.report-claim-grid,
+.report-scenario-kpis,
+.perf-attribution-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -4709,9 +4608,6 @@ body.ui-pro .panel-disclosure--advanced {
 @media (max-width: 760px) {
   .container { width: min(96vw, 1280px); margin-top: 16px; gap: 12px; }
   .hero { padding: 16px; }
-  .hero-kpi-strip {
-    grid-template-columns: 1fr;
-  }
   .hero h1 { font-size: 1.46rem; }
   .stats { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .section-title { padding: 14px 14px 10px; }
@@ -4720,16 +4616,6 @@ body.ui-pro .panel-disclosure--advanced {
   .btn.small { font-size: 0.76rem; padding: 6px 9px; }
   .section-nav { top: 6px; }
   .health-ribbon { top: 4px; }
-  .screen-context {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .screen-context-actions {
-    width: 100%;
-  }
-  .flow-stepper {
-    grid-template-columns: 1fr;
-  }
 }
 
 .mobile-primary-dock {
@@ -5181,7 +5067,6 @@ progress::-moz-progress-bar {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.hero-actions { position: relative; }
 
 /* ── Portfolio Risk Panel ─────────────────── */
 .risk-panel-content {
@@ -5471,18 +5356,6 @@ html, body {
   box-shadow: var(--elevation-soft);
 }
 
-.hero-shell {
-  gap: 1.4rem 2.2rem;
-  border: 1px solid rgba(125, 211, 252, 0.32);
-  background:
-    linear-gradient(130deg, rgba(30, 64, 175, 0.32) 0%, rgba(7, 11, 24, 0.9) 42%),
-    linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(6, 11, 25, 0.95));
-}
-
-.hero-shell::before {
-  opacity: 1;
-}
-
 .hero h1 {
   font-size: clamp(1.95rem, 2.5vw, 2.8rem);
   letter-spacing: -0.022em;
@@ -5494,31 +5367,10 @@ html, body {
   font-size: 1rem;
 }
 
-.hero-actions .btn.primary {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-  border-color: rgba(165, 180, 252, 0.55);
-  color: #ffffff;
-}
-
-.hero-actions .btn.secondary {
-  background: rgba(9, 15, 30, 0.72);
-  border-color: rgba(148, 163, 184, 0.34);
-}
-
-.hero-kpi-strip {
-  gap: 10px;
-}
-
 .hero-kpi {
   border-radius: 14px;
   background: rgba(6, 10, 22, 0.72);
   border: 1px solid rgba(125, 211, 252, 0.24);
-}
-
-.app-rail {
-  position: sticky;
-  top: 10px;
-  z-index: 20;
 }
 
 .section-nav {
@@ -5540,22 +5392,6 @@ html, body {
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.42), rgba(139, 92, 246, 0.4));
   border-color: rgba(165, 180, 252, 0.78);
   box-shadow: 0 0 0 1px rgba(165, 180, 252, 0.32) inset;
-}
-
-.screen-context {
-  border: 1px solid rgba(125, 211, 252, 0.22);
-  background: linear-gradient(145deg, rgba(8, 14, 30, 0.84), rgba(7, 11, 24, 0.96));
-}
-
-.flow-stepper {
-  border-radius: 16px;
-  padding: 12px;
-}
-
-.flow-stepper a {
-  min-height: 42px;
-  border-radius: 12px;
-  font-size: 0.82rem;
 }
 
 #workflowPrimary {
@@ -5698,15 +5534,9 @@ html, body {
   .container {
     width: min(96vw, 1400px);
   }
-  .app-rail {
-    position: static;
-  }
 }
 
 @media (max-width: 760px) {
-  .hero-shell {
-    border-radius: 18px;
-  }
   .hero h1 {
     font-size: 1.68rem;
   }
@@ -5777,27 +5607,6 @@ html, body {
     margin: 16px 24px 56px 338px;
     width: auto;
     max-width: none;
-  }
-
-  .app-rail {
-    position: fixed;
-    left: 20px;
-    top: 16px;
-    width: 300px;
-    height: calc(100vh - 32px);
-    overflow: auto;
-    z-index: 35;
-    padding-right: 2px;
-  }
-
-  .app-rail .section-nav {
-    position: static;
-  }
-}
-
-@media (max-width: 1279px) {
-  .app-rail {
-    position: static;
   }
 }
 
@@ -5964,4 +5773,133 @@ html, body {
   border-radius: 8px;
   background: rgba(2, 6, 23, 0.94);
   z-index: 40;
+}
+
+/* ── Cockpit workspace styling ────────────────────────────────────────── */
+/* Ported from the retired standalone cockpit.html inline styles, scoped
+   under .cockpit-surface / .cockpit-drawer. Uses the editorial (--ol-*)
+   tokens with the same fallbacks as the original page. */
+.cockpit-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+}
+@media (max-width: 1100px) {
+  .cockpit-grid { grid-template-columns: 1fr; }
+}
+.cockpit-grid .lane {
+  border: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--ol-surface, #fffefb);
+  min-height: 180px;
+}
+.cockpit-grid .lane h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 0.98rem;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cockpit-grid .lane h2 .lane-prov {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 400;
+  opacity: 0.85;
+}
+.cockpit-surface .prov-badge,
+.cockpit-drawer .prov-badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.cockpit-surface .prov-high, .cockpit-drawer .prov-high { color: #2d5a4a; }
+.cockpit-surface .prov-medium, .cockpit-drawer .prov-medium { color: #8a6d1f; }
+.cockpit-surface .prov-low, .cockpit-drawer .prov-low { color: #b23b3b; }
+.cockpit-surface .stale-dot { color: #b23b3b; font-weight: 700; }
+.cockpit-surface .opp-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
+  cursor: pointer;
+}
+.cockpit-surface .opp-row:hover { background: rgba(26, 26, 26, 0.04); }
+.cockpit-surface .opp-row .tk { font-weight: 700; }
+.cockpit-surface .opp-row .rank { font-variant-numeric: tabular-nums; opacity: 0.9; }
+.cockpit-surface .pill.muted,
+.cockpit-drawer .pill.muted {
+  background: rgba(90, 90, 90, 0.12);
+  color: #5a5a5a;
+}
+.cockpit-surface .kv,
+.cockpit-drawer .kv {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px dashed rgba(26, 26, 26, 0.12);
+  font-size: 0.85rem;
+}
+.cockpit-surface .kv span:last-child,
+.cockpit-drawer .kv span:last-child { font-variant-numeric: tabular-nums; }
+.cockpit-surface .regime-bull, .cockpit-drawer .regime-bull { color: #2d5a4a; }
+.cockpit-surface .regime-bear, .cockpit-drawer .regime-bear { color: #b23b3b; }
+.cockpit-surface .regime-neutral, .cockpit-drawer .regime-neutral { color: #8a6d1f; }
+.cockpit-drawer {
+  /* Opt out of the .container > * card-enter animation: its fill-mode
+     would pin transform and defeat the slide-in translate below. */
+  animation: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(520px, 96vw);
+  height: 100%;
+  background: var(--ol-surface, #fffefb);
+  border-left: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+  overflow-y: auto;
+  z-index: 50;
+}
+.cockpit-drawer.open { transform: translateX(0); }
+.cockpit-drawer-inner { padding: 16px; }
+.cockpit-drawer h3 { font-family: "Fraunces", Georgia, serif; margin: 4px 0 12px; }
+.cockpit-drawer-close { float: right; cursor: pointer; opacity: 0.7; }
+.cockpit-drawer-subhead {
+  margin: 12px 0 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.cockpit-drawer-reasons {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+.cockpit-surface .change-strip,
+.cockpit-drawer .change-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+}
+.cockpit-surface .change-chip,
+.cockpit-drawer .change-chip {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
+}
+.cockpit-surface .change-chip b,
+.cockpit-drawer .change-chip b { font-variant-numeric: tabular-nums; }
+.cockpit-drawer .preview-box {
+  border: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 10px;
 }

@@ -15,7 +15,6 @@
 
 import { state, AUTH_TOKEN_KEY, LEGACY_AUTH_TOKEN_KEYS } from "./state.js";
 import { safeText } from "./format.js";
-import { isFlagEnabled } from "./featureFlags.js";
 import { renderAuthState } from "./authPresentation.js";
 
 /** Reference to the lazily-loaded Supabase JS client. Read-only outside this
@@ -220,34 +219,19 @@ export function updateSupabaseAuthUI(session) {
   const label = document.getElementById("supabaseUserLabel");
   if (!out || !inn) return;
   if (session?.user) markEmailVerifiedOnce();
-  if (isFlagEnabled("unified_auth_block")) {
-    renderAuthState(
-      {
-        signedOutEl: out,
-        signedInEl: inn,
-        labelEl: label,
-        verifyBtn: document.getElementById("supabaseVerifyBtn"),
-      },
-      {
-        state: session?.user ? "signed-in" : "signed-out",
-        email: session?.user ? session.user.email || session.user.id || "Signed in" : "",
-        verified: hasVerifiedEmailOnce(),
-      },
-    );
-    return;
-  }
-  if (session?.user) {
-    out.classList.add("hidden");
-    inn.classList.remove("hidden");
-    if (label) label.textContent = session.user.email || session.user.id || "Signed in";
-  } else {
-    inn.classList.add("hidden");
-    out.classList.remove("hidden");
-    if (label) label.textContent = "";
-    // Returning verified users see "Sign in", not the confusing "Verify email".
-    const verifyBtn = document.getElementById("supabaseVerifyBtn");
-    if (verifyBtn && hasVerifiedEmailOnce()) verifyBtn.textContent = "Sign in";
-  }
+  renderAuthState(
+    {
+      signedOutEl: out,
+      signedInEl: inn,
+      labelEl: label,
+      verifyBtn: document.getElementById("supabaseVerifyBtn"),
+    },
+    {
+      state: session?.user ? "signed-in" : "signed-out",
+      email: session?.user ? session.user.email || session.user.id || "Signed in" : "",
+      verified: hasVerifiedEmailOnce(),
+    },
+  );
 }
 
 /** Default ESM URL for the Supabase JS SDK. Importable so callers can override

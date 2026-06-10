@@ -1,6 +1,6 @@
 /**
  * Shared helpers for Supabase access JWTs (browser + classic script bundles).
- * Loaded before app.js / login.js / simple.js.
+ * Loaded before app.js / login.js.
  */
 (function (w) {
   "use strict";

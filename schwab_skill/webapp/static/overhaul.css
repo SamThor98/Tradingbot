@@ -1,6 +1,6 @@
 /* ============================================================
    Editorial Trading Terminal — Visual Overhaul (legacy stack)
-   Loaded AFTER styles.css and simple.css; intentionally high
+   Loaded AFTER styles.css; intentionally high
    specificity (body[data-theme="editorial"]) to win the cascade
    without rewriting legacy stylesheets.
 
@@ -60,8 +60,7 @@ body[data-theme="editorial"] {
 }
 
 body[data-theme="editorial"] .bg-blur,
-body[data-theme="editorial"] .bg-grid,
-body[data-theme="editorial"] .hero-shell::before {
+body[data-theme="editorial"] .bg-grid {
   display: none !important;
 }
 
@@ -151,7 +150,6 @@ body[data-theme="editorial"] .card:hover {
   border-color: var(--ink-line-strong) !important;
 }
 
-body[data-theme="editorial"] .hero-shell,
 body[data-theme="editorial"] .hero {
   background:
     linear-gradient(180deg, rgba(201, 166, 107, 0.06) 0%, rgba(10, 13, 20, 0) 70%),
@@ -163,8 +161,7 @@ body[data-theme="editorial"] .hero {
   overflow: hidden;
 }
 
-body[data-theme="editorial"] .hero::after,
-body[data-theme="editorial"] .hero-shell::after {
+body[data-theme="editorial"] .hero::after {
   content: "";
   position: absolute;
   left: 32px;
@@ -173,24 +170,6 @@ body[data-theme="editorial"] .hero-shell::after {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--gold) 30%, var(--gold) 70%, transparent);
   opacity: 0.5;
-}
-
-body[data-theme="editorial"] .hero-aside {
-  border-left: 1px solid var(--ink-line);
-  padding-left: 1.4rem;
-}
-
-body[data-theme="editorial"] .hero-chart {
-  background: rgba(8, 11, 18, 0.6) !important;
-  border: 1px solid var(--ink-line) !important;
-  border-radius: 2px !important;
-}
-
-body[data-theme="editorial"] .hero-chart-caption {
-  color: var(--gold) !important;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-size: 0.66rem;
 }
 
 body[data-theme="editorial"] .hero-kpi {
@@ -294,16 +273,6 @@ body[data-theme="editorial"] .section-nav {
   grid-template-columns: 1fr;
 }
 
-body[data-theme="editorial"] .screen-switch {
-  width: 100%;
-  display: grid !important;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px !important;
-  margin-bottom: 12px !important;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--ink-line);
-}
-
 body[data-theme="editorial"] .screen-switch-btn {
   border: 1px solid var(--ink-line) !important;
   border-radius: 2px !important;
@@ -347,24 +316,6 @@ body[data-theme="editorial"] .section-nav a.active {
   border-left-color: var(--gold) !important;
   color: var(--paper-warm) !important;
   background: rgba(201, 166, 107, 0.06) !important;
-}
-
-/* Screen context ---------------------------------------------- */
-body[data-theme="editorial"] .screen-context {
-  background: var(--ink-2) !important;
-  border: 1px solid var(--ink-line) !important;
-  border-radius: 2px !important;
-  border-left: 2px solid var(--gold) !important;
-}
-
-body[data-theme="editorial"] .screen-context-copy strong {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  text-transform: none !important;
-  letter-spacing: -0.005em !important;
-  font-size: 1.05rem !important;
-  color: var(--paper-warm) !important;
 }
 
 /* Health ribbon ----------------------------------------------- */
@@ -439,48 +390,6 @@ body[data-theme="editorial"] #workflowPrimary {
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
-}
-
-body[data-theme="editorial"] .flow-stepper {
-  background: var(--ink) !important;
-  border: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  padding: 10px !important;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0 !important;
-  margin-bottom: 16px;
-}
-
-body[data-theme="editorial"] .flow-stepper a {
-  background: transparent !important;
-  border: none !important;
-  border-right: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  color: var(--paper) !important;
-  font-family: var(--sans) !important;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-  font-weight: 600;
-  min-height: 48px !important;
-  padding: 12px 14px !important;
-}
-
-body[data-theme="editorial"] .flow-stepper a:last-child {
-  border-right: none !important;
-}
-
-body[data-theme="editorial"] .flow-stepper a span {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  width: auto !important;
-  height: auto !important;
-  border: none !important;
-  background: transparent !important;
-  color: var(--gold) !important;
-  font-size: 1.1rem !important;
 }
 
 /* Kanban lanes ------------------------------------------------ */
@@ -818,24 +727,6 @@ body[data-theme="editorial"] .panel-disclosure-summary {
   color: var(--gold) !important;
 }
 
-/* Decorative volume marker for hero --------------------------- */
-body[data-theme="editorial"] .hero-main {
-  position: relative;
-}
-
-body[data-theme="editorial"] .hero-main::before {
-  content: "Vol. 01 — Operate";
-  position: absolute;
-  top: -6px;
-  right: 0;
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 0.85rem;
-  color: var(--gold);
-  letter-spacing: 0.04em;
-  opacity: 0.85;
-}
-
 /* Workspace intro typographic flourish ------------------------ */
 body[data-theme="editorial"] .workspace-intro h2::before {
   content: "—";
@@ -870,23 +761,13 @@ body[data-theme="editorial"] .workspace-intro h2::before {
   body[data-theme="editorial"] .kanban-lane:last-child {
     border-bottom: none !important;
   }
-  body[data-theme="editorial"] .flow-stepper {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  body[data-theme="editorial"] .flow-stepper a:nth-child(2n) {
-    border-right: none !important;
-  }
-  body[data-theme="editorial"] .hero-main::before {
-    display: none;
-  }
 }
 
 @media (max-width: 760px) {
   body[data-theme="editorial"] {
     font-size: 14px;
   }
-  body[data-theme="editorial"] .hero,
-  body[data-theme="editorial"] .hero-shell {
+  body[data-theme="editorial"] .hero {
     padding: 22px 18px !important;
   }
   body[data-theme="editorial"] .health-ribbon {
@@ -895,13 +776,6 @@ body[data-theme="editorial"] .workspace-intro h2::before {
   body[data-theme="editorial"] .health-tile {
     border-right: none !important;
     border-bottom: 1px solid var(--ink-line) !important;
-  }
-  body[data-theme="editorial"] .flow-stepper {
-    grid-template-columns: 1fr;
-  }
-  body[data-theme="editorial"] .flow-stepper a {
-    border-right: none !important;
-    border-bottom: 1px solid var(--ink-line);
   }
 }
 
@@ -964,37 +838,6 @@ body[data-theme="editorial"] .simple-pill {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-size: 0.78rem;
-}
-
-/* App-rail (desktop persistent left column) ------------------- */
-@media (min-width: 1280px) {
-  body[data-theme="editorial"] .app-rail {
-    background: var(--ink) !important;
-    border-right: 1px solid var(--ink-line);
-    padding: 24px 16px !important;
-  }
-}
-
-body[data-theme="editorial"] .app-rail {
-  display: grid;
-  gap: 12px;
-}
-
-body[data-theme="editorial"] .rail-quick-actions {
-  background: transparent !important;
-  border: 1px solid var(--ink-line) !important;
-  border-left: 2px solid var(--gold) !important;
-  border-radius: 0 !important;
-  padding: 14px !important;
-}
-
-body[data-theme="editorial"] .rail-quick-actions strong {
-  font-family: var(--serif) !important;
-  font-style: italic !important;
-  font-weight: 400 !important;
-  text-transform: none !important;
-  font-size: 1.05rem !important;
-  color: var(--paper-warm) !important;
 }
 
 /* Decision dashboard refinements ------------------------------ */
@@ -1081,15 +924,6 @@ body[data-theme="editorial"] .notif-badge {
   font-family: var(--mono);
 }
 
-/* Hero KPI strip vertical rules ------------------------------- */
-body[data-theme="editorial"] .hero-kpi-strip {
-  border-top: 1px solid var(--ink-line);
-  margin-top: 18px;
-  padding-top: 4px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-
 body[data-theme="editorial"] .hero-kpi {
   border-top: none !important;
   border-right: 1px solid var(--ink-line) !important;
@@ -1115,30 +949,7 @@ body[data-theme="editorial"] .container {
   gap: 18px !important;
 }
 
-body[data-theme="editorial"] .app-rail {
-  position: sticky !important;
-  top: 12px !important;
-  left: auto !important;
-  width: auto !important;
-  height: auto !important;
-  display: grid !important;
-  grid-template-columns: 1fr;
-  gap: 0 !important;
-  background: var(--ink) !important;
-  border: 1px solid var(--ink-line);
-  padding: 0 !important;
-  z-index: 12;
-}
-
-body[data-theme="editorial"] .app-rail .section-nav {
-  border: none !important;
-  padding: 12px 14px !important;
-  display: grid !important;
-  gap: 4px !important;
-}
-
-/* Tabs row first, then a compact horizontal link strip. */
-body[data-theme="editorial"] .screen-switch {
+/* Tabs row first {
   display: grid !important;
   grid-template-columns: repeat(4, 1fr) !important;
   gap: 4px !important;
@@ -1171,13 +982,11 @@ body[data-theme="editorial"] .section-nav a:hover {
 }
 
 /* 2. Drop redundant marketing/wayfinding blocks. The kanban
-      lane headers, hero, and section-nav already convey this.
-      operate-priority-bar, command-center, workflow-toolbar
-      were removed from HTML; remaining selectors are kept hidden
-      until they are also removed from styles.css. */
-body[data-theme="editorial"] .flow-stepper,
-body[data-theme="editorial"] .rail-quick-actions,
-body[data-theme="editorial"] .screen-context,
+      lane headers,
+hero,
+and section-nav already convey this.
+      operate-priority-bar,
+command-center,
 body[data-theme="editorial"] #researchWorkflowStrip,
 body[data-theme="editorial"] #diagnosticsWorkflowStrip,
 body[data-theme="editorial"] #settingsWorkflowStrip,
@@ -1188,10 +997,12 @@ body[data-theme="editorial"] #settingsWorkspaceIntro {
   display: none !important;
 }
 
-/* 4. Hero compaction: shorter, no decorative dateline, smaller
-      headline scale, KPI strip becomes the only secondary thing. */
-body[data-theme="editorial"] .hero,
-body[data-theme="editorial"] .hero-shell {
+/* 4. Hero compaction: shorter,
+no decorative dateline,
+smaller
+      headline scale,
+KPI strip becomes the only secondary thing. */
+body[data-theme="editorial"] .hero {
   padding: 24px 28px !important;
 }
 
@@ -1206,27 +1017,8 @@ body[data-theme="editorial"] .hero-lead {
   margin-bottom: 1rem;
 }
 
-body[data-theme="editorial"] .hero-actions {
-  margin-top: 0.6rem !important;
-  gap: 8px !important;
-}
-
-body[data-theme="editorial"] .hero-toolbar,
-body[data-theme="editorial"] .hero-main::before,
-body[data-theme="editorial"] .hero::after,
-body[data-theme="editorial"] .hero-shell::after {
+body[data-theme="editorial"] .hero::after {
   display: none !important;
-}
-
-/* On smaller viewports, let the hero be a single column block. */
-@media (max-width: 1100px) {
-  body[data-theme="editorial"] .hero-aside {
-    display: none !important;
-  }
-  body[data-theme="editorial"] .hero-shell {
-    grid-template-columns: 1fr !important;
-    grid-template-areas: "main" !important;
-  }
 }
 
 /* 5. dashboardToday: keep only the health ribbon + decision

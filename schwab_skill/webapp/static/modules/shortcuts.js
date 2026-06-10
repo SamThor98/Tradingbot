@@ -30,7 +30,7 @@ export function setupKeyboardShortcuts({
       return;
     }
 
-    if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4", "5"].includes(e.key)) {
+    if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4", "5", "6"].includes(e.key)) {
       e.preventDefault();
       const screenMap = {
         "1": "operations",
@@ -38,6 +38,7 @@ export function setupKeyboardShortcuts({
         "3": "kronos",
         "4": "diagnostics",
         "5": "settings",
+        "6": "cockpit",
       };
       const mode = screenMap[e.key];
       if (mode) {
@@ -71,7 +72,7 @@ export function setupKeyboardShortcuts({
         break;
       case "?":
         e.preventDefault();
-        showToast?.("Shortcuts: Ctrl+K palette, Ctrl/Cmd+1..5 screens, R refresh, S scan, T ticker, 1-3 detail", "info", 5500);
+        showToast?.("Shortcuts: Ctrl+K palette, Ctrl/Cmd+1..6 screens, R refresh, S scan, T ticker, 1-3 detail", "info", 5500);
         break;
       case "1":
         e.preventDefault();

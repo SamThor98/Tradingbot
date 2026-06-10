@@ -27,6 +27,17 @@ hard-coded colors/fonts.
   3) `readability.css` (canonical active readability contract)
 - Any new readability work should be added to `readability.css` only.
 - Do not add additional post-readability override files.
+- 2026-06-10 dead-CSS sweep: ~600 lines of unreferenced selectors pruned from
+  `styles.css` and `overhaul.css` (rules whose classes appear in no HTML/JS).
+  Remaining audit "misses" are dynamically-built class names
+  (`toast-*`, `severity-*`, `chat-bubble-*`, `task-card--risk-*`,
+  `dossier-quality-badge--*`) — keep these even though no literal match exists.
+- 2026-06-10 Tailwind CDN removed: the only real consumers were the four SEC
+  compare cards in `index.html` plus the `bg-*-900` health badges. Those
+  utilities are now self-hosted in `styles.css` (see the "Utility shim" block),
+  and a Tailwind-v3-preflight-equivalent reset sits at the top of `styles.css`
+  because the whole page always rendered with preflight active. Do not add new
+  Tailwind classes — use tokens/components instead.
 
 ## Screen Selector Map
 
@@ -52,6 +63,20 @@ hard-coded colors/fonts.
 - Focus visibility: keep a high-contrast `:focus-visible` outline for keyboard users.
 - Critical actions (`Run Scan`, approve/reject controls, primary CTA) must never rely on muted styling.
 
+## Async Surface Contract
+
+- Every fetch-driven panel must carry `data-async-state` (loading/empty/error/
+  success/stale/signed_out) and render explicit loading + error markup.
+- Prefer `setAsyncState` / `renderAsync` from `modules/asyncState.js`; the
+  hand-rolled `async-state--*` markup in older panels is acceptable as long as
+  it matches the same classes and includes a retry affordance for idempotent
+  GETs.
+- 2026-06-10 adoption sweep: `profile.js`, `quickCheck.js`, `report.js`
+  retrofitted. Remaining intentional exceptions: `sec.js` (status line +
+  metadata fallback flow), `tradeDrawer.js` (inline text states),
+  `backtest.js` / `onboarding.js` / `kronosWorkspace.js` / `twoFa.js`
+  (wizard- or run-status-driven flows with their own messaging).
+
 ## Module Decomposition Policy
 
 - Keep `app.js` as orchestrator only (event wiring + cross-panel coordination).
@@ -63,12 +88,23 @@ hard-coded colors/fonts.
 
 - Added `static/modules/validationView.js` and moved validation-step rendering
   out of `app.js`.
+- 2026-06-10: completed the three planned splits —
+  - `panels/scanDiagnostics.js`: `buildScanMeta`, `diagnosticsHeadline`,
+    blocker/funnel builders, and `renderDiagnostics` (DI: `updateHeroInfographic`,
+    `getDisplayMode`).
+  - `panels/pendingBoard.js`: `refreshPendingBoard` plus the task-card render
+    helpers (DI: `openApproveDialog`, `updateHeroInfographic`,
+    `trackFunnelMilestoneOnce`, `FUNNEL_EVENTS`).
+  - `panels/healthRibbon.js`: ribbon badges/tiles, the plain-language summary,
+    and `prioritizeActionCenterFromHealth` (no DI; imports modules directly).
+  - `modules/signalScores.js`: shared pure score accessors
+    (`getCompositeScore`, `getReliabilityScore`, `getCalibratedPUp`, etc.)
+    used by both the scan table and the pending board.
 - Existing panel modules (`panels/*.js`) remain the preferred target for new UI
   functionality.
 
 ## Next Planned Splits
 
-1. Move scan diagnostics rendering (`buildScanMeta`, diagnostics blocker/funnel)
-   into `panels/scanDiagnostics.js`.
-2. Move pending board rendering into `panels/pendingBoard.js`.
-3. Move health ribbon rendering into `panels/healthRibbon.js`.
+1. Move the scan results table rendering (sort/compare/row builders) into
+   `panels/scanTable.js`.
+2. Move the approve dialog + preflight checklist into `panels/approveDialog.js`.

@@ -1058,7 +1058,11 @@ export async function runReport() {
   btn.textContent = "Running...";
   setReportRunStatus("Status: queued", "muted");
   output.textContent = "Generating report...";
-  visual.innerHTML = `<div class="report-empty">Generating visual report...</div>`;
+  visual.setAttribute("data-async-state", "loading");
+  visual.innerHTML = `<div class="async-state async-state--loading" role="status">
+    <span class="async-spinner" aria-hidden="true"></span>
+    <span>Generating visual report for ${safeText(ticker)}…</span>
+  </div>`;
   updateActionCenter({ title: "Report Running", message: `Generating report for ${ticker}...`, severity: "info" });
 
   try {
@@ -1070,7 +1074,12 @@ export async function runReport() {
     const out = await api.get(`/api/report/${ticker}?${qs.toString()}`, { timeoutMs: 300000 });
     if (!out.ok) {
       output.textContent = out.error || "Report failed.";
-      visual.innerHTML = `<div class="report-empty">${safeText(out.error || "Report failed.")}</div>`;
+      visual.setAttribute("data-async-state", "error");
+      visual.innerHTML = `<div class="async-state async-state--error" role="alert">
+        <span>${safeText(out.user_message || out.error || "Report failed.")}</span>
+        <button type="button" class="btn small secondary" data-report-retry>Retry</button>
+      </div>`;
+      visual.querySelector("[data-report-retry]")?.addEventListener("click", () => void runReport());
       setReportRunStatus("Status: partial failure (fetching/scoring failed)", "warn");
       logEvent({ kind: "report", severity: "error", message: `Report ${ticker} failed: ${out.error}` });
       return;
@@ -1095,6 +1104,7 @@ export async function runReport() {
     output.textContent = JSON.stringify(out.data, null, 2);
     renderReportTabs(out.data);
     renderReportVisual(out.data);
+    visual.setAttribute("data-async-state", "success");
     if (portfolioRiskFailed) {
       setReportRunStatus("Status: complete with partial failure (portfolio risk unavailable)", "warn");
     } else {

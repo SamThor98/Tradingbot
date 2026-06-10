@@ -17,6 +17,13 @@ import { api } from "../modules/api.js";
 import { getApiAccessToken } from "../modules/auth.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
+import {
+  setAsyncState,
+  ASYNC_LOADING,
+  ASYNC_ERROR,
+  ASYNC_SUCCESS,
+  ASYNC_SIGNED_OUT,
+} from "../modules/asyncState.js";
 
 export const PRESET_SETTING_LABELS = {
   POSITION_SIZE_USD: "Position size (USD)",
@@ -164,10 +171,11 @@ export function renderPresetApplyPreview() {
 export async function loadProfiles() {
   const panel = document.getElementById("profilePanel");
   if (!panel) return;
+  setAsyncState(panel, ASYNC_LOADING, { message: "Loading preset settings…" });
   const token = await getApiAccessToken();
   if (!token) {
-    renderProfilePanel(panel, null, {
-      error: "Sign in first to load profile settings (missing auth session).",
+    setAsyncState(panel, ASYNC_SIGNED_OUT, {
+      message: "Sign in first to load profile settings (missing auth session).",
     });
     return;
   }
@@ -176,12 +184,15 @@ export async function loadProfiles() {
   const out = await api.get(`/api/settings/profiles?expert=${expert}`);
   if (!out.ok) {
     if (out.status === 401) {
-      renderProfilePanel(panel, null, {
-        error: "Sign in first to load profile settings (session expired or missing).",
+      setAsyncState(panel, ASYNC_SIGNED_OUT, {
+        message: "Sign in first to load profile settings (session expired or missing).",
       });
       return;
     }
-    renderProfilePanel(panel, null, { error: `Profile load failed: ${out.error}` });
+    setAsyncState(panel, ASYNC_ERROR, {
+      message: `Profile load failed: ${out.user_message || out.error || "request failed"}`,
+      onRetry: () => void loadProfiles(),
+    });
     return;
   }
   state.profile = out.data;
@@ -196,6 +207,7 @@ export async function loadProfiles() {
   document.getElementById("settingsModeSelect").value = out.data.mode || "standard";
   document.getElementById("automationOptIn").checked = Boolean(out.data.automation_opt_in);
   renderProfilePanel(panel, out.data);
+  panel.setAttribute("data-async-state", ASYNC_SUCCESS);
   renderPresetApplyPreview();
 }
 

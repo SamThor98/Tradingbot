@@ -21,7 +21,6 @@ import {
   formatDecimal,
   pct,
   formatPercentPoints,
-  clampPct,
   verdictFromScore,
   timeAgo,
   durationSec,
@@ -34,15 +33,7 @@ import {
   clearUnavailable,
   FRESHNESS_BUDGETS_SEC,
 } from "./modules/freshness.js";
-import {
-  setAsyncState,
-  busyButton,
-  retryGet,
-  ASYNC_LOADING,
-  ASYNC_EMPTY,
-  ASYNC_ERROR,
-  ASYNC_SUCCESS,
-} from "./modules/asyncState.js";
+import { retryGet } from "./modules/asyncState.js";
 import {
   authSessionReady,
   markAuthReady,
@@ -70,7 +61,6 @@ import {
   handleRouteHash,
   installRouter,
 } from "./modules/router.js";
-import { initFeatureFlags, isFlagEnabled } from "./modules/featureFlags.js";
 import {
   attachVerifyCooldownButton,
   requestVerificationEmail,
@@ -119,7 +109,6 @@ import {
   loadDecisionCard,
   mapRecovery,
   openTradeDrawer,
-  openTradeDrawerForTrade,
 } from "./panels/tradeDrawer.js";
 import { refreshSectors } from "./panels/sectors.js";
 import { refreshMovers } from "./panels/movers.js";
@@ -196,12 +185,37 @@ import {
   sendStrategyChat as _sendStrategyChatPanel,
 } from "./panels/strategyChat.js";
 import { renderValidationRecentSteps } from "./modules/validationView.js";
+import {
+  setHealthRibbonUnavailable,
+  setHealthRibbonTiles,
+  renderHealthRibbonSummary,
+  prioritizeActionCenterFromHealth,
+} from "./panels/healthRibbon.js";
+import {
+  buildScanMeta,
+  diagnosticsHeadline,
+  renderDiagnostics as _renderDiagnosticsPanel,
+} from "./panels/scanDiagnostics.js";
+import { refreshPendingBoard as _refreshPendingBoardPanel } from "./panels/pendingBoard.js";
+import {
+  optionalNum,
+  getCompositeScore,
+  getConvictionScore,
+  getCalibratedPUp,
+  getReliabilityScore,
+  getEdgeScore,
+  getExecutionScore,
+  getEv10d,
+  formatConfidenceLabel,
+} from "./modules/signalScores.js";
 import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
 import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
+import { initCockpitPanel, primeCockpitPanel } from "./panels/cockpit.js";
 import { createOperationsController } from "./screens/operations.js";
 import { createResearchController } from "./screens/research.js";
 import { createKronosController } from "./screens/kronos.js";
+import { createCockpitController } from "./screens/cockpit.js";
 import { createDiagnosticsController } from "./screens/diagnostics.js";
 import { createSettingsController } from "./screens/settings.js";
 
@@ -230,6 +244,15 @@ const showScQueueCallout = (taskId, runId) =>
   _showScQueueCalloutPanel(taskId, runId, { switchBacktestHubTab });
 const sendStrategyChat = () =>
   _sendStrategyChatPanel({ refreshBacktestRuns, switchBacktestHubTab });
+const renderDiagnostics = (diag) =>
+  _renderDiagnosticsPanel(diag, { updateHeroInfographic, getDisplayMode });
+const refreshPending = () =>
+  _refreshPendingBoardPanel({
+    openApproveDialog,
+    updateHeroInfographic,
+    trackFunnelMilestoneOnce,
+    FUNNEL_EVENTS,
+  });
 
 const lazyLoaded = {
   portfolio: false,
@@ -246,7 +269,7 @@ const lazyLoaded = {
 let _ablationCyclePollTimer = null;
 let _lastAblationRunStatus = "idle";
 
-const SCREEN_MODES = Object.freeze(["operations", "research", "kronos", "diagnostics", "settings"]);
+const SCREEN_MODES = Object.freeze(["operations", "research", "kronos", "diagnostics", "settings", "cockpit"]);
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
     title: "Built to endure.",
@@ -287,6 +310,14 @@ const SCREEN_CONTEXT = Object.freeze({
     ctaHref: "#onboardingSection",
     altCtaLabel: "Trading controls",
     altCtaHref: "#settingsSection",
+  },
+  cockpit: {
+    title: "One glance, full picture.",
+    text: "Market regime, ranked opportunities, portfolio risk, and the execution blotter in a single view with provenance on every lane.",
+    ctaLabel: "Opportunities",
+    ctaHref: "#laneOpportunities",
+    altCtaLabel: "Execution blotter",
+    altCtaHref: "#laneBlotter",
   },
 });
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
@@ -329,6 +360,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "reviewLoopSection",
   ],
   settings: ["settingsWorkspaceIntro", "settingsWorkflowStrip", "onboardingSection", "settingsSection"],
+  cockpit: ["cockpitWorkspaceIntro", "cockpitSection"],
 });
 const SECTION_TO_SCREEN = Object.freeze(
   Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
@@ -477,7 +509,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Kronos, 4 Diagnostics, 5 Settings.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Kronos, 4 Diagnostics, 5 Settings, 6 Cockpit.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -490,32 +522,7 @@ function renderScreenContext(mode) {
 
 function maybePrimeScreenData(mode) {
   const controller = screenControllers[mode];
-  if (isFlagEnabled("screen_controllers") && controller) {
-    // New path: each screen controller owns its prime() (same lazy-api keys).
-    controller.prime();
-    return;
-  }
-  if (mode === "operations") {
-    // Slim Operations: sectors/movers are collapsed disclosures that load on
-    // first expand instead of priming with the screen (flag: ops_slim_default).
-    if (!isFlagEnabled("ops_slim_default")) {
-      void runLazyApi("sectors");
-      void runLazyApi("movers");
-    }
-  } else if (mode === "settings") {
-    void runLazyApi("onboarding");
-    void runLazyApi("profiles");
-  } else if (mode === "diagnostics") {
-    void runLazyApi("calibration");
-    void runLazyApi("shadowScoreboard");
-    void runLazyApi("reviewLoop");
-  } else if (mode === "research") {
-    void runLazyApi("backtest");
-    void runLazyApi("portfolio");
-    void runLazyApi("performance");
-  } else if (mode === "kronos") {
-    void primeKronosWorkspace();
-  }
+  if (controller) controller.prime();
 }
 
 function maybeShowScreenNudge(mode) {
@@ -532,6 +539,7 @@ function maybeShowScreenNudge(mode) {
     settings: "Finish connectivity and profile settings once, then return to Operations.",
     research: "Use quick check, backtests, SEC compare, and dossiers to validate each setup.",
     diagnostics: "Use this screen to validate reliability and troubleshoot blockers without interrupting operations.",
+    cockpit: "Click any opportunity row for the decision card and order-intent preview.",
   };
   const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";
   showToast(`${cfg.title}: ${hint}`, "info", 2800);
@@ -558,6 +566,7 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
     "ui-screen-kronos",
     "ui-screen-diagnostics",
     "ui-screen-settings",
+    "ui-screen-cockpit",
   );
   document.body.classList.add(`ui-screen-${m}`);
   refreshScreenSwitchUi(m);
@@ -601,6 +610,25 @@ function applyConnectFirstExperience() {
     const onboardingEl = document.getElementById("onboardingSection");
     onboardingEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     connectFirstFocused = true;
+  }
+}
+
+/**
+ * Consume a `?display=simple|standard|pro` deep link (the retired /simple
+ * page redirects here). Strips the param via replaceState, mirroring the
+ * `?section=` / `?ff=` handling, and returns the mode or "".
+ */
+function consumeDisplayModeFromUrl() {
+  try {
+    const u = new URL(window.location.href);
+    const raw = safeText(u.searchParams.get("display")).toLowerCase();
+    if (!raw) return "";
+    u.searchParams.delete("display");
+    const q = u.searchParams.toString();
+    window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}${u.hash || ""}`);
+    return ["simple", "standard", "pro"].includes(raw) ? raw : "";
+  } catch {
+    return "";
   }
 }
 
@@ -901,53 +929,24 @@ async function initSupabaseAuth(url, anonKey) {
   });
 
   const verifyBtn = document.getElementById("supabaseVerifyBtn");
-  if (verifyBtn && isFlagEnabled("unified_auth_block")) {
+  if (verifyBtn) {
     // Shared cooldown keeps the topbar and onboarding inline buttons in sync.
     attachVerifyCooldownButton(verifyBtn, { label: authActionLabel });
   }
   verifyBtn?.addEventListener("click", async () => {
     const email = document.getElementById("supabaseEmail")?.value?.trim() || "";
-    if (isFlagEnabled("unified_auth_block")) {
-      const result = await requestVerificationEmail({
-        supabase: sb,
-        email,
-        redirectTo: `${window.location.origin}/?section=connect`,
-        verified: hasVerifiedEmailOnce(),
-      });
-      logEvent({
-        kind: "system",
-        severity: result.ok ? "info" : "warn",
-        message: result.message,
-      });
-      if (result.ok) {
-        void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
-          source: "supabase_email_verification",
-        });
-      }
-      return;
-    }
-    if (!email) {
-      logEvent({ kind: "system", severity: "warn", message: "Enter an email address first." });
-      return;
-    }
-    const redirectTo = `${window.location.origin}/?section=connect`;
-    const { error } = await sb.auth.signInWithOtp({
+    const result = await requestVerificationEmail({
+      supabase: sb,
       email,
-      options: {
-        shouldCreateUser: true,
-        emailRedirectTo: redirectTo,
-      },
+      redirectTo: `${window.location.origin}/?section=connect`,
+      verified: hasVerifiedEmailOnce(),
     });
-    if (error) logEvent({ kind: "system", severity: "error", message: error.message });
-    else {
-      const returning = hasVerifiedEmailOnce();
-      logEvent({
-        kind: "system",
-        severity: "info",
-        message: returning
-          ? "Sign-in link sent. Open your inbox and continue from the link."
-          : "Verification email sent. Open your inbox and continue from the sign-in link.",
-      });
+    logEvent({
+      kind: "system",
+      severity: result.ok ? "info" : "warn",
+      message: result.message,
+    });
+    if (result.ok) {
       void trackFunnelMilestoneOnce(FUNNEL_EVENTS.SIGNUP, {
         source: "supabase_email_verification",
       });
@@ -966,35 +965,6 @@ async function initSupabaseAuth(url, anonKey) {
   markAuthReady();
 }
 
-function buildScanMeta(signals = [], count = null) {
-  const total = count ?? signals.length;
-  const high = signals.filter((s) => (s?.advisory?.confidence_bucket || "").toLowerCase() === "high").length;
-  if (high > 0) return `Found ${total} signal(s). High-confidence: ${high}.`;
-  return `Found ${total} signal(s).`;
-}
-
-function diagnosticsHeadline(diagOrSummary = null) {
-  if (!diagOrSummary || typeof diagOrSummary !== "object") return "";
-  const headline = safeText(diagOrSummary.headline || "").trim();
-  if (headline && headline !== "—") return headline;
-  const dq = safeText(diagOrSummary.data_quality || "").trim().toLowerCase();
-  if (dq && dq !== "ok") {
-    const rs = Array.isArray(diagOrSummary.data_quality_reasons)
-      ? diagOrSummary.data_quality_reasons
-      : [];
-    const rtxt = rs.slice(0, 2).map((x) => safeText(x)).filter(Boolean).join("; ");
-    return rtxt ? `Data quality: ${dq} — ${rtxt}.` : `Data quality: ${dq}.`;
-  }
-  if (safeNum(diagOrSummary.scan_blocked, 0) > 0) {
-    const reason = safeText(diagOrSummary.scan_blocked_reason || "").trim();
-    if (reason === "bear_regime_spy_below_200sma") {
-      return "Scan blocked by regime gate: SPY is below 200 SMA.";
-    }
-    return "Scan blocked by active risk gates.";
-  }
-  return "";
-}
-
 function formatStrategyLabel(value) {
   const raw = safeText(value || "").trim();
   if (!raw || raw === "—") return "—";
@@ -1003,66 +973,6 @@ function formatStrategyLabel(value) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
-}
-
-function optionalNum(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed || trimmed === "—") return null;
-  }
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeProbability(value) {
-  const n = optionalNum(value);
-  if (n === null) return null;
-  // Backward compatibility for older payloads that persisted percent points (e.g. 62.4).
-  const ratio = n > 1 && n <= 100 ? n / 100 : n;
-  return Math.max(0, Math.min(1, ratio));
-}
-
-function getCompositeScore(row = {}) {
-  return optionalNum(row.composite_score ?? row.signal_score ?? row.score);
-}
-
-function getConvictionScore(row = {}) {
-  return optionalNum(row.mirofish_conviction ?? row.conviction_score ?? row?.mirofish_result?.conviction_score);
-}
-
-function getCalibratedPUp(row = {}) {
-  const advisory = row.advisory || {};
-  return normalizeProbability(
-    row.p_up_calibrated ?? advisory.p_up_10d ?? advisory.p_up_10d_raw ?? row.p_up_10d ?? row.advisory_p_up,
-  );
-}
-
-function getReliabilityScore(row = {}) {
-  const direct = optionalNum(row.reliability_score);
-  if (direct !== null) return direct;
-  const advisory = row.advisory || {};
-  const bucket = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
-  if (bucket === "HIGH") return 82;
-  if (bucket === "MEDIUM") return 64;
-  if (bucket === "LOW") return 46;
-  return 35;
-}
-
-function getEdgeScore(row = {}) {
-  const direct = optionalNum(row.edge_score);
-  if (direct !== null) return direct;
-  return getCompositeScore(row);
-}
-
-function getExecutionScore(row = {}) {
-  const direct = optionalNum(row.execution_score);
-  if (direct !== null) return direct;
-  return 60;
-}
-
-function getEv10d(row = {}) {
-  return optionalNum(row.ev_10d);
 }
 
 function buildRankWhyText(row = {}) {
@@ -1119,14 +1029,6 @@ function renderRankScoreCell(row = {}) {
   const why = buildRankWhyText(row);
   if (!why) return shown;
   return `<span class="scan-rank-cell"><span class="scan-rank-score">${shown}</span><span class="scan-rank-why" data-tooltip="${escapeHtml(why)}" aria-label="Why this rank">?</span></span>`;
-}
-
-function formatConfidenceLabel(value) {
-  const raw = safeText(value || "").trim();
-  if (!raw || raw === "—") return "—";
-  const lowered = raw.toLowerCase();
-  if (lowered === "unknown" || lowered === "none" || lowered === "null") return "—";
-  return raw.replace(/[_-]+/g, " ").toUpperCase();
 }
 
 function asObject(value) {
@@ -1186,177 +1088,6 @@ function updateTopStrategyChip(summary = null) {
     return;
   }
   el.textContent = `Top Strategy: ${dominant} (${count}/${total})`;
-}
-
-function setHealthRibbonUnavailable(reason) {
-  const rawReason = safeText(reason || "").trim();
-  const lower = rawReason.toLowerCase();
-  let uiReason = rawReason;
-  if (
-    lower.includes("missing authentication") ||
-    lower.includes("authorization: bearer") ||
-    lower.includes("auth session cookie")
-  ) {
-    uiReason = "Verify your email session, then connect Schwab to unlock live health checks.";
-  } else if (lower.includes("expired") && lower.includes("token")) {
-    uiReason = "Session expired. Sign in again to restore health checks.";
-  }
-  if (!uiReason) uiReason = "status fetch failed";
-
-  const ribbon = document.getElementById("healthRibbon");
-  if (ribbon) ribbon.setAttribute("data-async-state", "error");
-  ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.className = "health-badge bg-slate-900";
-    el.textContent = "Unknown";
-    markUnavailable(el, uiReason);
-  });
-  ["healthTileAuth", "healthTileQuotes", "healthTileApi", "healthTileValidation"].forEach((id) => {
-    const tile = document.getElementById(id);
-    if (!tile) return;
-    tile.dataset.state = "unknown";
-    tile.style.setProperty("--gauge", "0");
-  });
-  const noteIso = new Date().toISOString();
-  ["ribbonAuthFresh", "ribbonQuotesFresh", "ribbonApiErrorRateFresh", "ribbonValidationFresh"].forEach((id) => {
-    applyFreshness(document.getElementById(id), {
-      asOf: null,
-      source: "/api/status",
-      surface: "health_ribbon",
-      unavailable: `unavailable: ${uiReason}`,
-    });
-  });
-  // Reference noteIso so eslint stays quiet; the timestamp is unused but kept
-  // for future "last failure at" labels.
-  void noteIso;
-}
-
-function setHealthRibbonTiles(authState, quoteOk, errRate, validation) {
-  const setTile = (id, stateName, gauge) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.dataset.state = stateName;
-    el.style.setProperty("--gauge", String(gauge));
-  };
-  // authState may be a tri-state string ("connected"/"unverified"/"disconnected")
-  // or a legacy boolean. Map to the tile's good/warn/bad states.
-  const authTileState =
-    authState === "connected" || authState === true
-      ? "good"
-      : authState === "unverified"
-        ? "warn"
-        : "bad";
-  const authGauge = authTileState === "good" ? 1 : authTileState === "warn" ? 0.55 : 0;
-  setTile("healthTileAuth", authTileState, authGauge);
-  setTile("healthTileQuotes", quoteOk ? "good" : "bad", quoteOk ? 1 : 0);
-  const er = safeNum(errRate, 0);
-  const apiGaugeHealth = Math.max(0, Math.min(1, 1 - er / 18));
-  const apiState = er < 2 ? "good" : er < 8 ? "warn" : "bad";
-  setTile("healthTileApi", apiState, apiGaugeHealth);
-
-  const v = validation || {};
-  const runStatus = safeText(v.run_status || "").toLowerCase();
-  let vState = "neutral";
-  let vGauge = 0.35;
-  if (v.exists && v.passed === true) {
-    vState = "good";
-    vGauge = 1;
-  } else if (v.exists && v.passed === false) {
-    vState = "bad";
-    vGauge = 0.12;
-  } else if (runStatus === "running") {
-    vState = "warn";
-    const pct = safeNum(v.progress_pct, 0);
-    vGauge = Math.max(0.25, Math.min(0.92, pct > 0 ? pct / 100 : 0.55));
-  } else if (v.exists) {
-    vState = "warn";
-    vGauge = 0.55;
-  }
-  setTile("healthTileValidation", vState, vGauge);
-}
-
-// Plain-language one-liner rolling up the broker, market data, and scan state.
-// Keeps the diagnostics page understandable at a glance without reading tiles.
-function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, lastScan }) {
-  const el = document.getElementById("healthRibbonSummary");
-  if (!el) return;
-  clearUnavailable(el);
-  const broker =
-    authState === "connected"
-      ? "Broker connected"
-      : authState === "unverified"
-        ? "Broker verifying"
-        : "Broker disconnected";
-  const market = !deepReachable ? "market data unknown" : quoteOk ? "market data live" : "market data degraded";
-  let scan = "no scan yet this session";
-  const scanAt = lastScan?.at;
-  if (scanAt) {
-    const ts = new Date(scanAt).getTime();
-    if (Number.isFinite(ts)) {
-      const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
-      scan = mins < 1 ? "last scan just now" : mins < 60 ? `last scan ${mins}m ago` : `last scan ${Math.round(mins / 60)}h ago`;
-    }
-  }
-  el.textContent = `System status: ${broker}, ${market}, ${scan}.`;
-}
-
-function prioritizeActionCenterFromHealth({ authState, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
-  const runStatus = safeText(validation?.run_status || "").toLowerCase();
-  const blocker = safeText(topBlocker || "").trim();
-  if (authState === "disconnected") {
-    updateActionCenter({
-      title: "P0: Broker Authentication Blocked",
-      message: "Reconnect Schwab account and market sessions before running scans or approving orders.",
-      severity: "error",
-    });
-    return;
-  }
-  if (authState === "unverified") {
-    updateActionCenter({
-      title: "P1: Broker Connection Unverified",
-      message:
-        "Schwab tokens are saved but the live API hasn't confirmed a response yet. Run a quick health check, and reconnect if this persists.",
-      severity: "warn",
-    });
-    return;
-  }
-  if (!quoteOk || errRate >= 3.0) {
-    const qh = quoteHealth && typeof quoteHealth === "object" ? quoteHealth : {};
-    const quoteReason = safeText(qh.reason || "").trim();
-    const quoteHint = safeText(qh.operator_hint || "").trim();
-    const quoteMsg = quoteOk
-      ? ""
-      : `Quotes unhealthy${quoteReason ? ` (${quoteReason})` : ""}${quoteHint ? `: ${quoteHint}` : "."}`;
-    const apiMsg = `API server error rate is ${errRate.toFixed(1)}%.`;
-    const message =
-      !quoteOk && errRate >= 3.0
-        ? `${quoteMsg} ${apiMsg} Check provider status and fallback readiness.`
-        : !quoteOk
-          ? `${quoteMsg} Check provider status and fallback readiness.`
-          : `${apiMsg} Check provider status and fallback readiness.`;
-    updateActionCenter({
-      title: "P1: Market Data Reliability Degraded",
-      message,
-      severity: "warn",
-    });
-    return;
-  }
-  if (runStatus === "running") {
-    updateActionCenter({
-      title: "P2: Validation In Progress",
-      message: "Validation pipeline is running; monitor progress before trusting new model outputs.",
-      severity: "info",
-    });
-    return;
-  }
-  if (blocker) {
-    updateActionCenter({
-      title: "P2: Scan Blocker Identified",
-      message: blocker,
-      severity: "warn",
-    });
-  }
 }
 
 function updateHeroInfographic() {
@@ -1443,329 +1174,6 @@ function validateRuntimeContract(publicCfg, runtimeContract) {
       message,
       severity: "error",
     });
-  }
-}
-
-function buildDiagnosticsSummary(diag = {}) {
-  const blockers = Object.entries(diag)
-    .filter(([k, v]) => safeNum(v, 0) > 0 && !["watchlist_size"].includes(k))
-    .map(([k, v]) => ({
-      key: k,
-      label: DIAG_LABELS[k] || k.replaceAll("_", " "),
-      value: safeNum(v, 0),
-      severity: ["exceptions", "df_empty"].includes(k) ? "error" : "warn",
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
-
-  // Watchlist sourcing: trust the actual watchlist_size from diagnostics.
-  // Honoured sources from the backend include:
-  //   - explicit_tickers_override : custom ticker list (e.g. /api/scan body)
-  //   - sp1500_focused            : SIGNAL_UNIVERSE_MODE=focused (used by
-  //                                 backtests / API callers; no UI trigger)
-  //   - sp1500_default            : full SP1500 broad universe (Run Scan)
-  // Fall back to the SP1500 default size only when diagnostics carry no
-  // watchlist_size at all (e.g. before the first scan completes).
-  const watchRaw = safeNum(diag.watchlist_size, 0);
-  const watch = watchRaw > 0 ? watchRaw : 1500;
-  const finalSignals = state.latestSignals.length;
-  const funnel = buildFunnelStages(diag, watch, finalSignals);
-
-  return { blockers, funnel };
-}
-
-/**
- * Dev-mode integrity check for the scan funnel. The hero "Open signals" KPI
- * and the candidate table both render off `state.latestSignals`; the funnel
- * counts are computed from `diagnostics`. They must reconcile at the bottom.
- *
- * If they don't, surface a single grouped console.warn instead of failing
- * silently — this is exactly the kind of contradiction the cleanup pass is
- * trying to eliminate.
- */
-function assertScanDeltasReconcile(diag, funnel, signals) {
-  if (!funnel || !Array.isArray(funnel.stages)) return;
-  const last = funnel.stages[funnel.stages.length - 1];
-  if (!last) return;
-  const rendered = Array.isArray(signals) ? signals.length : 0;
-  // Only assert the *final* stage matches the rendered candidate count;
-  // intermediate stages can legitimately drift due to multi-source counting.
-  if (Number.isFinite(last.value) && last.value !== rendered) {
-    if (typeof console !== "undefined" && console.groupCollapsed) {
-      console.groupCollapsed(
-        "[scan reconcile] funnel terminal stage does not match rendered signals",
-      );
-      console.warn(
-        `funnel "${last.key || last.label}" reports ${last.value} but ${rendered} rows were rendered.`,
-      );
-      console.warn("diagnostics:", diag);
-      console.warn("funnel:", funnel);
-      console.groupEnd();
-    }
-  }
-}
-
-function buildFunnelStages(diag, watchlistOverride, finalCount) {
-  const stage2Fail = safeNum(diag.stage2_fail, 0);
-  const vcpFail = safeNum(diag.vcp_fail, 0);
-  const noSectorEtf = safeNum(diag.no_sector_etf, 0);
-  const sectorNotWinning = safeNum(diag.sector_not_winning, 0);
-  const breakoutNotConfirmed = safeNum(diag.breakout_not_confirmed, 0);
-  const exceptions = safeNum(diag.exceptions, 0);
-
-  const stageACandidatesRaw = safeNum(diag.stage_a_candidates, 0);
-  const stageAShortlistedRaw = safeNum(diag.stage_a_shortlisted, 0);
-  const stageAPruned = safeNum(diag.stage_a_pruned, 0);
-
-  const primaryProviderFiltered = safeNum(diag.primary_provider_filtered, 0);
-  const stageBExceptions = safeNum(diag.stage_b_exceptions, 0);
-  const stageBTimeouts = safeNum(diag.stage_b_timeouts, 0);
-  const selfStudyFiltered = safeNum(diag.self_study_filtered, 0);
-  const qualityGatesFiltered = safeNum(diag.quality_gates_filtered, 0);
-
-  const vcpWouldFilter = safeNum(diag.stage_a_vcp_would_filter, 0);
-  const sectorWouldFilter =
-    safeNum(diag.stage_a_sector_would_filter, 0) +
-    safeNum(diag.stage_a_no_sector_would_filter, 0);
-
-  const vcpGateMode = safeText(diag.scan_vcp_gate_mode || "").toLowerCase() || null;
-  const sectorGateMode = safeText(diag.scan_sector_gate_mode || "").toLowerCase() || null;
-  const primaryProviderMode =
-    safeText(diag.scan_primary_provider_mode || "").toLowerCase() || null;
-  const qualityGatesMode = safeText(diag.quality_gates_mode || "").toLowerCase() || null;
-
-  const nWatchlist = watchlistOverride;
-  const nStage2 = Math.max(0, nWatchlist - stage2Fail);
-  const nVcp = Math.max(0, nStage2 - vcpFail);
-  const sectorFiltered = noSectorEtf + sectorNotWinning;
-  const nSector = Math.max(0, nVcp - sectorFiltered);
-  const nBreakout = Math.max(0, nSector - breakoutNotConfirmed - exceptions);
-  // ``stage_a_candidates`` is the authoritative pass count when present.
-  const nStageA = stageACandidatesRaw > 0 ? stageACandidatesRaw : nBreakout;
-  const nAfterProvider = Math.max(0, nStageA - primaryProviderFiltered);
-  const nShortlist =
-    stageAShortlistedRaw > 0
-      ? stageAShortlistedRaw
-      : Math.max(0, nAfterProvider - stageAPruned);
-  const qualityFilteredTotal =
-    stageBExceptions + stageBTimeouts + selfStudyFiltered + qualityGatesFiltered;
-  const nQuality = Math.max(0, nShortlist - qualityFilteredTotal);
-  const topNTrimmed = Math.max(0, nQuality - finalCount);
-
-  const watchlistSource = safeText(diag.watchlist_source || "").toLowerCase();
-  const watchlistSourceLabel =
-    watchlistSource === "explicit_tickers_override"
-      ? "custom ticker override"
-      : watchlistSource === "sp1500_focused"
-        ? "SP1500 focused (SIGNAL_UNIVERSE_MODE=focused)"
-        : watchlistSource === "sp1500_default"
-          ? "SP1500 default (broad universe)"
-          : "default universe";
-  const watchlistTooltip =
-    `Total tickers actually scanned: ${nWatchlist}. Source: ${watchlistSourceLabel}. ` +
-    "Run Scan covers the full SP1500 (S&P 500 + 400 + 600). Set SIGNAL_UNIVERSE_MODE=focused in .env to narrow to a sample.";
-
-  const stages = [
-    {
-      key: "watchlist",
-      label: "Watchlist",
-      value: nWatchlist,
-      filtered: 0,
-      tooltip: watchlistTooltip,
-    },
-    {
-      key: "stage2",
-      label: "Passed Stage 2",
-      value: nStage2,
-      filtered: stage2Fail,
-      tooltip:
-        "Tickers in a confirmed Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail.",
-    },
-    {
-      key: "vcp",
-      label: "Passed VCP",
-      value: nVcp,
-      filtered: vcpFail,
-      shadow_filtered: vcpWouldFilter,
-      mode: vcpGateMode,
-      tooltip:
-        "Tickers showing volatility-contraction-pattern volume. In shadow mode the VCP gate observes but does not filter; the would-filter count shows how many it would have removed.",
-    },
-    {
-      key: "sector",
-      label: "Sector OK",
-      value: nSector,
-      filtered: sectorFiltered,
-      shadow_filtered: sectorWouldFilter,
-      mode: sectorGateMode,
-      tooltip:
-        "Tickers in a winning sector ETF. Filtered by no_sector_etf + sector_not_winning when the sector gate is hard.",
-    },
-    {
-      key: "stage_a",
-      label: "Stage A Candidates",
-      value: nStageA,
-      filtered: Math.max(0, nSector - nStageA),
-      tooltip:
-        "Final Stage A pass count after breakout confirmation, exceptions, and timed gates. Sourced from stage_a_candidates.",
-    },
-    {
-      key: "shortlist",
-      label: "Shortlist (top-scored)",
-      value: nShortlist,
-      filtered: Math.max(0, nStageA - nShortlist),
-      mode: primaryProviderMode,
-      tooltip:
-        "Top-scored Stage A candidates picked for Stage B enrichment (forensic, PEAD, advisory, MiroFish). Lower-scored picks are pruned by the shortlist cap.",
-    },
-    {
-      key: "quality",
-      label: "Quality Gates",
-      value: nQuality,
-      filtered: qualityFilteredTotal,
-      mode: qualityGatesMode,
-      tooltip:
-        "Survivors of Stage B exceptions, timeouts, self-study min conviction, and quality gates (forensic, weak breakout volume, etc.).",
-    },
-    {
-      key: "final",
-      label: "Final Signals",
-      value: finalCount,
-      filtered: topNTrimmed,
-      tooltip:
-        "Tradeable signals returned after the top-N rank cap. If much smaller than Quality Gates, the cap (TOP_N) is trimming output.",
-    },
-  ];
-
-  return {
-    watchlist: nWatchlist,
-    stage2_pass: nStage2,
-    vcp_pass: nVcp,
-    final: finalCount,
-    stages,
-    vcp_gate_mode: vcpGateMode,
-    sector_gate_mode: sectorGateMode,
-    primary_provider_mode: primaryProviderMode,
-    quality_gates_mode: qualityGatesMode,
-  };
-}
-
-function renderDiagnostics(diag = {}) {
-  const chipWrap = document.getElementById("scanDiagnostics");
-  const blockersEl = document.getElementById("scanBlockers");
-  const funnelEl = document.getElementById("scanFunnel");
-  chipWrap.innerHTML = "";
-  blockersEl.innerHTML = "";
-  funnelEl.innerHTML = "";
-
-  const dq = safeText(diag.data_quality || "").trim();
-  if (dq) {
-    const rs = Array.isArray(diag.data_quality_reasons) ? diag.data_quality_reasons : [];
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent =
-      rs.length > 0
-        ? `Data quality: ${dq} (${rs.slice(0, 2).map((x) => safeText(x)).join("; ")})`
-        : `Data quality: ${dq}`;
-    chipWrap.appendChild(chip);
-  }
-
-  const summary = buildDiagnosticsSummary(diag);
-  const headerChip = document.getElementById("scanBlockersChip");
-  const headerChipCount = document.getElementById("scanBlockersChipCount");
-  if (headerChip && !headerChip.dataset.wired) {
-    headerChip.dataset.wired = "1";
-    headerChip.addEventListener("click", () => {
-      const panel = document.getElementById("scanDiagnosticsPanel");
-      if (!panel) return;
-      panel.open = true;
-      headerChip.setAttribute("aria-expanded", "true");
-      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }
-  if (!summary.blockers.length) {
-    const empty = document.createElement("li");
-    empty.className = "empty";
-    empty.textContent = "No major blockers detected.";
-    blockersEl.appendChild(empty);
-    if (headerChip) headerChip.classList.add("hidden");
-    if (headerChipCount) headerChipCount.textContent = "0";
-  } else {
-    summary.blockers.forEach((b) => {
-      const li = document.createElement("li");
-      li.innerHTML = `${b.label}: <strong>${b.value}</strong> <span class="${statusClass(b.severity)}">${b.severity}</span>`;
-      blockersEl.appendChild(li);
-    });
-    if (headerChip) headerChip.classList.remove("hidden");
-    if (headerChipCount) headerChipCount.textContent = String(summary.blockers.length);
-  }
-
-  const stages = Array.isArray(summary.funnel.stages) ? summary.funnel.stages : [];
-  const funnelVals = stages.map((s) => safeNum(s.value, 0));
-  const funnelMax = Math.max(1, ...funnelVals);
-  const hueStep = stages.length > 1 ? 132 / (stages.length - 1) : 0;
-
-  stages.forEach((stage, i) => {
-    const n = safeNum(stage.value, 0);
-    const pct = Math.round((n / funnelMax) * 100);
-    const hue = Math.round(200 - i * hueStep);
-    const filtered = safeNum(stage.filtered, 0);
-    const shadowFiltered = safeNum(stage.shadow_filtered, 0);
-    const mode = safeText(stage.mode || "").toLowerCase();
-    const tooltip = safeText(stage.tooltip || "");
-    const showShadowBadge = shadowFiltered > 0 && (mode === "shadow" || mode === "soft" || mode === "off" || !mode);
-    const node = document.createElement("div");
-    node.className = "funnel-node";
-    if (mode) node.dataset.gateMode = mode;
-    if (tooltip) node.title = tooltip;
-    const filteredLine =
-      i === 0 || filtered <= 0
-        ? ""
-        : `<div class="funnel-node-filtered" title="Removed at this step">&minus;${filtered}</div>`;
-    const shadowBadge = showShadowBadge
-      ? `<span class="funnel-shadow-badge" title="${escapeHtml(
-          `Gate is in ${mode || "shadow"} mode. Would have filtered ${shadowFiltered} more in hard mode.`,
-        )}">${escapeHtml(mode || "shadow")} &middot; would-filter ${shadowFiltered}</span>`
-      : "";
-    node.innerHTML = `
-      <div class="funnel-node-head">
-        <span class="label">${escapeHtml(stage.label || stage.key || "")}</span>
-        <span class="funnel-node-pct mono-nums">${pct}%</span>
-      </div>
-      <div class="funnel-bar-track" aria-hidden="true">
-        <div class="funnel-bar-fill" style="width:${pct}%;--funnel-hue:${hue}"></div>
-      </div>
-      <div class="funnel-node-foot">
-        <span class="value mono-nums" aria-label="pass count">${n}</span>
-        ${filteredLine}
-      </div>
-      ${shadowBadge}
-    `;
-    funnelEl.appendChild(node);
-  });
-
-  Object.entries(diag).slice(0, 8).forEach(([key, value]) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${DIAG_LABELS[key] || key}: ${value}`;
-    chipWrap.appendChild(chip);
-  });
-  state.lastWatchlistSize = summary.funnel.watchlist;
-  state.lastScanAt = new Date().toISOString();
-  assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
-  updateHeroInfographic();
-  const diagPanel = document.getElementById("scanDiagnosticsPanel");
-  if (diagPanel && getDisplayMode() === "pro") diagPanel.open = true;
-  if (headerChip && diagPanel && !headerChip.dataset.boundExpand) {
-    headerChip.addEventListener("click", () => {
-      diagPanel.open = true;
-      headerChip.setAttribute("aria-expanded", "true");
-      const target = document.getElementById("scanBlockers");
-      if (target && typeof target.scrollIntoView === "function") {
-        target.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    });
-    headerChip.dataset.boundExpand = "1";
   }
 }
 
@@ -2909,63 +2317,6 @@ function renderScanRows(signalsInput = []) {
   updateHeroInfographic();
 }
 
-function getSectorKeyFromTrade(row) {
-  const sector = row?.signal?.sector_etf || "Unknown";
-  return String(sector || "Unknown").toUpperCase();
-}
-
-function meterFromScore(score) {
-  return clampPct(safeNum(score, 0));
-}
-
-function meterFromConviction(conviction) {
-  return clampPct((safeNum(conviction, 0) + 100) / 2);
-}
-
-function meterFromReliability(reliability) {
-  return clampPct(safeNum(reliability, 0));
-}
-
-function renderPendingContext(row) {
-  const sig = row.signal || {};
-  const score = getCompositeScore(sig);
-  const reliability = getReliabilityScore(sig);
-  const edge = getEdgeScore(sig);
-  const execution = getExecutionScore(sig);
-  const sector = sig.sector_etf;
-  const conviction = getConvictionScore(sig);
-  const advisory = sig.advisory || {};
-  const pUp = getCalibratedPUp(sig);
-  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
-  return `score: ${score !== null ? safeNum(score).toFixed(0) : "—"} (edge ${edge !== null ? safeNum(edge).toFixed(0) : "—"})<br/>
-    reliability: ${reliability !== null ? safeNum(reliability).toFixed(0) : "—"} · execution: ${execution !== null ? safeNum(execution).toFixed(0) : "—"}<br/>
-    sector: ${safeText(sector || "—")}<br/>
-    confidence: ${safeText(confidence || "—")} · P(up 10d): ${pUp === null ? "—" : pct(pUp, 1)}<br/>
-    conviction: ${conviction !== null ? safeText(conviction) : "—"}`;
-}
-
-function getPendingRiskProfile(row) {
-  const sig = row?.signal || {};
-  const score = safeNum(getCompositeScore(sig), 0);
-  const reliability = safeNum(getReliabilityScore(sig), 0);
-  const advisory = sig.advisory || {};
-  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
-  const hasSector = Boolean(safeText(sig.sector_etf || "").trim());
-  const lowConfidence = ["low", "unknown", "—"].includes(String(confidence || "—").toLowerCase());
-  if (!hasSector || score < 60 || lowConfidence || reliability < 45) return { label: "Requires extra review", severity: "high" };
-  if (score < 72) return { label: "Moderate confidence", severity: "medium" };
-  return { label: "Ready to review", severity: "low" };
-}
-
-function renderTimeline(row) {
-  const status = (row.status || "").toLowerCase();
-  if (status === "pending") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> waiting action</span>`;
-  if (status === "executed") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> approved -> executed</span>`;
-  if (status === "rejected") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> rejected</span>`;
-  if (status === "failed") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> approve attempted -> failed</span>`;
-  return `<span class="timeline-badge"><span class="timeline-dot"></span>${safeText(status)}</span>`;
-}
-
 function formatPreflightChecklistHtml(c) {
   if (!c || typeof c !== "object") return "";
   const lines = Array.isArray(c.checklist_lines) ? c.checklist_lines : [];
@@ -3208,76 +2559,26 @@ async function loadConfig() {
     markAuthReady();
   }
 
-  if (isFlagEnabled("unified_auth_block")) {
-    // Single manual-JWT block implementation shared with login.html.
-    wireManualJwtBlock({
-      input: tokenInput,
-      saveBtn,
-      copyBtn,
-      allowManual: manualJwtAllowed,
-      normalizeJwt: normalizeUserJwt,
-      isProbablyJwt: isProbablyAccessJwt,
-      badShapeHint: JWT_BAD_SHAPE_HINT,
-      readStoredToken: readStoredApiJwt,
-      saveToken: (token) => {
-        localStorage.setItem(AUTH_TOKEN_KEY, token);
-        clearLegacyApiJwtKeys();
-        void createCookieAuthSession(token);
-      },
-      clearToken: () => {
-        clearStoredApiJwt();
-        void clearCookieAuthSession();
-      },
-      onMessage: (text, severity) => logEvent({ kind: "system", severity, message: text }),
-    });
-  } else {
-    if (tokenInput) {
-      tokenInput.value = manualJwtAllowed ? readStoredApiJwt() : "";
-      tokenInput.disabled = !manualJwtAllowed;
-    }
-    if (saveBtn) {
-      saveBtn.disabled = !manualJwtAllowed;
-      saveBtn.addEventListener("click", () => {
-        if (!manualJwtAllowed) return;
-        const val = normalizeUserJwt(tokenInput?.value);
-        if (val) {
-          if (!isProbablyAccessJwt(val)) {
-            logEvent({ kind: "system", severity: "error", message: JWT_BAD_SHAPE_HINT });
-            return;
-          }
-          localStorage.setItem(AUTH_TOKEN_KEY, val);
-          clearLegacyApiJwtKeys();
-          void createCookieAuthSession(val);
-          logEvent({ kind: "system", severity: "info", message: "JWT token saved locally." });
-        } else {
-          clearStoredApiJwt();
-          void clearCookieAuthSession();
-          logEvent({ kind: "system", severity: "warn", message: "JWT token cleared." });
-        }
-      });
-    }
-    if (copyBtn) {
-      copyBtn.disabled = !manualJwtAllowed;
-      copyBtn.addEventListener("click", async () => {
-        if (!manualJwtAllowed) return;
-        const token = normalizeUserJwt(tokenInput?.value || readStoredApiJwt());
-        if (!token) {
-          logEvent({ kind: "system", severity: "warn", message: "No JWT token found to copy." });
-          return;
-        }
-        try {
-          const ok = await copyTextToClipboard(token);
-          logEvent({
-            kind: "system",
-            severity: ok ? "info" : "warn",
-            message: ok ? "JWT token copied to clipboard." : "Copy was blocked by this browser.",
-          });
-        } catch {
-          logEvent({ kind: "system", severity: "error", message: "Copy failed. Browser denied clipboard access." });
-        }
-      });
-    }
-  }
+  wireManualJwtBlock({
+    input: tokenInput,
+    saveBtn,
+    copyBtn,
+    allowManual: manualJwtAllowed,
+    normalizeJwt: normalizeUserJwt,
+    isProbablyJwt: isProbablyAccessJwt,
+    badShapeHint: JWT_BAD_SHAPE_HINT,
+    readStoredToken: readStoredApiJwt,
+    saveToken: (token) => {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      clearLegacyApiJwtKeys();
+      void createCookieAuthSession(token);
+    },
+    clearToken: () => {
+      clearStoredApiJwt();
+      void clearCookieAuthSession();
+    },
+    onMessage: (text, severity) => logEvent({ kind: "system", severity, message: text }),
+  });
   state.config = { auth_mode: hasSupabaseUi ? "supabase" : "jwt" };
   await refreshAuthDebugPanel();
   const authSetup = publicCfg?.auth_setup && typeof publicCfg.auth_setup === "object" ? publicCfg.auth_setup : {};
@@ -4629,215 +3930,6 @@ async function waitForScanCompletion() {
   });
 }
 
-async function refreshPending() {
-  const filter = document.getElementById("pendingFilter")?.value || state.pendingFilter;
-  const sort = document.getElementById("pendingSort")?.value || state.pendingSort;
-  state.pendingFilter = filter;
-  state.pendingSort = sort;
-  const board = document.getElementById("pendingBoard");
-  if (board) {
-    board.innerHTML = `<div class="task-empty muted">Loading pending trades...</div>`;
-  }
-  const query = new URLSearchParams({ status: filter, sort });
-  const pendingOnlyQuery = new URLSearchParams({ status: "pending", sort });
-  const [out, pendingOnlyOut] = await Promise.all([
-    api.get(`/api/pending-trades?${query.toString()}`),
-    api.get(`/api/pending-trades?${pendingOnlyQuery.toString()}`),
-  ]);
-  if (!out.ok) {
-    const msg = out.user_message || out.error;
-    logEvent({ kind: "trade", severity: "error", message: `Pending trades load failed: ${out.error}` });
-    if (board) {
-      setAsyncState(board, ASYNC_ERROR, {
-        message: `Pending trades unavailable: ${safeText(msg)}`,
-        onRetry: () => void refreshPending(),
-      });
-    }
-    // Honest "unavailable" for the count badge — never silently render 0.
-    const pcEl = document.getElementById("pendingCount");
-    if (pcEl) markUnavailable(pcEl, msg || "fetch failed");
-    state.lastPendingCount = null;
-    updateHeroInfographic();
-    updateActionCenter({ title: "Pending queue unavailable", message: msg, severity: "error" });
-    return;
-  }
-  const rows = out.data || [];
-  let pendingN =
-    pendingOnlyOut.ok && Array.isArray(pendingOnlyOut.data)
-      ? pendingOnlyOut.data.length
-      : rows.filter((r) => r.status === "pending").length;
-  const pcEl = document.getElementById("pendingCount");
-  if (pcEl) {
-    clearUnavailable(pcEl);
-    pcEl.textContent = formatCount(pendingN);
-  }
-  state.lastPendingCount = pendingN;
-  state.lastPendingAt = new Date().toISOString();
-  if (pendingN > 0) {
-    void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
-      source: "pending_queue_refresh",
-      pending_count: pendingN,
-    });
-  }
-  const clearBtn = document.getElementById("clearPendingBtn");
-  if (clearBtn) clearBtn.disabled = pendingN === 0;
-  updateHeroInfographic();
-
-  board.innerHTML = "";
-  if (!rows.length) {
-    board.innerHTML = `<div class="task-empty muted">No trades match current filter.</div>`;
-    return;
-  }
-
-  const groups = rows.reduce((acc, row) => {
-    const key = getSectorKeyFromTrade(row);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
-
-  Object.keys(groups).sort().forEach((sector) => {
-    const section = document.createElement("section");
-    section.className = "task-group";
-    section.innerHTML = `<h3>${sector}</h3>`;
-    groups[sector].forEach((row) => {
-      const composite = getCompositeScore(row?.signal || {});
-      const reliabilityValue = getReliabilityScore(row?.signal || {});
-      const convictionValue = getConvictionScore(row?.signal || {});
-      const score = meterFromScore(composite);
-      const reliabilityMeter = meterFromReliability(reliabilityValue);
-      const conviction = meterFromConviction(convictionValue);
-      const liveBlocked =
-        state.publicConfig.saas_mode &&
-        (!state.accountMe || !state.accountMe.live_execution_enabled);
-      const approveTitle = liveBlocked
-        ? "Live trading is off — enable in Strategy Presets after reviewing risk."
-        : "";
-      const card = document.createElement("article");
-      const risk = getPendingRiskProfile(row);
-      card.className = `task-card task-card--risk-${risk.severity}`;
-      card.innerHTML = `
-        <div class="task-card-head">
-          <div>
-            <strong>${safeText(row.ticker)}</strong>
-            <span class="muted">#${safeText(row.id)} • Qty ${safeText(row.qty)}</span>
-          </div>
-          <div class="task-card-badges">
-            <span class="risk-chip ${risk.severity}">${safeText(risk.label)}</span>
-            <span class="${statusClass(row.status)}">${safeText(row.status)}</span>
-          </div>
-        </div>
-        <div class="task-meters">
-          <div>
-            <span class="meter-label">Score ${safeNum(composite, 0).toFixed(0)}</span>
-            <div class="meter"><span style="width:${score}%"></span></div>
-          </div>
-          <div>
-            <span class="meter-label">Reliability ${safeNum(reliabilityValue, 0).toFixed(0)}</span>
-            <div class="meter info"><span style="width:${reliabilityMeter}%"></span></div>
-          </div>
-          <div>
-            <span class="meter-label">Conviction ${safeNum(convictionValue, 0).toFixed(0)}</span>
-            <div class="meter conviction"><span style="width:${conviction}%"></span></div>
-          </div>
-        </div>
-        <div class="context-mini">${renderTimeline(row)}<br/>${renderPendingContext(row)}</div>
-        <div class="task-actions">
-          <button class="btn small secondary" data-quick="${row.id}">Quick View</button>
-          <button class="btn small approve-btn" data-approve="${row.id}" title="${escapeHtml(approveTitle)}" ${row.status !== "pending" || liveBlocked ? "disabled" : ""}>Approve</button>
-          <button class="btn small reject-btn" data-reject="${row.id}" ${row.status !== "pending" ? "disabled" : ""}>Reject</button>
-          <button class="btn small bad" data-delete="${row.id}" title="Permanently delete this trade">Delete</button>
-        </div>
-      `;
-      section.appendChild(card);
-    });
-    board.appendChild(section);
-  });
-
-  board.querySelectorAll("button[data-quick]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.currentTarget.getAttribute("data-quick");
-      const row = rows.find((r) => r.id === id);
-      if (row) await openTradeDrawerForTrade(row);
-    });
-  });
-
-  board.querySelectorAll("button[data-approve]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const id = e.currentTarget.getAttribute("data-approve");
-      const row = rows.find((r) => r.id === id);
-      openApproveDialog(row);
-    });
-  });
-
-  board.querySelectorAll("button[data-reject]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const clicked = e.currentTarget;
-      const release = busyButton(clicked, "Rejecting…");
-      const id = clicked.getAttribute("data-reject");
-      try {
-        const out = await api.post(`/api/trades/${id}/reject`, {});
-        if (!out.ok) {
-          logEvent({ kind: "trade", severity: "error", message: `Reject ${id} failed: ${out.error}` });
-          updateActionCenter({ title: "Trade Reject Failed", message: out.user_message || out.error, severity: "error" });
-        } else {
-          logEvent({ kind: "trade", severity: "info", message: `Rejected ${id}.` });
-          updateActionCenter({ title: "Trade Rejected", message: `Trade ${id} was rejected.`, severity: "warn" });
-        }
-        await refreshPending();
-      } finally {
-        release();
-      }
-    });
-  });
-
-  board.querySelectorAll("button[data-delete]").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const clicked = e.currentTarget;
-      const release = busyButton(clicked, "Deleting…");
-      const id = clicked.getAttribute("data-delete");
-      try {
-        const out = await api.post(`/api/trades/${id}/delete`, {});
-        if (!out.ok) {
-          logEvent({ kind: "trade", severity: "error", message: `Delete ${id} failed: ${out.error}` });
-          updateActionCenter({ title: "Trade Delete Failed", message: out.user_message || out.error, severity: "error" });
-        } else {
-          logEvent({ kind: "trade", severity: "info", message: `Deleted ${id}.` });
-        }
-        await refreshPending();
-      } finally {
-        release();
-      }
-    });
-  });
-
-  const strip = document.getElementById("pendingSummaryStrip");
-  const stripText = document.getElementById("pendingSummaryText");
-  if (isPriorityFeedActive()) {
-    // Feed replaces the strip: one surface, deduped by key, with a deep link.
-    if (strip) strip.classList.add("hidden");
-    if (pendingN > 0) {
-      pushPriorityItem({
-        key: "pending_decision",
-        title: "Pending trades need a decision",
-        message: `${pendingN} staged trade(s) are waiting for approval or rejection.`,
-        severity: "warn",
-        href: "#pendingSection",
-        hrefLabel: "Review pending",
-      });
-    } else {
-      removePriorityItem("pending_decision");
-    }
-  } else if (strip && stripText) {
-    if (pendingN > 0) {
-      strip.classList.remove("hidden");
-      stripText.textContent = `${pendingN} pending trade(s) need a decision.`;
-    } else {
-      strip.classList.add("hidden");
-    }
-  }
-}
-
 async function approveTradeById(id) {
   const typed = document.getElementById("approveTickerInput")?.value?.trim().toUpperCase() || "";
   const otpCode = document.getElementById("approveOtpInput")?.value?.trim() || "";
@@ -5148,7 +4240,6 @@ function buildScreenControllers() {
     safeText,
     logEvent,
     updateActionCenter,
-    isFlagEnabled,
     runLazyApi,
     // Operations
     runScan,
@@ -5215,6 +4306,9 @@ function buildScreenControllers() {
     // Kronos
     initKronosWorkspace,
     primeKronosWorkspace,
+    // Cockpit
+    initCockpitPanel,
+    primeCockpitPanel,
   };
   return {
     research: createResearchController(ctx),
@@ -5222,23 +4316,16 @@ function buildScreenControllers() {
     settings: createSettingsController(ctx),
     diagnostics: createDiagnosticsController(ctx),
     kronos: createKronosController(ctx),
+    cockpit: createCockpitController(ctx),
   };
 }
 
 function wireEvents() {
   setupFeatureGuideFirstClick();
-  // Per-screen wiring lives in static/screens/* controllers (same handlers,
-  // same element ids). With the screen_controllers flag ON each controller
-  // initializes in isolation so one failing screen cannot break the others;
-  // with the flag OFF they run inline, matching the legacy single-pass
-  // wireEvents semantics (any throw aborts the rest of this function).
+  // Per-screen wiring lives in static/screens/* controllers. Each controller
+  // initializes in isolation so one failing screen cannot break the others.
   screenControllers = buildScreenControllers();
-  const isolateControllerInit = isFlagEnabled("screen_controllers");
   Object.values(screenControllers).forEach((controller) => {
-    if (!isolateControllerInit) {
-      controller.init();
-      return;
-    }
     try {
       controller.init();
     } catch (err) {
@@ -5431,17 +4518,7 @@ function connectSSE() {
     }
   }
 
-  // Resolve UI feature flags first so all downstream wiring can gate on them
-  // (rollout contract: see wiki [[section-migration-map]]).
-  safeInit("initFeatureFlags", () => {
-    const flags = initFeatureFlags();
-    const on = Object.entries(flags).filter(([, v]) => v).map(([k]) => k);
-    if (on.length) {
-      logEvent({ kind: "system", severity: "info", message: `UI flags enabled: ${on.join(", ")}` });
-    }
-  });
   safeInit("applyOpsSlimDefault", () => {
-    if (!isFlagEnabled("ops_slim_default")) return;
     // Demote context cards to collapsed disclosures on the Operations landing.
     // Deep links still work: the router force-opens ancestor/target <details>.
     ["sectorsSection", "moversSection"].forEach((id) => {
@@ -5450,7 +4527,6 @@ function connectSSE() {
     });
   });
   safeInit("initPriorityFeed", () => {
-    if (!isFlagEnabled("priority_feed")) return;
     initPriorityFeed({
       onAction: ({ key, severity }) => trackUiEvent("priority_feed_action_clicked", { item_key: key, severity }),
     });
@@ -5470,7 +4546,7 @@ function connectSSE() {
     }),
   );
   safeInit("setupNotifications", setupNotifications);
-  safeInit("applyDisplayMode", () => applyDisplayMode(getDisplayMode()));
+  safeInit("applyDisplayMode", () => applyDisplayMode(consumeDisplayModeFromUrl() || getDisplayMode()));
   safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
   safeInit("applyReportViewMode", applyReportViewMode);
   safeInit("applySecCompareMode", applySecCompareMode);

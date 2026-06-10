@@ -586,15 +586,15 @@ def index() -> HTMLResponse:
 
 
 @app.get("/simple")
-def simple_dashboard() -> HTMLResponse:
-    """Focused scan + diagnostics UI for external users (see also `/`)."""
-    return render_versioned_html(STATIC_DIR / "simple.html")
+def simple_dashboard() -> RedirectResponse:
+    """Legacy focused-scan page, now a display-mode preset of the dashboard."""
+    return RedirectResponse("/?display=simple", status_code=302)
 
 
 @app.get("/cockpit")
-def cockpit_page() -> HTMLResponse:
-    """Trading Cockpit: four always-visible lanes (per-tenant /api/cockpit/* under JWT)."""
-    return render_versioned_html(STATIC_DIR / "cockpit.html")
+def cockpit_page() -> RedirectResponse:
+    """Legacy standalone cockpit page, now a screen of the main dashboard."""
+    return RedirectResponse("/?screen=cockpit", status_code=302)
 
 
 @app.get("/login")

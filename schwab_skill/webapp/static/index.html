@@ -13,7 +13,6 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,400&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
     <link rel="stylesheet" href="/static/overhaul.css?v=__APP_VERSION__" />
     <link rel="stylesheet" href="/static/readability.css?v=__APP_VERSION__" />
@@ -86,10 +85,20 @@
         >
           <span class="tab-num" aria-hidden="true">5</span>Settings
         </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="cockpit"
+          role="tab"
+          aria-selected="false"
+          aria-controls="cockpitWorkspaceIntro"
+          title="Market regime, ranked opportunities, portfolio risk, and execution blotter in one view"
+        >
+          <span class="tab-num" aria-hidden="true">6</span>Cockpit
+        </button>
       </nav>
 
       <div class="app-topbar-actions">
-        <a id="cockpitLink" class="btn secondary small" href="/cockpit" title="Open the Trading Cockpit: market regime, ranked opportunities, portfolio risk, and execution blotter in one view">🛰️ Cockpit</a>
         <label class="topbar-detail" for="displayModeSelect">
           <span class="visually-hidden">Detail level</span>
           <select id="displayModeSelect" title="Simple keeps actions focused; Standard balances depth; Pro expands diagnostics and raw detail.">
@@ -560,7 +569,7 @@
       <details id="moversSection" class="card operations-surface panel-disclosure ops-context-disclosure" data-lazy-api="movers" open>
         <summary class="panel-disclosure-summary">
           <span class="ops-disclosure-title">Market Movers</span>
-          <span class="disclosure-hint muted">Top gainers, losers, and most active <a href="/cockpit" class="muted">· open cockpit</a></span>
+          <span class="disclosure-hint muted">Top gainers, losers, and most active <a href="/?screen=cockpit" class="muted">· open cockpit</a></span>
         </summary>
         <div id="moversGrid" data-async-state="idle"></div>
       </details>
@@ -1026,6 +1035,54 @@
           </li>
         </ul>
       </section>
+
+      <section id="cockpitWorkspaceIntro" class="card workspace-intro cockpit-surface" aria-label="Trading cockpit workspace">
+        <div>
+          <p class="workspace-eyebrow">Cockpit</p>
+          <h2>🛰️ Trading Cockpit</h2>
+          <p class="muted">
+            Market regime, ranked opportunities, portfolio risk, and the execution blotter in one
+            glance view. Every lane shows its data source and freshness; click an opportunity for the
+            decision card and order-intent preview.
+          </p>
+        </div>
+        <div class="inline-form compact">
+          <button class="btn small secondary" id="cockpitReviewBtn" type="button" title="Weekly learning diagnostics and tuning proposals"><span id="cockpitReview">🧠 Review</span></button>
+          <span class="muted" id="cockpitUpdated">—</span>
+          <button class="btn small secondary" id="cockpitRefresh" type="button">Refresh</button>
+        </div>
+      </section>
+
+      <section id="cockpitSection" class="cockpit-surface cockpit-grid" aria-label="Cockpit lanes">
+        <section class="lane" id="laneMarket">
+          <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
+          <div id="cockpitMarketBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="lanePortfolio">
+          <h2>Portfolio Risk + Exposure <span class="lane-prov" data-prov="portfolio"></span></h2>
+          <div id="cockpitPortfolioBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneOpportunities">
+          <h2>Ranked Opportunities <span class="lane-prov" data-prov="opportunities"></span></h2>
+          <div id="cockpitOppChangeStrip" class="change-strip"></div>
+          <div id="cockpitOpportunitiesBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneBlotter">
+          <h2>Execution Blotter <span class="lane-prov" data-prov="blotter"></span></h2>
+          <div id="cockpitBlotterQualityStrip" class="change-strip"></div>
+          <div id="cockpitBlotterBody" data-async-state="idle"></div>
+        </section>
+      </section>
+
+      <aside class="cockpit-drawer" id="cockpitDrawer" aria-hidden="true">
+        <div class="cockpit-drawer-inner">
+          <span class="cockpit-drawer-close" id="cockpitDrawerClose" role="button" aria-label="Close">✕</span>
+          <div id="cockpitDrawerBody"></div>
+        </div>
+      </aside>
 
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
         <div>

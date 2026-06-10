@@ -128,13 +128,31 @@ export async function renderTickerChart(ticker) {
 export async function quickCheck() {
   const ticker = document.getElementById("tickerInput").value.trim().toUpperCase();
   if (!ticker) return;
-  renderQuickCheckCard(null, "Loading...");
+  const ph = document.getElementById("checkPlaceholder");
+  renderQuickCheckCard(null, "");
+  if (ph) {
+    ph.setAttribute("data-async-state", "loading");
+    ph.innerHTML = `<span class="async-state async-state--loading" role="status">
+      <span class="async-spinner" aria-hidden="true"></span>
+      <span>Checking ${safeText(ticker)}…</span>
+    </span>`;
+  }
   const out = await api.get(`/api/check/${ticker}`);
   if (!out.ok) {
-    renderQuickCheckCard(null, `Check failed: ${out.error}`);
+    const msg = out.user_message || out.error || "Request failed";
+    renderQuickCheckCard(null, "");
+    if (ph) {
+      ph.setAttribute("data-async-state", "error");
+      ph.innerHTML = `<span class="async-state async-state--error" role="alert">
+        <span>Check failed: ${safeText(String(msg))}</span>
+        <button type="button" class="btn small secondary" data-check-retry>Retry</button>
+      </span>`;
+      ph.querySelector("[data-check-retry]")?.addEventListener("click", () => void quickCheck());
+    }
     logEvent({ kind: "system", severity: "error", message: `Check ${ticker} failed: ${out.error}` });
     return;
   }
+  if (ph) ph.setAttribute("data-async-state", "success");
   renderQuickCheckCard(out.data, null);
   renderTickerChart(ticker);
   logEvent({ kind: "system", severity: "info", message: `Check complete for ${ticker}.` });

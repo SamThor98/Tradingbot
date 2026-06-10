@@ -1,7 +1,6 @@
 /**
  * Focused sign-in page: shares JWT localStorage key with the main dashboard (`tradingbot.jwt`).
  */
-import { initFeatureFlags, isFlagEnabled } from "./modules/featureFlags.js";
 import { renderAuthState, wireManualJwtBlock } from "./modules/authPresentation.js";
 
 const AUTH_TOKEN_KEY = "tradingbot.jwt";
@@ -125,27 +124,14 @@ function updateSbUi(session) {
   const inn = document.getElementById("loginSbIn");
   const label = document.getElementById("loginSbLabel");
   if (!out || !inn) return;
-  if (isFlagEnabled("unified_auth_block")) {
-    renderAuthState(
-      { signedOutEl: out, signedInEl: inn, labelEl: label },
-      {
-        state: session?.user ? "signed-in" : "signed-out",
-        email: session?.user ? session.user.email || session.user.id || "Signed in" : "",
-      },
-    );
-    if (session?.user) setMessage("You are signed in. Continue to the dashboard.");
-    return;
-  }
-  if (session?.user) {
-    out.classList.add("hidden");
-    inn.classList.remove("hidden");
-    if (label) label.textContent = session.user.email || session.user.id || "Signed in";
-    setMessage("You are signed in. Continue to the dashboard.");
-  } else {
-    inn.classList.add("hidden");
-    out.classList.remove("hidden");
-    if (label) label.textContent = "";
-  }
+  renderAuthState(
+    { signedOutEl: out, signedInEl: inn, labelEl: label },
+    {
+      state: session?.user ? "signed-in" : "signed-out",
+      email: session?.user ? session.user.email || session.user.id || "Signed in" : "",
+    },
+  );
+  if (session?.user) setMessage("You are signed in. Continue to the dashboard.");
 }
 
 async function initSupabase(url, anonKey) {
@@ -215,65 +201,28 @@ async function initSupabase(url, anonKey) {
 }
 
 async function main() {
-  initFeatureFlags();
   const jwtInput = document.getElementById("loginJwt");
   const wrap = document.getElementById("loginSupabase");
 
-  if (isFlagEnabled("unified_auth_block")) {
-    // Single manual-JWT block implementation shared with the dashboard.
-    wireManualJwtBlock({
-      input: jwtInput,
-      saveBtn: document.getElementById("loginJwtSave"),
-      copyBtn: document.getElementById("loginJwtCopy"),
-      normalizeJwt: normalizeUserJwt,
-      isProbablyJwt: AuthJwt.isProbablyAccessJwt,
-      badShapeHint: AuthJwt.JWT_BAD_SHAPE_HINT,
-      readStoredToken: readStoredApiJwt,
-      saveToken: (token) => {
-        localStorage.setItem(AUTH_TOKEN_KEY, token);
-        clearLegacyApiJwtKeys();
-        void createCookieSession(token);
-      },
-      clearToken: () => {
-        void clearCookieSession();
-        clearStoredApiJwt();
-      },
-      onMessage: (text) => setMessage(text),
-    });
-  } else {
-    if (jwtInput) jwtInput.value = readStoredApiJwt();
-
-    document.getElementById("loginJwtSave")?.addEventListener("click", () => {
-      const val = normalizeUserJwt(jwtInput?.value ?? "");
-      if (val) {
-        if (!AuthJwt.isProbablyAccessJwt(val)) {
-          setMessage(AuthJwt.JWT_BAD_SHAPE_HINT);
-          return;
-        }
-        localStorage.setItem(AUTH_TOKEN_KEY, val);
-        clearLegacyApiJwtKeys();
-        void createCookieSession(val);
-        setMessage("Token saved for this browser.");
-      } else {
-        void clearCookieSession();
-        clearStoredApiJwt();
-        setMessage("Token cleared.");
-      }
-    });
-    document.getElementById("loginJwtCopy")?.addEventListener("click", async () => {
-      const val = normalizeUserJwt(jwtInput?.value || readStoredApiJwt());
-      if (!val) {
-        setMessage("No token found to copy.");
-        return;
-      }
-      try {
-        const ok = await copyTextToClipboard(val);
-        setMessage(ok ? "Token copied." : "Copy blocked by browser.");
-      } catch {
-        setMessage("Copy failed. Browser denied clipboard access.");
-      }
-    });
-  }
+  wireManualJwtBlock({
+    input: jwtInput,
+    saveBtn: document.getElementById("loginJwtSave"),
+    copyBtn: document.getElementById("loginJwtCopy"),
+    normalizeJwt: normalizeUserJwt,
+    isProbablyJwt: AuthJwt.isProbablyAccessJwt,
+    badShapeHint: AuthJwt.JWT_BAD_SHAPE_HINT,
+    readStoredToken: readStoredApiJwt,
+    saveToken: (token) => {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      clearLegacyApiJwtKeys();
+      void createCookieSession(token);
+    },
+    clearToken: () => {
+      void clearCookieSession();
+      clearStoredApiJwt();
+    },
+    onMessage: (text) => setMessage(text),
+  });
 
   try {
     const res = await fetch("/api/public-config", { headers: { Accept: "application/json" } });
