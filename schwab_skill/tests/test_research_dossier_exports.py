@@ -188,6 +188,15 @@ def test_compose_dossier_records_finnhub_fallback_notes(monkeypatch) -> None:
     assert any("company_news:rate_limited" in note for note in dossier["fallback_notes"])
 
 
+def test_research_dossier_include_markdown_attaches_preview(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    resp = research.research_dossier("AAPL", include_markdown=True)
+    assert resp.ok is True
+    payload = resp.data or {}
+    assert "markdown_preview" in payload
+    assert "## Executive Investment Summary" in str(payload.get("markdown_preview") or "")
+
+
 def test_export_endpoint_sets_content_disposition(monkeypatch) -> None:
     monkeypatch.setattr(
         research,

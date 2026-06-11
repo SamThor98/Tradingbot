@@ -1395,6 +1395,23 @@ select:focus-visible,
   line-height: 1.7;
   letter-spacing: 0.003em;
 }
+.ir-dossier-preview .dossier-provenance-banner {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.35));
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.35);
+}
+.ir-dossier-preview .dossier-provenance-title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.ir-dossier-preview .dossier-source-list {
+  margin-top: 0.5rem;
+}
+.sec-fidelity-banner {
+  margin-bottom: 0.75rem;
+}
 .ir-dossier-preview .dossier-quality-badge {
   display: inline-flex;
   align-items: center;

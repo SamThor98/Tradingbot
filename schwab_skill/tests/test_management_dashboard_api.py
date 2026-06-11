@@ -67,6 +67,7 @@ def test_management_dashboard_auto_detects_profile(
     assert dashboard["profile"]["selected"] == "cyclical"
     assert isinstance(dashboard["attribution"]["group_level"], list)
     assert isinstance(dashboard["attribution"]["rule_level"], list)
+    assert dashboard["data_fidelity"]["say_do_timeline"] == "derived_from_compare_deltas"
 
 
 def test_management_dashboard_profile_override_roundtrip(

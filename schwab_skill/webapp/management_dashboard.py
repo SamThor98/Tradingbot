@@ -299,6 +299,7 @@ def build_management_dashboard(
     if ruthless_mode:
         red_flags = [rf for rf in red_flags if _severity_weight(_safe_text(rf.get("severity"))) >= 0.55]
 
+    compare_evidence_mode = _safe_text(compare.get("analysis_mode") or "full_text") or "full_text"
     return {
         "source": "management_dashboard_v1",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -307,6 +308,16 @@ def build_management_dashboard(
         "mode": _safe_text(mode),
         "form_type": _safe_text(form_type).upper(),
         "ruthless_mode": bool(ruthless_mode),
+        "data_fidelity": {
+            "compare_evidence": compare_evidence_mode,
+            "say_do_timeline": "derived_from_compare_deltas",
+            "dilution_heatmap": "derived_proxy",
+            "integrity_score": "rule_weighted_from_compare",
+            "disclaimer": (
+                "Say-Do timeline and dilution heatmap are modeled from SEC compare deltas, "
+                "not independently verified filing KPIs."
+            ),
+        },
         "profile": {
             "selected": selected_profile,
             "mode": profile_mode,

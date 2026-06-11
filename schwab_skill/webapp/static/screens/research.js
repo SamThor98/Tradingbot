@@ -110,7 +110,7 @@ export function createResearchController(ctx) {
         }
         updateActionCenter({
           title: "Report Template Loaded",
-          message: `${template} template loaded. Generate dossier when ready.`,
+          message: `${template} preset applied to Run Report controls. Click Run Report (advanced) or Generate Dossier when ready.`,
           severity: "info",
         });
       });

@@ -1348,6 +1348,34 @@ function markdownToPreviewHtml(markdown) {
   return out.join("");
 }
 
+function buildDossierProvenanceBanner(data) {
+  const trust = data?.report_trust || {};
+  const sources = Array.isArray(data?.source_metadata) ? data.source_metadata : [];
+  const fallbacks = Array.isArray(data?.fallback_notes) ? data.fallback_notes : [];
+  const trustStatus = safeText(trust.trust_status || (trust.trusted ? "trusted" : "needs_review"));
+  const trustClass = trust.trusted ? "good" : "warn";
+  const sourceRows = sources.map((row) => {
+    const status = safeText(row.status || "unknown");
+    const name = safeText(row.name || "source");
+    const detail = safeText(row.detail || "");
+    const statusClass = status === "ok" ? "good" : status === "disabled" ? "neutral" : "warn";
+    return `<li><span class="pill ${statusClass}">${name}</span> ${status}${detail ? ` — ${detail}` : ""}</li>`;
+  }).join("");
+  const fallbackBlock = fallbacks.length
+    ? `<div class="subtle">Degraded sources</div><ul class="report-bullets">${fallbacks.map((n) => `<li>${safeText(n)}</li>`).join("")}</ul>`
+    : "";
+  return `
+    <div class="dossier-provenance-banner">
+      <div class="dossier-provenance-title">Evidence trail</div>
+      <div class="subtle">Trust status: <span class="pill ${trustClass}">${trustStatus}</span>
+        · Data confidence ${safeNum((Number(trust.data_confidence) || 0) * 100, 0)}%
+        · Citations ${safeNum((Number(trust.citation_completeness) || 0) * 100, 0)}%</div>
+      <ul class="report-bullets dossier-source-list">${sourceRows || "<li>No source metadata returned.</li>"}</ul>
+      ${fallbackBlock}
+    </div>
+  `;
+}
+
 function buildDossierQualityBadge(data) {
   const quality = data?.sections?.finnhub_catalysts_risks?.snapshot?.quality || null;
   if (!quality || typeof quality !== "object") {
@@ -1377,8 +1405,9 @@ function setDossierPreview(data, markdownText = "") {
     const html = markdownText
       ? markdownToPreviewHtml(markdownText)
       : `<div class="report-empty">Narrative preview unavailable. Use Download Markdown as fallback.</div>`;
+    const provenanceHtml = buildDossierProvenanceBanner(data);
     const qualityBadgeHtml = buildDossierQualityBadge(data);
-    writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${qualityBadgeHtml}${html}</article>`;
+    writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${provenanceHtml}${qualityBadgeHtml}${html}</article>`;
   }
   details.classList.remove("hidden");
   out.textContent = JSON.stringify(data, null, 2);
@@ -1398,6 +1427,12 @@ function triggerBlobDownload(blob, filename) {
 function resolveDossierTicker() {
   const reportTicker = document.getElementById("reportTickerInput")?.value?.trim()?.toUpperCase() || "";
   if (reportTicker) return reportTicker;
+  const quickCheckTicker = document.getElementById("tickerInput")?.value?.trim()?.toUpperCase() || "";
+  if (quickCheckTicker) {
+    const reportInput = document.getElementById("reportTickerInput");
+    if (reportInput) reportInput.value = quickCheckTicker;
+    return quickCheckTicker;
+  }
   // Allow SEC compare users to generate a dossier without retyping.
   const secCompareTicker = document.getElementById("secCompareTickerA")?.value?.trim()?.toUpperCase() || "";
   if (secCompareTicker) {
@@ -1439,7 +1474,7 @@ export async function runResearchDossier() {
   setDossierMeta(`Generating dossier for ${ticker}...`);
   updateActionCenter({ title: "Dossier Running", message: `Building research dossier for ${ticker}...`, severity: "info" });
   try {
-    const out = await api.getResearchDossier(ticker, { timeoutMs: 300000 });
+    const out = await api.getResearchDossier(ticker, { timeoutMs: 300000, includeMarkdown: true });
     if (handleDossierRuntimeUnavailable(out)) return;
     if (!out.ok) {
       setDossierMeta(out.error || "Dossier generation failed.", "warn");
@@ -1447,15 +1482,7 @@ export async function runResearchDossier() {
       return;
     }
     state.lastResearchDossier = out.data;
-    let mdPreview = "";
-    const mdOut = await api.downloadResearchDossier(ticker, "md", { timeoutMs: 300000 });
-    if (mdOut?.ok && mdOut?.data?.blob) {
-      try {
-        mdPreview = await mdOut.data.blob.text();
-      } catch {
-        mdPreview = "";
-      }
-    }
+    const mdPreview = safeText(out.data?.markdown_preview || "");
     setDossierPreview(out.data, mdPreview);
     const fallbackCount = Array.isArray(out.data?.fallback_notes) ? out.data.fallback_notes.length : 0;
     setDossierMeta(

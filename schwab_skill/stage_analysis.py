@@ -102,11 +102,26 @@ def is_stage_2(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
     return True
 
 
-def check_vcp_volume(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
-    """True if last N days each have volume below 50-day avg (VCP_DAYS)."""
-    from config import get_vcp_days
+def check_vcp_volume(
+    df: pd.DataFrame,
+    skill_dir: Path | None = None,
+    exclude_last_bars: int | None = None,
+) -> bool:
+    """True if last N days each have volume below 50-day avg (VCP_DAYS).
+
+    ``exclude_last_bars`` drops that many most-recent bars (the breakout /
+    confirmation bars) before measuring dry-up, so contraction is evaluated
+    strictly before the breakout instead of including it. ``None`` reads
+    VCP_EXCLUDE_BREAKOUT_BARS from config (default 0 = legacy behavior).
+    """
+    from config import get_vcp_days, get_vcp_exclude_breakout_bars
 
     vcp_days = get_vcp_days(skill_dir)
+    if exclude_last_bars is None:
+        exclude_last_bars = get_vcp_exclude_breakout_bars(skill_dir)
+    exclude = max(0, int(exclude_last_bars))
+    if exclude:
+        df = df.iloc[:-exclude]
     if df.empty or len(df) < 50 or len(df) < vcp_days:
         return False
     df = add_indicators(df)

@@ -2027,9 +2027,15 @@ def set_sec_management_profile_override(payload: dict[str, Any]) -> ApiResponse:
 
 
 @router.get("/api/research/dossier/{ticker}", response_model=ApiResponse)
-def research_dossier(ticker: str) -> ApiResponse:
+def research_dossier(
+    ticker: str,
+    include_markdown: bool = Query(default=False),
+) -> ApiResponse:
     try:
-        return _ok(_compose_research_dossier(ticker))
+        dossier = _compose_research_dossier(ticker)
+        if include_markdown:
+            dossier["markdown_preview"] = _dossier_to_markdown(dossier)
+        return _ok(dossier)
     except Exception as e:
         return _err_response("research_dossier", e)
 

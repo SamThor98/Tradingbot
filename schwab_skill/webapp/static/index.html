@@ -1279,7 +1279,7 @@
         <article id="portfolioSection" class="card" data-lazy-api="portfolio">
           <div class="section-title">
             <h2>Portfolio</h2>
-            <small id="portfolioMeta" class="muted">Open the Research screen to load positions.</small>
+            <small id="portfolioMeta" class="muted">Loads automatically on Research or when you scroll here.</small>
           </div>
           <div class="table-wrap">
             <table>
@@ -1340,7 +1340,7 @@
             <button id="challengerBtn" class="btn secondary" type="button">Run Challenger Scan</button>
           </div>
           <div id="learningPanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">No learning engine results yet. Click <em>Run Post-Mortem Analysis</em> to start.</div>
+            <div class="report-empty">No learning engine results yet. Workflow: execute trades so outcomes are recorded → <em>Run Post-Mortem Analysis</em> (requires persisted outcomes) → <em>Run Challenger Scan</em> (requires post-mortem overrides).</div>
           </div>
           <div id="challengerPanel" class="performance-panel" aria-live="polite" style="margin-top:1rem;">
           </div>
@@ -1659,7 +1659,7 @@
             <button class="btn small secondary" type="button" data-template="fundamental_snapshot" data-section="dcf" data-skip-mirofish="true" data-skip-edgar="false">Fundamental Snapshot</button>
             <button class="btn small secondary" type="button" data-template="forensic_focus" data-section="edgar" data-skip-mirofish="true" data-skip-edgar="false">Forensic Focus</button>
           </div>
-          <div id="reportTemplateMeta" class="muted compare-meta">Pick a preset template, then generate a dossier.</div>
+          <div id="reportTemplateMeta" class="muted compare-meta">Presets configure <strong>Run Report</strong> (advanced). Use <strong>Generate Dossier</strong> for the full institutional package.</div>
           <details id="reportAdvancedOptions" class="panel-disclosure panel-disclosure--advanced">
             <summary class="panel-disclosure-summary">
               Advanced report controls
@@ -1691,6 +1691,10 @@
             <pre id="dossierOutput" class="code-block">No dossier run yet.</pre>
           </details>
           <div id="reportTabs" class="report-tabs"></div>
+          <p id="reportVsDossierHint" class="muted compare-meta" style="margin-top:0.75rem">
+            <strong>Generate Dossier</strong> builds the full institutional package (technical, valuation, SEC narrative, Finnhub catalysts, portfolio context) for export.
+            <strong>Run Report</strong> below is the interactive IC view — presets and section overrides apply only there.
+          </p>
           <div id="reportVisual" class="report-visual">
             <div class="report-empty">No report run yet. Enter a ticker and run report.</div>
           </div>

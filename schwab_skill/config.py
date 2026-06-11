@@ -251,6 +251,18 @@ def get_vcp_days(skill_dir: Path | None = None) -> int:
     return _get_int("VCP_DAYS", 4, skill_dir)
 
 
+def get_vcp_exclude_breakout_bars(skill_dir: Path | None = None) -> int:
+    """Most-recent bars to exclude from the VCP dry-up window.
+
+    The VCP check historically included the breakout/entry bar itself, which
+    forces every accepted signal to have below-average breakout-day volume and
+    makes any breakout-volume confirmation gate (ratio >= 1.0) unsatisfiable.
+    Setting this to BREAKOUT_CONFIRM_BARS measures dry-up strictly *before*
+    the breakout. Default 0 preserves legacy behavior.
+    """
+    return max(0, _get_int("VCP_EXCLUDE_BREAKOUT_BARS", 0, skill_dir))
+
+
 # Signal ranking: max number of signals to send (0 = no limit)
 def get_signal_top_n(skill_dir: Path | None = None) -> int:
     """

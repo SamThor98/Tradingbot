@@ -154,6 +154,10 @@ export async function quickCheck() {
   }
   if (ph) ph.setAttribute("data-async-state", "success");
   renderQuickCheckCard(out.data, null);
+  const reportInput = document.getElementById("reportTickerInput");
+  if (reportInput && !reportInput.value.trim()) reportInput.value = ticker;
+  const secInput = document.getElementById("secCompareTickerA");
+  if (secInput && !secInput.value.trim()) secInput.value = ticker;
   renderTickerChart(ticker);
   logEvent({ kind: "system", severity: "info", message: `Check complete for ${ticker}.` });
 }

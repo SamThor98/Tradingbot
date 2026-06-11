@@ -343,7 +343,10 @@ export const api = {
 
   getResearchDossier(ticker, options = {}) {
     const safeTicker = String(ticker || "").trim().toUpperCase();
-    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}`, options);
+    const qs = new URLSearchParams();
+    if (options.includeMarkdown) qs.set("include_markdown", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}${suffix}`, options);
   },
 
   downloadResearchDossier(ticker, format = "json", options = {}) {

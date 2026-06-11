@@ -205,13 +205,29 @@ def _build_configs() -> list[SweepConfig]:
             "BREAKOUT_CONFIRM_BARS": "2",
         },
     ))
+    # VCP window ablation: measure dry-up strictly before the breakout bar.
+    # The legacy VCP check includes the entry bar, which forces every accepted
+    # signal to break out on BELOW-average volume (and made the volume-gate
+    # configs below mathematically unsatisfiable in the 2026-06-10 sweep).
+    configs.append(SweepConfig(
+        config_id="vcp_pre_breakout",
+        description="VCP dry-up measured on bars before the breakout bar (no volume gate).",
+        env={
+            **_signal_gate_base,
+            "VCP_EXCLUDE_BREAKOUT_BARS": "1",
+        },
+    ))
     # Breakout volume confirmation: hard-require latest/avg50 volume ratio.
+    # Requires VCP_EXCLUDE_BREAKOUT_BARS >= 1: with the legacy VCP window the
+    # entry bar is below-average volume by construction and no signal can pass
+    # a ratio >= 1.0 gate.
     for ratio in ("1.00", "1.20", "1.50"):
         configs.append(SweepConfig(
             config_id=f"breakout_vol_{ratio.replace('.', '')}",
-            description=f"Hard breakout-volume gate: latest/avg50 volume >= {ratio}.",
+            description=f"Hard breakout-volume gate: latest/avg50 volume >= {ratio} (VCP measured pre-breakout).",
             env={
                 **_signal_gate_base,
+                "VCP_EXCLUDE_BREAKOUT_BARS": "1",
                 "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
                 "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": ratio,
             },
@@ -219,12 +235,13 @@ def _build_configs() -> list[SweepConfig]:
     # Combined best-guess: confluence (either) + 2-bar follow-through + 1.2x volume.
     configs.append(SweepConfig(
         config_id="signal_gate_combo",
-        description="Combo: confluence(either) + 2-bar breakout + 1.2x volume gate.",
+        description="Combo: confluence(either) + 2-bar breakout + 1.2x volume gate (VCP pre-breakout).",
         env={
             **_signal_gate_base,
             "CONFLUENCE_GATE_MODE": "live",
             "CONFLUENCE_REQUIRE_COUNT": "1",
             "BREAKOUT_CONFIRM_BARS": "2",
+            "VCP_EXCLUDE_BREAKOUT_BARS": "2",
             "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
             "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": "1.20",
         },
@@ -245,6 +262,29 @@ def _result_path(config_id: str) -> Path:
 
 def _multi_era_artifact_path(config_id: str) -> Path:
     return ARTIFACT_DIR / f"multi_era_backtest_schwab_only_{config_id}.json"
+
+
+def _artifact_is_complete(config_id: str) -> bool:
+    """True if the multi-era artifact exists and covers every era with no failures.
+
+    The multi-era subprocess can exit nonzero for reasons unrelated to the
+    backtest itself (e.g. CPython exit code 120 when stdout/stderr flushing
+    fails at interpreter shutdown on Windows/OneDrive consoles — observed
+    2026-06-10, which discarded four completed multi-hour runs). The artifact
+    on disk is the source of truth, so trust it over the process return code.
+    """
+    p = _multi_era_artifact_path(config_id)
+    if not p.exists():
+        return False
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if payload.get("failed_eras"):
+        return False
+    eras = {str(r.get("era")) for r in payload.get("results", [])}
+    expected = {"recent_current", "bear_rates", "crash_recovery", "volatility_chop", "late_bull"}
+    return expected.issubset(eras)
 
 
 def _load_control_results(config_id: str = "control_legacy") -> dict[str, dict[str, Any]] | None:
@@ -472,11 +512,16 @@ def main() -> int:
         state["currently_running"] = cfg.config_id
         _write_progress(state, progress_path)
         rc = _run_one(cfg, max_workers=args.max_workers, chunk_size=args.chunk_size, ticker_limit=args.ticker_limit)
-        if rc != 0:
+        if rc != 0 and not _artifact_is_complete(cfg.config_id):
             state["failed"].append({"config_id": cfg.config_id, "rc": rc})
             print(f"[phase1] config {cfg.config_id} failed with rc={rc}")
             _write_progress(state, progress_path)
             continue
+        if rc != 0:
+            print(
+                f"[phase1] config {cfg.config_id} exited rc={rc} but artifact is "
+                "complete; persisting result anyway."
+            )
         control_results = _load_control_results()
         result = _persist_result(cfg, control_results)
         if result is None:

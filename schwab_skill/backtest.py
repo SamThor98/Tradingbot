@@ -1018,6 +1018,16 @@ def _run_backtest_core(
     breakout_confirm_bars = int(get_breakout_confirm_bars(sd))
     confluence_mode = get_confluence_gate_mode(sd)
     confluence_require_count = int(get_confluence_require_count(sd))
+    if confluence_mode in ("shadow", "live") and get_schwab_only_data(sd):
+        # check_earnings_at_date returns None in schwab-only mode, so the
+        # pead_positive confirmation can never fire: the advisory_high path is
+        # the only achievable confirmation. Surface that so 0-trade sweeps are
+        # interpretable instead of silently testing "block everything".
+        diagnostics["confluence_pead_unavailable"] = True
+        LOG.warning(
+            "Confluence gate active with SCHWAB_ONLY_DATA=true: PEAD "
+            "confirmation unavailable; only advisory_high can confirm."
+        )
     quality_mode = get_quality_gates_mode(sd)
     adaptive_stop_enabled = get_adaptive_stop_enabled(sd)
     stop_pct_base = float(get_adaptive_stop_base_pct(sd))
@@ -1200,7 +1210,10 @@ def _run_backtest_core(
                     diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
                 else:
                     try:
-                        if not check_vcp_volume(window, sd):
+                        # Exit invalidation always evaluates the current bar:
+                        # VCP_EXCLUDE_BREAKOUT_BARS is an entry-side tunable
+                        # and must not delay invalidation exits.
+                        if not check_vcp_volume(window, sd, exclude_last_bars=0):
                             exit_reason = "vcp_invalidation"
                             diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
                     except Exception:
@@ -1352,6 +1365,15 @@ def _run_backtest_core(
             signal: dict[str, Any] = {
                 "ticker": ticker,
                 "signal_score": float(comps.get("score", 0) or 0),
+                # price/sma_50/sma_200/score_components mirror the live
+                # scanner's signal_row: the advisory model extracts its
+                # features from these keys, and without them every advisory
+                # score degenerated to zeroed features (confluence gate could
+                # never see advisory_high in backtests).
+                "price": float(window["close"].iloc[-1]),
+                "sma_50": float(window["sma_50"].iloc[-1]) if "sma_50" in window.columns else None,
+                "sma_200": float(window["sma_200"].iloc[-1]) if "sma_200" in window.columns else None,
+                "score_components": comps,
                 "latest_volume": float(window["volume"].iloc[-1]),
                 "avg_vol_50": float(window["avg_vol_50"].iloc[-1]),
                 "mirofish_result": miro,

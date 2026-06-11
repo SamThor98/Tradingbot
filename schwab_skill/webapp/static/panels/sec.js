@@ -351,6 +351,13 @@ function buildFallbackManagementDashboard(comparePayload, { mode, tickerA, ticke
     ];
   return {
     source: "derived_compare_fallback",
+    data_fidelity: {
+      compare_evidence: safeText(compare.analysis_mode || "metadata_fallback"),
+      say_do_timeline: "synthetic_fallback",
+      dilution_heatmap: "synthetic_fallback",
+      integrity_score: "synthetic_fallback",
+      disclaimer: "Management dashboard cards are synthetic placeholders because SEC compare used metadata-only fallback.",
+    },
     mode,
     ticker: tickerA,
     benchmark_ticker: tickerB || "",
@@ -384,11 +391,16 @@ function normalizeManagementPayload(raw, fallbackData) {
   if (!timeline.length && !pillars.length && !heatmap.length && !redFlags.length) {
     return fallbackData;
   }
+  const dataFidelity = payload?.data_fidelity && typeof payload.data_fidelity === "object"
+    ? payload.data_fidelity
+    : (fallbackData?.data_fidelity || null);
   return {
     source: safeText(payload?.source || raw?.source || "backend"),
     mode: safeText(payload?.mode || fallbackData.mode || ""),
     ticker: safeText(payload?.ticker || fallbackData.ticker || ""),
     benchmark_ticker: safeText(payload?.benchmark_ticker || fallbackData.benchmark_ticker || ""),
+    profile: payload?.profile || fallbackData?.profile || null,
+    data_fidelity: dataFidelity,
     say_do_timeline: timeline.length ? timeline : fallbackData.say_do_timeline,
     integrity_scorecard: {
       score: score || fallbackData.integrity_scorecard.score,
@@ -424,6 +436,8 @@ function mergeManagementDashboard(base, analyst, { mode, tickerA, tickerB, ruthl
   out.red_flags = asArray(analyst?.red_flags).length
     ? analyst.red_flags
     : asArray(base?.red_flags);
+  out.data_fidelity = analyst?.data_fidelity || base?.data_fidelity || out.data_fidelity || null;
+  out.profile = analyst?.profile || base?.profile || out.profile || null;
   out.source = safeText([base?.source, analyst?.source].filter(Boolean).join("+") || "fallback");
   return out;
 }
@@ -715,6 +729,21 @@ export function buildNarrativeSummary(comparePayload) {
   return `${investor} ${firstSimilarity} ${firstDifference} ${firstMaterial}`;
 }
 
+function buildManagementFidelityBanner(dashboard, compare) {
+  const fidelity = dashboard?.data_fidelity || {};
+  const compareMode = safeText(fidelity.compare_evidence || compare?.analysis_mode || "full_text");
+  const timelineMode = safeText(fidelity.say_do_timeline || "");
+  const disclaimer = safeText(fidelity.disclaimer || "");
+  const isDerived = timelineMode.includes("derived") || timelineMode.includes("synthetic") || compareMode === "metadata_fallback";
+  if (!isDerived && !disclaimer) return "";
+  const message = disclaimer || (
+    compareMode === "metadata_fallback"
+      ? "SEC compare used EDGAR metadata only. Management dashboard metrics are illustrative until full filing-text compare is available."
+      : "Say-Do timeline and dilution heatmap are derived from compare deltas, not independently audited filing KPIs."
+  );
+  return `<div class="report-callout warn sec-fidelity-banner">${message}</div>`;
+}
+
 export function renderSecCompareEmpty(message) {
   const headlineRoot = document.getElementById("secCompareHeadline");
   const narrativeRoot = document.getElementById("secCompareNarrative");
@@ -876,7 +905,9 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
     tickerA: left?.ticker || leftLabel || "N/A",
     tickerB: right?.ticker || rightLabel || "",
   });
+  const fidelityBanner = buildManagementFidelityBanner(dashboard, compare);
   renderSayDoTimeline(timelineRoot, normalizeTimelineRows(dashboard), ruthlessMode);
+  if (timelineRoot && fidelityBanner) timelineRoot.insertAdjacentHTML("afterbegin", fidelityBanner);
   renderIntegrityScorecard(scorecardRoot, {
     score: dashboard?.integrity_scorecard?.score,
     pillars: normalizePillars(dashboard),
