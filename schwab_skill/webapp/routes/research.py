@@ -455,10 +455,10 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         sec_compare_data = {"ok": False, "error": "SEC compare disabled by config"}
         source_metadata.append(_source_entry("sec_compare", status="disabled", detail="compare disabled"))
 
+    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
     portfolio_summary: dict[str, Any] = {}
     portfolio_risk: dict[str, Any] = {}
     try:
-        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
         account_status = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(account_status, dict):
             portfolio_summary = build_portfolio_summary(account_status)
@@ -473,7 +473,7 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
 
     sector_context: dict[str, Any]
     try:
-        sector_context = get_sector_heatmap(skill_dir=SKILL_DIR)
+        sector_context = get_sector_heatmap(auth=auth, skill_dir=SKILL_DIR)
         source_metadata.append(_source_entry("sector_context", status="ok", detail="relative sector heatmap"))
     except Exception as exc:  # noqa: BLE001
         sector_context = {"ok": False, "error": str(exc)}

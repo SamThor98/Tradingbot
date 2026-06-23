@@ -46,6 +46,7 @@ from sec_filing_compare import (
     compare_ticker_vs_ticker,
 )
 from sector_strength import get_sector_heatmap
+from webapp.routes.research import _dossier_to_xlsx
 
 from ._shared import (
     build_portfolio_risk_analytics as _build_portfolio_risk_analytics,
@@ -1129,7 +1130,8 @@ def _compose_research_dossier_sd(
 
     sector_context: dict[str, Any]
     try:
-        sector_context = get_sector_heatmap(skill_dir=skill_dir)
+        with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as heatmap_auth:
+            sector_context = get_sector_heatmap(auth=heatmap_auth, skill_dir=skill_dir)
         source_metadata.append(_source_entry_sd("sector_context", status="ok", detail="relative sector heatmap"))
     except Exception as exc:  # noqa: BLE001
         sector_context = {"ok": False, "error": str(exc)}
@@ -2615,6 +2617,7 @@ def tenant_set_sec_management_profile_override(
 @router.get("/api/research/dossier/{ticker}", response_model=ApiResponse)
 def tenant_research_dossier(
     ticker: str,
+    include_markdown: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> ApiResponse:
@@ -2623,6 +2626,8 @@ def tenant_research_dossier(
     try:
         with tenant_skill_dir(db, user.id) as skill_dir:
             dossier = _compose_research_dossier_sd(ticker, skill_dir=skill_dir)
+            if include_markdown:
+                dossier["markdown_preview"] = _dossier_to_markdown_sd(dossier)
         return _ok(dossier)
     except Exception as exc:
         return _saas_error_response(exc, source="research_dossier", fallback="Research dossier generation failed.")
@@ -2631,7 +2636,7 @@ def tenant_research_dossier(
 @router.get("/api/research/dossier/{ticker}/export")
 def tenant_research_dossier_export(
     ticker: str,
-    format: str = Query(default="json", pattern="^(json|md|pdf)$"),
+    format: str = Query(default="json", pattern="^(json|md|pdf|xlsx)$"),
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> Response:
@@ -2651,6 +2656,10 @@ def tenant_research_dossier_export(
             body = _dossier_to_markdown_sd(dossier).encode("utf-8")
             filename = f"{safe_symbol.lower()}_research_dossier.md"
             media_type = "text/markdown; charset=utf-8"
+        elif format == "xlsx":
+            body = _dossier_to_xlsx(dossier)
+            filename = f"{safe_symbol.lower()}_fundamental_workbook.xlsx"
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
             body = _text_to_simple_pdf_sd(_dossier_to_markdown_sd(dossier))
             filename = f"{safe_symbol.lower()}_research_dossier.pdf"
@@ -2659,6 +2668,37 @@ def tenant_research_dossier_export(
         return Response(content=body, media_type=media_type, headers=headers)
     except Exception as exc:
         err = _saas_error_response(exc, source="research_dossier_export", fallback="Dossier export failed.")
+        return Response(content=json.dumps(err.model_dump(), indent=2), media_type="application/json", status_code=500)
+
+
+@router.get("/api/research/dossier/{ticker}/fundamental-workbook")
+def tenant_research_fundamental_workbook_export(
+    ticker: str,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> Response:
+    if not user_has_account_session(db, user.id):
+        err = _err("Link Schwab account before downloading the fundamental model workbook.")
+        return Response(content=json.dumps(err.model_dump(), indent=2), media_type="application/json", status_code=409)
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            dossier = _compose_research_dossier_sd(ticker, skill_dir=skill_dir)
+        symbol = str(dossier.get("ticker") or ticker.upper().strip())
+        safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
+        body = _dossier_to_xlsx(dossier)
+        filename = f"{safe_symbol.lower()}_fundamental_model_workbook.xlsx"
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+    except Exception as exc:
+        err = _saas_error_response(
+            exc,
+            source="research_fundamental_workbook_export",
+            fallback="Fundamental workbook export failed.",
+        )
         return Response(content=json.dumps(err.model_dump(), indent=2), media_type="application/json", status_code=500)
 
 

@@ -346,7 +346,8 @@ export const api = {
     const qs = new URLSearchParams();
     if (options.includeMarkdown) qs.set("include_markdown", "true");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}${suffix}`, options);
+    const { includeMarkdown: _includeMarkdown, ...requestOptions } = options;
+    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}${suffix}`, requestOptions);
   },
 
   downloadResearchDossier(ticker, format = "json", options = {}) {

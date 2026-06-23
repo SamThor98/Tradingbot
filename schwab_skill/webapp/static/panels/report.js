@@ -1445,7 +1445,9 @@ function resolveDossierTicker() {
 
 function handleDossierRuntimeUnavailable(responseLike) {
   if (!responseLike || responseLike.status !== 404) return false;
-  const msg = "Dossier endpoint unavailable in this runtime";
+  const msg =
+    responseLike.error ||
+    "Dossier export endpoint unavailable in this runtime. Update the API service and retry.";
   setDossierMeta(msg, "warn");
   updateActionCenter({
     title: "Dossier Unavailable",

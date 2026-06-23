@@ -4668,8 +4668,25 @@ body.ui-pro .panel-disclosure--advanced {
   .mobile-primary-dock {
     display: grid;
   }
+  /* Research/diagnostics controls sit low on the page; hide the operations dock so
+     fixed bottom actions do not intercept dossier/report clicks. */
+  body.ui-screen-research .mobile-primary-dock,
+  body.ui-screen-diagnostics .mobile-primary-dock,
+  body.ui-screen-settings .mobile-primary-dock,
+  body.ui-screen-kronos .mobile-primary-dock {
+    display: none;
+  }
+  #reportSectionCard .inline-form {
+    padding-bottom: 18px;
+  }
   .scroll-top-btn {
     bottom: 86px;
+  }
+  body.ui-screen-research .scroll-top-btn,
+  body.ui-screen-diagnostics .scroll-top-btn,
+  body.ui-screen-settings .scroll-top-btn,
+  body.ui-screen-kronos .scroll-top-btn {
+    bottom: 18px;
   }
 }
 
