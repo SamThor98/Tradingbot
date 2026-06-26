@@ -209,6 +209,9 @@ export async function loadProfiles() {
   renderProfilePanel(panel, out.data);
   panel.setAttribute("data-async-state", ASYNC_SUCCESS);
   renderPresetApplyPreview();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("settings_summary_refresh"));
+  }
 }
 
 export async function applyProfile() {

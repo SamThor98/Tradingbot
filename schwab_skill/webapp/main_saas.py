@@ -594,7 +594,7 @@ def simple_dashboard() -> RedirectResponse:
 @app.get("/cockpit")
 def cockpit_page() -> RedirectResponse:
     """Legacy standalone cockpit page, now a screen of the main dashboard."""
-    return RedirectResponse("/?screen=cockpit", status_code=302)
+    return RedirectResponse("/?screen=research#cockpitSection", status_code=302)
 
 
 @app.get("/login")

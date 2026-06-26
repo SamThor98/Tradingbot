@@ -153,6 +153,39 @@ def _normalize_sec_compare_payload(payload: dict[str, Any], *, analysis_mode: st
     return data
 
 
+def _attach_management_dashboard(
+    compare_payload: dict[str, Any],
+    *,
+    mode: str,
+    ticker: str,
+    ticker_b: str,
+    form_type: str,
+    ruthless_mode: bool,
+    profile_override: str,
+) -> dict[str, Any]:
+    persisted_override = _LOCAL_SEC_MGMT_PROFILE_OVERRIDE or ""
+    last_override = _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-1] if _LOCAL_SEC_MGMT_OVERRIDE_HISTORY else None
+    safe_override = profile_override.strip().lower() or persisted_override
+    if safe_override and safe_override not in PROFILE_WEIGHTS:
+        supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+        raise ValueError(f"Invalid profile_override '{profile_override}'. Use one of: {supported}.")
+    dashboard = build_management_dashboard(
+        compare_payload=compare_payload,
+        mode=mode,
+        ticker=ticker,
+        ticker_b=ticker_b,
+        form_type=form_type,
+        ruthless_mode=bool(ruthless_mode),
+        profile_override=safe_override or None,
+    )
+    dashboard["profile"]["persisted_override"] = persisted_override or None
+    dashboard["profile"]["last_override"] = last_override
+    dashboard["profile"]["history_tail"] = _LOCAL_SEC_MGMT_OVERRIDE_HISTORY[-10:]
+    out = dict(compare_payload)
+    out["management_dashboard"] = dashboard
+    return out
+
+
 def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
     technical = report.get("technical") or {}
     dcf = report.get("dcf") or {}
@@ -1859,6 +1892,9 @@ def sec_compare(
     ticker_b: str = "",
     form_type: str = "10-K",
     highlight_changes_only: bool = False,
+    include_management_dashboard: bool = False,
+    ruthless_mode: bool = False,
+    profile_override: str = "",
 ) -> ApiResponse:
     try:
         cfg = _sec_analysis_settings()
@@ -1898,7 +1934,21 @@ def sec_compare(
 
         if not out.get("ok"):
             return ApiResponse(ok=False, error=str(out.get("error", "SEC compare failed")))
-        return _ok(_normalize_sec_compare_payload(out))
+        compare_payload = _normalize_sec_compare_payload(out)
+        if include_management_dashboard:
+            bundled = _attach_management_dashboard(
+                compare_payload,
+                mode=safe_mode,
+                ticker=safe_ticker,
+                ticker_b=safe_ticker_b,
+                form_type=safe_form,
+                ruthless_mode=ruthless_mode,
+                profile_override=profile_override,
+            )
+            return _ok(bundled)
+        return _ok(compare_payload)
+    except ValueError as e:
+        return ApiResponse(ok=False, error=str(e))
     except Exception as e:
         return _err_response("sec_compare", e)
 
@@ -1910,10 +1960,16 @@ def sec_compare_alias(
     ticker_b: str = "",
     form_type: str = "10-K",
     highlight_changes_only: bool = False,
+    include_management_dashboard: bool = False,
+    ruthless_mode: bool = False,
+    profile_override: str = "",
 ) -> ApiResponse:
     return sec_compare(
         mode=mode, ticker=ticker, ticker_b=ticker_b,
         form_type=form_type, highlight_changes_only=highlight_changes_only,
+        include_management_dashboard=include_management_dashboard,
+        ruthless_mode=ruthless_mode,
+        profile_override=profile_override,
     )
 
 

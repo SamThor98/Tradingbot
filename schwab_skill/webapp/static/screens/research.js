@@ -2,8 +2,7 @@
  *
  * Owns one-time wiring (init) and screen-prime data loading (prime) for the
  * Research screen: quick check, backtest hub + strategy chat, dossiers/reports,
- * SEC compare, recovery/ablation tools, learning panels, portfolio and
- * performance. Dependencies are injected via ctx from app.js so behavior is
+ * SEC compare, recovery/learning tools, portfolio and performance. Dependencies are injected via ctx from app.js so behavior is
  * identical to the previous inline wireEvents/maybePrimeScreenData code.
  * Rollout flag: screen_controllers (see wiki [[section-migration-map]]).
  */
@@ -35,14 +34,13 @@ export function createResearchController(ctx) {
     applySecCompareMode,
     resetSecCompareProfileOverride,
     renderSecCompareVisual,
+    wireSecCompareActions,
     applyReportViewMode,
     mapRecovery,
     refreshPerformance,
     loadPortfolioRisk,
     renderEvolvePanel,
     renderChallengerPanel,
-    runAblationCycle,
-    refreshAblationCycleStatus,
     runLazyApi,
   } = ctx;
 
@@ -118,6 +116,7 @@ export function createResearchController(ctx) {
     bindEvent("secCompareBtn", "click", runSecCompare);
     bindEvent("secCompareMode", "change", applySecCompareMode);
     bindEvent("secCompareResetProfileBtn", "click", resetSecCompareProfileOverride);
+    wireSecCompareActions({ openTradeDrawer });
     bindEvent("secCompareRuthlessMode", "change", () => {
       state.secRuthlessMode = Boolean(document.getElementById("secCompareRuthlessMode")?.checked);
       if (state.secCompareResult) renderSecCompareVisual(state.secCompareResult);
@@ -132,9 +131,13 @@ export function createResearchController(ctx) {
         document.getElementById("secCompareTickerA").value = a;
         document.getElementById("secCompareTickerB").value = b;
         applySecCompareMode();
+        if (e.shiftKey) {
+          void runSecCompare();
+          return;
+        }
         updateActionCenter({
           title: "Preset Loaded",
-          message: `${a}${b ? ` vs ${b}` : " over time"} template loaded. Click Run SEC Compare.`,
+          message: `${a}${b ? ` vs ${b}` : " over time"} template loaded. Click Run SEC Compare (Shift+click to run immediately).`,
           severity: "info",
         });
       });
@@ -182,14 +185,17 @@ export function createResearchController(ctx) {
         if (btn) { btn.disabled = false; btn.textContent = "Run Challenger Scan"; }
       }
     });
-    document.getElementById("ablationCycleBtn")?.addEventListener("click", () => void runAblationCycle());
-    document.getElementById("ablationStatusRefreshBtn")?.addEventListener("click", () => void refreshAblationCycleStatus());
   }
 
   function prime() {
     void runLazyApi("backtest");
     void runLazyApi("portfolio");
     void runLazyApi("performance");
+    void ctx.primeCockpitPanel?.();
+    void runLazyApi("sectors");
+    void runLazyApi("movers");
+    void refreshBacktestRuns().then(() => ctx.updateResearchSummaryLanding?.());
+    ctx.updateResearchSummaryLanding?.();
   }
 
   return { id: "research", init, prime };

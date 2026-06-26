@@ -38,6 +38,9 @@ from config import (
     get_adaptive_stop_enabled,
     get_backtest_adaptive_guardrail_policy_path,
     get_backtest_adaptive_guardrails_enabled,
+    get_backtest_hold_days,
+    get_backtest_min_hold_days_before_trail,
+    get_backtest_min_hold_defer_soft_exits,
     get_backtest_portfolio_max_positions,
     get_backtest_portfolio_starting_equity,
     get_backtest_position_size_pct,
@@ -533,23 +536,9 @@ def _run_mirofish_for_entry(
     seeded_df: pd.DataFrame,
     skill_dir: Path | None = None,
 ) -> dict[str, Any] | None:
-    if os.environ.get("BACKTEST_SKIP_MIROFISH", "").strip().lower() in ("1", "true", "yes"):
-        return None
-    sd = skill_dir or SKILL_DIR
-    try:
-        from engine_analysis import MarketSimulation
+    from core.mirofish_entry import run_mirofish_for_entry
 
-        sim = MarketSimulation(ticker, seed_df=seeded_df, skill_dir=sd)
-        result = sim.run()
-        return {
-            "conviction_score": result.get("conviction_score"),
-            "summary": result.get("summary"),
-            "continuation_probability": result.get("continuation_probability"),
-            "bull_trap_probability": result.get("bull_trap_probability"),
-        }
-    except Exception as e:
-        LOG.warning("MiroFish sim failed for %s: %s", ticker, e)
-        return None
+    return run_mirofish_for_entry(ticker, seeded_df, skill_dir=skill_dir or SKILL_DIR)
 
 
 def _safe_telemetry_float(value: Any, default: float = 0.0) -> float:
@@ -654,17 +643,147 @@ def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> d
     }
 
 
+def _score_fields_for_trade(signal: dict[str, Any]) -> dict[str, Any]:
+    comps = signal.get("score_components") if isinstance(signal.get("score_components"), dict) else {}
+    price_raw = signal.get("price")
+    sma_200_raw = signal.get("sma_200")
+    try:
+        price = float(price_raw) if price_raw is not None else None
+    except (TypeError, ValueError):
+        price = None
+    try:
+        sma_200 = float(sma_200_raw) if sma_200_raw is not None else None
+    except (TypeError, ValueError):
+        sma_200 = None
+    trend_pct: float | None
+    trend_raw = signal.get("close_vs_sma200_pct")
+    if trend_raw is not None:
+        try:
+            trend_pct = float(trend_raw)
+        except (TypeError, ValueError):
+            trend_pct = None
+    else:
+        trend_pct = None
+    if trend_pct is None and price is not None and sma_200 is not None and sma_200 > 0:
+        trend_pct = (float(price) / float(sma_200)) - 1.0
+    advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
+    out: dict[str, Any] = {
+        "signal_score": signal.get("signal_score"),
+        "edge_score": signal.get("edge_score"),
+        "reliability_score": signal.get("reliability_score"),
+        "execution_score": signal.get("execution_score"),
+        "composite_score": signal.get("composite_score"),
+        "rank_score": signal.get("rank_score"),
+        "rank_score_v2": signal.get("rank_score_v2"),
+        "p_up_calibrated": signal.get("p_up_calibrated"),
+        "ev_10d": signal.get("ev_10d"),
+        "advisory_confidence_bucket": advisory.get("confidence_bucket"),
+        "advisory_feature_coverage": advisory.get("feature_coverage"),
+        "data_provider": signal.get("data_provider"),
+        "data_provider_primary": signal.get("data_provider_primary"),
+        "used_fallback_data": signal.get("used_fallback_data"),
+        "pts_52w": comps.get("pts_52w"),
+        "pts_sma": comps.get("pts_sma"),
+        "pts_volume": comps.get("pts_volume"),
+        "pts_mirofish": comps.get("pts_mirofish"),
+        "close_vs_sma200_pct": trend_pct,
+        "entry_sma_200": sma_200,
+    }
+    if price is not None:
+        out["entry_price_ref"] = price
+    return out
+
+
+def _resolve_backtest_exit_settings(skill_dir: Path | None = None) -> tuple[int, int, bool]:
+    sd = skill_dir or SKILL_DIR
+    hold_days = int(get_backtest_hold_days(sd))
+    min_hold_before_trail = int(get_backtest_min_hold_days_before_trail(sd))
+    defer_soft_exits = bool(get_backtest_min_hold_defer_soft_exits(sd))
+    return hold_days, min_hold_before_trail, defer_soft_exits
+
+
+def _stop_triggered(
+    *,
+    px: float,
+    entry_price: float,
+    stop_pct: float,
+    highest_close: float,
+    bars_held: int,
+    min_hold_before_trail: int,
+) -> bool:
+    if bars_held < min_hold_before_trail:
+        return px <= entry_price * (1.0 - stop_pct)
+    return px <= highest_close * (1.0 - stop_pct)
+
+
+def _evaluate_position_exit(
+    *,
+    px: float,
+    entry_price: float,
+    entry_idx: int,
+    idx: int,
+    stop_pct: float,
+    highest_close: float,
+    hold_days: int,
+    min_hold_before_trail: int,
+    defer_soft_exits: bool,
+    window: pd.DataFrame,
+    skill_dir: Path,
+) -> str | None:
+    bars_held = idx - entry_idx
+    if _stop_triggered(
+        px=px,
+        entry_price=entry_price,
+        stop_pct=stop_pct,
+        highest_close=highest_close,
+        bars_held=bars_held,
+        min_hold_before_trail=min_hold_before_trail,
+    ):
+        return "trailing_stop"
+    if bars_held >= hold_days:
+        return "time_exit"
+
+    soft_exits_allowed = not defer_soft_exits or bars_held >= min_hold_before_trail
+    if not soft_exits_allowed:
+        return None
+
+    sma50 = float(window["sma_50"].iloc[-1]) if "sma_50" in window.columns else 0.0
+    if sma50 > 0 and px < sma50:
+        return "sma50_break"
+    try:
+        if not check_vcp_volume(window, skill_dir, exclude_last_bars=0):
+            return "vcp_invalidation"
+    except Exception:
+        pass
+    return None
+
+
 def _simulate_exit(
-    df: pd.DataFrame, entry_idx: int, hold_days: int, stop_pct: float
+    df: pd.DataFrame,
+    entry_idx: int,
+    hold_days: int,
+    stop_pct: float,
+    *,
+    min_hold_before_trail: int | None = None,
+    skill_dir: Path | None = None,
 ) -> tuple[float, pd.Timestamp, str]:
+    sd = skill_dir or SKILL_DIR
+    if min_hold_before_trail is None:
+        min_hold_before_trail = int(get_backtest_min_hold_days_before_trail(sd))
     entry_price = float(df["close"].iloc[entry_idx])
     highest_close = entry_price
     last_idx = min(entry_idx + hold_days, len(df) - 1)
     for j in range(entry_idx + 1, last_idx + 1):
         px = float(df["close"].iloc[j])
         highest_close = max(highest_close, px)
-        trail_stop = highest_close * (1.0 - stop_pct)
-        if px <= trail_stop:
+        if _stop_triggered(
+            px=px,
+            entry_price=entry_price,
+            stop_pct=stop_pct,
+            highest_close=highest_close,
+            bars_held=j - entry_idx,
+            min_hold_before_trail=min_hold_before_trail,
+        ):
             return px, df.index[j], "trailing_stop"
     return float(df["close"].iloc[last_idx]), df.index[last_idx], "time_exit"
 
@@ -1044,6 +1163,7 @@ def _run_backtest_core(
     pead_score_penalty = float(get_pead_score_penalty(sd))
     pead_score_penalty_large = float(get_pead_score_penalty_large(sd))
     adaptive_guardrail_policy = _load_adaptive_guardrail_policy(sd)
+    backtest_hold_days, min_hold_before_trail, defer_soft_exits = _resolve_backtest_exit_settings(sd)
 
     starting_equity = float(get_backtest_portfolio_starting_equity(sd))
     max_concurrent_positions = max(1, int(get_backtest_portfolio_max_positions(sd)))
@@ -1174,11 +1294,15 @@ def _run_backtest_core(
         return mark
 
     def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float]:
-        rank_score = _safe_telemetry_float(candidate.signal.get("rank_score"))
+        from config import get_scan_live_sort_key
+
+        sort_key = get_scan_live_sort_key(sd)
+        primary = _safe_telemetry_float(candidate.signal.get(sort_key))
         composite_score = _safe_telemetry_float(candidate.signal.get("composite_score"))
+        rank_score = _safe_telemetry_float(candidate.signal.get("rank_score"))
         return (
-            rank_score,
-            composite_score,
+            primary,
+            composite_score if sort_key != "composite_score" else rank_score,
             _safe_telemetry_float(candidate.signal.get("signal_score")),
         )
 
@@ -1193,31 +1317,28 @@ def _run_backtest_core(
                 continue
             px = float(df["close"].iloc[idx])
             pos.highest_close = max(float(pos.highest_close), px)
-            trail_stop = float(pos.highest_close) * (1.0 - float(pos.stop_pct))
 
-            exit_reason: str | None = None
-            if px <= trail_stop:
-                exit_reason = "trailing_stop"
+            exit_reason = _evaluate_position_exit(
+                px=px,
+                entry_price=float(pos.entry_price),
+                entry_idx=int(pos.entry_idx),
+                idx=int(idx),
+                stop_pct=float(pos.stop_pct),
+                highest_close=float(pos.highest_close),
+                hold_days=backtest_hold_days,
+                min_hold_before_trail=min_hold_before_trail,
+                defer_soft_exits=defer_soft_exits,
+                window=df.iloc[: idx + 1],
+                skill_dir=sd,
+            )
+            if exit_reason == "trailing_stop":
                 diagnostics["exits_trailing_stop"] = int(diagnostics["exits_trailing_stop"]) + 1
-            elif idx - pos.entry_idx >= HOLD_DAYS:
-                exit_reason = "time_exit"
+            elif exit_reason == "time_exit":
                 diagnostics["exits_time_exit"] = int(diagnostics["exits_time_exit"]) + 1
-            else:
-                window = df.iloc[: idx + 1]
-                sma50 = float(window["sma_50"].iloc[-1]) if "sma_50" in window.columns else 0.0
-                if sma50 > 0 and px < sma50:
-                    exit_reason = "sma50_break"
-                    diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
-                else:
-                    try:
-                        # Exit invalidation always evaluates the current bar:
-                        # VCP_EXCLUDE_BREAKOUT_BARS is an entry-side tunable
-                        # and must not delay invalidation exits.
-                        if not check_vcp_volume(window, sd, exclude_last_bars=0):
-                            exit_reason = "vcp_invalidation"
-                            diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
-                    except Exception:
-                        pass
+            elif exit_reason == "sma50_break":
+                diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
+            elif exit_reason == "vcp_invalidation":
+                diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
             if not exit_reason:
                 continue
 
@@ -1247,14 +1368,7 @@ def _run_backtest_core(
                     "mae": mae,
                     "ohlc_path": ohlc_path,
                     "exit_reason": exit_reason,
-                    "signal_score": pos.signal.get("signal_score"),
-                    "edge_score": pos.signal.get("edge_score"),
-                    "reliability_score": pos.signal.get("reliability_score"),
-                    "execution_score": pos.signal.get("execution_score"),
-                    "composite_score": pos.signal.get("composite_score"),
-                    "rank_score": pos.signal.get("rank_score"),
-                    "p_up_calibrated": pos.signal.get("p_up_calibrated"),
-                    "ev_10d": pos.signal.get("ev_10d"),
+                    **_score_fields_for_trade(pos.signal),
                     "mirofish_conviction": pos.signal.get("mirofish_conviction"),
                     "data_provider": pos.signal.get("data_provider"),
                     "data_provider_primary": pos.signal.get("data_provider_primary"),
@@ -1433,7 +1547,7 @@ def _run_backtest_core(
                 LOG.debug("Backtest advisory scoring skipped for %s: %s", ticker, e)
 
             try:
-                signal = _apply_score_stack(signal)
+                signal = _apply_score_stack(signal, sd, score_stack_context="backtest")
             except Exception as e:
                 LOG.debug("Backtest score stack skipped for %s: %s", ticker, e)
 
@@ -1694,14 +1808,7 @@ def _run_backtest_core(
                 "mae": mae,
                 "ohlc_path": ohlc_path,
                 "exit_reason": "final_liquidation",
-                "signal_score": pos.signal.get("signal_score"),
-                "edge_score": pos.signal.get("edge_score"),
-                "reliability_score": pos.signal.get("reliability_score"),
-                "execution_score": pos.signal.get("execution_score"),
-                "composite_score": pos.signal.get("composite_score"),
-                "rank_score": pos.signal.get("rank_score"),
-                "p_up_calibrated": pos.signal.get("p_up_calibrated"),
-                "ev_10d": pos.signal.get("ev_10d"),
+                **_score_fields_for_trade(pos.signal),
                 "mirofish_conviction": pos.signal.get("mirofish_conviction"),
                 "data_provider": pos.signal.get("data_provider"),
                 "data_provider_primary": pos.signal.get("data_provider_primary"),
@@ -1769,7 +1876,9 @@ def _run_backtest_core(
                 "starting_equity": float(starting_equity),
                 "ending_equity": float(ending_equity),
             },
-            "avg_holding_days": HOLD_DAYS,
+            "avg_holding_days": backtest_hold_days,
+            "backtest_min_hold_days_before_trail": min_hold_before_trail,
+            "backtest_min_hold_defer_soft_exits": defer_soft_exits,
             "trailing_stop_pct": round(100.0 * stop_pct_base, 2),
             "adaptive_stop_enabled": bool(adaptive_stop_enabled),
             "adaptive_guardrails_enabled": bool(adaptive_guardrail_policy is not None),
@@ -1864,7 +1973,9 @@ def _run_backtest_core(
             "starting_equity": float(starting_equity),
             "ending_equity": float(ending_equity),
         },
-        "avg_holding_days": HOLD_DAYS,
+        "avg_holding_days": backtest_hold_days,
+        "backtest_min_hold_days_before_trail": min_hold_before_trail,
+        "backtest_min_hold_defer_soft_exits": defer_soft_exits,
         "trailing_stop_pct": round(100.0 * stop_pct_base, 2),
         "adaptive_stop_enabled": bool(adaptive_stop_enabled),
         "adaptive_guardrails_enabled": bool(adaptive_guardrail_policy is not None),

@@ -28,6 +28,30 @@ function chartWidth(container) {
   return Math.max(240, Math.min(safe, viewportCap));
 }
 
+function forecastCandles(data) {
+  if (Array.isArray(data?.median_candles) && data.median_candles.length) return data.median_candles;
+  if (Array.isArray(data?.forecast_candles) && data.forecast_candles.length) return data.forecast_candles;
+  return [];
+}
+
+function toCandlestickPoint(candle) {
+  const open = Number(candle?.open);
+  const high = Number(candle?.high);
+  const low = Number(candle?.low);
+  const close = Number(candle?.close);
+  const time = candle?.time;
+  if (time == null || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+    return null;
+  }
+  return {
+    time,
+    open,
+    high: Math.max(high, open, close, low),
+    low: Math.min(low, open, close, high),
+    close,
+  };
+}
+
 function renderKronosChart(container, data) {
   if (!container) return;
   if (_kronosResizeObserver) {
@@ -48,13 +72,22 @@ function renderKronosChart(container, data) {
   }
   const history = Array.isArray(data?.history_candles) ? data.history_candles : [];
   if (!history.length) {
+    container.classList.remove("kronos-chart-active");
     container.innerHTML = '<p class="muted">No price history available for this symbol.</p>';
     return;
   }
-  const median = Array.isArray(data?.median_candles) ? data.median_candles : data?.forecast_candles || [];
+  const forecast = forecastCandles(data)
+    .map(toCandlestickPoint)
+    .filter(Boolean);
+  const lastHistTime = history[history.length - 1]?.time;
+  const lastHistEpoch = Number(lastHistTime);
+  const forward = Number.isFinite(lastHistEpoch)
+    ? forecast.filter((c) => Number(c.time) > lastHistEpoch)
+    : forecast;
   const band = Array.isArray(data?.band) ? data.band : [];
   const intraday = safeText(data?.interval) !== "daily" && safeText(data?.interval) !== "";
 
+  container.classList.add("kronos-chart-active");
   container.innerHTML = "";
   const chart = LightweightCharts.createChart(container, {
     width: chartWidth(container),
@@ -80,15 +113,56 @@ function renderKronosChart(container, data) {
 
   // p10/p90 cone as two thin lines (Lightweight Charts has no native band fill).
   if (band.length) {
-    const upper = chart.addLineSeries({ color: "rgba(46,110,170,0.55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-    const lower = chart.addLineSeries({ color: "rgba(46,110,170,0.55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-    upper.setData(band.map((b) => ({ time: b.time, value: b.upper })));
-    lower.setData(band.map((b) => ({ time: b.time, value: b.lower })));
+    try {
+      const upperPoints = band
+        .map((b) => ({ time: b.time, value: Number(b.upper) }))
+        .filter((p) => p.time != null && Number.isFinite(p.value));
+      const lowerPoints = band
+        .map((b) => ({ time: b.time, value: Number(b.lower) }))
+        .filter((p) => p.time != null && Number.isFinite(p.value));
+      if (upperPoints.length && lowerPoints.length) {
+        const upper = chart.addLineSeries({
+          color: "rgba(46,110,170,0.55)",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        const lower = chart.addLineSeries({
+          color: "rgba(46,110,170,0.55)",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        upper.setData(upperPoints);
+        lower.setData(lowerPoints);
+      }
+    } catch {
+      // band overlay is best-effort; projected candles still render
+    }
   }
-  // Median forecast path.
-  if (median.length) {
-    const med = chart.addLineSeries({ color: "#2e6eaa", lineWidth: 2, priceLineVisible: false });
-    med.setData(median.map((c) => ({ time: c.time, value: c.close })));
+  // Median forecast path as translucent candlesticks (matches scan-detail overlay).
+  if (forward.length) {
+    try {
+      const fcSeries = chart.addCandlestickSeries({
+        upColor: "rgba(46,110,170,0.55)",
+        downColor: "rgba(150,90,170,0.55)",
+        borderUpColor: "#2e6eaa",
+        borderDownColor: "#965aaa",
+        wickUpColor: "#2e6eaa",
+        wickDownColor: "#965aaa",
+      });
+      fcSeries.setData(forward);
+    } catch {
+      // fallback to close line if candle payload is rejected by the chart library
+      try {
+        const med = chart.addLineSeries({ color: "#2e6eaa", lineWidth: 2, priceLineVisible: false });
+        med.setData(forward.map((c) => ({ time: c.time, value: c.close })));
+      } catch {
+        // summary still renders when overlay fails
+      }
+    }
   }
 
   chart.timeScale().fitContent();
@@ -120,6 +194,10 @@ async function runKronosForecast() {
   }
   if (summary) {
     summary.innerHTML = `<p class="muted">Requesting Kronos forecast for ${ticker} (${interval})… base model on CPU can take up to ~90s.</p>`;
+  }
+  if (container) {
+    container.classList.remove("kronos-chart-active");
+    container.innerHTML = '<p class="muted">Loading chart…</p>';
   }
   try {
     const qs = `pred_len=${horizon}&interval=${encodeURIComponent(interval)}`;

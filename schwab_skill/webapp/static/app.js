@@ -26,7 +26,7 @@ import {
   durationSec,
   formatCount,
 } from "./modules/format.js";
-import { api } from "./modules/api.js";
+import { api, ensureApiKeyOnLoad } from "./modules/api.js";
 import {
   applyFreshness,
   markUnavailable,
@@ -71,6 +71,7 @@ import {
   pushPriorityItem,
   removePriorityItem,
   isPriorityFeedActive,
+  getTopPriorityItem,
 } from "./modules/priorityFeed.js";
 import {
   setupCommandPalette,
@@ -133,6 +134,7 @@ import {
   buildFallbackSecCompare,
   runSecCompare as _runSecComparePanel,
   resetSecCompareProfileOverride,
+  wireSecCompareActions,
 } from "./panels/sec.js";
 import {
   renderReportTabs,
@@ -194,6 +196,7 @@ import {
 import {
   buildScanMeta,
   diagnosticsHeadline,
+  renderScanDeltaStrip,
   renderDiagnostics as _renderDiagnosticsPanel,
 } from "./panels/scanDiagnostics.js";
 import { refreshPendingBoard as _refreshPendingBoardPanel } from "./panels/pendingBoard.js";
@@ -203,11 +206,24 @@ import {
   getConvictionScore,
   getCalibratedPUp,
   getReliabilityScore,
+  getRankScore,
+  isReliabilityEstimated,
   getEdgeScore,
   getExecutionScore,
   getEv10d,
   formatConfidenceLabel,
 } from "./modules/signalScores.js";
+import {
+  formatScanStatusBadge,
+  formatNearMissSummary,
+  formatFilterReasons,
+} from "./modules/filterReasons.js";
+import {
+  isScanSignalStageable,
+  renderSignalProvenanceChip,
+  renderTradeableVerdict,
+} from "./modules/signalProvenance.js";
+import { initResearchTabs, applyResearchTab } from "./modules/researchTabs.js";
 import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
 import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
@@ -224,10 +240,16 @@ import { createSettingsController } from "./screens/settings.js";
 // dependency-injection contract into every call site.
 const submitEnableLiveTrading = () =>
   _submitEnableLiveTradingPanel({ refreshAccountMe, refreshPending });
-const refreshOnboarding = () => _refreshOnboardingPanel({ runLazyApi });
+const refreshOnboarding = async () => {
+  await _refreshOnboardingPanel({ runLazyApi });
+  updateSettingsSummaryLanding();
+};
 const submitTradingHaltSave = () =>
   _submitTradingHaltSavePanel({ refreshAccountMe });
-const refreshPortfolio = () => _refreshPortfolioPanel({ runScan });
+const refreshPortfolio = async () => {
+  await _refreshPortfolioPanel({ runScan });
+  updateResearchSummaryLanding();
+};
 const renderSecCompareVisual = (data) =>
   _renderSecCompareVisualPanel(data, { getDisplayMode });
 const runSecCompare = () => _runSecComparePanel({ getDisplayMode });
@@ -244,12 +266,15 @@ const showScQueueCallout = (taskId, runId) =>
   _showScQueueCalloutPanel(taskId, runId, { switchBacktestHubTab });
 const sendStrategyChat = () =>
   _sendStrategyChatPanel({ refreshBacktestRuns, switchBacktestHubTab });
-const renderDiagnostics = (diag) =>
+const renderDiagnostics = (diag) => {
   _renderDiagnosticsPanel(diag, { updateHeroInfographic, getDisplayMode });
+  void refreshScanDeltas();
+};
 const refreshPending = () =>
   _refreshPendingBoardPanel({
     openApproveDialog,
     updateHeroInfographic,
+    updateTodaySummaryLanding,
     trackFunnelMilestoneOnce,
     FUNNEL_EVENTS,
   });
@@ -269,22 +294,28 @@ const lazyLoaded = {
 let _ablationCyclePollTimer = null;
 let _lastAblationRunStatus = "idle";
 
-const SCREEN_MODES = Object.freeze(["operations", "research", "kronos", "diagnostics", "settings", "cockpit"]);
+const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
+const SCREEN_ALIASES = Object.freeze({
+  kronos: "research",
+  cockpit: "research",
+  today: "operations",
+  system: "diagnostics",
+});
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
-    title: "Built to endure.",
-    text: "Operate with discipline: run a scan, evaluate with context, and approve only what meets your standard.",
+    title: "Today",
+    text: "Scan, review candidates, and stage only tradeable setups — nothing else.",
     ctaLabel: "Run a scan",
     ctaHref: "#scanSection",
     altCtaLabel: "Review pending",
     altCtaHref: "#pendingSection",
   },
   research: {
-    title: "Disciplined analysis.",
-    text: "Pressure-test ideas with quick checks, backtests, and deeper diligence before committing capital.",
+    title: "Research",
+    text: "Quick-check a ticker, backtest assumptions, run diligence, then review portfolio context — one workflow at a time.",
     ctaLabel: "Quick check",
     ctaHref: "#quickCheckSection",
-    altCtaLabel: "Open backtests",
+    altCtaLabel: "Open backtest",
     altCtaHref: "#backtestSection",
   },
   kronos: {
@@ -296,20 +327,20 @@ const SCREEN_CONTEXT = Object.freeze({
     altCtaHref: "#kronosAboutSection",
   },
   diagnostics: {
-    title: "Resilience first.",
-    text: "Keep reliability visible, detect drift early, and resolve blockers before they impact execution.",
-    ctaLabel: "Health ribbon",
+    title: "System",
+    text: "Health, validation, and readiness — verify reliability before it impacts execution.",
+    ctaLabel: "Health tiles",
     ctaHref: "#healthRibbon",
     altCtaLabel: "Detailed status",
     altCtaHref: "#statusDetailsPanel",
   },
   settings: {
-    title: "Aligned controls.",
-    text: "Set connectivity, guardrails, and account controls so execution remains consistent over time.",
-    ctaLabel: "Connections",
+    title: "Settings",
+    text: "Link Schwab, control live orders from the overview, and adjust risk presets when you need finer tuning.",
+    ctaLabel: "Connect Schwab",
     ctaHref: "#onboardingSection",
-    altCtaLabel: "Trading controls",
-    altCtaHref: "#settingsSection",
+    altCtaLabel: "Live order controls",
+    altCtaHref: "#settingsSummaryGuardrails",
   },
   cockpit: {
     title: "One glance, full picture.",
@@ -325,42 +356,49 @@ const FEATURE_GUIDE_SEEN_KEY = "tradingbot.ui.feature_guide_seen";
 const SCREEN_SECTIONS = Object.freeze({
   operations: [
     "dashboardToday",
-    "operationsWorkspaceIntro",
+    "todaySummaryLanding",
     "workflowPrimary",
     "scanSection",
     "scanDetailPanel",
     "pendingSection",
-    "sectorsSection",
-    "moversSection",
   ],
   research: [
-    "researchWorkspaceIntro",
-    "researchWorkflowStrip",
+    "researchTabNav",
+    "researchSummaryLanding",
     "quickCheckSection",
-    "toolsSection",
-    "recoverySection",
-    "learningSection",
+    "sectorsSection",
+    "moversSection",
     "backtestSection",
     "reportSectionCard",
     "secCompareSection",
-    "activitySection",
+    "kronosForecastSection",
+    "kronosAboutSection",
     "portfolioSection",
     "performanceSection",
+    "cockpitMergedPanel",
+    "cockpitSection",
+    "recoverySection",
+    "learningSection",
   ],
-  kronos: ["kronosWorkspaceIntro", "kronosForecastSection", "kronosAboutSection"],
+  kronos: ["kronosForecastSection", "kronosAboutSection"],
   diagnostics: [
-    "dashboardToday",
-    "diagnosticsWorkspaceIntro",
-    "diagnosticsWorkflowStrip",
+    "systemAlertBanner",
+    "systemSummaryLanding",
     "healthRibbon",
+    "systemDecisionPanel",
     "decisionDashboardCard",
     "statusDetailsPanel",
+    "systemQualityDiagnostics",
     "calibrationSection",
     "shadowScoreboardSection",
     "reviewLoopSection",
   ],
-  settings: ["settingsWorkspaceIntro", "settingsWorkflowStrip", "onboardingSection", "settingsSection"],
-  cockpit: ["cockpitWorkspaceIntro", "cockpitSection"],
+  settings: [
+    "settingsSummaryLanding",
+    "onboardingSection",
+    "settingsSection",
+    "settingsAccountPanel",
+  ],
 });
 const SECTION_TO_SCREEN = Object.freeze(
   Object.entries(SCREEN_SECTIONS).reduce((acc, [screen, ids]) => {
@@ -376,7 +414,6 @@ let currentScreenMode = "operations";
 // screen_controllers flag (see wiki [[section-migration-map]]).
 let screenControllers = {};
 let screenSwitchTimer = null;
-let connectFirstFocused = false;
 
 const FUNNEL_EVENTS = Object.freeze({
   SIGNUP: "signup",
@@ -443,13 +480,14 @@ function resetLazyLoaded() {
 }
 
 function getDisplayMode() {
-  const m = localStorage.getItem(UI_VIEW_MODE_KEY) || "simple";
-  return ["simple", "standard", "pro"].includes(m) ? m : "simple";
+  const m = localStorage.getItem(UI_VIEW_MODE_KEY) || "pro";
+  return ["simple", "standard", "pro"].includes(m) ? m : "pro";
 }
 
 function normalizeScreenMode(raw) {
   const mode = safeText(raw).toLowerCase();
-  return SCREEN_MODES.includes(mode) ? mode : "operations";
+  const resolved = SCREEN_ALIASES[mode] || mode;
+  return SCREEN_MODES.includes(resolved) ? resolved : "operations";
 }
 
 function inferScreenFromHash() {
@@ -509,7 +547,7 @@ function renderScreenContext(mode) {
   const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Operations, 2 Research, 3 Kronos, 4 Diagnostics, 5 Settings, 6 Cockpit.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Today, 2 Research, 3 System, 4 Settings.";
   if (ctaEl) {
     ctaEl.textContent = cfg.ctaLabel;
     ctaEl.setAttribute("href", cfg.ctaHref);
@@ -574,6 +612,18 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   renderScreenContext(m);
   maybePrimeScreenData(m);
   maybeShowScreenNudge(m);
+  if (m === "research") {
+    applyResearchTab("check");
+    updateResearchSummaryLanding();
+  }
+  if (m === "diagnostics") {
+    updateSystemSummaryLanding();
+    refreshSystemAlertBanner();
+  }
+  if (m === "settings") {
+    updateSettingsSummaryLanding();
+    scrollToConnectSchwabIfNeeded();
+  }
   if (updateUrl) writeScreenModeToUrl(m);
 }
 
@@ -585,32 +635,31 @@ function applyConnectFirstExperience() {
   const active = shouldForceConnectFirst();
   document.body.classList.toggle("ui-connect-first", active);
 
-  const tabs = document.querySelector(".app-topbar-tabs");
-  if (tabs) tabs.classList.toggle("hidden", active);
-
-  const modeHeader = document.getElementById("screenContextCard");
-  if (modeHeader) modeHeader.classList.toggle("hidden", active);
-
-  const scanBtn = document.getElementById("scanBtn");
-  if (scanBtn) scanBtn.disabled = active;
-
-  if (!active) {
-    connectFirstFocused = false;
-    return;
+  const banner = document.getElementById("connectSchwabBanner");
+  if (banner) {
+    banner.classList.toggle("hidden", !active);
+    banner.setAttribute("aria-hidden", active ? "false" : "true");
   }
 
-  applyScreenMode("settings", { updateUrl: true });
-  updateActionCenter({
-    title: "Connect Schwab first",
-    message: "Finish Schwab connection in this section. Other workflows unlock automatically once connected.",
-    severity: "warn",
-  });
-
-  if (!connectFirstFocused) {
-    const onboardingEl = document.getElementById("onboardingSection");
-    onboardingEl?.scrollIntoView({ behavior: "smooth", block: "start" });
-    connectFirstFocused = true;
+  if (isPriorityFeedActive()) {
+    if (active) {
+      pushPriorityItem({
+        key: "connect_schwab_required",
+        title: "Connect Schwab first",
+        message: "Link your Schwab account before scans and trades will work. You can still browse the app.",
+        severity: "warn",
+        href: "/?screen=settings#onboardingSection",
+        hrefLabel: "Connect",
+      });
+    } else {
+      removePriorityItem("connect_schwab_required");
+    }
   }
+}
+
+function scrollToConnectSchwabIfNeeded() {
+  if (!shouldForceConnectFirst()) return;
+  document.getElementById("onboardingSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /**
@@ -633,7 +682,7 @@ function consumeDisplayModeFromUrl() {
 }
 
 function applyDisplayMode(mode) {
-  const m = ["simple", "standard", "pro"].includes(mode) ? mode : "standard";
+  const m = ["simple", "standard", "pro"].includes(mode) ? mode : "pro";
   localStorage.setItem(UI_VIEW_MODE_KEY, m);
   document.body.classList.remove("ui-simple", "ui-standard", "ui-pro");
   document.body.classList.add(`ui-${m}`);
@@ -641,11 +690,11 @@ function applyDisplayMode(mode) {
   if (sel) sel.value = m;
   const pro = m === "pro";
   const scanDiag = document.getElementById("scanDiagnosticsPanel");
-  const statusDet = document.getElementById("statusDetailsPanel");
-  const secDeep = document.getElementById("secCompareDeepPanel");
+  const scanAdvanced = document.getElementById("scanAdvancedOptionsPanel");
+  const secDerived = document.getElementById("secCompareDerivedPanel");
   if (scanDiag) scanDiag.open = pro;
-  if (statusDet) statusDet.open = pro;
-  if (secDeep) secDeep.open = pro;
+  if (scanAdvanced) scanAdvanced.open = pro;
+  if (secDerived) secDerived.open = pro;
   const perfRaw = document.getElementById("performanceRawDetails");
   if (perfRaw && !pro) perfRaw.open = false;
 }
@@ -743,13 +792,24 @@ function renderLiveTradingSaasPanel() {
       surface: "status_details",
       unavailable: "config not loaded",
     });
+    refreshSystemAlertBanner();
   }
   if (!block) return;
+  const localHint = document.getElementById("settingsGuardrailsLocalHint");
   if (!state.publicConfig.saas_mode) {
     block.classList.add("hidden");
+    if (localHint) {
+      localHint.classList.remove("hidden");
+      localHint.textContent = "Live order toggles appear here when account controls are available.";
+    }
+    updateSettingsSummaryLanding();
     return;
   }
+  if (localHint) localHint.classList.add("hidden");
   block.classList.remove("hidden");
+  block.querySelectorAll("input, button").forEach((el) => {
+    el.disabled = shouldForceConnectFirst();
+  });
   const statusEl = document.getElementById("liveTradingStatus");
   if (statusEl) {
     const on = Boolean(state.accountMe?.live_execution_enabled);
@@ -764,6 +824,7 @@ function renderLiveTradingSaasPanel() {
   if (haltCb && state.accountMe) {
     haltCb.checked = Boolean(state.accountMe.trading_halted);
   }
+  updateSettingsSummaryLanding();
 }
 
 function billingCallbackUrls() {
@@ -776,26 +837,9 @@ function billingCallbackUrls() {
 
 function renderBillingPanel() {
   const card = document.getElementById("billingSaasBlock");
-  const line = document.getElementById("billingStatusLine");
-  const checkoutBtn = document.getElementById("billingCheckoutBtn");
-  const portalBtn = document.getElementById("billingPortalBtn");
-  if (!card || !line || !checkoutBtn || !portalBtn) return;
-  if (!state.publicConfig?.saas_mode || !state.accountMe) {
-    card.classList.add("hidden");
-    return;
-  }
-  card.classList.remove("hidden");
-  const billingEnforced = Boolean(state.accountMe.billing_enforced);
-  const active = Boolean(state.accountMe.subscription_active);
-  const status = safeText(state.accountMe.subscription_status || "none").toLowerCase();
-  const hasStripeCustomer = Boolean(state.accountMe.has_stripe_customer);
-  line.textContent = billingEnforced
-    ? (active
-      ? `Subscription active (${status}). Premium routes are unlocked.`
-      : "No active subscription. Start checkout to unlock protected scan and trade flows.")
-    : `Billing enforcement is off (status: ${status}). You can still open checkout/portal for production readiness.`;
-  checkoutBtn.disabled = false;
-  portalBtn.disabled = !hasStripeCustomer;
+  if (!card) return;
+  card.classList.add("hidden");
+  card.setAttribute("aria-hidden", "true");
 }
 
 async function beginBillingCheckout() {
@@ -976,25 +1020,39 @@ function formatStrategyLabel(value) {
 }
 
 function buildRankWhyText(row = {}) {
-  const rank = optionalNum(row.rank_score);
-  const basis = safeText(row.rank_basis || "legacy");
-  const comp = optionalNum(getCompositeScore(row));
+  const rank = optionalNum(getRankScore(row));
+  const basis = safeText(row.rank_basis || "composite_score");
+  const comps = row.score_components || {};
+  const ptsVol = optionalNum(comps.pts_volume ?? row.pts_volume);
+  const ptsMiro = optionalNum(comps.pts_mirofish ?? row.pts_mirofish);
+  const legacyRank = optionalNum(row.rank_score_v1 ?? row.rank_score);
+  const rankV2 = optionalNum(row.rank_score_v2);
   const edge = optionalNum(getEdgeScore(row));
   const reliability = optionalNum(getReliabilityScore(row));
   const execution = optionalNum(getExecutionScore(row));
   const pUp = optionalNum(getCalibratedPUp(row));
   const ev10d = optionalNum(getEv10d(row));
+  const composite = optionalNum(getCompositeScore(row));
   const reasons = Array.isArray(row.reliability_reasons) ? row.reliability_reasons : [];
   const capReasons = reasons
     .filter((r) => String(r || "").startsWith("composite_capped"))
     .map((r) => String(r || "").replace(/^composite_capped_/, "").replaceAll("_", " "));
   const segments = [];
   segments.push(`basis ${basis}`);
-  if (rank !== null) segments.push(`rank ${rank.toFixed(1)}`);
-  if (comp !== null) segments.push(`composite ${comp.toFixed(1)}`);
+  if (composite !== null) segments.push(`composite ${composite.toFixed(1)}`);
+  if (rank !== null && composite !== null && Math.abs(rank - composite) >= 0.05) {
+    segments.push(`sort ${rank.toFixed(1)}`);
+  } else if (rank !== null) {
+    segments.push(`rank ${rank.toFixed(1)}`);
+  }
   if (edge !== null) segments.push(`edge ${edge.toFixed(1)}`);
   if (reliability !== null) segments.push(`reliability ${reliability.toFixed(1)}`);
   if (execution !== null) segments.push(`execution ${execution.toFixed(1)}`);
+  if (ptsVol !== null) segments.push(`vol pts ${ptsVol.toFixed(1)}`);
+  if (ptsMiro !== null && ptsMiro > 0) segments.push(`miro pts ${ptsMiro.toFixed(1)}`);
+  if (legacyRank !== null && legacyRank !== rank) segments.push(`v1 ${legacyRank.toFixed(1)}`);
+  if (rankV2 !== null) segments.push(`v2 diag ${rankV2.toFixed(1)}`);
+  const comp = composite;
   if (pUp !== null) segments.push(`p(up) ${pct(pUp, 1)}`);
   if (ev10d !== null) segments.push(`EV10d ${(ev10d * 100).toFixed(2)}%`);
   if (capReasons.length) segments.push(`caps ${capReasons.join(", ")}`);
@@ -1002,7 +1060,7 @@ function buildRankWhyText(row = {}) {
 }
 
 function buildRankWhyInlineText(row = {}) {
-  const rank = optionalNum(row.rank_score);
+  const rank = optionalNum(getRankScore(row));
   const reliability = optionalNum(getReliabilityScore(row));
   const execution = optionalNum(getExecutionScore(row));
   const pUp = optionalNum(getCalibratedPUp(row));
@@ -1018,17 +1076,23 @@ function buildRankWhyInlineText(row = {}) {
 }
 
 function renderRankScoreCell(row = {}) {
-  const score = getCompositeScore(row);
-  const shown = score !== null ? `${score.toFixed(1)}` : "—";
+  const rank = getRankScore(row);
+  const composite = getCompositeScore(row);
+  const shown = rank !== null ? `${rank.toFixed(1)}` : "—";
   const mode = getRankExplainMode();
+  const compositeHint =
+    composite !== null && rank !== null && Math.abs(composite - rank) >= 0.05
+      ? ` · comp ${composite.toFixed(1)}`
+      : "";
   if (mode === "inline") {
     const inlineWhy = buildRankWhyInlineText(row);
-    if (!inlineWhy) return shown;
-    return `<span class="scan-rank-cell scan-rank-cell--inline"><span class="scan-rank-score">${shown}</span><span class="scan-rank-inline">${escapeHtml(inlineWhy)}</span></span>`;
+    const tail = inlineWhy ? `<span class="scan-rank-inline">${escapeHtml(inlineWhy)}</span>` : "";
+    return `<span class="scan-rank-cell scan-rank-cell--inline"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span>${tail}</span>`;
   }
   const why = buildRankWhyText(row);
-  if (!why) return shown;
-  return `<span class="scan-rank-cell"><span class="scan-rank-score">${shown}</span><span class="scan-rank-why" data-tooltip="${escapeHtml(why)}" aria-label="Why this rank">?</span></span>`;
+  const title = why ? `${why}${compositeHint}` : `Rank ${shown}${compositeHint}`;
+  if (!why && !compositeHint) return shown;
+  return `<span class="scan-rank-cell"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span><span class="scan-rank-why" data-tooltip="${escapeHtml(title)}" aria-label="Why this rank">?</span></span>`;
 }
 
 function asObject(value) {
@@ -1088,6 +1152,64 @@ function updateTopStrategyChip(summary = null) {
     return;
   }
   el.textContent = `Top Strategy: ${dominant} (${count}/${total})`;
+}
+
+function formatRelativeScanTime(iso) {
+  if (!iso) return "—";
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return "—";
+  const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function updateTodaySummaryLanding() {
+  const sigEl = document.getElementById("todaySummarySignals");
+  const sigHint = document.getElementById("todaySummarySignalsHint");
+  const pendEl = document.getElementById("todaySummaryPending");
+  const pendHint = document.getElementById("todaySummaryPendingHint");
+  const scanEl = document.getElementById("todaySummaryScan");
+  const scanHint = document.getElementById("todaySummaryScanHint");
+
+  if (sigEl) {
+    if (state.lastScanAt) {
+      clearUnavailable(sigEl);
+      const n = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
+      sigEl.textContent = formatCount(n);
+      if (sigHint) sigHint.textContent = n === 0 ? "zero candidates" : `${n} from last scan`;
+    } else {
+      markUnavailable(sigEl, "no scan run this session");
+      if (sigHint) sigHint.textContent = "no scan yet";
+    }
+  }
+
+  if (pendEl) {
+    if (state.lastPendingCount === null || state.lastPendingCount === undefined) {
+      markUnavailable(pendEl, "pending queue not loaded");
+      if (pendHint) pendHint.textContent = "awaiting status";
+    } else {
+      clearUnavailable(pendEl);
+      pendEl.textContent = formatCount(state.lastPendingCount);
+      if (pendHint) {
+        pendHint.textContent =
+          state.lastPendingCount === 0 ? "nothing staged" : "needs approval on Today";
+      }
+    }
+  }
+
+  if (scanEl) {
+    if (state.lastScanAt) {
+      clearUnavailable(scanEl);
+      scanEl.textContent = formatRelativeScanTime(state.lastScanAt);
+      if (scanHint) scanHint.textContent = "most recent scan";
+    } else {
+      markUnavailable(scanEl, "no scan yet");
+      if (scanHint) scanHint.textContent = "run scan to begin";
+    }
+  }
 }
 
 function updateHeroInfographic() {
@@ -1151,6 +1273,274 @@ function updateHeroInfographic() {
     surface: "scan_results",
     unavailable: "scan to populate",
   });
+  updateTodaySummaryLanding();
+}
+
+function prefillResearchTicker(ticker) {
+  const sym = safeText(ticker || "").trim().toUpperCase();
+  if (!sym) return;
+  const ti = document.getElementById("tickerInput");
+  if (ti) ti.value = sym;
+  const reportInput = document.getElementById("reportTickerInput");
+  if (reportInput) reportInput.value = sym;
+  const secA = document.getElementById("secCompareTickerA");
+  if (secA && !secA.value.trim()) secA.value = sym;
+  const kronosInput = document.getElementById("kronosTickerInput");
+  if (kronosInput && !kronosInput.value.trim()) kronosInput.value = sym;
+  updateResearchSummaryLanding();
+}
+
+function openResearchForTicker(ticker) {
+  const sym = safeText(ticker || _scanDetailSignal?.ticker || _scanDetailSignal?.symbol || "").trim().toUpperCase();
+  if (!sym) return;
+  prefillResearchTicker(sym);
+  applyScreenMode("research", { updateUrl: true });
+  applyResearchTab("check");
+  document.getElementById("quickCheckSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncSystemSummaryKpi(summaryId, ribbonId, hintId, hintWhenOk) {
+  const summaryEl = document.getElementById(summaryId);
+  const ribbonEl = document.getElementById(ribbonId);
+  const hintEl = document.getElementById(hintId);
+  if (!summaryEl || !ribbonEl) return;
+  if (ribbonEl.hasAttribute("data-unavailable")) {
+    markUnavailable(summaryEl, ribbonEl.getAttribute("data-unavailable-reason") || "not loaded");
+    if (hintEl) hintEl.textContent = "awaiting health check";
+    return;
+  }
+  clearUnavailable(summaryEl);
+  summaryEl.textContent = safeText(ribbonEl.textContent || "—");
+  if (hintEl) hintEl.textContent = hintWhenOk;
+}
+
+function updateSystemSummaryLanding() {
+  const statusLine = document.getElementById("systemSummaryStatusLine");
+  const ribbonSummary = document.getElementById("healthRibbonSummary");
+  if (statusLine) {
+    const line = safeText(ribbonSummary?.textContent || "").trim();
+    if (line && !ribbonSummary?.hasAttribute("data-unavailable")) {
+      clearUnavailable(statusLine);
+      statusLine.textContent = line;
+    } else {
+      markUnavailable(statusLine, "awaiting first health check");
+    }
+  }
+  syncSystemSummaryKpi("systemSummaryAuth", "ribbonAuth", "systemSummaryAuthHint", "broker session");
+  syncSystemSummaryKpi("systemSummaryQuotes", "ribbonQuotes", "systemSummaryQuotesHint", "live market data");
+  syncSystemSummaryKpi(
+    "systemSummaryValidation",
+    "ribbonValidation",
+    "systemSummaryValidationHint",
+    "validation artifact",
+  );
+}
+
+function hideSystemAlertBanner() {
+  const banner = document.getElementById("systemAlertBanner");
+  if (!banner) return;
+  banner.classList.add("hidden");
+  banner.setAttribute("aria-hidden", "true");
+}
+
+function showSystemAlertBanner({ title = "", message = "", severity = "warn", href = "", hrefLabel = "" } = {}) {
+  const banner = document.getElementById("systemAlertBanner");
+  const titleEl = document.getElementById("systemAlertBannerTitle");
+  const textEl = document.getElementById("systemAlertBannerText");
+  const linkEl = document.getElementById("systemAlertBannerLink");
+  if (!banner || !titleEl || !textEl) return;
+  const sev = ["error", "warn", "success", "info"].includes(severity) ? severity : "warn";
+  banner.classList.remove("hidden");
+  banner.setAttribute("aria-hidden", "false");
+  banner.classList.remove("info", "success", "warn", "error");
+  banner.classList.add(sev);
+  titleEl.textContent = safeText(title) || "System alert";
+  textEl.textContent = safeText(message);
+  if (linkEl) {
+    const target = safeText(href);
+    if (target) {
+      linkEl.classList.remove("hidden");
+      linkEl.href = target;
+      linkEl.textContent = safeText(hrefLabel) || "Open";
+    } else {
+      linkEl.classList.add("hidden");
+    }
+  }
+}
+
+function refreshSystemAlertBanner(health = {}) {
+  if (state.publicConfig?.platform_live_trading_kill_switch) {
+    showSystemAlertBanner({
+      title: "Platform kill switch active",
+      message: "New risk-increasing orders are blocked until the host clears the kill switch.",
+      severity: "error",
+      href: "#platformKillSwitchBanner",
+      hrefLabel: "Details",
+    });
+    return;
+  }
+  if (state.accountMe?.trading_halted) {
+    showSystemAlertBanner({
+      title: "Trading pause active",
+      message: "New approvals are blocked until trading pause is cleared in Settings.",
+      severity: "warn",
+      href: "#settingsSummaryGuardrails",
+      hrefLabel: "Live order controls",
+    });
+    return;
+  }
+  const authState = health.authState;
+  if (authState === "disconnected") {
+    showSystemAlertBanner({
+      title: "Broker authentication blocked",
+      message: "Reconnect Schwab account and market sessions before running scans or approving orders.",
+      severity: "error",
+      href: "#onboardingSection",
+      hrefLabel: "Connect Schwab",
+    });
+    return;
+  }
+  if (authState === "unverified") {
+    showSystemAlertBanner({
+      title: "Broker connection unverified",
+      message:
+        "Schwab tokens are saved but the live API has not confirmed a response yet. Reconnect if this persists.",
+      severity: "warn",
+      href: "#healthRibbon",
+      hrefLabel: "Health tiles",
+    });
+    return;
+  }
+  if (health.quoteOk === false || (typeof health.errRate === "number" && health.errRate >= 3.0)) {
+    showSystemAlertBanner({
+      title: "Market data reliability degraded",
+      message: "Quote health or API error rate needs attention before trusting execution.",
+      severity: "warn",
+      href: "#statusDetailsPanel",
+      hrefLabel: "Detailed status",
+    });
+    return;
+  }
+  const top = getTopPriorityItem();
+  if (top && (top.severity === "error" || top.severity === "warn")) {
+    showSystemAlertBanner({
+      title: top.title,
+      message: top.message,
+      severity: top.severity,
+      href: top.href || "#healthRibbon",
+      hrefLabel: top.hrefLabel || "Open",
+    });
+    return;
+  }
+  hideSystemAlertBanner();
+}
+
+function updateSettingsSummaryLanding() {
+  const connEl = document.getElementById("settingsSummaryConnection");
+  const connHint = document.getElementById("settingsSummaryConnectionHint");
+  const liveEl = document.getElementById("settingsSummaryLive");
+  const liveHint = document.getElementById("settingsSummaryLiveHint");
+  const guardrails = document.getElementById("settingsSummaryGuardrails");
+
+  if (guardrails) {
+    guardrails.classList.toggle("settings-summary-guardrails--blocked", shouldForceConnectFirst());
+  }
+  const localHint = document.getElementById("settingsGuardrailsLocalHint");
+  if (localHint && shouldForceConnectFirst()) {
+    localHint.classList.remove("hidden");
+    localHint.textContent = "Connect Schwab first — live order controls unlock after your account is linked.";
+  } else if (localHint && state.publicConfig?.saas_mode) {
+    localHint.classList.add("hidden");
+  }
+
+  const onboardingMeta = document.getElementById("onboardingMeta");
+  const metaText = safeText(onboardingMeta?.textContent || "").trim();
+  if (connEl) {
+    if (metaText && !/loading/i.test(metaText)) {
+      clearUnavailable(connEl);
+      const linked = /linked|connected|complete|done/i.test(metaText);
+      connEl.textContent = linked ? "Linked" : "Not linked";
+      if (connHint) {
+        connHint.textContent = linked ? "Schwab is connected" : "Start Connect Schwab below";
+      }
+    } else {
+      markUnavailable(connEl, "status not loaded yet");
+      if (connHint) connHint.textContent = "open Connect Schwab below";
+    }
+  }
+
+  if (liveEl) {
+    if (state.publicConfig?.saas_mode && state.accountMe) {
+      clearUnavailable(liveEl);
+      const halted = Boolean(state.accountMe.trading_halted);
+      const enabled = Boolean(state.accountMe.live_execution_enabled);
+      if (halted) {
+        liveEl.textContent = "Paused";
+        if (liveHint) liveHint.textContent = "new approvals are blocked";
+      } else if (enabled) {
+        liveEl.textContent = "On";
+        if (liveHint) liveHint.textContent = "live orders can send";
+      } else {
+        liveEl.textContent = "Off";
+        if (liveHint) liveHint.textContent = "paper / review only";
+      }
+    } else {
+      const statusLine = safeText(document.getElementById("liveTradingStatus")?.textContent || "").trim();
+      if (statusLine) {
+        clearUnavailable(liveEl);
+        liveEl.textContent = /pause|halt/i.test(statusLine) ? "Paused" : /live orders.*on/i.test(statusLine) ? "On" : "Off";
+        if (liveHint) liveHint.textContent = "see controls below";
+      } else {
+        markUnavailable(liveEl, "not configured");
+        if (liveHint) liveHint.textContent = "turn on after Schwab is linked";
+      }
+    }
+  }
+}
+
+function updateResearchSummaryLanding() {
+  const tickerEl = document.getElementById("researchSummaryTicker");
+  const tickerHint = document.getElementById("researchSummaryTickerHint");
+  const posEl = document.getElementById("researchSummaryPositions");
+  const posHint = document.getElementById("researchSummaryPositionsHint");
+  const btEl = document.getElementById("researchSummaryBacktests");
+  const btHint = document.getElementById("researchSummaryBacktestsHint");
+
+  const ticker = safeText(document.getElementById("tickerInput")?.value || "").trim().toUpperCase();
+  if (tickerEl) {
+    tickerEl.textContent = ticker || "—";
+    if (tickerHint) tickerHint.textContent = ticker ? "last symbol checked" : "enter a ticker below";
+  }
+
+  const portfolioBody = document.getElementById("portfolioBody");
+  let positionCount = null;
+  const pdata = state.lastPortfolioData;
+  if (pdata && typeof pdata.positions_count === "number") {
+    positionCount = pdata.positions_count;
+  } else if (portfolioBody) {
+    const rows = [...portfolioBody.querySelectorAll("tr")].filter((tr) => {
+      const cell = tr.querySelector("td");
+      return cell && !cell.classList.contains("muted") && !/loading|open portfolio|not loaded|scroll here|no open positions/i.test(cell.textContent || "");
+    });
+    if (rows.length) positionCount = rows.length;
+  }
+  if (posEl) {
+    if (positionCount === null) {
+      markUnavailable(posEl, "portfolio not loaded");
+      if (posHint) posHint.textContent = "open Portfolio tab";
+    } else {
+      clearUnavailable(posEl);
+      posEl.textContent = formatCount(positionCount);
+      if (posHint) posHint.textContent = positionCount === 1 ? "open position" : "open positions";
+    }
+  }
+
+  const btRuns = document.getElementById("btRunList");
+  const runCount = btRuns ? btRuns.querySelectorAll("li").length : 0;
+  if (btEl) {
+    btEl.textContent = runCount ? formatCount(runCount) : "—";
+    if (btHint) btHint.textContent = runCount ? "listed on Backtest tab" : "no runs queued yet";
+  }
 }
 
 function setLoading(textMap = {}) {
@@ -1186,17 +1576,28 @@ let _scanDetailForecastBtnBound = false;
 
 function syncScanDetailStageButton(signal) {
   const btn = document.getElementById("scanDetailStageBtn");
-  if (!btn) return;
+  const researchBtn = document.getElementById("scanDetailResearchBtn");
   const sig = normalizeScanSignal(signal || {});
   const ticker = safeText(sig.ticker || sig.symbol || "");
   if (!ticker) {
-    btn.disabled = true;
-    btn.textContent = "Stage selected trade";
-    btn.title = "Select a candidate first.";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Stage selected trade";
+      btn.title = "Select a candidate first.";
+    }
+    if (researchBtn) {
+      researchBtn.disabled = true;
+      researchBtn.title = "Select a candidate first.";
+    }
     return;
   }
-  const status = safeText(sig._filter_status || "kept").toLowerCase();
-  const stageable = status === "kept";
+  if (researchBtn) {
+    researchBtn.disabled = false;
+    researchBtn.textContent = `Research ${ticker}`;
+    researchBtn.title = `Open ${ticker} in Research quick check.`;
+  }
+  if (!btn) return;
+  const stageable = isScanSignalStageable(sig);
   btn.disabled = !stageable;
   btn.textContent = stageable ? `Stage ${ticker}` : `${ticker} filtered`;
   btn.title = stageable
@@ -1381,7 +1782,7 @@ function renderScanDetailBrief(row, brief) {
     }
   });
   const stageNoteBtn = document.getElementById("scanDetailBriefStageNoteBtn");
-  const isStageable = safeText(row?._filter_status || "kept").toLowerCase() === "kept";
+  const isStageable = isScanSignalStageable(row);
   if (stageNoteBtn) {
     stageNoteBtn.disabled = !isStageable;
     stageNoteBtn.title = isStageable
@@ -1568,12 +1969,17 @@ async function renderScanDetail(sig) {
   state.selectedScanTicker = ticker;
   highlightSelectedScanRow(ticker);
   const advisory = row.advisory || {};
+  const rank = getRankScore(row);
   const score = getCompositeScore(row);
   const conviction = getConvictionScore(row);
   const pUp = getCalibratedPUp(row);
   const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
   const strategy = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
   const reliability = getReliabilityScore(row);
+  const reliabilityLabel =
+    reliability === null
+      ? "—"
+      : `${formatDecimal(reliability, 1)}${isReliabilityEstimated(row) ? " (est.)" : ""}`;
   const edge = getEdgeScore(row);
   const execution = getExecutionScore(row);
   const ev10d = getEv10d(row);
@@ -1584,6 +1990,7 @@ async function renderScanDetail(sig) {
   };
   setText("scanDetailTicker", ticker || "Select a ticker");
   setText("scanDetailStrategy", ticker ? `Top strategy: ${strategy}` : "Choose a scan row to review chart and scoring context.");
+  setText("scanDetailRank", rank === null ? "—" : formatDecimal(rank, 1));
   setText("scanDetailPrice", row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—");
   setText("scanDetailScore", score === null ? "—" : formatDecimal(score, 1));
   setText("scanDetailPup", pUp === null ? "—" : pct(pUp, 1));
@@ -1591,9 +1998,15 @@ async function renderScanDetail(sig) {
   setText("scanDetailConviction", conviction === null ? "—" : formatDecimal(conviction, 1));
   setText("scanDetailSector", safeText(row.sector_etf || "—"));
   setText("scanDetailEdge", edge === null ? "—" : formatDecimal(edge, 1));
-  setText("scanDetailReliability", reliability === null ? "—" : formatDecimal(reliability, 1));
+  setText("scanDetailReliability", reliabilityLabel);
   setText("scanDetailExecution", execution === null ? "—" : formatDecimal(execution, 1));
   setText("scanDetailEv10d", ev10d === null ? "—" : pct(ev10d, 2));
+  const trustEl = document.getElementById("scanDetailTrust");
+  if (trustEl) {
+    trustEl.innerHTML = ticker
+      ? `${renderTradeableVerdict(row)} ${renderSignalProvenanceChip(row)}`
+      : "";
+  }
   syncScanDetailStageButton(_scanDetailSignal);
   await loadScanDetailBrief(row);
   await renderScanDetailChart(ticker);
@@ -1651,13 +2064,29 @@ function getScanModeProfile(mode = getScanMode()) {
   return SCAN_MODE_PROFILES[mode] || SCAN_MODE_PROFILES[SCAN_MODE_DEFAULT];
 }
 
+async function refreshScanDeltas() {
+  const out = await api.get("/api/cockpit/deltas");
+  if (out.ok) renderScanDeltaStrip(out.data);
+}
+
+function renderConfidenceCell(row, conf) {
+  if (conf === "—") return "—";
+  const bucket = safeText((row.advisory || {}).confidence_bucket || "").toLowerCase();
+  const link =
+    bucket && bucket !== "unknown"
+      ? ` <a href="/?screen=diagnostics#calibrationSection" class="calibration-link muted" title="View bucket calibration on System tab">↗</a>`
+      : "";
+  return `${escapeHtml(conf)}${link}`;
+}
+
 function updateScanModeHelperText() {
   const helperEl = document.getElementById("scanModeHelperText");
   if (!helperEl) return;
   const mode = getScanMode();
   const profile = getScanModeProfile(mode);
   helperEl.textContent =
-    `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}.`;
+    `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}. ` +
+    "UI scan applies soft quality gates for this run (may differ from saved .env preset).";
 }
 
 function mergeScanRunOptionsWithMode(baseOptions) {
@@ -1718,64 +2147,6 @@ function updateRankExplainModeHelperText() {
     helperEl.textContent = "Inline shows rank rationale directly in each score cell (best for deep review).";
   } else {
     helperEl.textContent = "Tooltip keeps rows compact and shows rank rationale on hover.";
-  }
-}
-
-// Map a raw `_filter_status` value from the scanner shortlist into a
-// human-readable label, a CSS pill class, and a tooltip explaining the
-// disposition. Unknown values fall through as "—" so the table still
-// renders cleanly even if the scanner emits a new status we haven't
-// taught the dashboard about yet.
-function formatScanStatusBadge(status, reasons) {
-  const safeStatus = safeText(status || "").toLowerCase();
-  const reasonText = Array.isArray(reasons) && reasons.length ? reasons.join(", ") : "";
-  switch (safeStatus) {
-    case "kept":
-      return {
-        label: "Kept",
-        cls: "pill good",
-        title: "Survived all filters and is eligible for trade staging.",
-      };
-    case "filtered_quality_gates":
-      return {
-        label: "Quality gate",
-        cls: "pill bad",
-        title: reasonText
-          ? `Dropped by quality gates. Reasons: ${reasonText}.`
-          : "Dropped by quality gates (forensic / breakout-volume / etc).",
-      };
-    case "filtered_self_study":
-      return {
-        label: "Self-study",
-        cls: "pill warn",
-        title: "Dropped by self-study learned minimum conviction.",
-      };
-    case "filtered_event_risk":
-      return {
-        label: "Event risk",
-        cls: "pill bad",
-        title: "Suppressed by event-risk policy (earnings, FOMC, etc).",
-      };
-    case "filtered_meta_policy":
-      return {
-        label: "Meta-policy",
-        cls: "pill bad",
-        title: "Suppressed by the meta-policy / uncertainty combiner.",
-      };
-    case "filtered_ensemble":
-      return {
-        label: "Ensemble",
-        cls: "pill warn",
-        title: "Removed by the strategy ensemble step.",
-      };
-    case "trimmed_top_n":
-      return {
-        label: "Top-N trim",
-        cls: "pill neutral",
-        title: "Survived gates but ranked below SIGNAL_TOP_N — kept for review.",
-      };
-    default:
-      return { label: "—", cls: "pill neutral", title: "No disposition reported." };
   }
 }
 
@@ -1890,7 +2261,7 @@ function compareScanSignals(a, b, field, dir) {
 
 function getDefaultBreakoutRankValue(rawSig) {
   const row = normalizeScanSignal(rawSig);
-  const backendRank = optionalNum(row.rank_score);
+  const backendRank = optionalNum(row.composite_score ?? row.rank_score_v2 ?? row.rank_score);
   if (backendRank !== null) {
     return Math.min(Math.max(backendRank / 100, 0), 1);
   }
@@ -2040,7 +2411,7 @@ function renderScanRows(signalsInput = []) {
     nearMissBody.innerHTML = "";
     const nearMissRows = nearMissSignals.slice(0, NEAR_MISS_DEFAULT_LIMIT);
     if (!nearMissRows.length) {
-      nearMissBody.innerHTML = `<tr><td colspan="11" class="muted">No near-miss candidates for this scan mode.</td></tr>`;
+      nearMissBody.innerHTML = `<tr><td colspan="13" class="muted">No near-miss candidates for this scan mode.</td></tr>`;
     } else {
       nearMissRows.forEach((sig, idx) => {
         const row = normalizeScanSignal(sig);
@@ -2061,17 +2432,23 @@ function renderScanRows(signalsInput = []) {
         tr.setAttribute("data-scan-row-index", String(idx));
         tr.setAttribute("data-filter-status", filterStatus);
         tr.classList.add("scan-row--filtered");
+        const humanReasons = formatFilterReasons(filterReasons);
+        const reasonCell = humanReasons.length
+          ? `<span class="near-miss-reason" title="${escapeHtml(humanReasons.join("; "))}">${escapeHtml(humanReasons[0])}</span>`
+          : `<span class="muted">${escapeHtml(formatNearMissSummary(filterStatus, filterReasons))}</span>`;
         tr.innerHTML = `
           <td><strong>${safeText(ticker)}</strong></td>
           <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
+          <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
           <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
-          <td><span class="pill info strategy-badge">${topLive}</span></td>
+          <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
           <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
           <td>${renderRankScoreCell(row)}</td>
           <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
-          <td>${conf}</td>
+          <td>${renderConfidenceCell(row, conf)}</td>
           <td class="scan-col-advanced">${convictionText}</td>
           <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
+          <td class="scan-col-secondary near-miss-reason-cell">${reasonCell}</td>
           <td class="scan-actions-cell">
             <button type="button" class="btn small secondary" data-near-miss-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
             <button type="button" class="btn small secondary" disabled title="Near-miss candidates cannot be staged in this mode.">Stage</button>
@@ -2090,17 +2467,27 @@ function renderScanRows(signalsInput = []) {
     }
   }
   if (!signals.length) {
+    const scanned = Boolean(state.lastScanAt);
+    const emptyTitle = scanned ? "Zero candidates" : "No scan yet";
+    const emptySub = scanned
+      ? nearMissSignals.length
+        ? `${nearMissSignals.length} near-miss candidate(s) available below.`
+        : "No qualified breakouts passed filters this scan."
+      : "Run scan to load candidates.";
+    const emptyCta = scanned
+      ? ""
+      : `<button id="scanEmptyCtaBtn" class="btn small secondary" type="button">Run Scan</button>`;
     body.innerHTML = `
       <tr>
-        <td colspan="11" class="muted">
+        <td colspan="13" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M4 8h16M6 12h12M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
             </svg>
-            <div>No qualified breakout candidates in this mode.</div>
-            <div class="muted small">${nearMissSignals.length ? `${nearMissSignals.length} near-miss candidate(s) available below.` : "Run scan or try Balanced mode."}</div>
-            <button id="scanEmptyCtaBtn" class="btn small secondary" type="button">Run Scan to Begin</button>
+            <div>${emptyTitle}</div>
+            <div class="muted small">${emptySub}</div>
+            ${emptyCta}
           </div>
         </td>
       </tr>
@@ -2145,16 +2532,18 @@ function renderScanRows(signalsInput = []) {
       ? `<button type="button" class="btn small secondary" data-idx="${idx}" title="Stage ${safeText(ticker)} as a pending trade">Stage</button>`
       : `<button type="button" class="btn small secondary" disabled title="Filtered candidates cannot be staged. Adjust gates if you want this signal in the trade queue.">Stage</button>`;
     tr.innerHTML = `
-      <td><strong>${safeText(ticker)}</strong></td>
+      <td><strong>${safeText(ticker)}</strong> ${renderTradeableVerdict(sig)}</td>
       <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
+      <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
       <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
-      <td><span class="pill info strategy-badge">${topLive}</span></td>
+      <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
       <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
       <td>${renderRankScoreCell(row)}</td>
       <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
-      <td>${conf}</td>
+      <td>${renderConfidenceCell(row, conf)}</td>
       <td class="scan-col-advanced">${convictionText}</td>
       <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
+      <td class="scan-col-secondary muted">—</td>
       <td class="scan-actions-cell">
         <button type="button" class="btn small secondary" data-scan-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
         ${stageBtn}
@@ -2230,7 +2619,7 @@ function renderScanRows(signalsInput = []) {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-idx"));
       const raw = lookupRowSignal(idx, e.currentTarget);
-      if (!raw) return;
+      if (!raw || !isScanSignalStageable(raw)) return;
       openQueueScanDialog(normalizeScanSignal(raw));
     });
   });
@@ -2364,6 +2753,9 @@ async function openApproveDialog(row) {
   } else {
     checklistText = `<div class="approve-preflight muted">Checklist unavailable: ${safeText(preflight.error)}</div>`;
   }
+  if (sig && Object.keys(sig).length && !isScanSignalStageable(sig)) {
+    checklistText += `<p class="approve-preflight warn-text"><strong>Scan filter:</strong> This staged signal was marked filtered at scan time. Re-run scan or adjust gates before approving.</p>`;
+  }
   summary.innerHTML = `
     Approve BUY ${row.qty} ${row.ticker} @ ${row.price ? formatMoney(row.price) : "market"}?<br/>
     Est. value: <strong>${formatMoney(est)}</strong><br/>
@@ -2380,6 +2772,7 @@ async function openApproveDialog(row) {
   if (otpInput) otpInput.value = "";
   if (riskAck) riskAck.checked = false;
   state.approvingTradeId = row.id;
+  state.approvingScanSignal = sig;
   syncApproveDialogGuardrails();
   dialog.showModal();
 }
@@ -2391,7 +2784,10 @@ function syncApproveDialogGuardrails() {
   const hint = document.getElementById("approveConfirmHint");
   const btn = document.getElementById("confirmApproveBtn");
   const tickerMatch = expected && typed === expected;
-  const canSubmit = Boolean(state.approvingTradeId) && tickerMatch && ack;
+  const stagingSig = state.approvingScanSignal || {};
+  const signalFiltered =
+    stagingSig && Object.keys(stagingSig).length > 0 && !isScanSignalStageable(stagingSig);
+  const canSubmit = Boolean(state.approvingTradeId) && tickerMatch && ack && !signalFiltered;
   if (btn) btn.disabled = !canSubmit;
   if (hint) {
     if (!typed) {
@@ -2402,6 +2798,8 @@ function syncApproveDialogGuardrails() {
       hint.textContent = `Ticker mismatch. Enter ${expected} exactly.`;
     } else if (!ack) {
       hint.textContent = "Confirm the risk acknowledgement to enable submit.";
+    } else if (signalFiltered) {
+      hint.textContent = "Staged signal failed scan gates — re-stage from a tradeable row.";
     } else {
       hint.textContent = "Ready to submit this live order.";
     }
@@ -2602,13 +3000,42 @@ async function loadConfig() {
         : `This server did not expose Supabase browser sign-in (set SUPABASE_URL and SUPABASE_ANON_KEY in Render to match your local .env). In Supabase → Authentication → URL configuration, add ${originHint} to Site URL and Redirect URLs.`,
       severity: "warn",
     });
-  } else {
+  } else if (saasHost) {
     updateActionCenter({
       title: "Authentication Required",
       message: hasSupabaseUi
         ? "Use Verify email when prompted. Your session token is handled automatically."
         : "Supabase browser auth is required to access protected APIs.",
       severity: "warn",
+    });
+  } else if (hasSupabaseUi) {
+    updateActionCenter({
+      title: "Local sign-in available",
+      message: "Use Verify email when prompted. Your session token is handled automatically.",
+      severity: "info",
+    });
+  } else if (publicCfg?.api_key_required) {
+    const hasKey = Boolean((localStorage.getItem("tradingbot.api_key") || "").trim());
+    updateActionCenter({
+      title: hasKey ? "Local mode" : "API key required",
+      message: hasKey
+        ? "Local dashboard — WEB_API_KEY saved in this browser. Run Scan to load candidates."
+        : "Local dashboard — enter your WEB_API_KEY when prompted (same value as in schwab_skill/.env).",
+      severity: hasKey ? "info" : "warn",
+    });
+  } else {
+    updateActionCenter({
+      title: "Local mode",
+      message: "No sign-in required on localhost. Run Scan to load candidates.",
+      severity: "info",
+    });
+  }
+
+  if (!saasHost && publicCfg?.api_key_required && ensureApiKeyOnLoad()) {
+    updateActionCenter({
+      title: "Local mode",
+      message: "WEB_API_KEY saved in this browser. Run Scan to load candidates.",
+      severity: "info",
     });
   }
 
@@ -3155,6 +3582,8 @@ async function refreshStatus() {
   });
   setHealthRibbonTiles(authState, quoteOk, errRate, validation);
   renderHealthRibbonSummary({ authState, quoteOk, deepReachable: deepRes.ok, lastScan: status?.last_scan });
+  updateSystemSummaryLanding();
+  refreshSystemAlertBanner({ authState, quoteOk, errRate });
   // Mark the ribbon container as success now that it has rendered real data.
   const ribbonContainer = document.getElementById("healthRibbon");
   if (ribbonContainer) ribbonContainer.setAttribute("data-async-state", "success");
@@ -3983,6 +4412,17 @@ function openQueueScanDialog(sig) {
   const qty = document.getElementById("queueScanQty");
   const note = document.getElementById("queueScanNote");
   if (!dialog || !sig) return;
+  if (!isScanSignalStageable(sig)) {
+    const reasons = formatFilterReasons(sig._filter_reasons);
+    const hint = reasons.length ? reasons[0] : "Signal did not pass current scan gates.";
+    logEvent({ kind: "trade", severity: "warn", message: `Cannot stage filtered candidate: ${hint}` });
+    updateActionCenter({
+      title: "Cannot stage",
+      message: hint,
+      severity: "warn",
+    });
+    return;
+  }
   state.queueScanDraft = sig;
   const t = sig.ticker || sig.symbol || "?";
   if (headline) {
@@ -3991,7 +4431,71 @@ function openQueueScanDialog(sig) {
   }
   if (qty) qty.value = "";
   if (note) note.value = "Queued from scan table";
+  void loadQueueScanChecklist(sig);
   dialog.showModal();
+}
+
+async function loadQueueScanChecklist(sig) {
+  const host = document.getElementById("queueScanChecklist");
+  if (!host) return;
+  const ticker = safeText(sig?.ticker || sig?.symbol || "").trim();
+  if (!ticker) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = `<p class="muted">Loading pre-stage checklist…</p>`;
+  const out = await api.get(`/api/decision-card/${encodeURIComponent(ticker)}`);
+  if (!out.ok || !out.data) {
+    host.innerHTML = `<p class="muted warn-text">Checklist unavailable: ${escapeHtml(safeText(out.error || "unknown"))}</p>`;
+    return;
+  }
+  const checklist = out.data.checklist || {};
+  const blocked = Boolean(checklist.blocked);
+  const reasons = Array.isArray(checklist.block_reasons_plain)
+    ? checklist.block_reasons_plain
+    : Array.isArray(checklist.block_reasons)
+      ? checklist.block_reasons
+      : [];
+  const prov = renderSignalProvenanceChip(sig);
+  const stageable = isScanSignalStageable(sig);
+  const items = [
+    { ok: !sig.used_fallback_data, label: "Primary data provider" },
+    { ok: stageable, label: "Signal passed all gates" },
+    { ok: !blocked, label: "Pre-trade checklist clear" },
+    {
+      ok: safeText((sig.advisory || {}).confidence_bucket || "").toLowerCase() !== "low",
+      label: "Advisory confidence acceptable",
+    },
+    { ok: true, label: `Data lineage: ${prov.replace(/<[^>]+>/g, "")}` },
+  ];
+  host.innerHTML = `
+    <div class="queue-scan-checklist ${blocked ? "queue-scan-checklist--blocked" : ""}">
+      <strong>Pre-stage checklist</strong>
+      <ul>${items
+        .map(
+          (it) =>
+            `<li class="${it.ok ? "check-ok" : "check-fail"}">${it.ok ? "✓" : "✗"} ${escapeHtml(it.label)}</li>`,
+        )
+        .join("")}</ul>
+      ${
+        reasons.length
+          ? `<p class="muted small">Blockers: ${escapeHtml(reasons.slice(0, 3).join("; "))}</p>`
+          : ""
+      }
+    </div>
+  `;
+  const confirmBtn = document.getElementById("queueScanConfirmBtn");
+  if (confirmBtn) {
+    const canStage = stageable && !blocked;
+    confirmBtn.disabled = !canStage;
+    if (!stageable) {
+      confirmBtn.title = "Filtered candidates cannot be staged in this scan mode.";
+    } else if (blocked) {
+      confirmBtn.title = "Resolve checklist blockers before staging";
+    } else {
+      confirmBtn.title = "";
+    }
+  }
 }
 
 function closeQueueScanDialog() {
@@ -4004,6 +4508,15 @@ async function confirmQueueScanDialog() {
   const sig = state.queueScanDraft;
   if (!sig) {
     closeQueueScanDialog();
+    return;
+  }
+  if (!isScanSignalStageable(sig)) {
+    logEvent({ kind: "trade", severity: "warn", message: "Cannot stage a filtered scan candidate." });
+    updateActionCenter({
+      title: "Cannot stage",
+      message: "Only tradeable (kept) scan rows can be added to pending.",
+      severity: "warn",
+    });
     return;
   }
   const qtyRaw = document.getElementById("queueScanQty")?.value?.trim();
@@ -4037,7 +4550,7 @@ async function confirmQueueScanDialog() {
       source: "queue_scan_dialog",
       ticker: safeText(payload.ticker),
     });
-    updateActionCenter({ title: "Staged for approval", message: `${payload.ticker} added to pending.`, severity: "success" });
+    updateActionCenter({ title: "Staged for approval", message: `${payload.ticker} added to pending queue.`, severity: "success" });
     await refreshPending();
     closeQueueScanDialog();
   }
@@ -4277,6 +4790,7 @@ function buildScreenControllers() {
     applySecCompareMode,
     resetSecCompareProfileOverride,
     renderSecCompareVisual,
+    wireSecCompareActions,
     applyReportViewMode,
     mapRecovery,
     refreshPerformance,
@@ -4309,6 +4823,9 @@ function buildScreenControllers() {
     // Cockpit
     initCockpitPanel,
     primeCockpitPanel,
+    refreshScanDeltas,
+    updateResearchSummaryLanding,
+    openResearchForTicker,
   };
   return {
     research: createResearchController(ctx),
@@ -4518,19 +5035,46 @@ function connectSSE() {
     }
   }
 
-  safeInit("applyOpsSlimDefault", () => {
-    // Demote context cards to collapsed disclosures on the Operations landing.
-    // Deep links still work: the router force-opens ancestor/target <details>.
-    ["sectorsSection", "moversSection"].forEach((id) => {
+  safeInit("applyResearchSlimDefault", () => {
+    ["sectorsSection", "moversSection", "cockpitMergedPanel", "researchAdvancedTools"].forEach((id) => {
       const el = document.getElementById(id);
       if (el && el.tagName === "DETAILS") el.open = false;
     });
+  });
+  safeInit("applySystemSlimDefault", () => {
+    ["statusDetailsPanel", "systemDecisionPanel", "systemQualityDiagnostics"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && el.tagName === "DETAILS") el.open = false;
+    });
+  });
+  safeInit("applySettingsSlimDefault", () => {
+    ["settingsAccountPanel", "authDebugPanel"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && el.tagName === "DETAILS") el.open = false;
+    });
+  });
+  safeInit("initSettingsSummaryRefresh", () => {
+    const refresh = () => updateSettingsSummaryLanding();
+    window.addEventListener("settings_summary_refresh", refresh);
+    document.getElementById("profileSelect")?.addEventListener("change", refresh);
+    refresh();
+  });
+  safeInit("initResearchSummaryRefresh", () => {
+    const refresh = () => updateResearchSummaryLanding();
+    window.addEventListener("research_summary_refresh", refresh);
+    window.addEventListener("research_tab_change", refresh);
+    document.getElementById("tickerInput")?.addEventListener("input", refresh);
+    refresh();
+  });
+  safeInit("initSystemAlertRefresh", () => {
+    window.addEventListener("priority_feed_change", () => refreshSystemAlertBanner());
   });
   safeInit("initPriorityFeed", () => {
     initPriorityFeed({
       onAction: ({ key, severity }) => trackUiEvent("priority_feed_action_clicked", { item_key: key, severity }),
     });
   });
+  safeInit("initResearchTabs", initResearchTabs);
   safeInit("wireEvents", wireEvents);
   safeInit("setupScrollToTop", setupScrollToTop);
   safeInit("setupCommandPalette", () =>

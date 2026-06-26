@@ -15,8 +15,14 @@ TRACKER_FILE = SKILL_DIR / ".positions_tracker.json"
 
 
 def _get_hold_days(skill_dir: Path | None = None) -> int:
-    """Hold period in days before reminder. Default 20. Override via HOLD_DAYS in .env."""
+    """Hold period in days before reminder. Default 40 (aligned with exit window)."""
     skill_dir = skill_dir or SKILL_DIR
+    try:
+        from config import get_hold_days
+
+        return max(1, int(get_hold_days(skill_dir)))
+    except Exception:
+        pass
     env_path = skill_dir / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -26,7 +32,7 @@ def _get_hold_days(skill_dir: Path | None = None) -> int:
                     return max(1, int(float(val)))
                 except (ValueError, TypeError):
                     pass
-    return 20
+    return 40
 
 
 def _load_tracker(skill_dir: Path | None = None) -> list[dict]:

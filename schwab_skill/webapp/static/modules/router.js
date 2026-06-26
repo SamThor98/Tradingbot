@@ -26,6 +26,8 @@
  * wiki for the broader breakup.
  */
 
+import { activateResearchTabForSection } from "./researchTabs.js";
+
 /**
  * Default short-form ``?section=…`` aliases. Keep keys lowercase; values are
  * the actual element ``id`` to anchor to. New aliases land here so docs /
@@ -55,6 +57,8 @@ export const SECTION_ALIASES = Object.freeze({
   kronos: "kronosWorkspaceIntro",
   forecast: "kronosForecastSection",
   cockpit: "cockpitWorkspaceIntro",
+  sec: "secCompareSection",
+  seccompare: "secCompareSection",
 });
 
 /**
@@ -88,6 +92,7 @@ export function handleRouteHash() {
   if (!id) return;
   const el = window.document.getElementById?.(id);
   if (!el) return;
+  activateResearchTabForSection(id);
   // The deep-link target itself may be a collapsed <details> (e.g. the
   // demoted sectors/movers disclosures) — open it before scrolling.
   if (el.tagName === "DETAILS") el.open = true;
@@ -129,6 +134,7 @@ export function applyQuerySectionDeepLink(aliases = SECTION_ALIASES) {
     const id = resolveSectionAlias(raw, aliases);
     if (!id) return "";
     if (!window.document?.getElementById?.(id)) return "";
+    activateResearchTabForSection(id);
     u.searchParams.delete("section");
     const q = u.searchParams.toString();
     window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}#${id}`);

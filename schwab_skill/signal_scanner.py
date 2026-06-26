@@ -292,7 +292,26 @@ def _compute_high_level_rank_score(
     return _clamp_float(rank_score, 0.0, 100.0)
 
 
-def _apply_score_stack(signal_row: dict[str, Any], skill_dir: Path | None = None) -> dict[str, Any]:
+def _trend_pct_from_signal_row(signal_row: dict[str, Any]) -> float:
+    raw = signal_row.get("close_vs_sma200_pct")
+    if raw is not None:
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    price = _safe_float(signal_row.get("price"), 0.0)
+    sma_200 = _safe_float(signal_row.get("sma_200"), 0.0)
+    if price > 0 and sma_200 > 0:
+        return max(0.0, (price / sma_200) - 1.0)
+    return 0.0
+
+
+def _apply_score_stack(
+    signal_row: dict[str, Any],
+    skill_dir: Path | None = None,
+    *,
+    score_stack_context: str | None = None,
+) -> dict[str, Any]:
     """
     Compute a reliability-aware score stack for UI + ranking:
       - edge_score
@@ -310,86 +329,49 @@ def _apply_score_stack(signal_row: dict[str, Any], skill_dir: Path | None = None
     The edge/composite blend weights are config-driven (defaults preserve the
     original hardcoded blend) so the weight-feedback loop can tune them.
     """
-    from config import (
-        get_score_composite_edge_weight,
-        get_score_composite_execution_weight,
-        get_score_composite_reliability_weight,
-        get_score_edge_pup_weight,
-        get_score_edge_signal_weight,
+    from config import get_score_edge_exclude_52w
+    from core.scoring_composite import (
+        composite_quality_weights_from_config,
+        compute_composite_quality,
+        compute_edge_score,
+        normalized_component_scores,
     )
+    from core.scoring_reliability import compute_reliability_score
 
-    edge_signal_w = get_score_edge_signal_weight(skill_dir)
-    edge_pup_w = get_score_edge_pup_weight(skill_dir)
-    composite_edge_w = get_score_composite_edge_weight(skill_dir)
-    composite_reliability_w = get_score_composite_reliability_weight(skill_dir)
-    composite_execution_w = get_score_composite_execution_weight(skill_dir)
+    quality_weights = composite_quality_weights_from_config(skill_dir)
 
     score = _safe_float(signal_row.get("signal_score"), 0.0)
-    conviction_raw = signal_row.get("mirofish_conviction")
-    conviction = None
-    try:
-        conviction = float(conviction_raw) if conviction_raw is not None else None
-    except (TypeError, ValueError):
-        conviction = None
-
+    comps = signal_row.get("score_components") if isinstance(signal_row.get("score_components"), dict) else {}
+    pts_52w = _safe_float(comps.get("pts_52w") if comps else signal_row.get("pts_52w"), 0.0)
+    pts_volume = _safe_float(comps.get("pts_volume") if comps else signal_row.get("pts_volume"), 0.0)
+    pts_mirofish = _safe_float(comps.get("pts_mirofish") if comps else signal_row.get("pts_mirofish"), 0.0)
+    exclude_52w = get_score_edge_exclude_52w(skill_dir)
+    edge_signal, _, _, _ = normalized_component_scores(
+        signal_score=score,
+        pts_52w=pts_52w,
+        pts_volume=pts_volume,
+        pts_mirofish=pts_mirofish,
+        close_vs_sma200_pct=_trend_pct_from_signal_row(signal_row),
+        exclude_52w=exclude_52w,
+    )
     advisory = signal_row.get("advisory") if isinstance(signal_row.get("advisory"), dict) else {}
     confidence_bucket = str(advisory.get("confidence_bucket") or "unknown").lower()
     p_up_calibrated = _resolve_calibrated_p_up(signal_row, confidence_bucket)
 
-    edge_score = (
-        (score * edge_signal_w)
-        + ((p_up_calibrated * 100.0) * edge_pup_w)
+    edge_score = compute_edge_score(
+        edge_signal=edge_signal,
+        p_up_calibrated=p_up_calibrated,
+        weights=quality_weights,
     )
-    edge_score = _clamp_float(edge_score, 0.0, 100.0)
 
-    reliability = 82.0
-    reliability_reasons: list[str] = []
-    if confidence_bucket == "high":
-        reliability += 12.0
-    elif confidence_bucket == "medium":
-        reliability += 4.0
-    elif confidence_bucket == "low":
-        reliability -= 12.0
-        reliability_reasons.append("advisory_low_confidence")
-    else:
-        reliability -= 18.0
-        reliability_reasons.append("advisory_missing_or_unknown")
-    if not advisory:
-        reliability -= 8.0
-        reliability_reasons.append("advisory_unavailable")
-
-    if conviction is None:
-        reliability -= 10.0
-        reliability_reasons.append("mirofish_conviction_missing")
-    disagreement = _safe_float(signal_row.get("mirofish_disagreement"), 0.0)
-    if disagreement >= 55:
-        reliability -= 14.0
-        reliability_reasons.append("mirofish_high_disagreement")
-    elif disagreement >= 35:
-        reliability -= 8.0
-        reliability_reasons.append("mirofish_medium_disagreement")
-
-    used_fallback = bool(signal_row.get("used_fallback_data"))
-    if used_fallback:
-        reliability -= 15.0
-        reliability_reasons.append("fallback_data_used")
-    if not bool(signal_row.get("data_provider_primary")):
-        reliability -= 6.0
-        reliability_reasons.append("non_primary_provider")
-
+    reliability, reliability_reasons = compute_reliability_score(
+        signal_row,
+        context=score_stack_context,
+        skill_dir=skill_dir,
+    )
     sec_risk_tag = str(signal_row.get("sec_risk_tag") or "unknown").lower()
     forensic_flags = list(signal_row.get("forensic_flags") or [])
-    if sec_risk_tag == "high":
-        reliability -= 8.0
-        reliability_reasons.append("high_sec_risk_tag")
-    if "beneish_manipulator" in forensic_flags:
-        reliability -= 10.0
-        reliability_reasons.append("forensic_beneish_manipulator")
-    if "altman_distress" in forensic_flags:
-        reliability -= 10.0
-        reliability_reasons.append("forensic_altman_distress")
-
-    reliability = _clamp_float(reliability, 0.0, 100.0)
+    used_fallback = bool(signal_row.get("used_fallback_data"))
 
     execution = 100.0
     latest_volume = _safe_float(signal_row.get("latest_volume"), 0.0)
@@ -417,18 +399,23 @@ def _apply_score_stack(signal_row: dict[str, Any], skill_dir: Path | None = None
     friction = 0.002 + ((100.0 - execution) / 100.0) * 0.01
     ev_10d = (p_up_calibrated * avg_win) - ((1.0 - p_up_calibrated) * avg_loss) - friction
 
-    composite = (
-        (edge_score * composite_edge_w)
-        + (reliability * composite_reliability_w)
-        + (execution * composite_execution_w)
+    composite = compute_composite_quality(
+        signal_score=score,
+        pts_52w=pts_52w,
+        pts_volume=pts_volume,
+        pts_mirofish=pts_mirofish,
+        p_up_calibrated=p_up_calibrated,
+        reliability_score=reliability,
+        execution_score=execution,
+        sec_risk_tag=sec_risk_tag,
+        forensic_flags=forensic_flags,
+        close_vs_sma200_pct=_trend_pct_from_signal_row(signal_row),
+        weights=quality_weights,
     )
     if reliability < 40.0:
-        composite = min(composite, 55.0)
         reliability_reasons.append("composite_capped_low_reliability")
     if sec_risk_tag == "high" or "beneish_manipulator" in forensic_flags or "altman_distress" in forensic_flags:
-        composite = min(composite, 45.0)
         reliability_reasons.append("composite_capped_risk")
-    composite = _clamp_float(composite, 0.0, 100.0)
 
     rank_score = _compute_high_level_rank_score(
         composite_score=composite,
@@ -446,8 +433,19 @@ def _apply_score_stack(signal_row: dict[str, Any], skill_dir: Path | None = None
     signal_row["execution_score"] = round(execution, 2)
     signal_row["composite_score"] = round(composite, 2)
     signal_row["rank_score"] = round(rank_score, 2)
-    signal_row["rank_basis"] = "high_level_v1"
-    signal_row["score_stack_version"] = "v1"
+    signal_row["rank_score_v1"] = round(rank_score, 2)
+    signal_row["rank_basis"] = "composite_quality_v3"
+    signal_row["score_stack_version"] = "v3_direct"
+
+    from config import get_rank_score_v2_mode
+
+    if get_rank_score_v2_mode(skill_dir) != "off":
+        from core.scoring_rank_v2 import rank_v2_from_signal_row
+
+        signal_row["rank_score_v2"] = rank_v2_from_signal_row(signal_row, skill_dir=skill_dir)
+        if get_rank_score_v2_mode(skill_dir) == "shadow":
+            signal_row["rank_score_v2_shadow"] = True
+
     signal_row["p_up_calibrated"] = round(p_up_calibrated, 4)
     signal_row["ev_10d"] = round(ev_10d, 5)
     signal_row["reliability_reasons"] = sorted(set(reliability_reasons))
@@ -1892,18 +1890,38 @@ def _apply_post_stage_b_chain(
     # enrichment was partial. Here we derive a degraded rank_score for any
     # signal missing one and count it (`ranked_on_fallback_basis`) so operators
     # can see when ranking quality was compromised.
-    diagnostics["rank_basis"] = "rank_score"
+    diagnostics["rank_basis"] = "composite_score"
+    from config import get_rank_score_v2_mode, get_scan_live_sort_key
+
+    live_sort_key = get_scan_live_sort_key(skill_dir)
+    diagnostics["live_sort_key"] = live_sort_key
+
+    rank_v2_mode = get_rank_score_v2_mode(skill_dir)
+    if rank_v2_mode == "shadow":
+        diagnostics["rank_score_v2_shadow"] = True
+    elif rank_v2_mode == "live":
+        diagnostics["rank_score_v2_live"] = True
     for s in signals:
-        if s.get("rank_score") is None:
-            fallback = s.get("ensemble_score")
+        if s.get("composite_score") is None:
+            fallback = s.get("rank_score")
             if fallback is None:
-                fallback = s.get("composite_score")
+                fallback = s.get("ensemble_score")
             if fallback is None:
                 fallback = s.get("signal_score", 0)
-            s["rank_score"] = float(fallback) if fallback is not None else 0.0
-            s["rank_score_fallback"] = True
+            s["composite_score"] = float(fallback) if fallback is not None else 0.0
+            s["composite_score_fallback"] = True
             diagnostics["ranked_on_fallback_basis"] += 1
-    signals.sort(key=lambda s: s.get("rank_score") or 0.0, reverse=True)
+        if s.get("rank_score") is None:
+            s["rank_score"] = float(s.get("composite_score") or s.get("signal_score") or 0.0)
+            s["rank_score_fallback"] = True
+        sort_val = s.get(live_sort_key)
+        if sort_val is None:
+            sort_val = s.get("composite_score") or s.get("signal_score") or s.get("rank_score") or 0.0
+        s["sort_score"] = float(sort_val) if sort_val is not None else 0.0
+    signals.sort(
+        key=lambda s: s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
+        reverse=True,
+    )
 
     # De-correlation guard: prevent the final top-N from being concentrated in
     # one sector. Real pairwise return correlation needs a return series that

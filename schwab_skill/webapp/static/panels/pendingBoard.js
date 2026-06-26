@@ -289,9 +289,9 @@ export async function refreshPendingBoard(deps = {}) {
 
   const strip = document.getElementById("pendingSummaryStrip");
   const stripText = document.getElementById("pendingSummaryText");
+  // Pending count lives on the Today summary landing; keep the legacy strip hidden.
+  if (strip) strip.classList.add("hidden");
   if (isPriorityFeedActive()) {
-    // Feed replaces the strip: one surface, deduped by key, with a deep link.
-    if (strip) strip.classList.add("hidden");
     if (pendingN > 0) {
       pushPriorityItem({
         key: "pending_decision",
@@ -305,11 +305,9 @@ export async function refreshPendingBoard(deps = {}) {
       removePriorityItem("pending_decision");
     }
   } else if (strip && stripText) {
-    if (pendingN > 0) {
-      strip.classList.remove("hidden");
-      stripText.textContent = `${pendingN} pending trade(s) need a decision.`;
-    } else {
-      strip.classList.add("hidden");
-    }
+    strip.classList.add("hidden");
+  }
+  if (typeof deps.updateTodaySummaryLanding === "function") {
+    deps.updateTodaySummaryLanding();
   }
 }

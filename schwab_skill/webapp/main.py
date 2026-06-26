@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -67,6 +67,9 @@ from .recovery_map import map_failure as _map_failure
 from .response_helpers import api_err, json_default
 from .route_helpers import (
     apply_profile_to_runtime as _shared_apply_profile_to_runtime,
+)
+from .route_helpers import (
+    env_flag as _env_flag,
 )
 from .route_helpers import (
     is_loopback_host as _shared_is_loopback_host,
@@ -130,14 +133,26 @@ def get_shared_auth() -> DualSchwabAuth:
     """Return the process-wide shared ``DualSchwabAuth`` (lazily created).
 
     The singleton keeps a single refresh thread per session alive for the
-    lifetime of the process. Never call ``.close()`` on the returned instance
-    from a request handler — that would stop the shared refresh threads.
+    lifetime of the process. Call ``reset_shared_auth()`` after dashboard OAuth
+    writes new token files so the next request reloads from disk.
     """
     global _shared_auth
     with _shared_auth_lock:
         if _shared_auth is None:
             _shared_auth = DualSchwabAuth(skill_dir=SKILL_DIR)
         return _shared_auth
+
+
+def reset_shared_auth() -> None:
+    """Drop the cached ``DualSchwabAuth`` so the next call reloads token files."""
+    global _shared_auth
+    with _shared_auth_lock:
+        if _shared_auth is not None:
+            try:
+                _shared_auth.close()
+            except Exception as exc:
+                LOG.debug("shared auth close during reset failed: %s", exc)
+            _shared_auth = None
 
 
 def _session_token_ok(session: Any) -> bool:
@@ -222,6 +237,8 @@ def _ensure_local_dashboard_user() -> None:
 
 def _run_alembic_upgrade_head_for_sqlite() -> None:
     """Apply Alembic revisions so existing SQLite files gain new columns (e.g. Stripe billing)."""
+    if (os.getenv("WEBAPP_SKIP_ALEMBIC") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return
     if not DATABASE_URL.startswith("sqlite"):
         return
     alembic_ini = APP_DIR.parent / "alembic.ini"
@@ -557,6 +574,22 @@ def _new_local_oauth_state(kind: str) -> str:
                 _local_oauth_states.pop(key, None)
         _local_oauth_states[token] = {"k": str(kind or ""), "exp": now + _LOCAL_OAUTH_STATE_TTL_SEC}
     return token
+
+
+def _peek_local_oauth_state(token: str) -> str | None:
+    """Return OAuth kind for ``token`` without consuming it (root callback dispatch)."""
+    if not token:
+        return None
+    now = int(time.time())
+    with _local_oauth_state_lock:
+        payload = _local_oauth_states.get(token)
+    if not isinstance(payload, dict):
+        return None
+    exp = int(payload.get("exp") or 0)
+    kind = str(payload.get("k") or "").strip().lower()
+    if not kind or exp < now:
+        return None
+    return kind
 
 
 def _consume_local_oauth_state(token: str) -> str | None:
@@ -1665,8 +1698,29 @@ def require_api_key_if_set_or_query(
     return {"actor": (x_user or "web-user").strip() or "web-user"}
 
 
-@app.get("/")
-def index() -> HTMLResponse:
+@app.get("/", response_model=None)
+def index(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_description: str = "",
+):
+    # Legacy local Schwab apps register https://127.0.0.1:8182/ as the callback.
+    if code.strip() or error.strip() or error_description.strip() or state.strip():
+        if _peek_local_oauth_state(state) == "market":
+            return local_schwab_market_oauth_callback(
+                request,
+                code=code,
+                state=state,
+                error=error or error_description,
+            )
+        return local_schwab_oauth_callback(
+            request,
+            code=code,
+            state=state,
+            error=error or error_description,
+        )
     return render_versioned_html(STATIC_DIR / "index.html")
 
 
@@ -1750,7 +1804,9 @@ def public_config() -> ApiResponse:
     anon = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
     configured_api_key = (os.getenv("WEB_API_KEY") or "").strip()
     supabase: dict[str, str] | None = None
-    if url and anon:
+    # Local dashboard uses API-key / loopback auth. Supabase browser sign-in
+    # needs SaaS session routes (/api/auth/session); keep it off unless opted in.
+    if url and anon and _env_flag("WEB_ENABLE_SUPABASE_SIGNIN", default=False):
         supabase = {"url": url, "anon_key": anon}
     plat_kill = (os.getenv("LIVE_TRADING_KILL_SWITCH") or "").strip().lower() in (
         "1",
@@ -1764,6 +1820,8 @@ def public_config() -> ApiResponse:
     schwab_market_oauth = bool(
         (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip() and (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
     )
+    account_callback = (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
+    market_callback = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
     data: dict[str, Any] = {
         "supabase": supabase,
         "saas_mode": False,
@@ -1777,6 +1835,10 @@ def public_config() -> ApiResponse:
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
     }
+    if account_callback:
+        data["schwab_account_callback_url"] = account_callback
+    if market_callback:
+        data["schwab_market_callback_url"] = market_callback
     impl = (os.getenv("WEB_IMPLEMENTATION_GUIDE_URL") or "").strip()
     if impl.startswith(("http://", "https://")):
         data["implementation_guide_url"] = impl
@@ -1850,6 +1912,38 @@ def local_schwab_market_authorize_start(
     return out
 
 
+@app.get("/api/oauth/schwab/portal-config", response_model=ApiResponse)
+def local_schwab_oauth_portal_config(
+    request: Request,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Expose effective Schwab OAuth URLs (same shape as SaaS tenant routes)."""
+    account_configured = (os.getenv("SCHWAB_CALLBACK_URL") or "").strip()
+    market_configured = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or "").strip()
+    account_effective = _single_schwab_callback_uri(request)
+    market_effective = _resolve_schwab_redirect_uri(request, market=True)
+    origin = _request_origin(request)
+    front = _frontend_oauth_return_url(request)
+    return _ok(
+        {
+            "frontend_origin": origin,
+            "frontend_return_url": front,
+            "account_authorize_start_url": f"{origin}/api/oauth/schwab/start",
+            "market_authorize_start_url": f"{origin}/api/oauth/schwab/market/start",
+            "account_callback_url": account_effective,
+            "market_callback_url": market_effective,
+            "configured_account_callback_url": account_configured or None,
+            "configured_market_callback_url": market_configured or None,
+            "account_callback_matches_configured": (
+                bool(account_configured) and account_effective == account_configured
+            ),
+            "market_callback_matches_configured": (
+                bool(market_configured) and market_effective == market_configured
+            ),
+        }
+    )
+
+
 @app.get("/api/oauth/schwab/callback")
 def local_schwab_oauth_callback(
     request: Request,
@@ -1868,42 +1962,34 @@ def local_schwab_oauth_callback(
     if error:
         return red(f"{status_key(None)}=error&message={urllib.parse.quote(error)}")
     kind = _consume_local_oauth_state(state)
-    if kind not in {"account", "market"} or not code.strip():
+    if kind != "account" or not code.strip():
         return red("schwab_oauth=error&message=" + urllib.parse.quote("invalid_or_expired_state"))
 
-    if kind == "market":
-        client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        client_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
-    else:
-        client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
-        client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
-    redirect_uri = _resolve_schwab_redirect_uri(request, market=(kind == "market"))
+    client_id = (os.getenv("SCHWAB_ACCOUNT_APP_KEY") or "").strip()
+    client_secret = (os.getenv("SCHWAB_ACCOUNT_APP_SECRET") or "").strip()
+    redirect_uri = _single_schwab_callback_uri(request)
     if not client_id or not client_secret:
-        code_name = "server_market_oauth_not_configured" if kind == "market" else "server_oauth_not_configured"
-        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(code_name))
+        return red(f"{status_key('account')}=error&message=" + urllib.parse.quote("server_oauth_not_configured"))
     try:
         tok = exchange_schwab_code_for_tokens(client_id, client_secret, code, redirect_uri)
     except Exception as e:
-        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote(str(e)[:180]))
+        return red(f"{status_key('account')}=error&message=" + urllib.parse.quote(str(e)[:180]))
     access = str(tok.get("access_token") or "").strip()
     refresh = str(tok.get("refresh_token") or "").strip()
     if not access or not refresh:
-        return red(f"{status_key(kind)}=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
-    if kind == "market":
-        write_encrypted_token_file(TOKENS_MARKET_PATH, tok, client_secret)
-        _audit_event("oauth_schwab_market_callback", "local-dashboard", {"saved": "tokens_market.enc"})
-    else:
-        write_encrypted_token_file(TOKENS_ACCOUNT_PATH, tok, client_secret)
-        _audit_event("oauth_schwab_account_callback", "local-dashboard", {"saved": "tokens_account.enc"})
-        market_client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
-        market_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
-        market_missing = not TOKENS_MARKET_PATH.exists()
-        if market_client_id and market_secret and market_missing:
-            market_state = _new_local_oauth_state("market")
-            market_redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
-            market_url = schwab_authorize_url(market_client_id, market_redirect_uri, market_state)
-            return RedirectResponse(market_url, status_code=302)
-    return red(f"{status_key(kind)}=ok")
+        return red(f"{status_key('account')}=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
+    write_encrypted_token_file(TOKENS_ACCOUNT_PATH, tok, client_secret)
+    reset_shared_auth()
+    _audit_event("oauth_schwab_account_callback", "local-dashboard", {"saved": "tokens_account.enc"})
+    market_client_id = (os.getenv("SCHWAB_MARKET_APP_KEY") or "").strip()
+    market_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or "").strip()
+    market_missing = not TOKENS_MARKET_PATH.exists()
+    if market_client_id and market_secret and market_missing:
+        market_state = _new_local_oauth_state("market")
+        market_redirect_uri = _resolve_schwab_redirect_uri(request, market=True)
+        market_url = schwab_authorize_url(market_client_id, market_redirect_uri, market_state)
+        return RedirectResponse(market_url, status_code=302)
+    return red("schwab_oauth=ok")
 
 
 @app.get("/api/oauth/schwab/market/callback")
@@ -1938,6 +2024,7 @@ def local_schwab_market_oauth_callback(
     if not access or not refresh:
         return red("schwab_market_oauth=error&message=" + urllib.parse.quote("token_response_missing_tokens"))
     write_encrypted_token_file(TOKENS_MARKET_PATH, tok, client_secret)
+    reset_shared_auth()
     _audit_event("oauth_schwab_market_callback", "local-dashboard", {"saved": "tokens_market.enc"})
     return red("schwab_market_oauth=ok")
 
@@ -2357,7 +2444,7 @@ def _extract_bid_ask(quote: Any) -> tuple[float | None, float | None]:
 @app.get("/cockpit")
 def cockpit_page() -> RedirectResponse:
     """Legacy standalone cockpit page, now a screen of the main dashboard."""
-    return RedirectResponse("/?screen=cockpit", status_code=302)
+    return RedirectResponse("/?screen=research#cockpitSection", status_code=302)
 
 
 @app.get("/api/cockpit/market", response_model=ApiResponse)
@@ -3158,6 +3245,45 @@ def onboarding_step(
     return _ok(current)
 
 
+def _local_api_health_snapshot() -> dict[str, Any]:
+    """Schwab connectivity snapshot for onboarding (mirrors SaaS api_health shape)."""
+    auth = get_shared_auth()
+    try:
+        schwab_token_health = auth.get_token_health()
+    except Exception as exc:
+        schwab_token_health = {
+            "status": "unknown",
+            "market": {"status": "unknown"},
+            "account": {"status": "unknown"},
+            "error": str(exc)[:200],
+        }
+    market_health = str((schwab_token_health.get("market") or {}).get("status") or "")
+    account_health = str((schwab_token_health.get("account") or {}).get("status") or "")
+    market_token_ok, market_state = _session_connection_state(
+        _session_token_ok(auth.market_session), market_health
+    )
+    account_token_ok, account_state = _session_connection_state(
+        _session_token_ok(auth.account_session), account_health
+    )
+    linked = bool(market_token_ok or account_token_ok)
+    quote_ok = False
+    if linked:
+        try:
+            quote, _qmeta = get_current_quote_with_status("AAPL", auth=auth, skill_dir=SKILL_DIR)
+            quote_ok = extract_schwab_last_price(quote) is not None
+        except Exception:
+            quote_ok = False
+    return {
+        "schwab_linked": linked,
+        "market_token_ok": market_token_ok,
+        "account_token_ok": account_token_ok,
+        "market_state": market_state,
+        "account_state": account_state,
+        "quote_ok": quote_ok,
+        "token_health": schwab_token_health,
+    }
+
+
 @app.get("/api/onboarding/status", response_model=ApiResponse)
 def onboarding_status(db: Session = Depends(get_db)) -> ApiResponse:
     current = _load_state(
@@ -3190,6 +3316,7 @@ def onboarding_status(db: Session = Depends(get_db)) -> ApiResponse:
         and bool((steps.get("test_scan") or {}).get("ok"))
         and bool((steps.get("test_paper_order") or {}).get("ok"))
     )
+    api_health = _local_api_health_snapshot()
     return _ok(
         {
             **current,
@@ -3198,6 +3325,9 @@ def onboarding_status(db: Session = Depends(get_db)) -> ApiResponse:
             "completed_under_target": bool(
                 completion and elapsed_minutes is not None and elapsed_minutes <= ONBOARDING_TARGET_MINUTES
             ),
+            "api_health": api_health,
+            "connection_status": "connected" if api_health.get("schwab_linked") else "disconnected",
+            "schwab_linked": bool(api_health.get("schwab_linked")),
         }
     )
 
@@ -3232,6 +3362,8 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
     execution = signal.get("execution_score")
     ev_10d = signal.get("ev_10d")
     rank_score = signal.get("rank_score")
+    rank_score_v2 = signal.get("rank_score_v2")
+    rank_score_v1 = signal.get("rank_score_v1") or rank_score
     rank_basis = signal.get("rank_basis")
     conviction = signal.get("mirofish_conviction")
     try:
@@ -3244,7 +3376,9 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
         f"confidence={confidence_bucket}",
         f"strategy={((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}",
     ]
-    if rank_score is not None:
+    if rank_score_v2 is not None:
+        reasons.append(f"rank_score_v2={rank_score_v2}")
+    elif rank_score is not None:
         reasons.append(f"rank_score={rank_score}")
     if rank_basis:
         reasons.append(f"rank_basis={rank_basis}")
@@ -3336,7 +3470,9 @@ def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
                 "reliability_score": reliability,
                 "execution_score": execution,
                 "ev_10d": ev_10d,
-                "rank_score": rank_score,
+                "rank_score": rank_score_v2 if rank_score_v2 is not None else rank_score,
+                "rank_score_v2": rank_score_v2,
+                "rank_score_v1": rank_score_v1,
                 "rank_basis": rank_basis,
             },
             "key_reasons": reasons[:6],

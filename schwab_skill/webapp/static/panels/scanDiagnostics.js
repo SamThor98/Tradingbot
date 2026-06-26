@@ -11,12 +11,95 @@
 import { state } from "../modules/state.js";
 import { safeText, safeNum, escapeHtml } from "../modules/format.js";
 import { statusClass, DIAG_LABELS } from "../modules/logger.js";
+import { formatGateModeLabel } from "../modules/filterReasons.js";
 
 export function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
   const high = signals.filter((s) => (s?.advisory?.confidence_bucket || "").toLowerCase() === "high").length;
   if (high > 0) return `Found ${total} signal(s). High-confidence: ${high}.`;
   return `Found ${total} signal(s).`;
+}
+
+/**
+ * One-line scan integrity summary for the Operations banner.
+ * @param {object} diag
+ * @param {object[]} signals Kept signals (state.latestSignals)
+ * @param {object[]} shortlist Full shortlist when available
+ */
+export function buildScanIntegrityLine(diag = {}, signals = [], shortlist = []) {
+  const kept = Array.isArray(signals) ? signals.length : 0;
+  const screened =
+    safeNum(diag.watchlist_size, 0) ||
+    (Array.isArray(shortlist) && shortlist.length ? shortlist.length : kept);
+  const scanId = safeText(diag.scan_id || "").trim();
+  const idPart = scanId ? `Scan ${scanId.slice(0, 8)} · ` : "";
+  const dq = safeText(diag.data_quality || "ok").toLowerCase();
+  const regimeBlocked = safeNum(diag.scan_blocked, 0) > 0;
+  const regimePart = regimeBlocked ? "Regime: blocked · " : "Regime: open · ";
+  const vcp = formatGateModeLabel(diag.scan_vcp_gate_mode);
+  const sector = formatGateModeLabel(diag.scan_sector_gate_mode);
+  const quality = formatGateModeLabel(diag.quality_gates_mode);
+  const gatesPart = `Gates: quality=${quality}, VCP=${vcp}, sector=${sector}`;
+  const fallback = safeNum(diag.provider_fallback_count, 0) + safeNum(diag.used_fallback_data_count, 0);
+  const fallbackPart = fallback > 0 ? ` · ${fallback} fallback ticker(s)` : "";
+  return `${idPart}${kept} kept / ${screened} screened · Data: ${dq} · ${regimePart}${gatesPart}${fallbackPart}`;
+}
+
+export function renderScanIntegrityBanner(diag = {}, signals = [], shortlist = []) {
+  const el = document.getElementById("scanIntegrityBanner");
+  if (!el) return;
+  const line = buildScanIntegrityLine(diag, signals, shortlist);
+  el.textContent = line;
+  el.classList.remove("hidden");
+  const dq = safeText(diag.data_quality || "").toLowerCase();
+  el.dataset.integrity = dq === "ok" && !safeNum(diag.scan_blocked, 0) ? "good" : "warn";
+}
+
+export function renderScanGateModesToolbar(diag = {}) {
+  const el = document.getElementById("scanGateModesChip");
+  if (!el) return;
+  const quality = formatGateModeLabel(diag.quality_gates_mode);
+  const vcp = formatGateModeLabel(diag.scan_vcp_gate_mode);
+  el.textContent = `Active gates: quality ${quality}, VCP ${vcp}`;
+  el.classList.remove("hidden");
+}
+
+/**
+ * Render scan delta strip from `/api/cockpit/deltas` payload.
+ * @param {object|null} delta
+ */
+export function renderScanDeltaStrip(delta) {
+  const el = document.getElementById("scanDeltaStrip");
+  if (!el) return;
+  if (!delta || typeof delta !== "object") {
+    el.innerHTML = "";
+    el.classList.add("hidden");
+    return;
+  }
+  const newTickers = Array.isArray(delta.new_tickers) ? delta.new_tickers : [];
+  const dropped = Array.isArray(delta.dropped_tickers) ? delta.dropped_tickers : [];
+  const moves = Array.isArray(delta.rank_moves) ? delta.rank_moves : [];
+  const bigMoves = moves.filter((m) => Math.abs(safeNum(m?.delta, 0)) >= 10).slice(0, 5);
+  if (!newTickers.length && !dropped.length && !bigMoves.length) {
+    el.innerHTML = `<span class="muted">No material changes vs previous scan.</span>`;
+    el.classList.remove("hidden");
+    return;
+  }
+  const chips = [];
+  if (newTickers.length) {
+    chips.push(`<span class="delta-chip delta-new">+${newTickers.length} new (${escapeHtml(newTickers.slice(0, 4).join(", "))})</span>`);
+  }
+  if (dropped.length) {
+    chips.push(`<span class="delta-chip delta-dropped">−${dropped.length} dropped (${escapeHtml(dropped.slice(0, 4).join(", "))})</span>`);
+  }
+  bigMoves.forEach((m) => {
+    const t = escapeHtml(safeText(m.ticker || "?"));
+    const d = safeNum(m.delta, 0);
+    const sign = d >= 0 ? "+" : "";
+    chips.push(`<span class="delta-chip delta-move">${t} rank ${sign}${d.toFixed(1)}</span>`);
+  });
+  el.innerHTML = chips.join("");
+  el.classList.remove("hidden");
 }
 
 export function diagnosticsHeadline(diagOrSummary = null) {
@@ -353,6 +436,8 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   });
   state.lastWatchlistSize = summary.funnel.watchlist;
   state.lastScanAt = new Date().toISOString();
+  renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);
+  renderScanGateModesToolbar(diag);
   assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
   if (typeof updateHeroInfographic === "function") updateHeroInfographic();
   const diagPanel = document.getElementById("scanDiagnosticsPanel");

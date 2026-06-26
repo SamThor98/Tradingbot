@@ -12,12 +12,21 @@
  */
 
 import { safeText } from "./format.js";
+import { activateResearchTabForSection } from "./researchTabs.js";
 
 let _actions = [];
 
 function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTradeDrawer }) {
-  const lazyJump = (key, sectionId) => () => {
+  const lazyJump = (key, sectionId, screenMode) => () => {
+    if (typeof applyScreenMode === "function" && screenMode) {
+      applyScreenMode(screenMode, { updateUrl: true });
+    }
     if (typeof runLazyApi === "function") runLazyApi(key);
+    activateResearchTabForSection(sectionId);
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
+  };
+  const sectionJump = (sectionId) => () => {
+    activateResearchTabForSection(sectionId);
     document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
   };
   const setDisplayMode = (mode) => () => {
@@ -33,23 +42,21 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     { id: "refresh", label: "Refresh All", shortcut: "R", icon: "refresh", action: () => document.getElementById("refreshBtn")?.click() },
     { id: "ticker", label: "Quick Ticker Check", shortcut: "T", icon: "chart", action: () => { document.getElementById("tickerInput")?.focus(); document.getElementById("quickCheckSection")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "pending", label: "Go to Pending Trades", icon: "list", action: () => document.getElementById("pendingSection")?.scrollIntoView({ behavior: "smooth" }) },
-    { id: "portfolio", label: "Go to Portfolio", icon: "wallet", action: lazyJump("portfolio", "portfolioSection") },
-    { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection") },
-    { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection") },
-    { id: "performance", label: "Go to Performance", icon: "trending", action: lazyJump("performance", "performanceSection") },
+    { id: "portfolio", label: "Go to Portfolio", icon: "wallet", action: lazyJump("portfolio", "portfolioSection", "research") },
+    { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection", "research") },
+    { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection", "research") },
+    { id: "performance", label: "Go to Performance", icon: "trending", action: lazyJump("performance", "performanceSection", "research") },
     { id: "onboarding", label: "Go to Connections & Settings", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
     { id: "calibration", label: "Go to Calibration", icon: "tune", action: lazyJump("calibration", "calibrationSection") },
-    { id: "sec", label: "SEC Filing Compare", icon: "file", action: () => document.getElementById("secCompareSection")?.scrollIntoView({ behavior: "smooth" }) },
-    { id: "report", label: "Full Report", icon: "doc", action: () => document.getElementById("reportSectionCard")?.scrollIntoView({ behavior: "smooth" }) },
+    { id: "sec", label: "SEC Filing Compare", icon: "file", action: sectionJump("secCompareSection") },
+    { id: "report", label: "Full Report", icon: "doc", action: sectionJump("reportSectionCard") },
     { id: "decision", label: "Decision Card (drawer)", icon: "card", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "decision" }) : document.getElementById("decisionSection")?.scrollIntoView({ behavior: "smooth" })) },
     { id: "recovery", label: "Failure Recovery (drawer)", icon: "first-aid", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "recovery" }) : document.getElementById("recoverySection")?.scrollIntoView({ behavior: "smooth" })) },
     { id: "profiles", label: "Strategy Presets", icon: "sliders", action: lazyJump("profiles", "settingsSection") },
-    { id: "screen-operations", label: "Switch Screen: Operations", shortcut: "Ctrl+1", icon: "home", action: setScreenMode("operations") },
+    { id: "screen-operations", label: "Switch Screen: Today", shortcut: "Ctrl+1", icon: "home", action: setScreenMode("operations") },
     { id: "screen-research", label: "Switch Screen: Research", shortcut: "Ctrl+2", icon: "flask", action: setScreenMode("research") },
-    { id: "screen-kronos", label: "Switch Screen: Kronos", shortcut: "Ctrl+3", icon: "chart", action: setScreenMode("kronos") },
-    { id: "screen-diagnostics", label: "Switch Screen: Diagnostics", shortcut: "Ctrl+4", icon: "pulse", action: setScreenMode("diagnostics") },
-    { id: "screen-settings", label: "Switch Screen: Settings", shortcut: "Ctrl+5", icon: "settings", action: setScreenMode("settings") },
-    { id: "screen-cockpit", label: "Switch Screen: Cockpit", shortcut: "Ctrl+6", icon: "radar", action: setScreenMode("cockpit") },
+    { id: "screen-diagnostics", label: "Switch Screen: System", shortcut: "Ctrl+3", icon: "pulse", action: setScreenMode("diagnostics") },
+    { id: "screen-settings", label: "Switch Screen: Settings", shortcut: "Ctrl+4", icon: "settings", action: setScreenMode("settings") },
     { id: "simple-view", label: "Switch to Simple view", icon: "eye", action: setDisplayMode("simple") },
     { id: "standard-view", label: "Switch to Standard view", icon: "eye", action: setDisplayMode("standard") },
     { id: "pro-view", label: "Switch to Pro view", icon: "eye", action: setDisplayMode("pro") },

@@ -202,9 +202,13 @@ def compute_signal_components(
         score += pts_52w
 
     # SMA alignment strength (0-25): how far price above each SMA
+    from config import get_score_pts_sma_cap, get_score_pts_sma_multiplier
+
+    sma_cap = float(get_score_pts_sma_cap(skill_dir))
+    sma_mult = max(0.0, float(get_score_pts_sma_multiplier(skill_dir)))
     sma200 = float(latest.get(SMA_200, 0) or 0)
     if sma200 > 0 and price > sma200:
-        pts_sma = min(25, (price - sma200) / sma200 * 100)  # 1% above = 1 pt, cap 25
+        pts_sma = min(sma_cap, (price - sma200) / sma200 * 100) * sma_mult
         score += pts_sma
 
     # Volume dry-up (0-20): avg of last VCP_DAYS days vs 50d avg

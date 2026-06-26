@@ -425,6 +425,34 @@ def _equity_order_payload(
     return payload
 
 
+def _initial_stop_payload_for_entry(
+    ticker: str,
+    qty: int,
+    exec_price: float | None,
+    skill_dir: Path | str | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Return initial protective stop payload and kind (``hard_grace`` | ``trailing``)."""
+    stop_pct = _compute_adaptive_stop_pct(ticker, exec_price, skill_dir=skill_dir)
+    min_grace = 0
+    try:
+        from config import get_exit_min_hold_days_before_trail
+
+        min_grace = max(0, int(get_exit_min_hold_days_before_trail(Path(skill_dir or SKILL_DIR))))
+    except Exception:
+        min_grace = 0
+    if min_grace > 0 and exec_price is not None and exec_price > 0:
+        return (
+            _hard_stop_payload(
+                ticker,
+                qty,
+                stop_price=float(exec_price) * (1.0 - float(stop_pct)),
+                skill_dir=skill_dir,
+            ),
+            "hard_grace",
+        )
+    return _trailing_stop_payload(ticker, qty, exec_price, skill_dir=skill_dir), "trailing"
+
+
 def _trailing_stop_payload(
     ticker: str,
     qty: int,
@@ -490,12 +518,14 @@ def _get_exit_manager_settings(skill_dir: Path) -> dict[str, Any]:
     partial_r = 1.5
     partial_fraction = 0.5
     breakeven_after_partial = True
-    max_hold_days = 12
+    max_hold_days = 40
+    min_hold_days_before_trail = 15
     try:
         from config import (
             get_exit_breakeven_after_partial,
             get_exit_manager_mode,
             get_exit_max_hold_days,
+            get_exit_min_hold_days_before_trail,
             get_exit_partial_tp_fraction,
             get_exit_partial_tp_r_mult,
         )
@@ -505,6 +535,7 @@ def _get_exit_manager_settings(skill_dir: Path) -> dict[str, Any]:
         partial_fraction = float(get_exit_partial_tp_fraction(skill_dir))
         breakeven_after_partial = bool(get_exit_breakeven_after_partial(skill_dir))
         max_hold_days = int(get_exit_max_hold_days(skill_dir))
+        min_hold_days_before_trail = int(get_exit_min_hold_days_before_trail(skill_dir))
     except Exception as exc:
         LOG.debug("Exit manager settings load failed; using defaults: %s", exc)
     return {
@@ -513,6 +544,7 @@ def _get_exit_manager_settings(skill_dir: Path) -> dict[str, Any]:
         "partial_fraction": max(0.05, min(0.95, partial_fraction)),
         "breakeven_after_partial": breakeven_after_partial,
         "max_hold_days": max(1, max_hold_days),
+        "min_hold_days_before_trail": max(0, min_hold_days_before_trail),
     }
 
 
@@ -540,6 +572,7 @@ def register_exit_manager_entry(
         pending_meta = (state.setdefault("pending_entry_meta", {}) or {}).get(entry_order_id, {})
         staged_stop_order_id = pending_meta.get("stop_order_id")
         staged_stop_pct = _safe_float(pending_meta.get("stop_pct"))
+        staged_stop_grace = pending_meta.get("stop_grace_active")
         existing = positions.get(key) or {}
         if existing.get("status") == "closed":
             return
@@ -571,6 +604,9 @@ def register_exit_manager_entry(
             "shadow_partial_recorded": bool(existing.get("shadow_partial_recorded")),
             "shadow_breakeven_recorded": bool(existing.get("shadow_breakeven_recorded")),
             "shadow_time_stop_recorded": bool(existing.get("shadow_time_stop_recorded")),
+            "stop_grace_active": bool(existing.get("stop_grace_active") or staged_stop_grace),
+            "trailing_stop_armed": bool(existing.get("trailing_stop_armed")),
+            "shadow_trailing_armed_recorded": bool(existing.get("shadow_trailing_armed_recorded")),
         }
         positions[key] = pos
         links[entry_order_id] = {"position_key": key, "action": "entry"}
@@ -588,6 +624,7 @@ def stage_exit_manager_entry_meta(
     ticker: str,
     stop_order_id: str | None,
     stop_pct: float | None,
+    stop_grace_active: bool | None = None,
 ) -> None:
     skill_dir_p = Path(skill_dir or SKILL_DIR)
     settings = _get_exit_manager_settings(skill_dir_p)
@@ -601,6 +638,11 @@ def stage_exit_manager_entry_meta(
             "ticker": ticker.upper(),
             "stop_order_id": stop_order_id or existing.get("stop_order_id"),
             "stop_pct": float(stop_pct) if stop_pct and stop_pct > 0 else existing.get("stop_pct"),
+            "stop_grace_active": (
+                bool(stop_grace_active)
+                if stop_grace_active is not None
+                else existing.get("stop_grace_active")
+            ),
         }
         state["pending_entry_meta"] = pending
         _save_exit_manager_state(skill_dir_p, state)
@@ -706,8 +748,67 @@ def run_exit_manager_sweep(
             if entry_px and entry_px > 0
             else None
         )
+        exit_grace_active = held_days < int(settings.get("min_hold_days_before_trail") or 0)
 
-        if not pos.get("partial_tp_done") and not pos.get("partial_tp_order_id") and partial_trigger and last and last >= partial_trigger:
+        if (
+            pos.get("stop_grace_active")
+            and not pos.get("trailing_stop_armed")
+            and not exit_grace_active
+        ):
+            if mode == "shadow":
+                if not pos.get("shadow_trailing_armed_recorded"):
+                    _record_execution_metric(skill_dir_p, "exit_manager_shadow_would_arm_trailing")
+                    pos["shadow_trailing_armed_recorded"] = True
+                    pos["trailing_stop_armed"] = True
+                    changed = True
+            elif orders_url and entry_px and entry_px > 0:
+                try:
+                    existing_stop_id = pos.get("stop_order_id")
+                    if existing_stop_id:
+                        stop_url = f"{orders_url}/{existing_stop_id}"
+                        cancel_resp = _cancel_order_with_refresh(stop_url, auth)
+                        if not (cancel_resp.ok or cancel_resp.status_code in (200, 202, 204)):
+                            _record_execution_metric(
+                                skill_dir_p,
+                                "exit_manager_live_error",
+                                reason=f"trailing_arm_cancel_failed:{cancel_resp.status_code}",
+                            )
+                            continue
+                    trail = _trailing_stop_payload(
+                        ticker,
+                        remaining_qty,
+                        entry_px,
+                        skill_dir=skill_dir_p,
+                    )
+                    trail_resp = _post_order_with_refresh(orders_url, trail, auth)
+                    trail_resp.raise_for_status()
+                    trail_loc = trail_resp.headers.get("Location", "")
+                    trail_order_id = trail_loc.split("/")[-1] if trail_loc else None
+                    if trail_order_id:
+                        pos["stop_order_id"] = trail_order_id
+                        state.setdefault("order_links", {})[trail_order_id] = {
+                            "position_key": key,
+                            "action": "trailing_stop",
+                        }
+                    pos["trailing_stop_armed"] = True
+                    pos["stop_grace_active"] = False
+                    _record_execution_metric(skill_dir_p, "exit_manager_trailing_armed")
+                    changed = True
+                except Exception as e:
+                    _record_execution_metric(
+                        skill_dir_p,
+                        "exit_manager_live_error",
+                        reason=f"trailing_arm:{e}",
+                    )
+
+        if (
+            not exit_grace_active
+            and not pos.get("partial_tp_done")
+            and not pos.get("partial_tp_order_id")
+            and partial_trigger
+            and last
+            and last >= partial_trigger
+        ):
             partial_qty = max(1, int(round(float(pos.get("entry_qty") or remaining_qty) * settings["partial_fraction"])))
             partial_qty = min(partial_qty, remaining_qty)
             if mode == "shadow":
@@ -809,7 +910,12 @@ def run_exit_manager_sweep(
                     except Exception as e:
                         _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=str(e))
 
-        if not pos.get("time_stop_done") and not pos.get("time_stop_order_id") and held_days >= int(settings["max_hold_days"]):
+        if (
+            not exit_grace_active
+            and not pos.get("time_stop_done")
+            and not pos.get("time_stop_order_id")
+            and held_days >= int(settings["max_hold_days"])
+        ):
             if mode == "shadow":
                 if not pos.get("shadow_time_stop_recorded"):
                     _record_execution_metric(skill_dir_p, "exit_manager_shadow_would_time_stop")
@@ -1837,9 +1943,9 @@ def place_order(
             shadow_result["_stop_protection"] = {
                 "enabled": True,
                 "status": "shadow_simulated",
-                "duration": _trailing_stop_payload(
+                "duration": _initial_stop_payload_for_entry(
                     ticker_n, int(qty), exec_price, skill_dir=skill_dir
-                ).get("duration"),
+                )[0].get("duration"),
             }
         else:
             shadow_result["_stop_protection"] = {"enabled": False, "status": "not_applicable"}
@@ -1917,7 +2023,10 @@ def place_order(
         if side_n == "BUY":
             exec_price = wrapper._get_quote_price(ticker_n)
             exit_stop_pct = _compute_adaptive_stop_pct(ticker_n, exec_price, skill_dir=skill_dir)
-            stop_order = _trailing_stop_payload(ticker_n, int(qty), exec_price, skill_dir=skill_dir)
+            stop_order, stop_kind = _initial_stop_payload_for_entry(
+                ticker_n, int(qty), exec_price, skill_dir=skill_dir
+            )
+            stop_grace_active = stop_kind == "hard_grace"
             stop_resp = None
             hard_resp = None
             for attempt in range(3):  # Retry up to 3 times
@@ -1975,6 +2084,7 @@ def place_order(
                             ticker=ticker_n,
                             stop_order_id=stop_order_id,
                             stop_pct=exit_stop_pct,
+                            stop_grace_active=stop_grace_active,
                         )
                     except Exception as e:
                         logging.getLogger(__name__).debug("Exit manager meta stage failed: %s", e)

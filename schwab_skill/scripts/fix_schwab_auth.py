@@ -20,6 +20,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = SKILL_DIR / ".env"
 DEFAULT_CALLBACK = "https://127.0.0.1:8182/"
+DEFAULT_MARKET_CALLBACK = "https://127.0.0.1:8182/"
 REQUIRED_KEYS = (
     "SCHWAB_MARKET_APP_KEY",
     "SCHWAB_MARKET_APP_SECRET",
@@ -52,7 +53,7 @@ def _repair_callback_vars(path: Path, dry_run: bool) -> tuple[str, str]:
 
     current = _load_env_file(path)
     account_cb = current.get("SCHWAB_CALLBACK_URL", DEFAULT_CALLBACK).strip() or DEFAULT_CALLBACK
-    market_cb = current.get("SCHWAB_MARKET_CALLBACK_URL", account_cb).strip() or account_cb
+    market_cb = current.get("SCHWAB_MARKET_CALLBACK_URL", DEFAULT_MARKET_CALLBACK).strip() or DEFAULT_MARKET_CALLBACK
 
     saw_account = False
     saw_market = False

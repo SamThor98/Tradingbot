@@ -84,6 +84,8 @@ EXPECTED_ALIASES = {
     "cockpit": "cockpitWorkspaceIntro",
     "sectors": "sectorsSection",
     "movers": "moversSection",
+    "sec": "secCompareSection",
+    "seccompare": "secCompareSection",
 }
 
 

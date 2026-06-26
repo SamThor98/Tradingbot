@@ -95,7 +95,7 @@ def test_chain_ranks_and_trims_to_top_n(tmp_path, hermetic_chain) -> None:
     out, diagnostics = _run_chain(signals, top_n=2, skill_dir=tmp_path)
 
     assert [s["ticker"] for s in out] == ["HIGH", "MID"]
-    assert diagnostics["rank_basis"] == "rank_score"
+    assert diagnostics["rank_basis"] == "composite_score"
     assert diagnostics["top_n_applied"] == 1
 
 
@@ -123,21 +123,20 @@ def test_chain_top_n_zero_returns_all(tmp_path, hermetic_chain) -> None:
     assert diagnostics["top_n_applied"] == 0
 
 
-def test_chain_materializes_rank_score_from_fallback(tmp_path, hermetic_chain) -> None:
-    # No rank_score present; the chain should derive one from the best
-    # available score and count the fallback so ranking is apples-to-apples.
+def test_chain_materializes_composite_score_from_fallback(tmp_path, hermetic_chain) -> None:
+    # Missing composite_score is derived from rank/signal; rank_score backfilled from composite.
     signals = [
         {"ticker": "AAA", "composite_score": 40.0, "mirofish_conviction": 100.0},
         {"ticker": "BBB", "signal_score": 70.0, "mirofish_conviction": 100.0},
     ]
     out, diagnostics = _run_chain(signals, top_n=0, skill_dir=tmp_path)
 
-    assert diagnostics["ranked_on_fallback_basis"] == 2
+    assert diagnostics["ranked_on_fallback_basis"] == 1
     by_ticker = {s["ticker"]: s for s in out}
-    assert by_ticker["AAA"]["rank_score"] == 40.0
-    assert by_ticker["AAA"]["rank_score_fallback"] is True
+    assert by_ticker["AAA"]["composite_score"] == 40.0
+    assert by_ticker["BBB"]["composite_score"] == 70.0
+    assert by_ticker["BBB"]["composite_score_fallback"] is True
     assert by_ticker["BBB"]["rank_score"] == 70.0
-    # BBB (70) outranks AAA (40) once both are on the same basis.
     assert [s["ticker"] for s in out] == ["BBB", "AAA"]
 
 

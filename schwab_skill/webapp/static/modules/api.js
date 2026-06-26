@@ -88,19 +88,20 @@ function isApiKeyAuthFailure(status, payload) {
   return msg.includes("x-api-key") || msg.includes("api key");
 }
 
-function promptForApiKeyRefresh() {
+function promptForApiKeyRefresh({ rejected = false } = {}) {
   if (typeof window === "undefined" || typeof window.prompt !== "function") return false;
   const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
   const hasExisting = Boolean(existing);
-  if (hasExisting) {
+  if (hasExisting && rejected) {
     // The server already rejected the stored value; clear it immediately so we
     // do not keep auto-filling a bad key into subsequent retries.
     localStorage.removeItem("tradingbot.api_key");
   }
-  const message = hasExisting
-    ? "Saved WEB_API_KEY was rejected by the server.\nEnter the correct WEB_API_KEY (leave blank to skip):"
-    : "This server requires WEB_API_KEY for write operations.\nEnter your WEB_API_KEY:";
-  const entered = window.prompt(message, "");
+  const message =
+    hasExisting && rejected
+      ? "Saved WEB_API_KEY was rejected by the server.\nEnter the correct WEB_API_KEY (leave blank to skip):"
+      : "This server requires WEB_API_KEY for write operations.\nEnter your WEB_API_KEY (same value as WEB_API_KEY in schwab_skill/.env):";
+  const entered = window.prompt(message, hasExisting && !rejected ? existing : "");
   if (entered == null) return false;
   const next = String(entered || "").trim();
   if (!next) {
@@ -109,6 +110,14 @@ function promptForApiKeyRefresh() {
   }
   localStorage.setItem("tradingbot.api_key", next);
   return true;
+}
+
+/** Prompt once on local dashboard boot when WEB_API_KEY is configured server-side. */
+export function ensureApiKeyOnLoad() {
+  if (!state.publicConfig?.api_key_required) return true;
+  const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
+  if (existing) return true;
+  return promptForApiKeyRefresh();
 }
 
 async function parseJsonResponse(res) {
@@ -178,7 +187,7 @@ export const api = {
         data = await parseJsonResponse(res);
       }
 
-      if (!res.ok && isApiKeyAuthFailure(res.status, data) && promptForApiKeyRefresh()) {
+      if (!res.ok && isApiKeyAuthFailure(res.status, data) && promptForApiKeyRefresh({ rejected: true })) {
         const refreshedHeaders = await this._authHeaders(headers);
         res = await fetch(path, {
           ...fetchOptions,
@@ -322,6 +331,8 @@ export const api = {
     if (params.tickerB) qs.set("ticker_b", String(params.tickerB).trim().toUpperCase());
     if (params.highlightChangesOnly) qs.set("highlight_changes_only", "true");
     if (params.ruthlessMode) qs.set("ruthless_mode", "true");
+    if (params.includeManagementDashboard) qs.set("include_management_dashboard", "true");
+    if (params.profileOverride) qs.set("profile_override", String(params.profileOverride).trim().toLowerCase());
     return this.get(`/api/sec/compare?${qs.toString()}`, options);
   },
 

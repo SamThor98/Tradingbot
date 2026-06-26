@@ -1029,6 +1029,11 @@ body[data-theme="editorial"] #platformKillSwitchBanner {
   display: none !important;
 }
 
+body[data-theme="editorial"] #todaySummaryLanding,
+body.ui-pro[data-theme="editorial"] #actionCenter {
+  display: block !important;
+}
+
 body.ui-pro[data-theme="editorial"] #actionCenter {
   display: flex !important;
 }
@@ -1828,9 +1833,16 @@ body[data-theme="editorial"] .health-badge {
 }
 
 /* 11. Health ribbon: a single inline status row, not a card. It
-       reads as ambient telemetry above the kanban. */
+       reads as ambient telemetry above the kanban. Stays pinned while
+       scrolling diagnostics content below the top bar. */
 body[data-theme="editorial"] #healthRibbon {
-  background: transparent !important;
+  position: sticky;
+  top: calc(var(--app-chrome-offset) + 6px);
+  z-index: 15;
+  background:
+    linear-gradient(180deg, rgba(10, 13, 20, 0.96) 0%, rgba(10, 13, 20, 0.9) 100%) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: none !important;
   border-top: 1px solid var(--ink-line) !important;
   border-bottom: 1px solid var(--ink-line) !important;

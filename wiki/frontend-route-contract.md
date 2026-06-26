@@ -1,20 +1,20 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-26
 tags: [frontend, routing, deep-links, contract]
 ---
 
 # Frontend Route Contract
 
-> The frozen navigation contract for the dashboard (Action 2 of the redesign
-> roadmap). Any section move or rename must keep this contract intact: inbound
-> links from emails, docs, and bookmarks must never break.
+> The frozen navigation contract for the dashboard. Any section move or rename
+> must keep this contract intact: inbound links from emails, docs, and bookmarks
+> must never break.
 
 ## Contract
 
-The dashboard is a single HTML page with five screen tabs. Three URL surfaces
-exist, each with one job:
+The dashboard is a single HTML page with **four top-level tabs** (Today /
+Research / System / Settings). Three URL surfaces exist, each with one job:
 
 | Surface | Job | Owner |
 |---------|-----|-------|
@@ -33,18 +33,22 @@ Rules:
    the router force-opens ancestor `<details>` before scrolling.
 4. Screen inference: a bare `#id` (no `?screen=`) infers its screen via
    `SECTION_TO_SCREEN` and activates that tab.
-5. Keyboard shortcuts Ctrl/Cmd+1..5 map to the screen order below and must not
+5. Keyboard shortcuts Ctrl/Cmd+1..4 map to the screen order below and must not
    be reassigned.
 
-## Screen map (final)
+Legacy screen modes (`kronos`, `cockpit`, `system`, `health`) normalize to a
+top-level tab via `SCREEN_ALIASES` in `app.js` (e.g. `cockpit` → `research`).
 
-| Order / shortcut | Screen mode | Purpose | Default landing |
-|------------------|-------------|---------|-----------------|
-| 1 | `operations` | Scan → evaluate → queue → approve workflow | Yes (default) |
-| 2 | `research` | Quick check, backtest, SEC compare, dossier, portfolio, performance |  |
-| 3 | `kronos` | Kronos forecast workspace |  |
-| 4 | `diagnostics` | Health ribbon, decision dashboard, status, calibration, scoreboard, review loop |  |
-| 5 | `settings` | Schwab connect, presets, live trading, 2FA, billing |  |
+## Screen map (locked 2026-06-26)
+
+| Order / shortcut | Screen mode | Tab label | Purpose |
+|------------------|-------------|-----------|---------|
+| 1 | `operations` | Today | Summary landing + scan → review → approve kanban |
+| 2 | `research` | Research | Sub-tabs: Quick check, Backtest, Diligence, Portfolio |
+| 3 | `diagnostics` | System | Summary + health ribbon; collapsed status/decision/quality panels |
+| 4 | `settings` | Settings | Overview (live-order controls) + Connect + presets + account security |
+
+Default landing: `operations` (Today).
 
 ## Alias table (frozen, from `SECTION_ALIASES`)
 
@@ -54,35 +58,36 @@ Rules:
 | `pending`, `queue`, `approvals`, `trades` | `pendingSection` | operations |
 | `workflow` | `workflowPrimary` | operations |
 | `operations` | `operationsWorkspaceIntro` | operations |
-| `sectors` | `sectorsSection` | operations |
-| `movers` | `moversSection` | operations |
+| `sectors` | `sectorsSection` | research |
+| `movers` | `moversSection` | research |
 | `research` | `researchWorkspaceIntro` | research |
 | `backtest`, `backtests` | `backtestSection` | research |
-| `kronos` | `kronosWorkspaceIntro` | kronos |
-| `forecast` | `kronosForecastSection` | kronos |
-| `diagnostics` | `diagnosticsWorkspaceIntro` | diagnostics |
-| `health` | `healthRibbon` | diagnostics |
+| `cockpit` | `cockpitWorkspaceIntro` | research (via alias) |
+| `kronos`, `forecast` | `kronosForecastSection` | research (via alias) |
+| `sec`, `seccompare` | `secCompareSection` | research |
+| `diagnostics`, `health` | `healthRibbon` | diagnostics |
 | `connect`, `onboarding`, `setup` | `onboardingSection` | settings |
 | `settings` | `settingsWorkspaceIntro` | settings |
 
-(`sectors` / `movers` aliases are added by the redesign so the demoted cards
-stay deep-linkable; the rest existed before.)
+Deprecated intro sections (`*WorkspaceIntro`) remain in the DOM for alias
+compatibility; they are hidden. Prefer canonical section ids in new links.
 
 ## Section-to-screen source of truth
 
-- `SCREEN_SECTIONS` in `app.js` (~line 276) maps each screen to its section ids.
+- `SCREEN_SECTIONS` in `app.js` maps each screen to its section ids.
 - `SECTION_TO_SCREEN` is derived from it; never hand-edit a duplicate mapping.
 - CSS visibility (`body.ui-screen-*` rules in `styles.css`) must agree with
   `SCREEN_SECTIONS`; a section listed for a screen must be visible on that
   screen.
+- Research sub-tab visibility is owned by `modules/researchTabs.js` (`research-tab-hidden`).
 
 ## Related Pages
 
-- [[section-migration-map]] — which sections move where under this contract
+- [[section-migration-map]] — locked section layout and rollout history
 - [[ux-kpi-baseline]] — KPI events keyed to screen views
 - [[static-module-layout]] — frontend module map including `router.js`
 - [[webapp-dashboard]] — dashboard overview
 
 ---
 
-*Last compiled: 2026-06-10*
+*Last compiled: 2026-06-26*

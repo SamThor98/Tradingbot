@@ -188,12 +188,14 @@ def test_event_risk_overlay_shadow_never_blocks_but_counts():
 # --------------------------------------------------------------------------- #
 
 
-def test_exit_manager_off_matches_legacy_simulate_exit():
+def test_exit_manager_off_matches_legacy_simulate_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL", "0")
+    monkeypatch.setenv("BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS", "false")
     # Build a price path that triggers a trailing stop on day 5.
     prices = [100.0, 105.0, 110.0, 108.0, 100.0, 95.0, 96.0, 97.0, 98.0]
     df = _build_df(prices)
     px, ts, reason, info = simulate_exit_with_manager(
-        df, entry_idx=0, hold_days_default=8, stop_pct=0.05, skill_dir=SKILL_DIR, mode="off"
+        df, entry_idx=0, hold_days_default=8, stop_pct=0.05, skill_dir=tmp_path, mode="off"
     )
     # 110 high triggers stop at 110 * 0.95 = 104.5; close 100 on day 4 trips it.
     assert reason == "trailing_stop"

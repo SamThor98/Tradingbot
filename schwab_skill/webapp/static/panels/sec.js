@@ -442,50 +442,49 @@ function mergeManagementDashboard(base, analyst, { mode, tickerA, tickerB, ruthl
   return out;
 }
 
-async function fetchManagementDashboard({ mode, tickerA, tickerB, formType, ruthlessMode, comparePayload, profileOverride }) {
+async function fetchManagementDashboard({
+  mode,
+  tickerA,
+  tickerB,
+  ruthlessMode,
+  comparePayload,
+  profileOverride,
+  deepScan,
+}) {
   const fallbackData = buildFallbackManagementDashboard(comparePayload, { mode, tickerA, tickerB });
-  const qs = new URLSearchParams();
-  qs.set("mode", mode);
-  qs.set("ticker", tickerA);
-  qs.set("form_type", formType);
-  if (tickerB) qs.set("ticker_b", tickerB);
-  if (ruthlessMode) qs.set("ruthless_mode", "true");
-  if (profileOverride) qs.set("profile_override", profileOverride);
-  // Only /api/sec/management-dashboard exists on the backend; the old
-  // financial-modeling/fmp candidates were never implemented and only
-  // added timeout latency before the fallback kicked in.
-  const endpoint = `/api/sec/management-dashboard?${qs.toString()}`;
-  let backendData = null;
-  let source = "fallback";
-  const out = await api.get(endpoint, { timeoutMs: 120000 });
-  if (out.ok) {
-    backendData = normalizeManagementPayload(out.data, fallbackData);
-    source = endpoint;
+  let merged = comparePayload?.management_dashboard
+    ? normalizeManagementPayload({ management_dashboard: comparePayload.management_dashboard }, fallbackData)
+    : fallbackData;
+  merged.mode = safeText(merged.mode || mode || "ticker_over_time");
+  merged.ticker = safeText(merged.ticker || tickerA || "");
+  merged.benchmark_ticker = safeText(merged.benchmark_ticker || tickerB || "");
+  merged.ruthless_mode = Boolean(ruthlessMode);
+  let source = comparePayload?.management_dashboard ? "bundled_compare" : "fallback";
+
+  if (deepScan) {
+    const analystOut = await calculateManagementIntegrityScore(tickerA);
+    const analystData = analystOut?.ok ? analystOut.data : null;
+    merged = mergeManagementDashboard(merged, analystData, { mode, tickerA, tickerB, ruthlessMode });
+    if (analystData?.source) source = `${source}+${analystData.source}`;
   }
-  const analystOut = await calculateManagementIntegrityScore(tickerA);
-  const analystData = analystOut?.ok ? analystOut.data : null;
-  const merged = mergeManagementDashboard(
-    backendData || fallbackData,
-    analystData,
-    { mode, tickerA, tickerB, ruthlessMode },
-  );
-  const mergedSource = safeText([source, analystData?.source].filter(Boolean).join("+") || source);
-  return { ok: true, data: merged, source: mergedSource };
+
+  return { ok: true, data: merged, source };
 }
 
-function renderSayDoTimeline(root, timelineRows, ruthlessMode) {
+function renderSayDoTimeline(root, timelineRows, ruthlessMode, derivedMode) {
   if (!root) return;
   const rows = asArray(timelineRows).slice(0, 8);
   if (!rows.length) {
     root.innerHTML = "<div class='report-empty'>No guidance-to-KPI timeline rows were returned.</div>";
     return;
   }
+  const derivedAttr = derivedMode ? ' data-derived="true"' : "";
   root.innerHTML = `
-    <div class="mgmt-card-title-row">
+    <div class="mgmt-card-title-row"${derivedAttr}>
       <h4>The Say-Do Timeline</h4>
-      <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: ${rows.length}Q</span>
+      <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: ${rows.length}Q${derivedMode ? " · modeled" : ""}</span>
     </div>
-    <div class="saydo-timeline">
+    <div class="saydo-timeline"${derivedAttr}>
       ${rows.map((row) => {
         const variance = Number.isFinite(Number(row.variance)) ? Number(row.variance) : null;
         const status = safeText(row.status || (variance !== null && variance >= 0 ? "Beat" : "Miss"));
@@ -579,7 +578,7 @@ function buildAnalystAnnotation(flag) {
     : "Analyst engine flagged a governance/execution anomaly. Verify source text directly.";
 }
 
-function renderDilutionHeatmap(root, heatRows) {
+function renderDilutionHeatmap(root, heatRows, derivedMode) {
   if (!root) return;
   const rows = asArray(heatRows).slice(0, 10);
   const th = YourThemeConfig.chart.heatmap.thresholds;
@@ -587,12 +586,13 @@ function renderDilutionHeatmap(root, heatRows) {
     root.innerHTML = "<div class='report-empty'>No SBC/dilution observations were returned.</div>";
     return;
   }
+  const derivedAttr = derivedMode ? ' data-derived="true"' : "";
   root.innerHTML = `
-    <div class="mgmt-card-title-row">
+    <div class="mgmt-card-title-row"${derivedAttr}>
       <h4>Dilution &amp; SBC Heatmap</h4>
-      <span class="mgmt-badge mono-nums">SBC x NI x Price</span>
+      <span class="mgmt-badge mono-nums">SBC x NI x Price${derivedMode ? " · modeled" : ""}</span>
     </div>
-    <div class="dilution-table-wrap">
+    <div class="dilution-table-wrap"${derivedAttr}>
       <table class="dilution-table mono-nums">
         <thead>
           <tr>
@@ -662,6 +662,7 @@ export function renderSecAnalysisCard(label, analysis) {
   const guidance = safeText(analysis.guidance_signal || "neutral");
   const takeaway = safeText(analysis.high_level_takeaway || "No takeaway.");
   const verdict = safeText(analysis.verdict || "neutral");
+  const filingUrl = safeText(analysis.filing_url || "");
   const confidence = Number.isFinite(Number(analysis.confidence)) ? Number(analysis.confidence) : null;
   const why = (analysis.why || []).slice(0, 3);
   const evidence = (analysis.evidence || []).slice(0, 2);
@@ -680,7 +681,7 @@ export function renderSecAnalysisCard(label, analysis) {
       <div class="subtle">Variant view: <span class="${statusClass(verdict === "bullish" ? "good" : verdict === "bearish" ? "bad" : "neutral")}">${verdict}</span>${confidence !== null ? ` | Confidence: ${safeText(confidence)}/100 (${confidenceBandLabel})` : ""}</div>
       ${warning}
       <ul class="report-bullets">
-        <li>Form: ${safeText(analysis.form)} | Filed: ${safeText(analysis.filing_date)}</li>
+        <li>Form: ${safeText(analysis.form)} | Filed: ${safeText(analysis.filing_date)}${filingUrl ? ` | <a href="${safeText(filingUrl)}" target="_blank" rel="noopener noreferrer">View filing</a>` : ""}</li>
         <li>Evidence quality: ${safeText(analysisModeLabel(analysisMode))}</li>
         <li>Guidance: <span class="${statusClass(guidance === "negative" ? "bad" : guidance === "positive" ? "good" : "neutral")}">${guidance}</span></li>
         <li>Risk terms: ${safeText(risks)}</li>
@@ -744,6 +745,42 @@ function buildManagementFidelityBanner(dashboard, compare) {
   return `<div class="report-callout warn sec-fidelity-banner">${message}</div>`;
 }
 
+function isDerivedFidelity(dashboard) {
+  const fidelity = dashboard?.data_fidelity || {};
+  const timelineMode = safeText(fidelity.say_do_timeline || "");
+  const compareMode = safeText(fidelity.compare_evidence || "");
+  return (
+    timelineMode.includes("derived")
+    || timelineMode.includes("synthetic")
+    || compareMode === "metadata_fallback"
+  );
+}
+
+function setSecCompareActionRow(tickerA) {
+  const row = document.getElementById("secCompareActionRow");
+  if (!row) return;
+  if (!tickerA) {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+}
+
+export function wireSecCompareActions({ openTradeDrawer } = {}) {
+  document.getElementById("secCompareOpenDossierBtn")?.addEventListener("click", () => {
+    const ticker = document.getElementById("secCompareTickerA")?.value?.trim()?.toUpperCase() || "";
+    if (!ticker) return;
+    const reportInput = document.getElementById("reportTickerInput");
+    if (reportInput) reportInput.value = ticker;
+    document.getElementById("reportSectionCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  document.getElementById("secCompareOpenDrawerBtn")?.addEventListener("click", () => {
+    const ticker = document.getElementById("secCompareTickerA")?.value?.trim()?.toUpperCase() || "";
+    if (!ticker || typeof openTradeDrawer !== "function") return;
+    openTradeDrawer({ tab: "decision", ticker });
+  });
+}
+
 export function renderSecCompareEmpty(message) {
   const headlineRoot = document.getElementById("secCompareHeadline");
   const narrativeRoot = document.getElementById("secCompareNarrative");
@@ -753,6 +790,7 @@ export function renderSecCompareEmpty(message) {
   const scorecardRoot = document.getElementById("secIntegrityScorecard");
   const heatmapRoot = document.getElementById("secDilutionHeatmap");
   const redFlagsRoot = document.getElementById("secRedFlagsPanel");
+  const fidelityTop = document.getElementById("secCompareFidelityBanner");
   const msg = safeText(message || "No SEC compare data available.");
   if (headlineRoot) headlineRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (narrativeRoot) narrativeRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
@@ -762,6 +800,11 @@ export function renderSecCompareEmpty(message) {
   if (scorecardRoot) scorecardRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (heatmapRoot) heatmapRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
   if (redFlagsRoot) redFlagsRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  if (fidelityTop) {
+    fidelityTop.hidden = true;
+    fidelityTop.innerHTML = "";
+  }
+  setSecCompareActionRow("");
 }
 
 export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced" } = {}) {
@@ -832,12 +875,18 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
   const whatChanged = materialRaw.length ? materialRaw.slice(0, 3) : differencesRaw.slice(0, 3);
   const whyItMatters = rationale.length ? rationale : [safeText(compare.investor_takeaway || "Impact statement unavailable.")];
   const falsifierLines = (compare.what_would_falsify || compare.falsifier || compareLimits || []).slice(0, 2);
+  const diffChips = [...materialRaw.slice(0, 3), ...differencesRaw.slice(0, 3)]
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((x) => `<span class="delta-chip">${safeText(x)}</span>`)
+    .join("");
 
   headlineRoot.innerHTML = `
     <div class="report-section compare-headline-card">
       <h4>Variant vs Consensus</h4>
       <div><span class="${sentimentTagClass(sentimentTag)}">${sentimentTag}</span></div>
       <div class="compare-lead">${headline}</div>
+      ${diffChips ? `<div class="sec-diff-chips">${diffChips}</div>` : ""}
       <div class="subtle">Mode: ${safeText(data.mode || compare.mode || "N/A")} | Form: ${safeText(data.form_type || "N/A")} | Evidence quality: ${evidenceMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : " | Confidence: Unavailable"}</div>
       <div class="subtle">Freshness: ${leftLabel} <span class="pill ${freshnessLeft.css}">${safeText(freshnessLeft.label)}</span> · ${rightLabel} <span class="pill ${freshnessRight.css}">${safeText(freshnessRight.label)}</span></div>
       ${warning ? `<div class="report-callout warn">Reduced confidence context. ${compareLimits.length ? `Limits: ${safeText(compareLimits.join("; "))}` : "Metadata fallback or partial evidence mode."}</div>` : ""}
@@ -905,17 +954,28 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
     tickerA: left?.ticker || leftLabel || "N/A",
     tickerB: right?.ticker || rightLabel || "",
   });
+  const derivedMode = isDerivedFidelity(dashboard);
   const fidelityBanner = buildManagementFidelityBanner(dashboard, compare);
-  renderSayDoTimeline(timelineRoot, normalizeTimelineRows(dashboard), ruthlessMode);
-  if (timelineRoot && fidelityBanner) timelineRoot.insertAdjacentHTML("afterbegin", fidelityBanner);
+  const fidelityTop = document.getElementById("secCompareFidelityBanner");
+  if (fidelityTop) {
+    if (fidelityBanner) {
+      fidelityTop.hidden = false;
+      fidelityTop.innerHTML = fidelityBanner;
+    } else {
+      fidelityTop.hidden = true;
+      fidelityTop.innerHTML = "";
+    }
+  }
+  setSecCompareActionRow(safeText(left?.ticker || data.management_dashboard?.ticker || ""));
+  renderSayDoTimeline(timelineRoot, normalizeTimelineRows(dashboard), ruthlessMode, derivedMode);
   renderIntegrityScorecard(scorecardRoot, {
     score: dashboard?.integrity_scorecard?.score,
     pillars: normalizePillars(dashboard),
   });
-  renderDilutionHeatmap(heatmapRoot, normalizeHeatmapRows(dashboard));
+  renderDilutionHeatmap(heatmapRoot, normalizeHeatmapRows(dashboard), derivedMode);
   renderRedFlags(redFlagsRoot, normalizeRedFlags(dashboard), ruthlessMode);
-  const deep = document.getElementById("secCompareDeepPanel");
-  if (deep && getDisplayMode() === "pro") deep.open = true;
+  const derivedPanel = document.getElementById("secCompareDerivedPanel");
+  if (derivedPanel && getDisplayMode() === "pro") derivedPanel.open = true;
 }
 
 export async function buildFallbackSecCompare(mode, tickerA, tickerB, formType) {
@@ -1042,8 +1102,9 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   const tickerA = document.getElementById("secCompareTickerA").value.trim().toUpperCase();
   const tickerB = document.getElementById("secCompareTickerB").value.trim().toUpperCase();
   const formType = document.getElementById("secCompareFormType").value.trim().toUpperCase();
-  const highlightChangesOnly = document.getElementById("secCompareChangesOnly")?.checked ? "true" : "false";
+  const highlightChangesOnly = Boolean(document.getElementById("secCompareChangesOnly")?.checked);
   const ruthlessMode = document.getElementById("secCompareRuthlessMode")?.checked || false;
+  const deepScan = document.getElementById("secCompareDeepScan")?.checked || false;
   const profileSelect = document.getElementById("secCompareProfile");
   const selectedProfile = profileSelect ? profileSelect.value.trim().toLowerCase() : "auto";
   const profileOverride = selectedProfile && selectedProfile !== "auto" ? selectedProfile : "";
@@ -1062,7 +1123,6 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   try {
     let usedFallback = false;
     let profilePersistFailed = false;
-    // Best-effort profile override persistence for SaaS runtime.
     if (profileOverride || selectedProfile === "auto") {
       const profilePersistOut = await api.post(
         "/api/sec/management-dashboard/profile",
@@ -1076,16 +1136,23 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
       profilePersistFailed = !profilePersistOut?.ok;
     }
     meta.textContent = "Status: fetching data";
-    const qs = new URLSearchParams();
-    qs.set("mode", mode);
-    qs.set("ticker", tickerA);
-    qs.set("form_type", formType);
-    qs.set("highlight_changes_only", highlightChangesOnly);
-    if (ruthlessMode) qs.set("ruthless_mode", "true");
-    if (mode === "ticker_vs_ticker") qs.set("ticker_b", tickerB);
-    const out = await api.get(`/api/sec/compare?${qs.toString()}`, { timeoutMs: 300000 });
-    let payload = out.ok ? out.data : null;
-    if (!out.ok && (out.status === 404 || String(out.error || "").toLowerCase().includes("not found"))) {
+    let payload = null;
+    const compareOut = await api.getSecCompare(
+      {
+        mode,
+        ticker: tickerA,
+        tickerB: mode === "ticker_vs_ticker" ? tickerB : "",
+        formType,
+        highlightChangesOnly,
+        ruthlessMode,
+        includeManagementDashboard: true,
+        profileOverride,
+      },
+      { timeoutMs: 300000 },
+    );
+    if (compareOut.ok) {
+      payload = compareOut.data;
+    } else if (compareOut.status === 404 || String(compareOut.error || "").toLowerCase().includes("not found")) {
       meta.textContent = "Status: fetching data (metadata fallback mode)";
       usedFallback = true;
       const fallback = await buildFallbackSecCompare(mode, tickerA, tickerB, formType);
@@ -1096,21 +1163,21 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
         return;
       }
       payload = fallback;
-    } else if (!out.ok) {
+    } else {
       meta.textContent = "Status: partial failure (fetching failed)";
-      renderSecCompareEmpty(safeText(out.error || "Compare failed."));
-      logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${out.error}` });
+      renderSecCompareEmpty(safeText(compareOut.error || "Compare failed."));
+      logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${compareOut.error}` });
       return;
     }
-    meta.textContent = "Status: scoring";
+    meta.textContent = deepScan ? "Status: scoring (deep proxy scan)" : "Status: scoring";
     const dashboardOut = await fetchManagementDashboard({
       mode,
       tickerA,
       tickerB: mode === "ticker_vs_ticker" ? tickerB : "",
-      formType,
       ruthlessMode,
       comparePayload: payload,
       profileOverride,
+      deepScan,
     });
     payload.management_dashboard = dashboardOut.data;
     payload.management_dashboard.ruthless_mode = ruthlessMode;
@@ -1125,14 +1192,14 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     if (partialFailure) {
       meta.textContent = `Status: complete with partial failure · profile: ${activeProfile} · source: ${safeText(dashboardOut.source)}`;
     } else {
-      meta.textContent = `Status: complete · profile: ${activeProfile} · source: ${safeText(dashboardOut.source)}`;
+      meta.textContent = `Status: complete · profile: ${activeProfile} · source: bundled_compare${deepScan ? "+deep_scan" : ""}`;
     }
     renderProfileStatusFromDashboard(payload.management_dashboard);
     renderSecCompareVisual(payload, { getDisplayMode });
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });
     updateActionCenter({
-      title: "Management Dashboard Complete",
-      message: `Execution & integrity dashboard finished for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
+      title: "SEC Compare Complete",
+      message: `Filing compare finished for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
       severity: "success",
     });
   } finally {

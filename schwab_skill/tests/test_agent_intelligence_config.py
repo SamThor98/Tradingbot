@@ -12,9 +12,9 @@ from config import (
 
 def test_agent_intelligence_config_defaults(tmp_path) -> None:
     assert get_mirofish_weighting_mode(tmp_path) == "off"
-    assert get_meta_policy_mode(tmp_path) == "off"
-    assert get_uncertainty_mode(tmp_path) == "off"
-    assert get_counterfactual_logging_enabled(tmp_path) is False
+    assert get_meta_policy_mode(tmp_path) == "shadow"
+    assert get_uncertainty_mode(tmp_path) == "shadow"
+    assert get_counterfactual_logging_enabled(tmp_path) is True
     assert float(get_meta_policy_size_mult_min(tmp_path)) <= 1.0
     assert float(get_meta_policy_size_mult_max(tmp_path)) >= 1.0
 

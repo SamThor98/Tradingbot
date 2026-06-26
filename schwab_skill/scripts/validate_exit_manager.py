@@ -63,49 +63,65 @@ def _check_partial_once_and_restart_safe(tmp_skill_dir: Path) -> tuple[bool, str
     import execution
 
     auth = _FakeAuth(tmp_skill_dir)
-    execution.register_exit_manager_entry(
-        skill_dir=tmp_skill_dir,
-        ticker="AAPL",
-        entry_order_id="ENTRY1",
-        qty=10,
-        entry_price=100.0,
-        stop_order_id="STOP1",
-        stop_pct=0.05,
-    )
-
-    post_calls: list[str] = []
-
-    def _fake_post(_url, _payload, _auth):
-        order_id = "PARTIAL1"
-        post_calls.append(order_id)
-        return _FakeResponse(order_id)
-
-    with (
-        patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 105.0, "ask": 105.2, "last": 106.0, "mid": 105.1, "spread_bps": 19.0}),
-        patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
-        patch("order_monitor.start_fill_monitor", return_value=None),
+    with _temporary_env(
+        {
+            "EXIT_MANAGER_MODE": "live",
+            "EXIT_PARTIAL_TP_R_MULT": "1.0",
+            "EXIT_PARTIAL_TP_FRACTION": "0.5",
+            "EXIT_BREAKEVEN_AFTER_PARTIAL": "true",
+            "EXIT_MAX_HOLD_DAYS": "40",
+            "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+        }
     ):
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+        execution.register_exit_manager_entry(
+            skill_dir=tmp_skill_dir,
+            ticker="AAPL",
+            entry_order_id="ENTRY1",
+            qty=10,
+            entry_price=100.0,
+            stop_order_id="STOP1",
+            stop_pct=0.05,
+        )
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
+        pos["entry_date"] = (date.today() - timedelta(days=16)).isoformat()
+        pos["trailing_stop_armed"] = True
+        state["positions"]["AAPL:ENTRY1"] = pos
+        execution._save_exit_manager_state(tmp_skill_dir, state)
 
-    if len(post_calls) != 1:
-        return False, f"partial TP should place once, got {len(post_calls)} calls"
+        post_calls: list[str] = []
 
-    state = execution._load_exit_manager_state(tmp_skill_dir)
-    pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
-    if not pos.get("partial_tp_order_id"):
-        return False, "partial_tp_order_id missing after first trigger"
+        def _fake_post(_url, _payload, _auth):
+            order_id = "PARTIAL1"
+            post_calls.append(order_id)
+            return _FakeResponse(order_id)
 
-    # Simulate restart by reloading state and sweeping again; still no duplicate.
-    with (
-        patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 105.0, "ask": 105.2, "last": 106.0, "mid": 105.1, "spread_bps": 19.0}),
-        patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
-        patch("order_monitor.start_fill_monitor", return_value=None),
-    ):
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+        with (
+            patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 105.0, "ask": 105.2, "last": 106.0, "mid": 105.1, "spread_bps": 19.0}),
+            patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
+            patch("order_monitor.start_fill_monitor", return_value=None),
+        ):
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
 
-    if len(post_calls) != 1:
-        return False, "restart-safe idempotency failed: duplicate partial order placed"
+        if len(post_calls) != 1:
+            return False, f"partial TP should place once, got {len(post_calls)} calls"
+
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
+        if not pos.get("partial_tp_order_id"):
+            return False, "partial_tp_order_id missing after first trigger"
+
+        # Simulate restart by reloading state and sweeping again; still no duplicate.
+        with (
+            patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 105.0, "ask": 105.2, "last": 106.0, "mid": 105.1, "spread_bps": 19.0}),
+            patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
+            patch("order_monitor.start_fill_monitor", return_value=None),
+        ):
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+
+        if len(post_calls) != 1:
+            return False, "restart-safe idempotency failed: duplicate partial order placed"
     return True, "partial triggered once + restart-safe"
 
 
@@ -113,41 +129,51 @@ def _check_breakeven_move_once(tmp_skill_dir: Path) -> tuple[bool, str]:
     import execution
 
     auth = _FakeAuth(tmp_skill_dir)
-    state = execution._load_exit_manager_state(tmp_skill_dir)
-    pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
-    partial_id = pos.get("partial_tp_order_id")
-    if not partial_id:
-        return False, "missing partial order id for breakeven test"
-
-    execution.on_exit_manager_sell_fill(
-        skill_dir=tmp_skill_dir,
-        ticker="AAPL",
-        order_id=partial_id,
-        qty=5,
-    )
-
-    post_calls: list[str] = []
-
-    def _fake_post(_url, _payload, _auth):
-        order_id = "BE1"
-        post_calls.append(order_id)
-        return _FakeResponse(order_id)
-
-    with (
-        patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 104.0, "ask": 104.2, "last": 104.1, "mid": 104.1, "spread_bps": 19.0}),
-        patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
-        patch.object(execution, "_cancel_order_with_refresh", return_value=_FakeCancelResponse()),
+    with _temporary_env(
+        {
+            "EXIT_MANAGER_MODE": "live",
+            "EXIT_PARTIAL_TP_R_MULT": "1.0",
+            "EXIT_PARTIAL_TP_FRACTION": "0.5",
+            "EXIT_BREAKEVEN_AFTER_PARTIAL": "true",
+            "EXIT_MAX_HOLD_DAYS": "40",
+            "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+        }
     ):
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
+        partial_id = pos.get("partial_tp_order_id")
+        if not partial_id:
+            return False, "missing partial order id for breakeven test"
 
-    if len(post_calls) != 1:
-        return False, f"breakeven stop move should place once, got {len(post_calls)}"
+        execution.on_exit_manager_sell_fill(
+            skill_dir=tmp_skill_dir,
+            ticker="AAPL",
+            order_id=partial_id,
+            qty=5,
+        )
 
-    state = execution._load_exit_manager_state(tmp_skill_dir)
-    pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
-    if not pos.get("breakeven_done"):
-        return False, "breakeven_done flag not set"
+        post_calls: list[str] = []
+
+        def _fake_post(_url, _payload, _auth):
+            order_id = "BE1"
+            post_calls.append(order_id)
+            return _FakeResponse(order_id)
+
+        with (
+            patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 104.0, "ask": 104.2, "last": 104.1, "mid": 104.1, "spread_bps": 19.0}),
+            patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
+            patch.object(execution, "_cancel_order_with_refresh", return_value=_FakeCancelResponse()),
+        ):
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+
+        if len(post_calls) != 1:
+            return False, f"breakeven stop move should place once, got {len(post_calls)}"
+
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("AAPL:ENTRY1", {})
+        if not pos.get("breakeven_done"):
+            return False, "breakeven_done flag not set"
     return True, "stop move once after partial fill"
 
 
@@ -155,71 +181,75 @@ def _check_time_stop_once(tmp_skill_dir: Path) -> tuple[bool, str]:
     import execution
 
     auth = _FakeAuth(tmp_skill_dir)
-    execution.register_exit_manager_entry(
-        skill_dir=tmp_skill_dir,
-        ticker="MSFT",
-        entry_order_id="ENTRY2",
-        qty=8,
-        entry_price=100.0,
-        stop_order_id="STOP2",
-        stop_pct=0.05,
-    )
-    state = execution._load_exit_manager_state(tmp_skill_dir)
-    pos = state.get("positions", {}).get("MSFT:ENTRY2", {})
-    pos["entry_date"] = (date.today() - timedelta(days=20)).isoformat()
-    state["positions"]["MSFT:ENTRY2"] = pos
-    execution._save_exit_manager_state(tmp_skill_dir, state)
-
-    post_calls: list[str] = []
-
-    def _fake_post(_url, _payload, _auth):
-        order_id = "TIME1"
-        post_calls.append(order_id)
-        return _FakeResponse(order_id)
-
-    with (
-        patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 99.0, "ask": 99.2, "last": 99.1, "mid": 99.1, "spread_bps": 20.0}),
-        patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
-        patch("order_monitor.start_fill_monitor", return_value=None),
+    with _temporary_env(
+        {
+            "EXIT_MANAGER_MODE": "live",
+            "EXIT_MAX_HOLD_DAYS": "12",
+            "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+        }
     ):
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
-        execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+        execution.register_exit_manager_entry(
+            skill_dir=tmp_skill_dir,
+            ticker="MSFT",
+            entry_order_id="ENTRY2",
+            qty=8,
+            entry_price=100.0,
+            stop_order_id="STOP2",
+            stop_pct=0.05,
+        )
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("MSFT:ENTRY2", {})
+        pos["entry_date"] = (date.today() - timedelta(days=20)).isoformat()
+        pos["trailing_stop_armed"] = True
+        state["positions"]["MSFT:ENTRY2"] = pos
+        execution._save_exit_manager_state(tmp_skill_dir, state)
 
-    if len(post_calls) != 1:
-        return False, f"time stop should place once, got {len(post_calls)}"
-    state = execution._load_exit_manager_state(tmp_skill_dir)
-    pos = state.get("positions", {}).get("MSFT:ENTRY2", {})
-    if not pos.get("time_stop_done"):
-        return False, "time_stop_done flag not set"
+        post_calls: list[str] = []
+
+        def _fake_post(_url, _payload, _auth):
+            order_id = "TIME1"
+            post_calls.append(order_id)
+            return _FakeResponse(order_id)
+
+        with (
+            patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 99.0, "ask": 99.2, "last": 99.1, "mid": 99.1, "spread_bps": 20.0}),
+            patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
+            patch("order_monitor.start_fill_monitor", return_value=None),
+        ):
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+            execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
+
+        if len(post_calls) != 1:
+            return False, f"time stop should place once, got {len(post_calls)}"
+        state = execution._load_exit_manager_state(tmp_skill_dir)
+        pos = state.get("positions", {}).get("MSFT:ENTRY2", {})
+        if not pos.get("time_stop_done"):
+            return False, "time_stop_done flag not set"
     return True, "time stop once"
 
 
 def main() -> int:
-    checks = []
+    failures: list[str] = []
     with tempfile.TemporaryDirectory(prefix="exit_manager_validate_") as td:
         tmp_skill_dir = Path(td)
-        with _temporary_env(
-            {
-                "EXIT_MANAGER_MODE": "live",
-                "EXIT_PARTIAL_TP_R_MULT": "1.0",
-                "EXIT_PARTIAL_TP_FRACTION": "0.5",
-                "EXIT_BREAKEVEN_AFTER_PARTIAL": "true",
-                "EXIT_MAX_HOLD_DAYS": "12",
-            }
+        for ok, label in (
+            _check_partial_once_and_restart_safe(tmp_skill_dir),
+            _check_breakeven_move_once(tmp_skill_dir),
         ):
-            checks = [
-                _check_partial_once_and_restart_safe(tmp_skill_dir),
-                _check_breakeven_move_once(tmp_skill_dir),
-                _check_time_stop_once(tmp_skill_dir),
-            ]
+            if ok:
+                print(f"PASS: {label}")
+            else:
+                failures.append(label)
+                print(f"FAIL: {label}")
 
-    failures: list[str] = []
-    for ok, label in checks:
+    with tempfile.TemporaryDirectory(prefix="exit_manager_validate_ts_") as td_ts:
+        ok, label = _check_time_stop_once(Path(td_ts))
         if ok:
             print(f"PASS: {label}")
         else:
             failures.append(label)
             print(f"FAIL: {label}")
+
     if failures:
         print(f"Exit manager validation failed: {failures}")
         return 1

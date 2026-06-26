@@ -1,0 +1,52 @@
+---
+description: P0 signal-edge work — scanner, backtest, scoring, exits, quality gates
+globs: schwab_skill/{backtest*.py,signal_scanner.py,stage_analysis.py,core/scoring*.py,core/trade_review.py,tests/test_backtest*.py,tests/test_scan*.py}
+alwaysApply: false
+---
+
+# Signal Edge Priority (P0)
+
+Active when editing scanner, backtest, ranking, or exit logic. North star: improve bare-signal PF before plugin LIVE promotion.
+
+## Promotion gate (do not skip)
+
+Phase 2 verdict: `halt_fix_signal_first`. Target before promoting REGIME_V2 / EXIT_MANAGER / CORRELATION_GUARD to LIVE:
+
+- PF mean ≥ 1.20 across multi-era backtest
+- Worst-era PF ≥ 1.00
+
+Check `schwab_skill/phase1_progress_signal_gate.json` and `schwab_skill/README.md` Recommended Rollout Sequence before claiming edge improvement.
+
+## Change discipline
+
+- **Shadow first** — new filters/gates log in diagnostics (`*_would_filter`, counters) before `QUALITY_GATES_ENABLED=true`
+- **Config via getters** — add env vars in `config.py` with defaults; document in `env.example`
+- **Diagnostics travel with signals** — extend the flat diagnostics dict; initialize counters to 0
+- **Backtest parity** — if scanner logic changes, update `backtest.py` (and `backtest_intelligence.py` if enrichment affected)
+- **No silent behavior change** — plugin modes stay OFF/SHADOW unless task explicitly promotes with ledger entry
+
+## Key files
+
+| Area | Files |
+|------|-------|
+| Scan pipeline | `signal_scanner.py`, `stage_analysis.py` |
+| Ranking / audit | `core/scoring_rank_v2.py`, `core/scoring_metrics.py`, `core/scoring_audit_builder.py` |
+| Backtest | `backtest.py`, `backtest_intelligence.py` |
+| Exits | `backtest.py` (exit grace/hold), `execution.py` exit manager hooks |
+| Quality rollout | `SIGNAL_QUALITY_ROLLOUT.md`, quality gate config getters |
+
+## Validation (required for P0 diffs)
+
+From `schwab_skill/`:
+
+```bash
+python -m pytest -q tests/test_backtest*.py tests/test_scan*.py
+python scripts/validate_backtest.py --warn-on-regression
+python scripts/validate_signal_quality.py
+```
+
+For promotion-grade claims, also run multi-era backtest per project runbooks and compare PF mean / worst-era PF to baseline in `phase1_progress_signal_gate.json`.
+
+## Report format
+
+Summarize: hypothesis → config/env toggles → PF delta (if run) → throughput impact (signals/week proxy) → recommended next experiment.

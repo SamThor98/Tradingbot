@@ -1,13 +1,28 @@
 ---
 source: Brain/Architecture/WebApp Dashboard.md
 created: 2026-04-13
-updated: 2026-04-13
-tags: [architecture, webapp, dashboard]
+updated: 2026-06-26
+tags: [architecture, webapp, dashboard, ux]
 ---
 
 # WebApp Dashboard
 
 > FastAPI local dashboard for scanning, trade approval, portfolio, and system health.
+
+## Navigation (locked 2026-06-26)
+
+Four top-level tabs in `index.html` / `app.js`:
+
+| Tab | Mode | Focus |
+|-----|------|-------|
+| Today | `operations` | Scan workflow + pending queue |
+| Research | `research` | Quick check, backtest, diligence, portfolio (sub-tabs) |
+| System | `diagnostics` | Health, validation, calibration |
+| Settings | `settings` | Schwab connect, live-order controls, risk presets |
+
+See [[frontend-route-contract]] and [[section-migration-map]] for deep links and section ids.
+
+Display modes: Simple / Standard / Pro (`?display=` or header selector). Simple hides advanced scan columns and Settings risk presets.
 
 ## Two UIs
 
@@ -38,10 +53,12 @@ All API routes return `ApiResponse(ok, data, error)` via `_ok()` / `_err()` help
 
 ## Related Pages
 
+- [[frontend-route-contract]] — frozen deep-link and screen contract
+- [[section-migration-map]] — locked section layout
 - [[local-dashboard-endpoints]] — full endpoint reference
 - [[tenant-dashboard-endpoints]] — SaaS per-tenant routes
 - [[system-overview]] — architecture context
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-06-26*

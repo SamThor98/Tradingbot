@@ -54,7 +54,35 @@ def test_apply_score_stack_emits_rank_score_metadata() -> None:
     out = _apply_score_stack(copy.deepcopy(row))
     assert isinstance(out.get("rank_score"), (int, float))
     assert 0.0 <= float(out["rank_score"]) <= 100.0
-    assert out.get("rank_basis") == "high_level_v1"
+    assert out.get("rank_basis") == "composite_quality_v3"
+
+
+def test_apply_score_stack_edge_excludes_52w_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    from signal_scanner import _apply_score_stack
+
+    monkeypatch.setenv("SCORE_EDGE_EXCLUDE_52W", "true")
+    from config import clear_env_cache
+
+    clear_env_cache()
+    row = {
+        "signal_score": 80.0,
+        "score_components": {"pts_52w": 30.0},
+        "advisory": {"confidence_bucket": "high", "p_up_10d": 0.55},
+        "breakout_confirmed": True,
+        "latest_volume": 1_000_000.0,
+        "avg_vol_50": 1_000_000.0,
+        "data_provider_primary": True,
+        "used_fallback_data": False,
+        "recent_8k": False,
+        "sec_risk_tag": "unknown",
+        "forensic_flags": [],
+        "mirofish_disagreement": 0.0,
+    }
+    with_exclusion = _apply_score_stack(copy.deepcopy(row))
+    monkeypatch.setenv("SCORE_EDGE_EXCLUDE_52W", "false")
+    clear_env_cache()
+    without_exclusion = _apply_score_stack(copy.deepcopy(row))
+    assert float(with_exclusion["edge_score"]) < float(without_exclusion["edge_score"])
 
 
 def test_apply_score_stack_rank_score_caps_on_high_risk() -> None:
@@ -76,6 +104,7 @@ def test_apply_score_stack_rank_score_caps_on_high_risk() -> None:
     }
     out = _apply_score_stack(copy.deepcopy(row))
     assert float(out.get("rank_score", 100.0)) <= 45.0
+    assert float(out.get("composite_score", 100.0)) <= 45.0
 
 
 def test_forensic_snapshot_skipped_under_schwab_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

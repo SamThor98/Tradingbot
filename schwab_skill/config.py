@@ -338,28 +338,110 @@ def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
 # Defaults preserve the original hardcoded blend; exposing them as config lets
 # the weight-feedback review loop propose tuning without code edits.
 def get_score_edge_signal_weight(skill_dir: Path | None = None) -> float:
-    """Weight of the raw signal_score within edge_score (default 0.65)."""
-    return _get_float("SCORE_EDGE_SIGNAL_WEIGHT", 0.65, skill_dir)
+    """Weight of the edge signal term within edge_score (default 1.0 — p_up harmful at 40d)."""
+    return _get_float("SCORE_EDGE_SIGNAL_WEIGHT", 1.0, skill_dir)
 
 
 def get_score_edge_pup_weight(skill_dir: Path | None = None) -> float:
-    """Weight of calibrated P(up) within edge_score (default 0.35)."""
-    return _get_float("SCORE_EDGE_PUP_WEIGHT", 0.35, skill_dir)
+    """Weight of calibrated P(up) within edge_score (default 0.0 at 40d)."""
+    return _get_float("SCORE_EDGE_PUP_WEIGHT", 0.0, skill_dir)
 
 
 def get_score_composite_edge_weight(skill_dir: Path | None = None) -> float:
-    """Weight of edge_score within composite_score (default 0.5)."""
-    return _get_float("SCORE_COMPOSITE_EDGE_WEIGHT", 0.5, skill_dir)
+    """Legacy stack blend: edge weight (default 0.0 when direct components + caps-only)."""
+    return _get_float("SCORE_COMPOSITE_EDGE_WEIGHT", 0.0, skill_dir)
 
 
 def get_score_composite_reliability_weight(skill_dir: Path | None = None) -> float:
-    """Weight of reliability_score within composite_score (default 0.3)."""
-    return _get_float("SCORE_COMPOSITE_RELIABILITY_WEIGHT", 0.3, skill_dir)
+    """Legacy stack blend: reliability weight (default 0.0 — caps only)."""
+    return _get_float("SCORE_COMPOSITE_RELIABILITY_WEIGHT", 0.0, skill_dir)
 
 
 def get_score_composite_execution_weight(skill_dir: Path | None = None) -> float:
-    """Weight of execution_score within composite_score (default 0.2)."""
-    return _get_float("SCORE_COMPOSITE_EXECUTION_WEIGHT", 0.2, skill_dir)
+    """Legacy stack blend: execution weight (default 0.0 — caps only)."""
+    return _get_float("SCORE_COMPOSITE_EXECUTION_WEIGHT", 0.0, skill_dir)
+
+
+def get_score_composite_use_direct_components(skill_dir: Path | None = None) -> bool:
+    """Blend pts_volume / trend / signal-minus-52w / pts_mirofish directly into composite (default true)."""
+    return _get_bool("SCORE_COMPOSITE_USE_DIRECT_COMPONENTS", True, skill_dir)
+
+
+def get_score_composite_direct_trend_weight(skill_dir: Path | None = None) -> float:
+    """Weight of 200-SMA trend distance in direct composite (40d IC ~ +0.07)."""
+    return _get_float("SCORE_COMPOSITE_DIRECT_TREND_WEIGHT", 0.70, skill_dir)
+
+
+def get_score_composite_direct_volume_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("SCORE_COMPOSITE_DIRECT_VOLUME_WEIGHT", 0.20, skill_dir)
+
+
+def get_score_composite_direct_signal_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("SCORE_COMPOSITE_DIRECT_SIGNAL_WEIGHT", 0.05, skill_dir)
+
+
+def get_score_composite_direct_mirofish_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("SCORE_COMPOSITE_DIRECT_MIROFISH_WEIGHT", 0.05, skill_dir)
+
+
+def get_score_composite_stack_blend_weight(skill_dir: Path | None = None) -> float:
+    """Mix edge stack into direct predictive core (default 0.0 — p_up harmful at 40d)."""
+    return _get_float("SCORE_COMPOSITE_STACK_BLEND_WEIGHT", 0.0, skill_dir)
+
+
+def get_score_composite_safety_caps_only(skill_dir: Path | None = None) -> bool:
+    """Apply reliability/execution via hard caps only, not blend weights (default true)."""
+    return _get_bool("SCORE_COMPOSITE_SAFETY_CAPS_ONLY", True, skill_dir)
+
+
+def get_score_pts_sma_cap(skill_dir: Path | None = None) -> float:
+    """Max points from SMA distance component (default 25)."""
+    return _get_float("SCORE_PTS_SMA_CAP", 25.0, skill_dir)
+
+
+def get_score_pts_sma_multiplier(skill_dir: Path | None = None) -> float:
+    """Scale applied to pts_sma before adding to signal_score (default 0.0).
+
+    Offline scoring validation (40d, 1102 candidates) showed pts_sma is harmful:
+    removing it improved AUC +0.023; multiplier=0.0 beat 1.0 (0.491 vs 0.467 AUC).
+    """
+    return _get_float("SCORE_PTS_SMA_MULTIPLIER", 0.0, skill_dir)
+
+
+def get_score_edge_exclude_52w(skill_dir: Path | None = None) -> bool:
+    """Use signal_score minus pts_52w in edge_score (52w harmful at 40d)."""
+    return _get_bool("SCORE_EDGE_EXCLUDE_52W", True, skill_dir)
+
+
+def get_scan_live_sort_key(skill_dir: Path | None = None) -> str:
+    """Primary candidate sort key until composite beats signal on realized trades."""
+    env = _load_env(skill_dir)
+    raw = _env_value("SCAN_LIVE_SORT_KEY", env).strip().lower()
+    if raw in {"signal_score", "composite_score", "rank_score"}:
+        return raw
+    return "signal_score"
+
+
+def get_rank_score_v2_mode(skill_dir: Path | None = None) -> str:
+    """Component-weighted rank v2 — diagnostic only; live sort uses composite_score."""
+    return _get_mode("RANK_SCORE_V2_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_rank_v2_signal_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("RANK_V2_SIGNAL_WEIGHT", 0.35, skill_dir)
+
+
+def get_rank_v2_volume_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("RANK_V2_VOLUME_WEIGHT", 0.50, skill_dir)
+
+
+def get_rank_v2_mirofish_weight(skill_dir: Path | None = None) -> float:
+    return _get_float("RANK_V2_MIROFISH_WEIGHT", 0.15, skill_dir)
+
+
+def get_rank_v2_exclude_52w(skill_dir: Path | None = None) -> bool:
+    """Exclude pts_52w from the signal term in rank v2 (harmful at 40d)."""
+    return _get_bool("RANK_V2_EXCLUDE_52W", True, skill_dir)
 
 
 def get_scan_vcp_gate_mode(skill_dir: Path | None = None) -> str:
@@ -531,6 +613,21 @@ def get_backtest_adaptive_guardrail_policy_path(skill_dir: Path | None = None) -
     return raw or "backtest_guardrail_policy.json"
 
 
+def get_backtest_hold_days(skill_dir: Path | None = None) -> int:
+    """Max holding window (trading bars) before time exit in portfolio backtest."""
+    return max(1, _get_int("BACKTEST_HOLD_DAYS", 40, skill_dir))
+
+
+def get_backtest_min_hold_days_before_trail(skill_dir: Path | None = None) -> int:
+    """Grace period before trailing-stop ratchet activates (entry fixed stop only)."""
+    return max(0, _get_int("BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL", 15, skill_dir))
+
+
+def get_backtest_min_hold_defer_soft_exits(skill_dir: Path | None = None) -> bool:
+    """Defer SMA50 / VCP invalidation exits until the trail grace period elapses."""
+    return _get_bool("BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS", True, skill_dir)
+
+
 def get_alert_min_conviction(skill_dir: Path | None = None) -> int:
     """Minimum conviction to send any alert (below = suppressed)."""
     return _get_int("ALERT_MIN_CONVICTION", 20, skill_dir)
@@ -638,8 +735,14 @@ def get_exec_quality_mode(skill_dir: Path | None = None) -> str:
 
 
 def get_exit_manager_mode(skill_dir: Path | None = None) -> str:
-    """Exit manager plugin mode (OFF|SHADOW|LIVE)."""
-    return _get_mode("EXIT_MANAGER_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    """Exit manager plugin mode (OFF|SHADOW|LIVE).
+
+    Default promoted to ``live`` (2026-Q2 exit-returns promotion) after Schwab
+    replay overlay showed exit grace ``t15_h40`` PF mean +0.58 vs baseline.
+    See ``scripts/promotion_ledger.jsonl`` and
+    ``validation_artifacts/replay_exit_overlay_control_legacy_aug.json``.
+    """
+    return _get_mode("EXIT_MANAGER_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_event_risk_mode(skill_dir: Path | None = None) -> str:
@@ -666,8 +769,10 @@ def get_confluence_gate_mode(skill_dir: Path | None = None) -> str:
     (PEAD-positive or advisory-high) on top of the Stage 2 + VCP base setup.
     SHADOW annotates and counts would-blocks without dropping signals;
     LIVE drops unconfirmed signals from the scan results.
+
+    Default ``shadow``: multi-era signal-gate sweep regressed PF when live.
     """
-    return _get_mode("CONFLUENCE_GATE_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    return _get_mode("CONFLUENCE_GATE_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 
 
 def get_confluence_advisory_min_pup(skill_dir: Path | None = None) -> float:
@@ -777,7 +882,17 @@ def get_exit_breakeven_after_partial(skill_dir: Path | None = None) -> bool:
 
 def get_exit_max_hold_days(skill_dir: Path | None = None) -> int:
     """Maximum hold days before forcing a time-stop exit."""
-    return _get_int("EXIT_MAX_HOLD_DAYS", 12, skill_dir)
+    return _get_int("EXIT_MAX_HOLD_DAYS", 40, skill_dir)
+
+
+def get_hold_days(skill_dir: Path | None = None) -> int:
+    """Live hold reminder threshold; aligned with backtest max-hold window."""
+    return max(1, _get_int("HOLD_DAYS", 40, skill_dir))
+
+
+def get_exit_min_hold_days_before_trail(skill_dir: Path | None = None) -> int:
+    """Calendar-day grace before live exit-manager actions (partial TP, time stop)."""
+    return max(0, _get_int("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL", 15, skill_dir))
 
 
 def get_event_risk_blackout_minutes(skill_dir: Path | None = None) -> int:
@@ -1525,8 +1640,12 @@ def get_mirofish_weighting_min_multiplier(skill_dir: Path | None = None) -> floa
 
 
 def get_meta_policy_mode(skill_dir: Path | None = None) -> str:
-    """Meta-policy rollout mode (OFF|SHADOW|LIVE)."""
-    return _get_mode("META_POLICY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    """Meta-policy rollout mode (OFF|SHADOW|LIVE).
+
+    Default ``shadow``: accumulate counterfactual suppress/downsize evidence
+    before live promotion (see promotion-playbook).
+    """
+    return _get_mode("META_POLICY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 
 
 def get_meta_policy_min_base_score(skill_dir: Path | None = None) -> float:
@@ -1567,7 +1686,7 @@ def get_meta_policy_downsize_threshold(skill_dir: Path | None = None) -> float:
 
 def get_uncertainty_mode(skill_dir: Path | None = None) -> str:
     """Uncertainty plugin rollout mode (OFF|SHADOW|LIVE)."""
-    return _get_mode("UNCERTAINTY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    return _get_mode("UNCERTAINTY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 
 
 def get_uncertainty_high_threshold(skill_dir: Path | None = None) -> float:
@@ -1596,7 +1715,7 @@ def get_uncertainty_size_mult_floor(skill_dir: Path | None = None) -> float:
 
 def get_counterfactual_logging_enabled(skill_dir: Path | None = None) -> bool:
     """Enable counterfactual logging for filtered/suppressed opportunities."""
-    return _get_bool("COUNTERFACTUAL_LOGGING_ENABLED", False, skill_dir)
+    return _get_bool("COUNTERFACTUAL_LOGGING_ENABLED", True, skill_dir)
 
 
 def get_counterfactual_max_horizon_days(skill_dir: Path | None = None) -> int:

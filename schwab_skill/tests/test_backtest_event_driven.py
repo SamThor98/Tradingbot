@@ -380,7 +380,9 @@ def test_advisory_prob_ranking_used_when_mirofish_missing(monkeypatch) -> None:
 
     monkeypatch.setattr(backtest, "_run_mirofish_for_entry", lambda *args, **kwargs: None)
 
+    import config
 
+    monkeypatch.setattr(config, "get_scan_live_sort_key", lambda _sd=None: "rank_score")
 
     def _inject_advisory(signal, diagnostics, skill_dir, mode):
 

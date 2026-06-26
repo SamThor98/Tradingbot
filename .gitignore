@@ -28,11 +28,13 @@ guardrail_trades.json
 .pm_*.json
 .hypothesis_ledger*.json
 .counterfactual_*.json
+.counterfactual_*.jsonl
 .scan_outcomes.json
 .token_cache.json
 strategy_state.json
 strategy_chat_log.jsonl
 execution_safety_metrics.json
+.exit_manager_state.json
 schwab_skill/.env
 
 # Per-tenant SaaS runtime sandboxes (created on demand).
@@ -57,6 +59,12 @@ artifacts/
 schwab_skill/artifacts/
 schwab_skill/validation_artifacts/
 schwab_skill/experiments/
+schwab_skill/phase1_progress*.json
+schwab_skill/validate_all_output.txt
+schwab_skill/scripts/*_recent_current.json
+
+# Unrelated local sync / nested repos
+_site_sync_oldlogan/
 
 # Generated tokens
 schwab_skill/tokens_*.enc
