@@ -11,6 +11,7 @@
  */
 
 import { api } from "../modules/api.js";
+import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
 import { safeText } from "../modules/format.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./forecast.js";
 
@@ -89,25 +90,24 @@ function renderKronosChart(container, data) {
 
   container.classList.add("kronos-chart-active");
   container.innerHTML = "";
+  const chartTheme = getLightweightChartsProps();
   const chart = LightweightCharts.createChart(container, {
     width: chartWidth(container),
     height: 340,
-    layout: { background: { type: "solid", color: "transparent" }, textColor: "#94a3b8" },
-    grid: {
-      vertLines: { color: "rgba(148,163,184,0.10)" },
-      horzLines: { color: "rgba(148,163,184,0.10)" },
-    },
-    rightPriceScale: { borderColor: "rgba(148,163,184,0.22)" },
-    timeScale: { borderColor: "rgba(148,163,184,0.22)", timeVisible: intraday, secondsVisible: false },
+    layout: chartTheme.layout,
+    grid: chartTheme.grid,
+    rightPriceScale: chartTheme.rightPriceScale,
+    timeScale: { ...chartTheme.timeScale, timeVisible: intraday, secondsVisible: false },
   });
 
   const histSeries = chart.addCandlestickSeries({
+    ...chartTheme.candlestick,
     upColor: "#2d8a5f",
-    downColor: "#c94949",
+    downColor: chartTheme.candlestick.downColor,
     borderUpColor: "#2d8a5f",
-    borderDownColor: "#c94949",
+    borderDownColor: chartTheme.candlestick.downColor,
     wickUpColor: "#2d8a5f",
-    wickDownColor: "#c94949",
+    wickDownColor: chartTheme.candlestick.downColor,
   });
   histSeries.setData(history);
 

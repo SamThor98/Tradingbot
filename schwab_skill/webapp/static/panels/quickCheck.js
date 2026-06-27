@@ -6,6 +6,9 @@
  */
 
 import { api } from "../modules/api.js";
+import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
+import { humanizeFieldLabel } from "../modules/humanize.js";
+import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
 
@@ -36,7 +39,7 @@ export function renderQuickCheckCard(data, error) {
       const val = (f.value || "").replace(/\*\*/g, "").replace(/\n/g, "<br>");
       fieldsHtml += `<div class="preset-subsection" style="padding: 10px;">
         <h3 style="margin: 0 0 6px; font-size: 0.82rem;">${safeText(f.name)}</h3>
-        <div style="font-size: 0.84rem; color: #dbe6ff; line-height: 1.5;">${val}</div>
+        <div style="font-size: 0.84rem; color: ${YourThemeConfig.palette.text}; line-height: 1.5;">${val}</div>
       </div>`;
     }
     fieldsHtml += "</div>";
@@ -48,13 +51,14 @@ export function renderQuickCheckCard(data, error) {
     const score = d.signal_score ?? d.score;
     const sector = d.sector ?? d.sector_etf;
     if (price != null) items.push(`<li><strong>Price:</strong> $${Number(price).toFixed(2)}</li>`);
-    if (stage2 != null) items.push(`<li><strong>Stage 2:</strong> <span class="pill ${stage2 ? 'good' : 'bad'} small">${stage2 ? 'Yes' : 'No'}</span></li>`);
-    if (vcp != null) items.push(`<li><strong>VCP:</strong> <span class="pill ${vcp ? 'good' : 'bad'} small">${vcp ? 'Detected' : 'None'}</span></li>`);
-    if (score != null) items.push(`<li><strong>Signal Score:</strong> ${Number(score).toFixed(1)}/100</li>`);
+    if (stage2 != null) items.push(`<li><strong>In uptrend:</strong> <span class="pill ${stage2 ? 'good' : 'bad'} small">${stage2 ? 'Yes' : 'No'}</span></li>`);
+    if (vcp != null) items.push(`<li><strong>Volatility pattern:</strong> <span class="pill ${vcp ? 'good' : 'bad'} small">${vcp ? 'Detected' : 'None'}</span></li>`);
+    if (score != null) items.push(`<li><strong>Signal score:</strong> ${Number(score).toFixed(1)}/100</li>`);
     if (sector) items.push(`<li><strong>Sector:</strong> ${safeText(sector)}</li>`);
+    const hiddenKeys = new Set(["title", "description", "color", "timestamp", "ticker", "stage_2", "is_stage_2", "vcp", "vcp_detected", "signal_score", "score", "sector", "sector_etf", "price", "current_price", "last_price"]);
     Object.entries(d).forEach(([k, v]) => {
-      if (v != null && typeof v !== "object" && !["title", "description", "color", "timestamp", "ticker"].includes(k)) {
-        items.push(`<li><strong>${safeText(k)}:</strong> ${safeText(String(v))}</li>`);
+      if (v != null && typeof v !== "object" && !hiddenKeys.has(k)) {
+        items.push(`<li><strong>${safeText(humanizeFieldLabel(k))}:</strong> ${safeText(String(v))}</li>`);
       }
     });
     if (items.length) fieldsHtml = `<ul class="tool-summary-list">${items.join("")}</ul>`;
@@ -89,20 +93,17 @@ export async function renderTickerChart(ticker) {
     return;
   }
 
+  const chartTheme = getLightweightChartsProps();
   const chart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
     height: 280,
-    layout: { background: { type: "solid", color: "transparent" }, textColor: "#9ca3b8" },
-    grid: { vertLines: { color: "rgba(99,120,200,0.06)" }, horzLines: { color: "rgba(99,120,200,0.06)" } },
+    layout: chartTheme.layout,
+    grid: chartTheme.grid,
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: "rgba(99,120,200,0.15)" },
-    timeScale: { borderColor: "rgba(99,120,200,0.15)", timeVisible: false },
+    rightPriceScale: chartTheme.rightPriceScale,
+    timeScale: { ...chartTheme.timeScale, timeVisible: false },
   });
-  const candleSeries = chart.addCandlestickSeries({
-    upColor: "#34d399", downColor: "#fb7185",
-    borderUpColor: "#34d399", borderDownColor: "#fb7185",
-    wickUpColor: "#34d399", wickDownColor: "#fb7185",
-  });
+  const candleSeries = chart.addCandlestickSeries(chartTheme.candlestick);
   candleSeries.setData(out.data.candles);
 
   const volSeries = chart.addHistogramSeries({
@@ -113,7 +114,7 @@ export async function renderTickerChart(ticker) {
   volSeries.setData(out.data.candles.map((c) => ({
     time: c.time,
     value: c.volume,
-    color: c.close >= c.open ? "rgba(52,211,153,0.25)" : "rgba(251,113,133,0.25)",
+    color: c.close >= c.open ? chartTheme.volumeColors.up : chartTheme.volumeColors.down,
   })));
 
   chart.timeScale().fitContent();

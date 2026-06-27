@@ -49,13 +49,13 @@ export function provenanceFromSignal(row = {}) {
  */
 export function renderSignalProvenanceChip(row = {}) {
   const p = provenanceFromSignal(row);
-  const parts = [p.source, p.confidence];
-  if (p.isStale) parts.push("stale");
-  const label = parts.join(" · ");
   const title = p.staleReason
     ? `Data source: ${p.source}. Confidence: ${p.confidence}. ${p.staleReason}`
     : `Data source: ${p.source}. Confidence: ${p.confidence}.`;
-  return `<span class="prov-chip prov-${escapeHtml(p.confidence)}" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+  const staleHtml = p.isStale
+    ? `<span class="prov-chip__stale">stale</span>`
+    : "";
+  return `<span class="prov-chip prov-${escapeHtml(p.confidence)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><span class="prov-chip__source">${escapeHtml(p.source)}</span><span aria-hidden="true">&middot;</span><span class="prov-chip__confidence">${escapeHtml(p.confidence)}</span>${staleHtml}</span>`;
 }
 
 /**

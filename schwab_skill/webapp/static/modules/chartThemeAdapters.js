@@ -130,3 +130,64 @@ export function getTremorClassMap(overrides = {}) {
   };
 }
 
+/**
+ * Ready-to-drop Lightweight Charts options aligned with YourThemeConfig.
+ *
+ * @param {Record<string, any>} [overrides]
+ * @returns {{
+ *   layout: { background: { type: string; color: string }; textColor: string };
+ *   grid: { vertLines: { color: string }; horzLines: { color: string } };
+ *   rightPriceScale: { borderColor: string };
+ *   timeScale: { borderColor: string };
+ *   candlestick: {
+ *     upColor: string;
+ *     downColor: string;
+ *     borderUpColor: string;
+ *     borderDownColor: string;
+ *     wickUpColor: string;
+ *     wickDownColor: string;
+ *   };
+ *   volumeColors: { up: string; down: string };
+ * }}
+ */
+export function getLightweightChartsProps(overrides = {}) {
+  const lc = YourThemeConfig.lightweightCharts;
+  const base = {
+    layout: {
+      background: { type: "solid", color: "transparent" },
+      textColor: lc.textColor,
+    },
+    grid: {
+      vertLines: { color: lc.grid },
+      horzLines: { color: lc.grid },
+    },
+    rightPriceScale: { borderColor: lc.scaleBorder },
+    timeScale: { borderColor: lc.scaleBorder },
+    candlestick: {
+      upColor: lc.upColor,
+      downColor: lc.downColor,
+      borderUpColor: lc.upColor,
+      borderDownColor: lc.downColor,
+      wickUpColor: lc.upColor,
+      wickDownColor: lc.downColor,
+    },
+    volumeColors: {
+      up: lc.volumeUp,
+      down: lc.volumeDown,
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    layout: { ...base.layout, ...(overrides.layout || {}) },
+    grid: {
+      vertLines: { ...base.grid.vertLines, ...(overrides.grid?.vertLines || {}) },
+      horzLines: { ...base.grid.horzLines, ...(overrides.grid?.horzLines || {}) },
+    },
+    rightPriceScale: { ...base.rightPriceScale, ...(overrides.rightPriceScale || {}) },
+    timeScale: { ...base.timeScale, ...(overrides.timeScale || {}) },
+    candlestick: { ...base.candlestick, ...(overrides.candlestick || {}) },
+    volumeColors: { ...base.volumeColors, ...(overrides.volumeColors || {}) },
+  };
+}
+

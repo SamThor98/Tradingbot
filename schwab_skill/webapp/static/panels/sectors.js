@@ -22,6 +22,11 @@ import {
 export async function refreshSectors() {
   const grid = document.getElementById("sectorGrid");
   if (!grid) return;
+  const summaryMeta = document.getElementById("sectorSummaryMeta");
+  if (summaryMeta) {
+    summaryMeta.textContent = "";
+    summaryMeta.classList.add("hidden");
+  }
   setAsyncState(grid, ASYNC_LOADING, { message: "Loading sectors…" });
   const out = await api.get("/api/sectors");
   if (!out.ok) {
@@ -56,14 +61,20 @@ export async function refreshSectors() {
   grid.innerHTML = "";
   grid.setAttribute("data-async-state", ASYNC_SUCCESS);
   const maxAbsVs = Math.max(1, ...rows.map((r) => Math.abs(safeNum(r.vs_spy, 0))));
-  rows.forEach((row) => {
+  const sortedRows = [...rows].sort((a, b) => safeNum(b.vs_spy, 0) - safeNum(a.vs_spy, 0));
+  const winningCount = sortedRows.filter((row) => Boolean(row.winning)).length;
+  if (summaryMeta) {
+    summaryMeta.textContent = `${winningCount} winning / ${sortedRows.length - winningCount} lagging`;
+    summaryMeta.classList.remove("hidden");
+  }
+  sortedRows.forEach((row) => {
     const card = document.createElement("div");
     card.className = `sector-card ${row.winning ? "win" : "loss"}`;
     const vs = safeNum(row.vs_spy, 0);
     const barPct = Math.round((Math.abs(vs) / maxAbsVs) * 100);
     card.innerHTML = `
-      <div class="${row.winning ? "sector-winning" : "sector-lagging"}"><strong>${safeText(row.etf)}</strong> ${safeText(row.name || "")}</div>
-      <div class="${row.winning ? "sector-winning" : "sector-lagging"} mono-nums">${formatDecimal(row.return_pct, 2, "—")}% vs SPY ${formatDecimal(vs, 2, "—")}%</div>
+      <div class="${row.winning ? "sector-winning" : "sector-lagging"} sector-card-title"><strong>${safeText(row.etf)}</strong> <span>${safeText(row.name || "")}</span></div>
+      <div class="${row.winning ? "sector-winning" : "sector-lagging"} sector-card-metric mono-nums">${formatDecimal(row.return_pct, 2, "—")}% vs SPY ${formatDecimal(vs, 2, "—")}%</div>
       <div class="sector-bar-track" aria-hidden="true" title="Relative strength vs SPY (within this grid)">
         <div class="sector-bar-fill ${row.winning ? "sector-bar-fill--win" : "sector-bar-fill--loss"}" style="width:${barPct}%"></div>
       </div>

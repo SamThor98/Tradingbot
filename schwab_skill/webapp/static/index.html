@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Old Logan Capital workspace — operations-first scanning, research, diagnostics, and settings." />
-    <meta name="theme-color" content="#0c1018" />
+    <meta name="theme-color" content="#f5f1e8" />
     <title>Old Logan Capital Dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c1018'/><text x='50' y='66' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='62' fill='%23e7d9b5'>T</text></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23f5f1e8'/><text x='50' y='70' text-anchor='middle' font-family='Georgia,serif' font-weight='700' font-size='64' fill='%231a3a2e'>O</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -119,8 +119,8 @@
         <details id="manualJwtDetails" class="auth-manual-jwt">
           <summary id="manualJwtSummary" class="muted manual-jwt-summary">Session token</summary>
           <div class="inline-form compact">
-            <label class="field-label" for="jwtInput">JWT</label>
-            <input id="jwtInput" type="password" placeholder="Supabase access token (optional fallback after verification)" />
+            <label class="field-label" for="jwtInput">Access token</label>
+            <input id="jwtInput" type="password" placeholder="Optional backup token after email verification" />
             <button id="saveJwtBtn" class="btn small secondary" type="button">Save Token</button>
             <button id="copyJwtBtn" class="btn small secondary" type="button">Copy Token</button>
           </div>
@@ -172,7 +172,7 @@
           <div class="hero-kpi" data-kpi="watchlist">
             <span class="hero-kpi-label">Universe</span>
             <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">1500</strong>
-            <small id="heroKpiWatchlistFresh" class="hero-kpi-hint" data-freshness="unknown">SP1500 default</small>
+            <small id="heroKpiWatchlistFresh" class="hero-kpi-hint" data-freshness="unknown">S&amp;P 1500 (default)</small>
           </div>
         </aside>
       </header>
@@ -205,7 +205,7 @@
         <p id="platformKillSwitchBannerText" class="muted" style="margin: 0.35rem 0 0">
           The host has enabled a global kill switch. New risk-increasing orders are blocked until it is cleared.
         </p>
-        <small id="platformKillSwitchBannerFresh" class="muted" data-freshness="unknown" style="margin-top: 0.35rem">awaiting /api/me</small>
+        <small id="platformKillSwitchBannerFresh" class="muted" data-freshness="unknown" style="margin-top: 0.35rem">Checking account status…</small>
       </section>
 
       <div id="dashboardToday" class="dashboard-today-stack">
@@ -330,23 +330,25 @@
                 <div id="scanFunnel" class="funnel-grid"></div>
               </div>
             </div>
-            <div id="scanDiagnostics" class="chip-row"></div>
+            <div class="scan-diagnostics-meta">
+              <div class="scan-diagnostics-label">Pipeline metadata</div>
+              <div id="scanDiagnostics" class="chip-row" aria-label="Pipeline metadata"></div>
+            </div>
           </details>
           <details id="scanAdvancedOptionsPanel" class="panel-disclosure panel-disclosure--advanced nav-advanced">
             <summary class="panel-disclosure-summary">
               Advanced scan options
-              <span class="disclosure-hint muted">optional JSON overrides</span>
+              <span class="disclosure-hint muted">optional advanced settings (JSON)</span>
             </summary>
             <p class="muted small" style="margin: 0.5rem 0">
-              Default scan universe is <code>SP1500</code>. Use <code>strategy_overrides</code> for runtime knobs, or set
-              <code>universe_mode</code> to <code>tickers</code> with explicit <code>tickers</code> to override SP1500.
+              By default the scan covers the S&amp;P 1500. Leave blank for defaults, or paste JSON to limit tickers or adjust scanner settings.
             </p>
             <textarea
               id="scanOptionsJson"
               class="input-like"
               rows="5"
               style="width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem"
-              placeholder="{}"
+              placeholder="Optional JSON settings (leave blank for defaults)"
               spellcheck="false"
             ></textarea>
             <div class="inline-form compact" style="margin-top: 0.5rem">
@@ -363,10 +365,10 @@
                 <small id="scanQualifiedMeta" class="muted">No scan yet.</small>
               </div>
               <div class="scan-severity-legend" aria-label="Status severity legend">
-                <span class="pill good">good</span>
-                <span class="pill warn">caution</span>
-                <span class="pill bad">blocked</span>
-                <span class="pill neutral">info</span>
+                <span class="pill good">Pass</span>
+                <span class="pill warn">Review</span>
+                <span class="pill bad">Blocked</span>
+                <span class="pill neutral">Info</span>
               </div>
             </div>
             <div class="table-wrap qualified-table-wrap">
@@ -478,9 +480,9 @@
               <small class="muted">Blended edge + reliability + execution.</small>
             </div>
             <div class="scan-detail-stat">
-              <span class="muted">P(up 10d)</span>
+              <span class="muted">10-day up chance</span>
               <strong id="scanDetailPup">--</strong>
-              <small class="muted">Calibrated 10-day upside probability.</small>
+              <small class="muted">Estimated probability of gain over 10 trading days.</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">Confidence</span>
@@ -512,7 +514,7 @@
               <small class="muted">Tradeability given risk and liquidity context.</small>
             </div>
             <div class="scan-detail-stat">
-              <span class="muted">EV 10d</span>
+              <span class="muted">Expected 10-day return</span>
               <strong id="scanDetailEv10d">--</strong>
               <small class="muted">Expected value estimate over 10 trading days.</small>
             </div>
@@ -690,6 +692,7 @@
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Sector Performance</span>
             <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
+            <span id="sectorSummaryMeta" class="disclosure-hint sector-summary-meta muted hidden" aria-live="polite"></span>
           </summary>
           <div id="sectorGrid" class="sector-grid"></div>
         </details>
@@ -714,9 +717,9 @@
             <div class="inline-form trade-drawer-launcher">
               <label class="field-label" for="recoverySource">Source</label>
               <select id="recoverySource">
-                <option value="schwab_auth">schwab_auth</option>
-                <option value="market_data">market_data</option>
-                <option value="execution">execution</option>
+                <option value="schwab_auth">Schwab login</option>
+                <option value="market_data">Market data</option>
+                <option value="execution">Order execution</option>
               </select>
               <input id="recoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
               <button id="recoveryBtn" class="btn primary" type="button">Open fix path →</button>
@@ -854,7 +857,7 @@
           </div>
 
           <details id="authDebugPanel" class="onboarding-help">
-            <summary>Auth debug</summary>
+            <summary>Sign-in troubleshooting</summary>
             <div class="onboarding-help-body">
               <p class="muted">Use this to verify Supabase wiring and live session auth before running protected APIs.</p>
               <div class="inline-form compact">
@@ -862,7 +865,7 @@
                 <input id="authDebugSupabaseUi" type="text" readonly value="checking..." />
               </div>
               <div class="inline-form compact">
-                <label class="field-label" for="authDebugJwtVerify">JWT verification ready</label>
+                <label class="field-label" for="authDebugJwtVerify">Token verification ready</label>
                 <input id="authDebugJwtVerify" type="text" readonly value="checking..." />
               </div>
               <div class="inline-form compact">
@@ -870,7 +873,7 @@
                 <input id="authDebugSession" type="text" readonly value="checking..." />
               </div>
               <div class="inline-form compact">
-                <label class="field-label" for="authDebugSubject">Session subject (sub)</label>
+                <label class="field-label" for="authDebugSubject">User ID</label>
                 <input id="authDebugSubject" type="text" readonly value="checking..." />
               </div>
               <div class="inline-form compact">
@@ -963,7 +966,7 @@
               <option value="standard" selected>Standard</option>
               <option value="expert">Expert</option>
             </select>
-            <label class="field-label" for="rankExplainModeSelect">Rank explain</label>
+            <label class="field-label" for="rankExplainModeSelect">Rank explanation style</label>
             <select id="rankExplainModeSelect" title="Choose how ranking rationale is shown in scan tables.">
               <option value="tooltip" selected>Tooltip (compact)</option>
               <option value="inline">Inline (expanded)</option>
@@ -986,7 +989,7 @@
                 <li><strong>Onboarding:</strong> connect account (orders) and market data (quotes), verify tokens, then test with a scan or paper order before going live.</li>
                 <li><strong>Presets:</strong> profile picks a fixed risk template; apply shows a before/after preview, then persists it. Mode toggles plain vs raw values; rank explain sets tooltip vs inline rationale.</li>
                 <li><strong>Guardrails (enforced per preset):</strong> position cap <code>$300/$500/$900</code> and daily trade cap <code>3/5/8</code> for conservative/balanced/aggressive. Conservative runs hard quality gates and blocks event risk; aggressive shadows event and execution checks instead of blocking.</li>
-                <li><strong>Screener thesis:</strong> trend-continuation breakouts (Stage 2 + VCP), fast Stage A filter, deeper Stage B enrichment, regime gates, and visible near-misses with reasons.</li>
+                <li><strong>Screener thesis:</strong> trend-continuation breakouts (uptrend + volatility pattern), fast first-pass filter, deeper follow-up analysis, market regime checks, and visible near-misses with reasons.</li>
                 <li><strong>Live trading:</strong> enabling requires risk acknowledgment plus typing <code>ENABLE</code>; pause blocks new approvals; 2FA protects sensitive actions; automation stays off until you opt in.</li>
               </ul>
               <p class="muted small">
@@ -1208,10 +1211,10 @@
         <div class="health-tile" id="healthTileAuth" data-state="unknown" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
-            <span class="health-label">Auth</span>
+            <span class="health-label">Sign-in</span>
             <strong id="ribbonAuth" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
             <small id="ribbonAuthReason" class="health-reason muted">Broker connection not checked yet.</small>
-            <small id="ribbonAuthFresh" data-freshness="unknown">awaiting /api/status</small>
+            <small id="ribbonAuthFresh" data-freshness="unknown">Checking connection…</small>
           </div>
         </div>
         <div class="health-tile" id="healthTileQuotes" data-state="unknown" style="--gauge: 0">
@@ -1220,15 +1223,15 @@
             <span class="health-label">Quotes</span>
             <strong id="ribbonQuotes" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
             <small id="ribbonQuotesReason" class="health-reason muted">Live market-data probe not run yet.</small>
-            <small id="ribbonQuotesFresh" data-freshness="unknown">awaiting /api/health/deep</small>
+            <small id="ribbonQuotesFresh" data-freshness="unknown">Checking quote health…</small>
           </div>
         </div>
         <div class="health-tile" id="healthTileApi" data-state="unknown" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
-            <span class="health-label">API errors</span>
+            <span class="health-label">Request errors</span>
             <strong id="ribbonApiErrorRate" class="health-badge bg-slate-900" data-unavailable="true">—</strong>
-            <small id="ribbonApiErrorRateFresh" data-freshness="unknown">awaiting metrics</small>
+            <small id="ribbonApiErrorRateFresh" data-freshness="unknown">Waiting for metrics…</small>
           </div>
         </div>
         <div class="health-tile" id="healthTileValidation" data-state="unknown" style="--gauge: 0">
@@ -1236,7 +1239,7 @@
           <div class="health-tile-copy">
             <span class="health-label">Validation</span>
             <strong id="ribbonValidation" class="health-badge bg-slate-900" data-unavailable="true">Unknown</strong>
-            <small id="ribbonValidationFresh" data-freshness="unknown">awaiting validation artifact</small>
+            <small id="ribbonValidationFresh" data-freshness="unknown">Waiting for validation check…</small>
           </div>
         </div>
       </section>
@@ -1244,7 +1247,7 @@
       <details id="systemDecisionPanel" class="card section-advanced panel-disclosure diagnostics-surface system-decision-disclosure">
         <summary class="panel-disclosure-summary">
           <span class="ops-disclosure-title">Decision dashboard</span>
-          <span class="disclosure-hint muted">Reliability, promotion readiness, ablation cycle</span>
+          <span class="disclosure-hint muted">Reliability, readiness, strategy comparison</span>
         </summary>
       <section
         id="decisionDashboardCard"
@@ -1272,28 +1275,28 @@
             </div>
           </div>
           <p id="decisionValidationStatus" class="muted" data-unavailable="true" style="margin: 0">Validation: —</p>
-          <p id="decisionSloStatus" class="muted" data-unavailable="true" style="margin: 0">SLO gate: —</p>
+          <p id="decisionSloStatus" class="muted" data-unavailable="true" style="margin: 0">Reliability check: —</p>
           <p id="decisionLastScan" class="muted" data-unavailable="true" style="margin: 0">Last scan: —</p>
           <p id="decisionSignalsFound" class="muted" data-unavailable="true" style="margin: 0">Signals: —</p>
           <p id="decisionStrategyLead" class="muted" data-unavailable="true" style="margin: 0">Dominant strategy: —</p>
           <p id="decisionDataQuality" class="muted" data-unavailable="true" style="margin: 0">Data quality: —</p>
           <p id="decisionLatestPromotion" class="muted" data-unavailable="true" style="margin: 0">Latest promotion: —</p>
-          <p id="decisionAblationStatus" class="muted" data-unavailable="true" style="margin: 0">Ablation: —</p>
+          <p id="decisionAblationStatus" class="muted" data-unavailable="true" style="margin: 0">Strategy test: —</p>
           <p id="decisionAblationLift" class="muted" data-unavailable="true" style="margin: 0">Best lift: —</p>
-          <p id="decisionAblationSummary" class="muted" data-unavailable="true" style="margin: 0">Ablation summary: —</p>
+          <p id="decisionAblationSummary" class="muted" data-unavailable="true" style="margin: 0">Test summary: —</p>
           <details id="decisionAblationTopWrap" class="validation-steps">
-            <summary>Top ablation variants</summary>
+            <summary>Top strategy variants</summary>
             <ul id="decisionAblationTopList" class="validation-steps-list">
-              <li class="muted">No ablation report yet.</li>
+              <li class="muted">No strategy comparison yet.</li>
             </ul>
           </details>
-          <small id="decisionDashboardFresh" data-freshness="unknown">awaiting /api/decision-dashboard</small>
+          <small id="decisionDashboardFresh" data-freshness="unknown">Loading decision summary…</small>
         </div>
       </section>
 
       <div class="inline-form compact system-ablation-actions">
-        <button id="ablationCycleBtn" class="btn small secondary" type="button">Run ablation cycle</button>
-        <button id="ablationStatusRefreshBtn" class="btn small secondary" type="button">Refresh ablation status</button>
+        <button id="ablationCycleBtn" class="btn small secondary" type="button">Run strategy comparison</button>
+        <button id="ablationStatusRefreshBtn" class="btn small secondary" type="button">Refresh test status</button>
         <small id="ablationCycleStatus" class="muted">Status: idle</small>
         <small id="ablationCycleMeta" class="muted">No cycle run yet.</small>
       </div>
@@ -1343,7 +1346,7 @@
           <span class="stat-label">Account Token</span>
           <strong id="accountToken" class="pill neutral" data-unavailable="true">—</strong>
         </article>
-        <article id="statusTokenAge" class="card stat" title="Schwab refresh tokens have a 7-day TTL. This shows time until you must re-OAuth.">
+        <article id="statusTokenAge" class="card stat" title="Schwab sign-in tokens expire after 7 days. This shows time until you need to sign in again.">
           <span class="stat-label">Token Refresh</span>
           <strong id="tokenAgeBadge" class="pill neutral" data-unavailable="true">—</strong>
           <small id="tokenAgeDetail" class="muted" data-freshness="unknown">no token age recorded yet</small>
@@ -1493,7 +1496,7 @@
             <h2>Run a historical backtest</h2>
           </div>
           <p class="backtest-intro muted">
-            Replays the <strong>Stage 2 + VCP</strong> rules on past prices using your saved scanner settings — no live trades.
+            Replays the <strong>uptrend + volatility pattern</strong> rules on past prices using your saved scanner settings — no live trades.
             Use the <strong>form</strong> for precise control or <strong>chat</strong> to describe a run in plain language.
           </p>
           <div class="tab-bar" role="tablist" aria-label="Backtest entry mode">
@@ -1519,7 +1522,7 @@
                   <option value="watchlist">Saved watchlist</option>
                   <option value="tickers">Custom tickers</option>
                 </select>
-                <span id="btUniverseHint" class="muted form-hint">Watchlist uses symbols from your environment / tenant config.</span>
+                <span id="btUniverseHint" class="muted form-hint">Watchlist uses symbols from your saved settings.</span>
               </div>
               <div class="form-row" id="btTickersRow">
                 <label class="field-label" for="btTickers">Tickers</label>
@@ -1544,7 +1547,7 @@
               <summary>Advanced — costs &amp; rule overrides</summary>
               <div class="backtest-form-grid advanced-grid">
                 <div class="form-row">
-                  <label class="field-label" for="btSlippage">Slippage (bps / side)</label>
+                  <label class="field-label" for="btSlippage">Slippage (basis points per side)</label>
                   <input id="btSlippage" type="number" min="0" max="200" step="1" value="15" />
                 </div>
                 <div class="form-row">
@@ -1556,7 +1559,7 @@
                   <input id="btMinFee" type="number" min="0" max="50" step="0.5" value="1" />
                 </div>
                 <div class="form-row">
-                  <label class="field-label" for="btMaxAdv">Max ADV participation</label>
+                  <label class="field-label" for="btMaxAdv">Max share of daily volume</label>
                   <input id="btMaxAdv" type="number" min="0.001" max="0.1" step="0.001" value="0.02" />
                 </div>
                 <div class="form-row">
@@ -1568,7 +1571,7 @@
                   <input id="btMaxPositions" type="number" min="1" max="100" step="1" value="10" />
                 </div>
                 <div class="form-row">
-                  <label class="field-label" for="btRiskPerTradePct">Risk per trade (fraction)</label>
+                  <label class="field-label" for="btRiskPerTradePct">Risk per trade (% of account)</label>
                   <input id="btRiskPerTradePct" type="number" min="0" max="0.1" step="0.0005" value="0.0075" />
                 </div>
                 <div class="form-row">
@@ -1605,7 +1608,7 @@
                   </select>
                 </div>
                 <div class="form-row">
-                  <label class="field-label" for="btPead">PEAD</label>
+                  <label class="field-label" for="btPead">Earnings drift filter</label>
                   <select id="btPead">
                     <option value="">Account default</option>
                     <option value="on">On</option>
@@ -1637,8 +1640,8 @@
                   <select id="btMetaPolicyMode">
                     <option value="">Account default</option>
                     <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="live">Live</option>
+                    <option value="shadow">Observe only</option>
+                    <option value="live">Enforced</option>
                   </select>
                 </div>
                 <div class="form-row">
@@ -1646,8 +1649,8 @@
                   <select id="btEventRiskMode">
                     <option value="">Account default</option>
                     <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="live">Live</option>
+                    <option value="shadow">Observe only</option>
+                    <option value="live">Enforced</option>
                   </select>
                 </div>
                 <div class="form-row">
@@ -1655,8 +1658,8 @@
                   <select id="btExitManagerMode">
                     <option value="">Account default</option>
                     <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="live">Live</option>
+                    <option value="shadow">Observe only</option>
+                    <option value="live">Enforced</option>
                   </select>
                 </div>
                 <div class="form-row">
@@ -1664,14 +1667,14 @@
                   <select id="btExecQualityMode">
                     <option value="">Account default</option>
                     <option value="off">Off</option>
-                    <option value="shadow">Shadow</option>
-                    <option value="live">Live</option>
+                    <option value="shadow">Observe only</option>
+                    <option value="live">Enforced</option>
                   </select>
                 </div>
                 <div class="form-row form-row-check">
                   <label class="field-check">
                     <input id="btSkipMirofish" type="checkbox" />
-                    Skip MiroFish / LLM during backtest (faster)
+                    Skip AI sentiment during backtest (faster)
                   </label>
                 </div>
               </div>
@@ -1751,14 +1754,14 @@
       <section class="section-advanced">
         <article id="shadowScoreboardSection" class="card system-quality-nested" data-lazy-api="shadowScoreboard">
           <div class="section-title">
-            <h2>Shadow scoreboard</h2>
-            <small class="muted">Would-have counters for every shadow-mode plugin (scan + 7-day execution window)</small>
+            <h2>Trial-run scoreboard</h2>
+            <small class="muted">What each trial rule would have done (last scan + past 7 days of trades)</small>
           </div>
           <div class="inline-form">
             <button id="shadowScoreboardRefreshBtn" type="button" class="btn secondary">Refresh scoreboard</button>
           </div>
           <div id="shadowScoreboardPanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">Scroll here or refresh to load shadow counters.</div>
+            <div class="report-empty">Scroll here or refresh to load trial-run counters.</div>
           </div>
         </article>
       </section>
@@ -1812,15 +1815,15 @@
               <label class="field-label" for="reportSection">Section Override</label>
               <select id="reportSection">
                 <option value="">All sections</option>
-                <option value="tech">tech</option>
-                <option value="dcf">dcf</option>
-                <option value="comps">comps</option>
-                <option value="health">health</option>
-                <option value="edgar">edgar</option>
-                <option value="mirofish">mirofish</option>
+                <option value="tech">Technical analysis</option>
+                <option value="dcf">Valuation (DCF)</option>
+                <option value="comps">Peer comparison</option>
+                <option value="health">Financial health</option>
+                <option value="edgar">SEC filings</option>
+                <option value="mirofish">AI sentiment</option>
               </select>
-              <label class="muted"><input id="skipMirofish" type="checkbox" /> skip_mirofish</label>
-              <label class="muted"><input id="skipEdgar" type="checkbox" /> skip_edgar</label>
+              <label class="muted"><input id="skipMirofish" type="checkbox" /> Skip AI sentiment</label>
+              <label class="muted"><input id="skipEdgar" type="checkbox" /> Skip SEC filing analysis</label>
               <button id="reportBtn" class="btn secondary" type="button">Run Report</button>
               <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
               <small id="reportRunStatus" class="muted">Status: idle</small>
@@ -1853,8 +1856,8 @@
             <div class="sec-compare-grid">
               <label class="field-label" for="secCompareMode">Mode</label>
               <select id="secCompareMode">
-                <option value="ticker_over_time" selected>ticker_over_time</option>
-                <option value="ticker_vs_ticker">ticker_vs_ticker</option>
+                <option value="ticker_over_time" selected>One company over time</option>
+                <option value="ticker_vs_ticker">Compare two companies</option>
               </select>
 
               <label class="field-label" for="secCompareFormType">Form</label>
@@ -1872,7 +1875,7 @@
             </div>
 
             <small id="secCompareModeHelp" class="muted sec-compare-help">
-              ticker_over_time compares current filing language vs prior periods to surface execution drift.
+              “One company over time” compares current filing language to prior periods to spot changes in tone and risk.
             </small>
 
             <div class="sec-compare-toggles">
@@ -1947,11 +1950,11 @@
               <div class="sec-compare-grid">
                 <label class="field-label" for="secCompareProfile">Profile</label>
                 <select id="secCompareProfile" title="Auto uses backend profile detection; pick a profile to override.">
-                  <option value="auto" selected>auto_detect</option>
-                  <option value="early_growth">early_growth</option>
-                  <option value="scaled_growth">scaled_growth</option>
-                  <option value="mature_compounder">mature_compounder</option>
-                  <option value="cyclical">cyclical</option>
+                  <option value="auto" selected>Auto-detect</option>
+                  <option value="early_growth">Early growth</option>
+                  <option value="scaled_growth">Scaled growth</option>
+                  <option value="mature_compounder">Mature compounder</option>
+                  <option value="cyclical">Cyclical</option>
                 </select>
 
                 <label class="field-label" for="secCompareProfileReason">Override reason</label>
@@ -2061,7 +2064,7 @@
         <p id="approveSummary" class="muted"></p>
         <label class="field-label" for="approveTickerInput">Type the ticker to confirm this live order</label>
         <input id="approveTickerInput" type="text" autocomplete="off" placeholder="e.g. AAPL" />
-        <label class="field-label" for="approveOtpInput">2FA code (required for high-value approvals)</label>
+        <label class="field-label" for="approveOtpInput">Verification code (required for large approvals)</label>
         <input id="approveOtpInput" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="123456" />
         <label class="muted approve-risk-ack">
           <input id="approveRiskAck" type="checkbox" />

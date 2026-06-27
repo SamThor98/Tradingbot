@@ -85,11 +85,11 @@ export function renderProfilePanel(rootEl, data, { error } = {}) {
   if (expert) {
     const ek = Object.keys(expert).sort();
     const expertRows = ek
-      .map((k) => `<tr><th scope="row"><code>${safeText(k)}</code></th><td>${safeText(expert[k])}</td></tr>`)
+      .map((k) => `<tr><th scope="row">${safeText(presetSettingLabel(k))}</th><td>${safeText(expert[k])}</td></tr>`)
       .join("");
     expertBlock = `
       <div class="preset-subsection preset-expert">
-        <h3>Runtime env (read-only)</h3>
+        <h3>Advanced settings (read-only)</h3>
         <table class="preset-kv-table">
           <tbody>${expertRows || `<tr><td colspan="2" class="muted">No values</td></tr>`}</tbody>
         </table>

@@ -28,7 +28,7 @@ function _renderAblationTop(topRows = []) {
   if (!Array.isArray(topRows) || !topRows.length) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = "No ablation variants available.";
+    li.textContent = "No strategy variants available.";
     listEl.appendChild(li);
     wrapEl.open = false;
     return;
@@ -65,7 +65,7 @@ export function renderDecisionDashboard(payload = {}) {
   const sloFailures = Array.isArray(reliability.slo_failures) ? reliability.slo_failures : [];
   _setText(
     "decisionSloStatus",
-    sloPassed ? "SLO gate: pass" : `SLO gate: ${sloFailures[0] ? safeText(sloFailures[0]) : "failing"}`
+    sloPassed ? "Reliability check: pass" : `Reliability check: ${sloFailures[0] ? safeText(sloFailures[0]) : "needs attention"}`
   );
 
   const lastScanAt = safeText(strategy.last_scan_at || "");
@@ -97,9 +97,9 @@ export function renderDecisionDashboard(payload = {}) {
   const ablationBest = ablation.best || {};
   const ablationSummary = ablation.summary || {};
   if (!ablationExists) {
-    _setText("decisionAblationStatus", "Ablation: no report yet");
+    _setText("decisionAblationStatus", "Strategy test: no report yet");
     _setText("decisionAblationLift", "Best lift: —");
-    _setText("decisionAblationSummary", "Ablation summary: run ablation cycle to populate this panel.");
+    _setText("decisionAblationSummary", "Run a strategy comparison to populate this panel.");
     _renderAblationTop([]);
     return;
   }
@@ -111,11 +111,11 @@ export function renderDecisionDashboard(payload = {}) {
   const passCount = Number(ablationSummary.pass_count ?? 0);
   const failCount = Number(ablationSummary.fail_count ?? 0);
   const variantCount = Number(ablationSummary.variant_count ?? passCount + failCount);
-  _setText("decisionAblationStatus", `Ablation: ${bestPass ? "pass" : "at risk"} (${bestId})`);
-  _setText("decisionAblationLift", `Best lift: ${bestLift} | 95% CI ${ciLo} to ${ciHi}`);
+  _setText("decisionAblationStatus", `Strategy test: ${bestPass ? "pass" : "needs review"} (${bestId})`);
+  _setText("decisionAblationLift", `Best lift: ${bestLift} | 95% range ${ciLo} to ${ciHi}`);
   _setText(
     "decisionAblationSummary",
-    `Ablation summary: ${passCount}/${variantCount} passing, ${failCount} flagged`
+    `Summary: ${passCount} of ${variantCount} passing, ${failCount} flagged`
   );
   _renderAblationTop(ablation.top_variants || []);
 }

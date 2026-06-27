@@ -8,6 +8,7 @@
 
 import { api } from "../modules/api.js";
 import { escapeHtml } from "../modules/format.js";
+import { humanizeRolloutMode } from "../modules/humanize.js";
 
 const COUNTER_LABELS = {
   confirmed: "Confirmed",
@@ -39,7 +40,7 @@ const COUNTER_LABELS = {
 function modeBadge(mode) {
   const m = String(mode || "off").toLowerCase();
   const cls = m === "live" ? "good" : m === "shadow" ? "warn" : "neutral";
-  return `<span class="pill ${cls}">${escapeHtml(m.toUpperCase())}</span>`;
+  return `<span class="pill ${cls}">${escapeHtml(humanizeRolloutMode(m))}</span>`;
 }
 
 function renderPlugin(p) {

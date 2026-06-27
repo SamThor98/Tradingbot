@@ -20,6 +20,7 @@
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { safeText, prettyJson, formatPercentPoints, formatDecimal } from "../modules/format.js";
+import { humanizeEnvParam, humanizeVerdict } from "../modules/humanize.js";
 
 function prettifySourceName(rawSource) {
   if (!rawSource && rawSource !== 0) return "Unavailable";
@@ -194,7 +195,7 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     valBadgeClass = "bg-slate-900";
     valBadgeText = "Idle";
   } else if (String(vstat.run_status || "").trim().toLowerCase() === "running") {
-    valBadgeClass = "bg-blue-900";
+    valBadgeClass = "pill-accent";
     valBadgeText = "Running";
   }
   const valMetaParts = [];
@@ -263,7 +264,7 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
       <div class="perf-bucket">
         <h3>Shadow / paper</h3>
         <div class="perf-source">Data source: ${safeText(prettifySourceName(sp.source))}</div>
-        <div class="perf-metric"><span class="label">Shadow actions</span><span class="value">${safeText(sp.shadow_actions)}</span></div>
+        <div class="perf-metric"><span class="label">Trial-run actions</span><span class="value">${safeText(sp.shadow_actions)}</span></div>
         <p class="perf-bucket-note">${safeText(sp.notes)}</p>
       </div>
       <div class="perf-bucket">
@@ -308,7 +309,7 @@ export function renderChallengerPanel(rootEl, ch) {
   else if (v === "champion_better") verdictClass = "bg-red-900";
 
   const overrides = latest.env_overrides && typeof latest.env_overrides === "object"
-    ? Object.entries(latest.env_overrides).map(([k, val]) => `<code>${safeText(k)}=${safeText(val)}</code>`).join(", ")
+    ? Object.entries(latest.env_overrides).map(([k, val]) => `${safeText(humanizeEnvParam(k))}: ${safeText(val)}`).join(", ")
     : "none";
 
   let wrLine = "";
@@ -333,11 +334,11 @@ export function renderChallengerPanel(rootEl, ch) {
       </div>
     </div>
     <div class="performance-validation">
-      <span class="health-badge ${verdictClass}">${v.replace(/_/g, " ")}</span>
+      <span class="health-badge ${verdictClass}">${safeText(humanizeVerdict(v))}</span>
       <span class="muted">Score delta: <strong>${delta}</strong></span>
       <span class="muted">Run: ${safeText(latest.run_at || "?")}</span>
     </div>
-    <p class="muted" style="margin-top:0.5rem">Overrides tested: ${overrides}</p>
+    <p class="muted" style="margin-top:0.5rem">Settings tested: ${overrides}</p>
     ${wrLine}
   `;
 }
@@ -377,7 +378,7 @@ export function renderEvolvePanel(rootEl, data) {
   }).join("");
 
   const updateRows = updates.map((u) => `<tr>
-    <td><code>${safeText(u.env_key)}</code></td>
+    <td>${safeText(humanizeEnvParam(u.env_key))}</td>
     <td>${safeText(u.current_value)}</td>
     <td><strong>${safeText(u.suggested_value)}</strong></td>
     <td>${Number(u.importance).toFixed(3)}</td>
@@ -386,10 +387,10 @@ export function renderEvolvePanel(rootEl, data) {
 
   rootEl.innerHTML = `
     <div class="perf-bucket" style="margin-bottom:1rem">
-      <h3>Feature Importance (${r2Label}, n = ${safeText(training.n_samples)})</h3>
+      <h3>What drove results (${r2Label.replace("train R²", "fit").replace("val R²", "validation fit")}, ${safeText(training.n_samples)} samples)</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Feature</th><th>Importance</th><th></th></tr></thead>
+          <thead><tr><th>Factor</th><th>Weight</th><th></th></tr></thead>
           <tbody>${impRows || '<tr><td colspan="3" class="muted">No features analyzed</td></tr>'}</tbody>
         </table>
       </div>

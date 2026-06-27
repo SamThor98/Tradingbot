@@ -11,6 +11,7 @@
  */
 
 import { safeText, timeAgo } from "./format.js";
+import { humanizeApiSource } from "./humanize.js";
 
 /** Default freshness budgets (in seconds) keyed by logical surface name.
  *  Override per-call by passing an explicit `budgetSec`. */
@@ -73,7 +74,7 @@ export function freshnessLabel({
       ? budgetSec
       : FRESHNESS_BUDGETS_SEC[surface] || 60;
   const cls = classifyFreshness(asOf, budget);
-  const src = safeText(source).trim();
+  const src = humanizeApiSource(safeText(source).trim());
   if (cls.state === FRESHNESS_UNKNOWN) {
     const tail = src ? ` · ${src}` : "";
     return `${unavailable}${tail}`;
@@ -107,7 +108,7 @@ export function applyFreshness(el, opts = {}) {
   el.setAttribute(
     "title",
     [
-      opts.source ? `Source: ${opts.source}` : "",
+      opts.source ? `Source: ${humanizeApiSource(opts.source)}` : "",
       opts.asOf ? `As of: ${opts.asOf}` : "",
       `Budget: ${budget}s`,
       `State: ${cls.state}`,

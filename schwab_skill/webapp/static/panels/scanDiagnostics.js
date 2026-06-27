@@ -39,7 +39,7 @@ export function buildScanIntegrityLine(diag = {}, signals = [], shortlist = []) 
   const vcp = formatGateModeLabel(diag.scan_vcp_gate_mode);
   const sector = formatGateModeLabel(diag.scan_sector_gate_mode);
   const quality = formatGateModeLabel(diag.quality_gates_mode);
-  const gatesPart = `Gates: quality=${quality}, VCP=${vcp}, sector=${sector}`;
+  const gatesPart = `Filters: quality ${quality}, pattern ${vcp}, sector ${sector}`;
   const fallback = safeNum(diag.provider_fallback_count, 0) + safeNum(diag.used_fallback_data_count, 0);
   const fallbackPart = fallback > 0 ? ` · ${fallback} fallback ticker(s)` : "";
   return `${idPart}${kept} kept / ${screened} screened · Data: ${dq} · ${regimePart}${gatesPart}${fallbackPart}`;
@@ -183,6 +183,69 @@ export function assertScanDeltasReconcile(diag, funnel, signals) {
   }
 }
 
+const DIAGNOSTIC_DETAIL_SKIP_KEYS = new Set([
+  "data_quality",
+  "data_quality_reasons",
+]);
+
+function dataQualityChipClass(value) {
+  const dq = safeText(value || "").trim().toLowerCase();
+  if (["ok", "fresh", "healthy", "good"].includes(dq)) return "good";
+  if (["stale", "conflict", "blocked", "failed", "fail"].includes(dq)) return "bad";
+  if (["degraded", "partial", "unknown", "warning", "warn"].includes(dq)) return "warn";
+  return "neutral";
+}
+
+function formatDiagnosticValue(value) {
+  if (value === null) return "null";
+  if (value === undefined) return "—";
+  if (Array.isArray(value)) return value.map((item) => safeText(item)).join("; ") || "—";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return safeText(value);
+    }
+  }
+  return safeText(value);
+}
+
+function diagnosticChipClass(key, value) {
+  const normalizedKey = safeText(key || "").toLowerCase();
+  const normalizedValue = safeText(value || "").toLowerCase();
+  const count = safeNum(value, 0);
+  if (normalizedKey === "data_quality") return dataQualityChipClass(value);
+  if (normalizedKey === "scan_blocked" && count > 0) return "bad";
+  if (["exceptions", "df_empty", "stage_b_exceptions"].includes(normalizedKey) && count > 0) {
+    return "bad";
+  }
+  if (
+    count > 0 &&
+    (normalizedKey.includes("stale") ||
+      normalizedKey.includes("no_price") ||
+      normalizedKey.includes("insufficient") ||
+      normalizedKey.includes("timeout") ||
+      normalizedKey.includes("fallback") ||
+      normalizedKey.includes("filtered"))
+  ) {
+    return normalizedKey.includes("stale") ? "bad" : "warn";
+  }
+  if (["stale", "conflict", "blocked", "fail", "failed"].some((token) => normalizedValue.includes(token))) {
+    return "bad";
+  }
+  if (["degraded", "warning", "warn", "partial"].some((token) => normalizedValue.includes(token))) {
+    return "warn";
+  }
+  return count > 0 ? "neutral" : "neutral";
+}
+
+function appendDiagnosticChip(chipWrap, label, value, className) {
+  const chip = document.createElement("span");
+  chip.className = `chip ${className || "neutral"}`;
+  chip.textContent = `${label}: ${formatDiagnosticValue(value)}`;
+  chipWrap.appendChild(chip);
+}
+
 export function buildFunnelStages(diag, watchlistOverride, finalCount) {
   const stage2Fail = safeNum(diag.stage2_fail, 0);
   const vcpFail = safeNum(diag.vcp_fail, 0);
@@ -235,13 +298,13 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     watchlistSource === "explicit_tickers_override"
       ? "custom ticker override"
       : watchlistSource === "sp1500_focused"
-        ? "SP1500 focused (SIGNAL_UNIVERSE_MODE=focused)"
+        ? "SP1500 focused (smaller sample)"
         : watchlistSource === "sp1500_default"
-          ? "SP1500 default (broad universe)"
+          ? "S&P 1500 (full universe)"
           : "default universe";
   const watchlistTooltip =
-    `Total tickers actually scanned: ${nWatchlist}. Source: ${watchlistSourceLabel}. ` +
-    "Run Scan covers the full SP1500 (S&P 500 + 400 + 600). Set SIGNAL_UNIVERSE_MODE=focused in .env to narrow to a sample.";
+    `Total tickers scanned: ${nWatchlist}. Source: ${watchlistSourceLabel}. ` +
+    "Run Scan covers the S&P 1500. Use focused universe in settings to scan a smaller sample.";
 
   const stages = [
     {
@@ -253,21 +316,21 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
     {
       key: "stage2",
-      label: "Passed Stage 2",
+      label: "Passed uptrend check",
       value: nStage2,
       filtered: stage2Fail,
       tooltip:
-        "Tickers in a confirmed Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail.",
+        "Symbols in a confirmed uptrend (above the long-term average with healthy trend structure). Failures did not pass the uptrend check.",
     },
     {
       key: "vcp",
-      label: "Passed VCP",
+      label: "Passed volatility pattern",
       value: nVcp,
       filtered: vcpFail,
       shadow_filtered: vcpWouldFilter,
       mode: vcpGateMode,
       tooltip:
-        "Tickers showing volatility-contraction-pattern volume. In shadow mode the VCP gate observes but does not filter; the would-filter count shows how many it would have removed.",
+        "Symbols showing a volatility contraction pattern with supportive volume. In observe-only mode the filter watches but does not remove candidates; the “would filter” count shows how many it would have removed.",
     },
     {
       key: "sector",
@@ -277,41 +340,41 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       shadow_filtered: sectorWouldFilter,
       mode: sectorGateMode,
       tooltip:
-        "Tickers in a winning sector ETF. Filtered by no_sector_etf + sector_not_winning when the sector gate is hard.",
+        "Symbols in a leading sector. Removed when sector data is missing or the sector is underperforming.",
     },
     {
       key: "stage_a",
-      label: "Stage A Candidates",
+      label: "Passed quick filter",
       value: nStageA,
       filtered: Math.max(0, nSector - nStageA),
       tooltip:
-        "Final Stage A pass count after breakout confirmation, exceptions, and timed gates. Sourced from stage_a_candidates.",
+        "Final count after breakout confirmation and timing gates — candidates ready for deeper analysis.",
     },
     {
       key: "shortlist",
-      label: "Shortlist (top-scored)",
+      label: "Shortlist (top scored)",
       value: nShortlist,
       filtered: Math.max(0, nStageA - nShortlist),
       mode: primaryProviderMode,
       tooltip:
-        "Top-scored Stage A candidates picked for Stage B enrichment (forensic, PEAD, advisory, MiroFish). Lower-scored picks are pruned by the shortlist cap.",
+        "Highest-scoring candidates selected for deep analysis (financial checks, earnings drift, probability scores, sentiment). Lower-ranked picks are trimmed by the shortlist cap.",
     },
     {
       key: "quality",
-      label: "Quality Gates",
+      label: "Quality filters",
       value: nQuality,
       filtered: qualityFilteredTotal,
       mode: qualityGatesMode,
       tooltip:
-        "Survivors of Stage B exceptions, timeouts, self-study min conviction, and quality gates (forensic, weak breakout volume, etc.).",
+        "Survivors after deep-analysis exceptions, timeouts, minimum conviction, and quality filters (financial red flags, weak breakout volume, etc.).",
     },
     {
       key: "final",
-      label: "Final Signals",
+      label: "Final signals",
       value: finalCount,
       filtered: topNTrimmed,
       tooltip:
-        "Tradeable signals returned after the top-N rank cap. If much smaller than Quality Gates, the cap (TOP_N) is trimming output.",
+        "Tradeable signals after the rank limit. If much smaller than after quality filters, the rank limit is trimming results.",
     },
   ];
 
@@ -345,13 +408,14 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   const dq = safeText(diag.data_quality || "").trim();
   if (dq) {
     const rs = Array.isArray(diag.data_quality_reasons) ? diag.data_quality_reasons : [];
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent =
+    appendDiagnosticChip(
+      chipWrap,
+      "Data quality",
       rs.length > 0
-        ? `Data quality: ${dq} (${rs.slice(0, 2).map((x) => safeText(x)).join("; ")})`
-        : `Data quality: ${dq}`;
-    chipWrap.appendChild(chip);
+        ? `${dq} (${rs.slice(0, 2).map((x) => safeText(x)).join("; ")})`
+        : dq,
+      dataQualityChipClass(dq),
+    );
   }
 
   const summary = buildDiagnosticsSummary(diag);
@@ -428,12 +492,17 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     funnelEl.appendChild(node);
   });
 
-  Object.entries(diag).slice(0, 8).forEach(([key, value]) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${DIAG_LABELS[key] || key}: ${value}`;
-    chipWrap.appendChild(chip);
-  });
+  Object.entries(diag)
+    .filter(([key]) => !DIAGNOSTIC_DETAIL_SKIP_KEYS.has(key))
+    .slice(0, 8)
+    .forEach(([key, value]) => {
+      appendDiagnosticChip(
+        chipWrap,
+        DIAG_LABELS[key] || key.replaceAll("_", " "),
+        value,
+        diagnosticChipClass(key, value),
+      );
+    });
   state.lastWatchlistSize = summary.funnel.watchlist;
   state.lastScanAt = new Date().toISOString();
   renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);

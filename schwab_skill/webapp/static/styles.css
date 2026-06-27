@@ -180,7 +180,7 @@ html, body {
 .container {
   width: min(1480px, 94vw);
   margin: 28px auto 56px;
-  padding-bottom: 300px;
+  padding-bottom: 120px;
   display: grid;
   gap: 14px;
 }
@@ -211,9 +211,9 @@ html, body {
   pointer-events: none;
   z-index: -1;
 }
-.bg1 { background: #4f46e5; top: -140px; left: -100px; }
-.bg2 { background: #0ea5e9; top: 22%; right: -140px; }
-.bg3 { background: #a855f7; bottom: -140px; left: 32%; }
+.bg1 { background: #2d5a4a; top: -140px; left: -100px; }
+.bg2 { background: #1a3a2e; top: 22%; right: -140px; }
+.bg3 { background: #3d6b58; bottom: -140px; left: 32%; }
 
 .card {
   background: linear-gradient(155deg, rgba(28, 32, 48, 0.92) 0%, rgba(14, 16, 26, 0.88) 100%);
@@ -2310,6 +2310,18 @@ select:focus-visible,
 }
 .sector-card.win { border-color: rgba(34, 197, 94, 0.35); }
 .sector-card.loss { border-color: rgba(239, 68, 68, 0.35); }
+.sector-card-title,
+.sector-card-metric {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.sector-card-title span {
+  min-width: 0;
+}
+.sector-card-metric {
+  margin-top: 2px;
+}
 .sector-winning { font-weight: 700; color: #f4f4f5; }
 .sector-lagging { opacity: 0.5; }
 .sector-bar-track {
@@ -3506,6 +3518,20 @@ progressive disclosure {
 #scanSection .panel-disclosure #scanDiagnostics {
   padding: 0 16px 14px;
 }
+#scanSection .panel-disclosure .scan-diagnostics-meta {
+  padding: 0 16px 14px;
+}
+#scanSection .panel-disclosure .scan-diagnostics-meta #scanDiagnostics {
+  padding: 0;
+}
+.scan-diagnostics-label {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 
 .scan-results-layout {
   display: grid;
@@ -4099,12 +4125,23 @@ body.ui-screen-settings .cockpit-drawer {
   font-size: 0.78rem;
 }
 .prov-chip {
-  display: inline-block;
-  font-size: 0.72rem;
-  padding: 1px 6px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  padding: 2px 7px;
+  border-radius: 6px;
   border: 1px solid rgba(26, 26, 26, 0.14);
   white-space: nowrap;
+}
+.prov-chip__confidence,
+.prov-chip__stale {
+  font-weight: 700;
+}
+.prov-chip__stale::before {
+  content: "•";
+  margin-right: 4px;
 }
 .prov-chip.prov-high { color: #2d5a4a; }
 .prov-chip.prov-medium { color: #8a6d1f; }
@@ -5799,9 +5836,9 @@ html, body {
   background-size: 40px 40px;
 }
 
-.bg1 { background: #6366f1; opacity: 0.2; }
-.bg2 { background: #38bdf8; opacity: 0.2; }
-.bg3 { background: #8b5cf6; opacity: 0.16; }
+.bg1 { background: #2d5a4a; opacity: 0.2; }
+.bg2 { background: #1a3a2e; opacity: 0.2; }
+.bg3 { background: #3d6b58; opacity: 0.16; }
 
 .container {
   width: min(1540px, 95vw);
@@ -6015,13 +6052,14 @@ html, body {
 ------------------------------------------------------------------- */
 .operate-kanban {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.9fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .kanban-lane {
-  min-height: 560px;
+  min-height: 0;
+  width: 100%;
 }
 
 .kanban-lane-head {
@@ -6064,9 +6102,149 @@ html, body {
 
 @media (min-width: 1280px) {
   .container {
-    margin: 16px 24px 56px 338px;
-    width: auto;
-    max-width: none;
+    width: min(1400px, calc(100vw - 48px));
+    max-width: 1400px;
+    margin: 16px auto 48px;
+    padding-bottom: 120px;
+  }
+
+  body.ui-screen-operations .container {
+    width: min(1416px, calc(100vw - 32px));
+    max-width: 1416px;
+  }
+
+  .section-title {
+    padding: 14px 16px 8px;
+  }
+
+  .inline-form {
+    padding: 0 16px 12px;
+    gap: 10px;
+  }
+
+  .table-wrap {
+    padding: 0 12px 14px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .today-summary-landing,
+  .research-summary-landing,
+  .system-summary-landing,
+  .settings-summary-landing,
+  .action-center,
+  .pending-summary-strip {
+    margin-bottom: 0;
+    padding: 14px 18px;
+  }
+
+  .today-summary-grid,
+  .research-summary-grid,
+  .system-summary-grid,
+  .settings-summary-grid {
+    gap: 10px 14px;
+    margin-bottom: 8px;
+  }
+
+  .today-summary-value {
+    font-size: 1.22rem;
+  }
+
+  .research-summary-value,
+  .system-summary-value,
+  .settings-summary-value {
+    font-size: 1.12rem;
+  }
+
+  .settings-summary-lead {
+    margin-bottom: 0.55rem;
+  }
+
+  .settings-summary-guardrails {
+    margin: 0.55rem 0;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .layout-quick-tools.research-check-panel {
+    grid-template-columns: minmax(420px, 0.95fr) minmax(0, 1.05fr);
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .layout-2 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  body.ui-screen-research .layout-2 {
+    grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+  }
+
+  body.ui-screen-research .layout-2:has(> :only-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ir-dossier-preview {
+    max-width: min(1120px, 100%);
+    padding: 22px 28px 30px;
+  }
+
+  .settings-workspace,
+  .layout-onboarding-presets {
+    grid-template-columns: minmax(420px, 0.9fr) minmax(0, 1.1fr);
+    align-items: start;
+  }
+
+  .preset-subsection {
+    padding: 12px 14px;
+  }
+
+  body.ui-screen-operations .operate-kanban {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  body.ui-screen-operations .kanban-lane {
+    min-height: 0;
+    width: 100%;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-header p {
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-brief-card {
+    padding: 12px;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-brief-card h4 {
+    margin-bottom: 8px;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart {
+    min-height: clamp(220px, 32vh, 320px);
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-forecast-controls,
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-forecast {
+    margin-top: 6px;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-actions {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+  }
+
+  body.ui-screen-operations .operate-kanban #scanSection .table-wrap,
+  body.ui-screen-operations .operate-kanban #pendingSection .task-board {
+    max-height: none;
   }
 }
 

@@ -320,7 +320,7 @@ const SCREEN_CONTEXT = Object.freeze({
   },
   kronos: {
     title: "Forecast with foundation models.",
-    text: "Project the next sessions of price action for a symbol with Kronos — advisory context to pressure-test a thesis, never an order.",
+    text: "Project likely price paths for a symbol — for research and thesis checks only, never an order trigger.",
     ctaLabel: "Run a forecast",
     ctaHref: "#kronosForecastSection",
     altCtaLabel: "How it works",
@@ -1242,7 +1242,7 @@ function updateHeroInfographic() {
   // dedicated state field rather than scraping #pendingCount text.
   if (pendEl) {
     if (state.lastPendingCount === null || state.lastPendingCount === undefined) {
-      markUnavailable(pendEl, "/api/pending-trades not loaded");
+      markUnavailable(pendEl, "Pending trades not loaded yet");
     } else {
       clearUnavailable(pendEl);
       pendEl.textContent = formatCount(state.lastPendingCount);
@@ -1261,7 +1261,7 @@ function updateHeroInfographic() {
   if (wlEl) {
     const n = Number(state.lastWatchlistSize);
     if (!Number.isFinite(n) || n <= 0) {
-      markUnavailable(wlEl, "scan diagnostics have not reported watchlist_size yet");
+      markUnavailable(wlEl, "Universe size not reported yet");
     } else {
       clearUnavailable(wlEl);
       wlEl.textContent = formatCount(n);
@@ -1269,7 +1269,7 @@ function updateHeroInfographic() {
   }
   applyFreshness(wlFreshEl, {
     asOf: state.lastScanAt,
-    source: state.lastScanAt ? "/api/scan diagnostics" : "SP1500 default",
+    source: state.lastScanAt ? "last scan" : "S&P 1500 (default)",
     surface: "scan_results",
     unavailable: "scan to populate",
   });
@@ -1560,7 +1560,7 @@ function validateRuntimeContract(publicCfg, runtimeContract) {
       "Deploy matching frontend+API revisions before continuing.";
     logEvent({ kind: "system", severity: "error", message });
     updateActionCenter({
-      title: "Runtime Contract Mismatch",
+      title: "App version mismatch",
       message,
       severity: "error",
     });
@@ -1895,7 +1895,7 @@ function resetScanDetailForecastUi(ticker) {
   const btn = document.getElementById("scanDetailForecastBtn");
   if (!btn) return;
   btn.disabled = !ticker;
-  btn.textContent = "Forecast (Kronos)";
+  btn.textContent = "Run forecast";
   if (!_scanDetailForecastBtnBound) {
     btn.addEventListener("click", () => loadScanDetailForecast());
     _scanDetailForecastBtnBound = true;
@@ -1907,7 +1907,7 @@ async function loadScanDetailForecast() {
   const summary = document.getElementById("scanDetailForecast");
   const btn = document.getElementById("scanDetailForecastBtn");
   if (!ticker) return;
-  if (summary) summary.innerHTML = '<p class="muted">Requesting Kronos forecast…</p>';
+  if (summary) summary.innerHTML = '<p class="muted">Loading forecast…</p>';
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Forecasting…";
@@ -1915,7 +1915,7 @@ async function loadScanDetailForecast() {
   try {
     const out = await api.get(`/api/forecast/${encodeURIComponent(ticker)}`);
     if (!out.ok || !out.data) {
-      if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Kronos forecast unavailable.");
+      if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Forecast unavailable.");
       return;
     }
     const data = out.data;
@@ -1954,7 +1954,7 @@ async function loadScanDetailForecast() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Forecast (Kronos)";
+      btn.textContent = "Run forecast";
     }
   }
 }
@@ -2086,7 +2086,7 @@ function updateScanModeHelperText() {
   const profile = getScanModeProfile(mode);
   helperEl.textContent =
     `${profile.label}: score >= ${profile.minScore}, volume ratio >= ${profile.minVolumeRatio.toFixed(1)}. ` +
-    "UI scan applies soft quality gates for this run (may differ from saved .env preset).";
+    "This scan uses softer quality filters for this run (may differ from saved settings).";
 }
 
 function mergeScanRunOptionsWithMode(baseOptions) {
@@ -2848,7 +2848,7 @@ async function refreshAuthDebugPanel() {
   setAuthDebugValue("authDebugJwtVerify", jwtReady ? "ready" : "missing SUPABASE_URL and/or SUPABASE_JWT_SECRET");
 
   const hint = document.getElementById("authDebugHint");
-  if (hint) hint.textContent = "Checking /api/auth/session…";
+  if (hint) hint.textContent = "Checking sign-in status…";
 
   try {
     const out = await api.get("/api/auth/session");
@@ -3518,7 +3518,7 @@ async function refreshStatus() {
       ribbonQuotes.className = healthBadgeClass(quoteOk);
       ribbonQuotes.textContent = quoteOk ? "Healthy" : "Degraded";
     } else {
-      markUnavailable(ribbonQuotes, deepRes.error || "/api/health/deep failed");
+      markUnavailable(ribbonQuotes, deepRes.error || "Quote health check failed");
       ribbonQuotes.className = "health-badge bg-slate-900";
       ribbonQuotes.textContent = "Unknown";
     }
@@ -3638,7 +3638,7 @@ async function refreshDecisionDashboard() {
     ].forEach((id) => markUnavailable(document.getElementById(id), msg));
     const ablationList = document.getElementById("decisionAblationTopList");
     if (ablationList) {
-      ablationList.innerHTML = '<li class="muted">Ablation report unavailable.</li>';
+      ablationList.innerHTML = '<li class="muted">Strategy comparison unavailable.</li>';
     }
     applyFreshness(freshEl, {
       asOf: null,
@@ -3684,17 +3684,17 @@ function _syncAblationButtons(running) {
   const runBtn = document.getElementById("ablationCycleBtn");
   if (!runBtn) return;
   runBtn.disabled = Boolean(running);
-  runBtn.textContent = running ? "Ablation running..." : "Run ablation cycle";
+  runBtn.textContent = running ? "Strategy test running…" : "Run strategy comparison";
 }
 
 async function refreshAblationCycleStatus({ quiet = false } = {}) {
   const out = await api.get("/api/ablation/status");
   if (!out.ok) {
-    _setAblationStatusUi("Status: unknown", safeText(out.error || "Ablation status unavailable."));
+    _setAblationStatusUi("Status: unknown", safeText(out.error || "Strategy test status unavailable."));
     if (!quiet) {
       updateActionCenter({
-        title: "Ablation status unavailable",
-        message: safeText(out.error || "Could not fetch /api/ablation/status."),
+        title: "Strategy test unavailable",
+        message: safeText(out.error || "Could not load strategy test status."),
         severity: "warn",
       });
     }
@@ -3736,8 +3736,8 @@ async function refreshAblationCycleStatus({ quiet = false } = {}) {
   if (_lastAblationRunStatus === "running" && runStatus !== "running") {
     void refreshDecisionDashboard();
     if (!quiet) {
-      const msg = runStatus === "completed" ? "Ablation cycle completed." : "Ablation cycle finished with issues.";
-      updateActionCenter({ title: "Ablation cycle", message: msg, severity: runStatus === "completed" ? "success" : "warn" });
+      const msg = runStatus === "completed" ? "Strategy comparison completed." : "Strategy comparison finished with issues.";
+      updateActionCenter({ title: "Strategy comparison", message: msg, severity: runStatus === "completed" ? "success" : "warn" });
     }
   }
   _lastAblationRunStatus = runStatus;
@@ -3754,19 +3754,19 @@ async function runAblationCycle() {
     if (!out.ok) {
       const msg = safeText(out.error || "Could not start ablation cycle.");
       _setAblationStatusUi("Status: failed_to_start", msg);
-      updateActionCenter({ title: "Ablation cycle failed to start", message: msg, severity: "error" });
+      updateActionCenter({ title: "Strategy comparison failed to start", message: msg, severity: "error" });
       return;
     }
     const d = out.data || {};
     if (d.already_running) {
       updateActionCenter({
-        title: "Ablation already running",
+        title: "Strategy test already running",
         message: "A previous run is still in progress.",
         severity: "info",
       });
     } else {
       updateActionCenter({
-        title: "Ablation cycle started",
+        title: "Strategy comparison started",
         message: "Running parameter sweep and report scoring in the background.",
         severity: "success",
       });
@@ -3775,13 +3775,13 @@ async function runAblationCycle() {
   } catch (e) {
     const msg = safeText(String(e));
     _setAblationStatusUi("Status: error", msg);
-    updateActionCenter({ title: "Ablation cycle error", message: msg, severity: "error" });
+    updateActionCenter({ title: "Strategy comparison error", message: msg, severity: "error" });
   } finally {
     _syncAblationButtons(_lastAblationRunStatus === "running");
   }
 }
 
-const SCAN_START_META = "Scanning SP1500 market candidates...";
+const SCAN_START_META = "Scanning S&P 1500 candidates…";
 
 function scanBodyFromBacktestSpec(spec) {
   if (!spec || typeof spec !== "object") return {};

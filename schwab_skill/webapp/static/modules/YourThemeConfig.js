@@ -45,6 +45,15 @@ export const AUDIT_THEME_CONFIG = {
     neutralSeries: "#6e6862",
     tooltipBg: "rgba(255, 254, 251, 0.96)",
   },
+  lightweightCharts: {
+    textColor: "#5a5a5a",
+    grid: "rgba(26, 58, 46, 0.08)",
+    scaleBorder: "rgba(26, 58, 46, 0.18)",
+    upColor: "#2d5a4a",
+    downColor: "#c94949",
+    volumeUp: "rgba(45, 90, 74, 0.28)",
+    volumeDown: "rgba(201, 73, 73, 0.28)",
+  },
   tremor: {
     colorMap: {
       truth: "emerald",

@@ -14,6 +14,7 @@ import { api } from "../modules/api.js";
 import { calculateManagementIntegrityScore } from "../modules/managementIntegrity.js";
 import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, safeNum } from "../modules/format.js";
+import { humanizeAnalysisMode, humanizeKey } from "../modules/humanize.js";
 import { logEvent, updateActionCenter, statusClass, sentimentTagClass } from "../modules/logger.js";
 
 export function applySecCompareMode() {
@@ -28,8 +29,8 @@ export function applySecCompareMode() {
   tickerB.placeholder = requiresSecondTicker ? "Ticker B (MSFT)" : "Not required for over-time mode";
   if (modeHelp) {
     modeHelp.textContent = requiresSecondTicker
-      ? "ticker_vs_ticker compares two issuers and is best used as an advanced contrast view."
-      : "ticker_over_time compares current filing language vs prior periods to surface execution drift.";
+      ? "Compare two companies side by side — best for contrasting business models and risk language."
+      : "Track one company over time — compares current filing language to prior periods to spot changes.";
   }
   if (changesOnly) {
     changesOnly.disabled = mode !== "ticker_over_time";
@@ -75,16 +76,16 @@ function renderProfileStatusFromDashboard(dashboard) {
     ? ` · last override: ${safeText(lastOverride.after || "auto")} by ${safeText(lastOverride.actor || "user")} (${safeText(lastOverride.reason || "no reason")})`
     : "";
   if (mode === "manual_override") {
-    setProfileStatusText(`Profile source: manual override (${selected})${lastSummary}`);
+    setProfileStatusText(`Profile: manual override (${humanizeKey(selected)})${lastSummary}`);
     renderProfileHistory(profile.history_tail || []);
     return;
   }
   if (persisted) {
-    setProfileStatusText(`Profile source: saved override (${persisted})${lastSummary}`);
+    setProfileStatusText(`Profile: saved override (${humanizeKey(persisted)})${lastSummary}`);
     renderProfileHistory(profile.history_tail || []);
     return;
   }
-  setProfileStatusText(`Profile source: auto-detect (${selected})${lastSummary}`);
+  setProfileStatusText(`Profile: ${humanizeKey(selected || "auto_detect")}${lastSummary}`);
   renderProfileHistory(profile.history_tail || []);
 }
 
@@ -97,7 +98,7 @@ function confidenceBand(confidence) {
 }
 
 function analysisModeLabel(mode) {
-  return mode === "metadata_fallback" ? "metadata_fallback" : "full_text";
+  return humanizeAnalysisMode(mode === "metadata_fallback" ? "metadata_fallback" : "full_text");
 }
 
 function parseDateSafe(value) {
@@ -887,7 +888,7 @@ export function renderSecCompareVisual(data, { getDisplayMode = () => "balanced"
       <div><span class="${sentimentTagClass(sentimentTag)}">${sentimentTag}</span></div>
       <div class="compare-lead">${headline}</div>
       ${diffChips ? `<div class="sec-diff-chips">${diffChips}</div>` : ""}
-      <div class="subtle">Mode: ${safeText(data.mode || compare.mode || "N/A")} | Form: ${safeText(data.form_type || "N/A")} | Evidence quality: ${evidenceMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : " | Confidence: Unavailable"}</div>
+      <div class="subtle">View: ${humanizeAnalysisMode(safeText(data.mode || compare.mode || "N/A"))} | Form: ${safeText(data.form_type || "N/A")} | Evidence quality: ${evidenceMode}${compareConfidence !== null ? ` | Confidence: ${safeText(compareConfidence)}/100 (${confidenceBandLabel})` : " | Confidence: Unavailable"}</div>
       <div class="subtle">Freshness: ${leftLabel} <span class="pill ${freshnessLeft.css}">${safeText(freshnessLeft.label)}</span> · ${rightLabel} <span class="pill ${freshnessRight.css}">${safeText(freshnessRight.label)}</span></div>
       ${warning ? `<div class="report-callout warn">Reduced confidence context. ${compareLimits.length ? `Limits: ${safeText(compareLimits.join("; "))}` : "Metadata fallback or partial evidence mode."}</div>` : ""}
       <ul class="report-bullets">
