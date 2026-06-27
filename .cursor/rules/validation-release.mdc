@@ -1,0 +1,77 @@
+---
+description: Release gatekeeper — validation pipeline, promotion ledger, and ship/no-ship criteria
+globs: schwab_skill/scripts/**,schwab_skill/VALIDATION*.md,schwab_skill/CANARY_RUNBOOK.md
+alwaysApply: false
+---
+
+# Validation & Release Gate
+
+Active when editing validators, promotion scripts, or validation runbooks. You are the **release gatekeeper** — prove safety before merge or promotion; do not hand-wave "looks good."
+
+## Command of record
+
+All commands run from `schwab_skill/`.
+
+| Intent | Command |
+|--------|---------|
+| **Pre-push (fast)** | `python -m ruff check .` · `python -m pytest -q` · `python scripts/validate_typecheck_ratchet.py` |
+| **Local release gate** | `python scripts/validate_all.py --profile local --strict --skip-backtest` |
+| **CI / server profile** | `python scripts/validate_all.py --profile ci --strict` (includes backtest when not skipped) |
+| **Docs/rules drift** | `python scripts/validate_docs_governance.py` |
+| **Signal/backtest change** | `python scripts/validate_backtest.py --warn-on-regression` |
+| **Signal quality** | `python scripts/validate_signal_quality.py` |
+| **Plugin shadow mode** | `python scripts/validate_shadow_mode.py` |
+| **Dashboard contract** | `python scripts/validate_decision_dashboard_contract.py` |
+| **Promotion-grade** | Add `--promotion` to `validate_all.py` and/or `validate_advisory_model.py` |
+
+Artifacts land in `schwab_skill/validation_artifacts/validate_all_*.json` — cite step name, returncode, and stderr on failure.
+
+## Ship criteria (default PR)
+
+1. Fast loop passes (ruff + pytest on touched areas minimum).
+2. `validate_all.py --profile local --strict --skip-backtest` exits 0.
+3. If scanner/backtest/scoring changed: `validate_backtest.py --warn-on-regression` + relevant `test_backtest*` / `test_scan*` pytest.
+4. If `.cursor/rules/` or `wiki/` changed: `validate_docs_governance.py` exits 0.
+5. Report: each validator → pass/fail; do not claim green without running commands.
+
+## Promotion criteria (plugins, advisory model, strategy params)
+
+**Blocked until base signal clears Phase 2 gate** (`halt_fix_signal_first` — PF mean ≥ 1.20, worst-era PF ≥ 1.00). Do not promote REGIME_V2 / EXIT_MANAGER / CORRELATION_GUARD to LIVE while blocked.
+
+When promotion is explicitly requested and gates pass:
+
+1. **Signed ledger required** — never use `MANUAL_PROMOTION_APPROVED=1` in new work:
+   ```bash
+   python scripts/promotion_ledger.py append --target <TARGET> --reason "<why>"
+   python scripts/promotion_ledger.py check --target <TARGET>
+   ```
+2. **Target strings** (stable):
+   - `strategy_champion_params` → `decide_strategy_promotion.py`
+   - `advisory_model` → `decide_and_promote_advisory_model.py`
+   - `strategy_tune_cycle` → `run_strategy_tune_cycle.py`
+   - Plugin LIVE: `--target REGIME_V2_MODE=live` (etc.) per README rollout sequence
+3. **Plugin rollout**: OFF → SHADOW (≥1 week stable diagnostics) → LIVE canary only.
+4. **Promotion validation**: `validate_all.py --strict --promotion` (+ `--pf-robust` when claiming edge).
+5. **Apply only after check passes**: e.g. `decide_and_promote_advisory_model.py --apply --strict --promotion --notify`
+
+Local sandbox only: `PROMOTION_LEDGER_SKIP=1` — never in CI.
+
+## Failure handling
+
+- **`--strict`**: fail fast on first failed step — fix and re-run full profile.
+- **Regression**: if `validate_backtest.py --warn-on-regression` fails, stop promotion; document baseline vs treatment in summary.
+- **Skipped steps**: data-integrity skips when fixtures unset are non-fatal — note explicitly, do not treat as pass.
+- **Rollback**: plugin mode → `off`; re-run validation; restore champion params if strategy promotion was applied (`CANARY_RUNBOOK.md`).
+
+## Report format (required)
+
+```
+Validation summary
+- Profile: local | ci | server
+- Steps: [name] PASS/FAIL (exit N)
+- Blockers: ...
+- Promotion: N/A | ledger seq N | veto reason
+- Recommendation: ship | fix first | shadow only
+```
+
+Reference runbooks: `VALIDATION_RUNBOOK.md`, `VALIDATION_MATRIX.md`, `CANARY_RUNBOOK.md`, `docs/GUARDRAIL_VALIDATION_MATRIX.md`.

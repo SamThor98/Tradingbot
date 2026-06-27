@@ -41,9 +41,9 @@
           data-screen-mode="operations"
           role="tab"
           aria-selected="true"
-          aria-controls="operationsWorkspaceIntro"
+          aria-controls="scanSection"
         >
-          <span class="tab-num" aria-hidden="true">1</span>Operations
+          <span class="tab-num" aria-hidden="true">1</span>Today
         </button>
         <button
           type="button"
@@ -51,19 +51,9 @@
           data-screen-mode="research"
           role="tab"
           aria-selected="false"
-          aria-controls="researchWorkspaceIntro"
+          aria-controls="researchTabNav"
         >
           <span class="tab-num" aria-hidden="true">2</span>Research
-        </button>
-        <button
-          type="button"
-          class="screen-switch-btn"
-          data-screen-mode="kronos"
-          role="tab"
-          aria-selected="false"
-          aria-controls="kronosWorkspaceIntro"
-        >
-          <span class="tab-num" aria-hidden="true">3</span>Kronos
         </button>
         <button
           type="button"
@@ -71,9 +61,9 @@
           data-screen-mode="diagnostics"
           role="tab"
           aria-selected="false"
-          aria-controls="diagnosticsWorkspaceIntro"
+          aria-controls="healthRibbon"
         >
-          <span class="tab-num" aria-hidden="true">4</span>Diagnostics
+          <span class="tab-num" aria-hidden="true">3</span>System
         </button>
         <button
           type="button"
@@ -81,30 +71,19 @@
           data-screen-mode="settings"
           role="tab"
           aria-selected="false"
-          aria-controls="settingsWorkspaceIntro"
+          aria-controls="onboardingSection"
         >
-          <span class="tab-num" aria-hidden="true">5</span>Settings
-        </button>
-        <button
-          type="button"
-          class="screen-switch-btn"
-          data-screen-mode="cockpit"
-          role="tab"
-          aria-selected="false"
-          aria-controls="cockpitWorkspaceIntro"
-          title="Market regime, ranked opportunities, portfolio risk, and execution blotter in one view"
-        >
-          <span class="tab-num" aria-hidden="true">6</span>Cockpit
+          <span class="tab-num" aria-hidden="true">4</span>Settings
         </button>
       </nav>
 
       <div class="app-topbar-actions">
         <label class="topbar-detail" for="displayModeSelect">
           <span class="visually-hidden">Detail level</span>
-          <select id="displayModeSelect" title="Simple keeps actions focused; Standard balances depth; Pro expands diagnostics and raw detail.">
-            <option value="simple" selected>Simple</option>
+          <select id="displayModeSelect" title="Pro is the default detail level; Simple and Standard hide advanced columns and disclosures.">
+            <option value="simple">Simple</option>
             <option value="standard">Standard</option>
-            <option value="pro">Pro</option>
+            <option value="pro" selected>Pro</option>
           </select>
         </label>
         <button id="refreshBtn" class="btn secondary small" type="button">Refresh</button>
@@ -163,15 +142,15 @@
             <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
             <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
             <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
-            <a href="#backtestSection" data-nav-screens="research">Backtest + chat</a>
-            <a href="#reportSectionCard" data-nav-screens="research">Dossier + SEC compare</a>
-            <a href="#kronosForecastSection" data-nav-screens="kronos">Run forecast</a>
-            <a href="#kronosAboutSection" data-nav-screens="kronos">How Kronos works</a>
-            <a href="#healthRibbon" data-nav-screens="diagnostics">Health ribbon</a>
-            <a href="#decisionDashboardCard" data-nav-screens="diagnostics">Decision readiness</a>
-            <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Detailed status</a>
-            <a href="#onboardingSection" data-nav-screens="settings">Connections</a>
-            <a href="#settingsSection" data-nav-screens="settings">Trading controls</a>
+            <a href="#backtestSection" data-nav-screens="research">Backtest</a>
+            <a href="#reportSectionCard" data-nav-screens="research">Dossier</a>
+            <a href="#cockpitSection" data-nav-screens="research">Market context</a>
+            <a href="#healthRibbon" data-nav-screens="diagnostics">Health</a>
+            <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Status</a>
+            <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics">Quality</a>
+            <a href="#settingsSummaryLanding" data-nav-screens="settings">Overview</a>
+            <a href="#onboardingSection" data-nav-screens="settings">Connect</a>
+            <a href="#settingsSection" data-nav-screens="settings" class="settings-presets-nav">Risk presets</a>
           </nav>
           <div class="mode-header-actions">
             <a id="screenContextCta" class="btn small primary" href="#workflowPrimary">Run a scan</a>
@@ -202,6 +181,21 @@
            is visible on every tab (Trade/Analyze/Health/Settings)
            when the host has globally halted trading. -->
       <section
+        id="connectSchwabBanner"
+        class="card blockers-alert hidden cross-mode-banner connect-schwab-banner"
+        aria-live="polite"
+        aria-hidden="true"
+      >
+        <strong>Connect Schwab to unlock scans and trades</strong>
+        <p id="connectSchwabBannerText" class="muted" style="margin: 0.35rem 0 0">
+          Your Schwab account is not linked yet. You can browse the app, but scans and order flow need a connection first.
+        </p>
+        <div class="inline-form compact" style="margin-top: 0.5rem">
+          <a class="btn small primary" href="/?screen=settings#onboardingSection">Go to Connect Schwab</a>
+        </div>
+      </section>
+
+      <section
         id="platformKillSwitchBanner"
         class="card blockers-alert hidden cross-mode-banner"
         aria-live="polite"
@@ -215,6 +209,30 @@
       </section>
 
       <div id="dashboardToday" class="dashboard-today-stack">
+      <section id="todaySummaryLanding" class="card today-summary-landing operations-surface" aria-label="Today at a glance">
+        <div class="today-summary-grid">
+          <div class="today-summary-kpi">
+            <span class="today-summary-label">Open signals</span>
+            <strong id="todaySummarySignals" class="today-summary-value mono-nums" data-unavailable="true">—</strong>
+            <small id="todaySummarySignalsHint" class="muted">no scan yet</small>
+          </div>
+          <div class="today-summary-kpi">
+            <span class="today-summary-label">Pending</span>
+            <strong id="todaySummaryPending" class="today-summary-value mono-nums" data-unavailable="true">—</strong>
+            <small id="todaySummaryPendingHint" class="muted">awaiting status</small>
+          </div>
+          <div class="today-summary-kpi">
+            <span class="today-summary-label">Last scan</span>
+            <strong id="todaySummaryScan" class="today-summary-value">—</strong>
+            <small id="todaySummaryScanHint" class="muted">run scan to begin</small>
+          </div>
+        </div>
+        <div class="today-summary-actions inline-form compact">
+          <button type="button" class="btn small primary" id="todaySummaryScanBtn">Run scan</button>
+          <a class="btn small secondary" href="#pendingSection">Review pending</a>
+        </div>
+      </section>
+
       <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>
@@ -231,7 +249,7 @@
       </section>
       </div>
 
-      <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro" aria-label="Operations workspace">
+      <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Operations</p>
           <h2>Scan -> review -> approve</h2>
@@ -245,7 +263,7 @@
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Operations workflow</h2>
-        <p class="muted workflow-strapline operations-surface">Scan -> evaluate -> stage -> approve.</p>
+        <p class="muted workflow-strapline operations-surface hidden workspace-intro--deprecated">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
         <article id="scanSection" class="card card--primary-task kanban-lane">
           <div class="kanban-lane-head">
@@ -274,6 +292,7 @@
               <small id="scanModeHelperText" class="muted scan-mode-helper">
                 Balanced: score >= 50, volume ratio >= 1.1. Strict raises thresholds.
               </small>
+              <span id="scanGateModesChip" class="chip scan-gate-modes-chip hidden" title="Active gate modes for this scan profile"></span>
               <span id="scanTopStrategy" class="chip">Top Strategy: --</span>
               <button
                 type="button"
@@ -287,6 +306,8 @@
               </button>
             </div>
           </div>
+          <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
+          <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
           <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
             <progress id="scanJobProgress" max="100" value="0"></progress>
             <span id="scanJobProgressLabel" class="muted"></span>
@@ -354,20 +375,22 @@
                 <thead>
                   <tr>
                     <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status. Disposition: kept = made the final cut; filtered_* = dropped at that stage. Filtered rows are visible for review but not stageable.">Status<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status">Status<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source">Source<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days Flagged<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by composite signal score">Score<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket (HIGH > MEDIUM > LOW)">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score (-100 to +100)">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-secondary">Reason</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="scanTableBody">
-                  <tr><td colspan="11" class="muted">Run a scan to load candidates.</td></tr>
+                  <tr><td colspan="13" class="muted">Run a scan to load candidates.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -389,19 +412,21 @@
                     <tr>
                       <th>Ticker</th>
                       <th>Status</th>
-                      <th class="scan-col-advanced">Days Flagged</th>
-                      <th>Strategy</th>
+                      <th class="scan-col-secondary">Source</th>
+                      <th class="scan-col-advanced">Days</th>
+                      <th class="scan-col-advanced">Strategy</th>
                       <th class="scan-col-secondary">Price</th>
-                      <th>Score</th>
+                      <th>Rank</th>
                       <th class="scan-col-advanced">P(up 10d)</th>
                       <th>Confidence</th>
                       <th class="scan-col-advanced">Conviction</th>
                       <th class="scan-col-advanced">Sector</th>
+                      <th>Reason</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody id="nearMissTableBody">
-                    <tr><td colspan="11" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                    <tr><td colspan="13" class="muted">Near-miss candidates will appear after scan.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -417,7 +442,14 @@
           <div class="scan-detail-header">
             <h3 id="scanDetailTicker">Select a ticker</h3>
             <p id="scanDetailStrategy" class="muted">Click <strong>Chart</strong> on any candidate row to load price action and scoring detail.</p>
+            <div id="scanDetailTrust" class="scan-detail-trust"></div>
           </div>
+          <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
+            <h4>Decision brief</h4>
+            <div id="scanDetailBrief" class="scan-brief-content">
+              <p class="muted">Select a candidate to load the bullet decision card.</p>
+            </div>
+          </section>
           <div id="scanDetailChartContainer" class="scan-detail-chart">
             <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
           </div>
@@ -428,21 +460,22 @@
             </button>
           </div>
           <div id="scanDetailForecast" class="scan-detail-forecast" aria-live="polite"></div>
-          <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
-            <h4>Decision brief</h4>
-            <div id="scanDetailBrief" class="scan-brief-content">
-              <p class="muted">Select a candidate to load the bullet decision card.</p>
-            </div>
-          </section>
+          <details id="scanDetailAdvancedStats" class="panel-disclosure scan-detail-advanced">
+            <summary class="panel-disclosure-summary">Advanced scores <span class="disclosure-hint muted">edge, reliability, execution, EV</span></summary>
           <div class="scan-detail-grid">
+            <div class="scan-detail-stat">
+              <span class="muted">Rank</span>
+              <strong id="scanDetailRank">--</strong>
+              <small class="muted">Primary sort key for candidates.</small>
+            </div>
             <div class="scan-detail-stat">
               <span class="muted">Price</span>
               <strong id="scanDetailPrice">--</strong>
             </div>
             <div class="scan-detail-stat">
-              <span class="muted">Signal score</span>
+              <span class="muted">Composite</span>
               <strong id="scanDetailScore">--</strong>
-              <small class="muted">Composite rank (edge + reliability + execution).</small>
+              <small class="muted">Blended edge + reliability + execution.</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">P(up 10d)</span>
@@ -484,9 +517,11 @@
               <small class="muted">Expected value estimate over 10 trading days.</small>
             </div>
           </div>
+          </details>
           <div class="scan-detail-actions">
             <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Stage selected trade</button>
-            <small class="muted">Pick a candidate and review chart context before staging.</small>
+            <button id="scanDetailResearchBtn" class="btn secondary" type="button" disabled>Open in Research</button>
+            <small class="muted">Pick a candidate and review chart context before staging or deep research.</small>
           </div>
         </aside>
 
@@ -559,22 +594,42 @@
         </article>
         </div>
       </section>
-      <details id="sectorsSection" class="card operations-surface panel-disclosure ops-context-disclosure" data-lazy-api="sectors" open>
-        <summary class="panel-disclosure-summary">
-          <span class="ops-disclosure-title">Sector Performance</span>
-          <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
-        </summary>
-        <div id="sectorGrid" class="sector-grid"></div>
-      </details>
-      <details id="moversSection" class="card operations-surface panel-disclosure ops-context-disclosure" data-lazy-api="movers" open>
-        <summary class="panel-disclosure-summary">
-          <span class="ops-disclosure-title">Market Movers</span>
-          <span class="disclosure-hint muted">Top gainers, losers, and most active <a href="/?screen=cockpit" class="muted">· open cockpit</a></span>
-        </summary>
-        <div id="moversGrid" data-async-state="idle"></div>
-      </details>
 
-      <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced" aria-label="Research workspace">
+      <nav id="researchTabNav" class="research-tab-nav" aria-label="Research sections">
+        <button type="button" class="research-tab-btn active" data-research-tab-btn="check" aria-selected="true">Quick check</button>
+        <button type="button" class="research-tab-btn" data-research-tab-btn="backtest" aria-selected="false">Backtest</button>
+        <button type="button" class="research-tab-btn" data-research-tab-btn="diligence" aria-selected="false">Diligence</button>
+        <button type="button" class="research-tab-btn" data-research-tab-btn="portfolio" aria-selected="false">Portfolio</button>
+      </nav>
+
+      <section id="researchSummaryLanding" class="card research-summary-landing section-advanced" aria-label="Research at a glance">
+        <div class="research-summary-grid">
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Quick check</span>
+            <strong id="researchSummaryTicker" class="research-summary-value">—</strong>
+            <small id="researchSummaryTickerHint" class="muted">enter a ticker below</small>
+          </div>
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Portfolio</span>
+            <strong id="researchSummaryPositions" class="research-summary-value mono-nums" data-unavailable="true">—</strong>
+            <small id="researchSummaryPositionsHint" class="muted">loads on Portfolio tab</small>
+          </div>
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Backtests</span>
+            <strong id="researchSummaryBacktests" class="research-summary-value mono-nums">—</strong>
+            <small id="researchSummaryBacktestsHint" class="muted">recent runs on Backtest tab</small>
+          </div>
+        </div>
+        <nav class="research-summary-actions inline-form compact" aria-label="Research shortcuts">
+          <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Backtest</a>
+          <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="diligence">Dossier</a>
+          <a class="btn small secondary" href="#secCompareSection" data-research-tab-link="diligence">SEC compare</a>
+          <a class="btn small secondary" href="#cockpitSection" data-research-tab-link="portfolio">Market context</a>
+          <a class="btn small secondary" href="#researchAdvancedTools" data-research-tab-link="check">Advanced tools</a>
+        </nav>
+      </section>
+
+      <section id="researchWorkspaceIntro" class="card workspace-intro section-advanced workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Research</p>
           <h2>Validate before size</h2>
@@ -586,7 +641,7 @@
           <a class="btn small secondary" href="#reportSectionCard">Full report</a>
         </div>
       </section>
-      <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced" aria-label="Research workflow lanes">
+      <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced workspace-intro--deprecated hidden" aria-hidden="true">
         <article class="research-lane">
           <h3>Fast validation</h3>
           <p class="muted">Confirm baseline signal quality on one symbol.</p>
@@ -609,7 +664,7 @@
           </div>
         </article>
       </section>
-      <div class="layout-2 layout-quick-tools">
+      <div class="layout-quick-tools research-check-panel">
         <article id="quickCheckSection" class="card card--primary-task section-advanced">
           <div class="section-title">
             <h2>Quick ticker check</h2>
@@ -631,41 +686,121 @@
           </div>
         </article>
 
-        <section id="toolsSection" class="card tools-hub section-advanced" aria-labelledby="toolsHeading">
-          <div class="section-title">
-            <h2 id="toolsHeading">Research toolkit</h2>
-            <small class="muted">Advanced tools when quick check or backtest needs deeper follow-up.</small>
-          </div>
-          <div class="tools-grid" role="list">
-            <a class="tool-card" role="listitem" href="#backtestSection">
-              <h3 class="tool-card-title">Backtest</h3>
-              <p class="tool-card-desc muted">Historical replay—no live orders.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#reportSectionCard">
-              <h3 class="tool-card-title">Full report</h3>
-              <p class="tool-card-desc muted">Deep dive with optional raw JSON.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-            <a class="tool-card" role="listitem" href="#secCompareSection">
-              <h3 class="tool-card-title">SEC compare</h3>
-              <p class="tool-card-desc muted">Filings contrast and narrative.</p>
-              <span class="tool-card-cta">Go</span>
-            </a>
-          </div>
-          <details class="panel-disclosure nav-advanced">
-            <summary class="panel-disclosure-summary">
-              Secondary tools
-              <span class="disclosure-hint muted">decision and recovery helpers</span>
-            </summary>
-            <div class="inline-form compact">
-              <a class="btn small secondary" href="#recoverySection">Recovery mapper</a>
+        <details id="sectorsSection" class="card section-advanced panel-disclosure research-market-disclosure" data-lazy-api="sectors">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Sector Performance</span>
+            <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
+          </summary>
+          <div id="sectorGrid" class="sector-grid"></div>
+        </details>
+        <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure" data-lazy-api="movers">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Market Movers</span>
+            <span class="disclosure-hint muted">Top gainers, losers, and most active</span>
+          </summary>
+          <div id="moversGrid" data-async-state="idle"></div>
+        </details>
+
+        <details id="researchAdvancedTools" class="card section-advanced panel-disclosure research-advanced-disclosure">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Advanced tools</span>
+            <span class="disclosure-hint muted">Failure recovery and learning engine</span>
+          </summary>
+          <article id="recoverySection" class="card recovery-nested">
+            <div class="section-title">
+              <h2>Failure Recovery</h2>
+              <small class="muted">Plain-language next steps for auth/data/order errors.</small>
             </div>
-          </details>
-        </section>
+            <div class="inline-form trade-drawer-launcher">
+              <label class="field-label" for="recoverySource">Source</label>
+              <select id="recoverySource">
+                <option value="schwab_auth">schwab_auth</option>
+                <option value="market_data">market_data</option>
+                <option value="execution">execution</option>
+              </select>
+              <input id="recoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
+              <button id="recoveryBtn" class="btn primary" type="button">Open fix path →</button>
+            </div>
+            <p class="muted small">
+              Recovery mapping shares the slide-in <strong>Trade Drawer</strong> with the decision card.
+            </p>
+          </article>
+          <article id="learningSection" class="card learning-nested">
+            <div class="section-title">
+              <h2>Learning Engine</h2>
+              <small class="muted">Closed-loop analysis: features logged per scan, ML identifies what predicts failure, challenger tests suggested thresholds.</small>
+            </div>
+            <div class="inline-form">
+              <button id="evolveBtn" class="btn secondary" type="button">Run Post-Mortem Analysis</button>
+              <button id="challengerBtn" class="btn secondary" type="button">Run Challenger Scan</button>
+            </div>
+            <div id="learningPanel" class="performance-panel" aria-live="polite">
+              <div class="report-empty">No learning engine results yet. Workflow: execute trades so outcomes are recorded → <em>Run Post-Mortem Analysis</em> (requires persisted outcomes) → <em>Run Challenger Scan</em> (requires post-mortem overrides).</div>
+            </div>
+            <div id="challengerPanel" class="performance-panel" aria-live="polite" style="margin-top:1rem;">
+            </div>
+            <details id="learningRawDetails" class="details-raw hidden">
+              <summary>Raw JSON</summary>
+              <pre id="learningRaw" class="code-block"></pre>
+            </details>
+          </article>
+        </details>
       </div>
 
-      <section id="settingsWorkspaceIntro" class="card workspace-intro" aria-label="Settings workspace">
+      <section id="settingsSummaryLanding" class="card settings-summary-landing settings-surface" aria-label="Settings overview">
+        <p id="settingsSummaryLead" class="settings-summary-lead muted">
+          Link Schwab first. Then use the controls below to turn live orders on or off and pause trading when you need to.
+        </p>
+        <div class="settings-summary-grid settings-summary-grid--pair">
+          <div class="settings-summary-kpi">
+            <span class="settings-summary-label">Schwab link</span>
+            <strong id="settingsSummaryConnection" class="settings-summary-value" data-unavailable="true">—</strong>
+            <small id="settingsSummaryConnectionHint" class="muted">account + market data</small>
+          </div>
+          <div class="settings-summary-kpi">
+            <span class="settings-summary-label">Live orders</span>
+            <strong id="settingsSummaryLive" class="settings-summary-value" data-unavailable="true">—</strong>
+            <small id="settingsSummaryLiveHint" class="muted">off until you enable them</small>
+          </div>
+        </div>
+
+        <div id="settingsSummaryGuardrails" class="settings-summary-guardrails">
+          <h3 class="settings-summary-guardrails-title">Live order controls</h3>
+          <p class="muted small settings-summary-guardrails-lead">
+            Nothing sends to your broker until Schwab is linked <em>and</em> you turn live orders on below. Each trade still needs your approval.
+          </p>
+          <div id="liveTradingSaasBlock" class="live-trading-saas hidden">
+            <p id="liveTradingStatus" class="muted small live-trading-status-line"></p>
+            <ul id="liveTradingBullets" class="live-trading-bullets muted small">
+              <li>Turn live orders on only when you are ready to send real trades.</li>
+              <li>You approve every order before it goes out.</li>
+              <li>Use pause to block new approvals without disconnecting Schwab.</li>
+            </ul>
+            <label class="muted plain-check"><input id="enableLiveRiskAck" type="checkbox" /> I understand live orders are risky and this app does not give personal advice.</label>
+            <div class="inline-form compact settings-guardrails-row">
+              <label class="field-label" for="enableLiveTypedPhrase">Type ENABLE to turn live orders on</label>
+              <input id="enableLiveTypedPhrase" type="text" autocomplete="off" placeholder="ENABLE" />
+              <button id="enableLiveTradingBtn" type="button" class="btn secondary small">Turn live orders on</button>
+            </div>
+            <div class="inline-form compact settings-guardrails-row">
+              <label class="muted plain-check">
+                <input id="tradingHaltedCheckbox" type="checkbox" />
+                Pause new live orders (block approvals until you uncheck and save)
+              </label>
+              <button id="saveTradingHaltBtn" type="button" class="btn secondary small">Save pause</button>
+            </div>
+          </div>
+          <p id="settingsGuardrailsLocalHint" class="muted small">Live order toggles appear here when account controls are available.</p>
+        </div>
+
+        <nav class="settings-summary-actions inline-form compact" aria-label="Settings shortcuts">
+          <a class="btn small secondary" href="#onboardingSection">Connect Schwab</a>
+          <a class="btn small secondary settings-summary-presets-link" href="#settingsSection">Risk presets</a>
+          <a class="btn small secondary" href="#settingsAccountPanel">Account security</a>
+        </nav>
+      </section>
+
+      <section id="settingsWorkspaceIntro" class="card workspace-intro settings-surface workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Settings</p>
           <h2>Configure connectivity and controls</h2>
@@ -676,7 +811,7 @@
           <a class="btn small secondary" href="#settingsSection">Trading controls</a>
         </div>
       </section>
-      <section id="settingsWorkflowStrip" class="card settings-workflow-strip nav-advanced" aria-label="Settings workflow lanes">
+      <section id="settingsWorkflowStrip" class="card settings-workflow-strip nav-advanced settings-surface workspace-intro--deprecated hidden" aria-hidden="true">
         <article class="settings-lane">
           <h3>Connect</h3>
           <p class="muted">Link Schwab account + market data and verify token health.</p>
@@ -699,11 +834,11 @@
           </div>
         </article>
       </section>
-      <section class="layout-2 layout-onboarding-presets">
+      <section class="settings-workspace settings-surface">
         <article id="onboardingSection" class="card" data-lazy-api="onboarding">
           <div class="section-title">
             <h2>Connect Schwab</h2>
-            <small id="onboardingMeta" class="muted">Use one guided flow to connect Schwab quickly; advanced checks are optional.</small>
+            <small id="onboardingMeta" class="muted">Step-by-step setup: link your account, link market data, then run a quick test.</small>
           </div>
           <div id="connectAuthInline" class="card" style="margin-bottom:10px; padding:10px;">
             <div id="connectSignedInState" class="inline-form compact hidden">
@@ -808,10 +943,13 @@
             </details>
           </div>
         </article>
-        <article id="settingsSection" class="card settings-advanced-only section-advanced" data-lazy-api="profiles">
+
+        <article id="settingsGuardrailsSection" class="card settings-surface workspace-intro--deprecated hidden" aria-hidden="true" data-lazy-api="profiles"></article>
+
+        <article id="settingsSection" class="card settings-surface settings-presets-panel" data-lazy-api="profiles">
           <div class="section-title">
-            <h2>Strategy Presets</h2>
-            <small class="muted">Standard shows plain English. Expert adds raw env values under each row.</small>
+            <h2>Risk presets</h2>
+            <small class="muted">Pick how aggressive the scanner and position limits should be. Standard view uses plain English; Expert shows raw values.</small>
           </div>
           <div class="inline-form">
             <label class="field-label" for="profileSelect">Profile</label>
@@ -830,9 +968,9 @@
               <option value="tooltip" selected>Tooltip (compact)</option>
               <option value="inline">Inline (expanded)</option>
             </select>
-            <small id="rankExplainModeHelperText" class="muted">Tooltip keeps rows compact. Inline shows rationale in each score cell.</small>
-            <label class="muted"><input id="automationOptIn" type="checkbox" /> Allow live orders without the extra confirmation step</label>
-            <button id="applyProfileBtn" class="btn secondary">Apply Preset</button>
+            <small id="rankExplainModeHelperText" class="muted">Tooltip keeps the table compact. Inline shows the reason in every score cell.</small>
+            <label class="muted plain-check"><input id="automationOptIn" type="checkbox" /> Skip the extra confirmation step when placing live orders (not recommended)</label>
+            <button id="applyProfileBtn" class="btn secondary">Save preset</button>
           </div>
           <div class="inline-form compact" style="margin-top: 0.5rem">
             <button id="featureGuideBtn" class="btn small secondary" type="button">Open feature guide</button>
@@ -858,40 +996,6 @@
             </div>
           </details>
           <div id="presetApplyPreview" class="preset-apply-preview" aria-live="polite"></div>
-          <div id="liveTradingSaasBlock" class="live-trading-saas hidden" style="margin-top: 1rem; padding: 0.75rem; border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 8px">
-            <h3 class="field-label">Live trading (SaaS)</h3>
-            <ul id="liveTradingBullets" class="live-trading-bullets muted small">
-              <li>Turns on broker orders from this app after you confirm below.</li>
-              <li>Each order still needs you to type the ticker in the approve dialog.</li>
-              <li>Nothing is sent until Schwab is linked and you enable here.</li>
-            </ul>
-            <p id="liveTradingStatus" class="muted small live-trading-status-line"></p>
-            <label class="muted"><input id="enableLiveRiskAck" type="checkbox" /> I understand live market orders are
-              risky and not personalized advice.</label>
-            <div class="inline-form compact" style="margin-top: 0.5rem">
-              <label class="field-label" for="enableLiveTypedPhrase">Type ENABLE to confirm</label>
-              <input id="enableLiveTypedPhrase" type="text" autocomplete="off" placeholder="ENABLE" />
-              <button id="enableLiveTradingBtn" type="button" class="btn secondary small">Enable live trading</button>
-            </div>
-            <div class="inline-form compact" style="margin-top: 0.75rem">
-              <label class="muted">
-                <input id="tradingHaltedCheckbox" type="checkbox" />
-                Pause new live orders for this account (approvals blocked until you uncheck and save)
-              </label>
-              <button id="saveTradingHaltBtn" type="button" class="btn secondary small">Save pause setting</button>
-            </div>
-            <div id="twoFaPanel" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
-              <p class="muted small">2FA controls loading...</p>
-            </div>
-            <div id="billingSaasBlock" class="hidden" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(127, 127, 127, 0.25)">
-              <h3 class="field-label">Billing</h3>
-              <p id="billingStatusLine" class="muted small">Loading billing status...</p>
-              <div class="inline-form compact">
-                <button id="billingCheckoutBtn" type="button" class="btn secondary small">Start subscription checkout</button>
-                <button id="billingPortalBtn" type="button" class="btn secondary small">Manage billing portal</button>
-              </div>
-            </div>
-          </div>
           <div id="profilePanel" class="preset-panel" aria-live="polite">
             <div class="report-empty">Loading preset…</div>
           </div>
@@ -900,31 +1004,27 @@
             <pre id="profileRaw" class="code-block"></pre>
           </details>
         </article>
+
+        <details id="settingsAccountPanel" class="card panel-disclosure settings-surface settings-account-disclosure">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Account security</span>
+            <span class="disclosure-hint muted">Two-factor authentication (optional)</span>
+          </summary>
+            <div id="twoFaPanel" style="margin-top: 0.25rem">
+              <p class="muted small">Loading security options…</p>
+            </div>
+            <div id="billingSaasBlock" class="hidden" aria-hidden="true" hidden style="display: none !important">
+              <h3 class="field-label">Billing</h3>
+              <p id="billingStatusLine" class="muted small">Billing is not enabled on this deployment.</p>
+              <div class="inline-form compact">
+                <button id="billingCheckoutBtn" type="button" class="btn secondary small" hidden disabled>Start subscription checkout</button>
+                <button id="billingPortalBtn" type="button" class="btn secondary small" hidden disabled>Manage billing portal</button>
+              </div>
+            </div>
+        </details>
       </section>
 
-      <section class="layout-2 section-advanced">
-        <article id="recoverySection" class="card">
-          <div class="section-title">
-            <h2>Failure Recovery</h2>
-            <small class="muted">Plain-language next steps for auth/data/order errors.</small>
-          </div>
-          <div class="inline-form trade-drawer-launcher">
-            <label class="field-label" for="recoverySource">Source</label>
-            <select id="recoverySource">
-              <option value="schwab_auth">schwab_auth</option>
-              <option value="market_data">market_data</option>
-              <option value="execution">execution</option>
-            </select>
-            <input id="recoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
-            <button id="recoveryBtn" class="btn primary" type="button">Open fix path →</button>
-          </div>
-          <p class="muted small">
-            Recovery mapping shares the slide-in <strong>Trade Drawer</strong> with the decision card.
-          </p>
-        </article>
-      </section>
-
-      <section id="kronosWorkspaceIntro" class="card workspace-intro kronos-surface kronos-workspace-intro" aria-label="Kronos forecast workspace">
+      <section id="kronosWorkspaceIntro" class="card workspace-intro kronos-surface kronos-workspace-intro workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Kronos</p>
           <h2>Forecast the next moves</h2>
@@ -1036,55 +1136,7 @@
         </ul>
       </section>
 
-      <section id="cockpitWorkspaceIntro" class="card workspace-intro cockpit-surface" aria-label="Trading cockpit workspace">
-        <div>
-          <p class="workspace-eyebrow">Cockpit</p>
-          <h2>🛰️ Trading Cockpit</h2>
-          <p class="muted">
-            Market regime, ranked opportunities, portfolio risk, and the execution blotter in one
-            glance view. Every lane shows its data source and freshness; click an opportunity for the
-            decision card and order-intent preview.
-          </p>
-        </div>
-        <div class="inline-form compact">
-          <button class="btn small secondary" id="cockpitReviewBtn" type="button" title="Weekly learning diagnostics and tuning proposals"><span id="cockpitReview">🧠 Review</span></button>
-          <span class="muted" id="cockpitUpdated">—</span>
-          <button class="btn small secondary" id="cockpitRefresh" type="button">Refresh</button>
-        </div>
-      </section>
-
-      <section id="cockpitSection" class="cockpit-surface cockpit-grid" aria-label="Cockpit lanes">
-        <section class="lane" id="laneMarket">
-          <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
-          <div id="cockpitMarketBody" data-async-state="idle"></div>
-        </section>
-
-        <section class="lane" id="lanePortfolio">
-          <h2>Portfolio Risk + Exposure <span class="lane-prov" data-prov="portfolio"></span></h2>
-          <div id="cockpitPortfolioBody" data-async-state="idle"></div>
-        </section>
-
-        <section class="lane" id="laneOpportunities">
-          <h2>Ranked Opportunities <span class="lane-prov" data-prov="opportunities"></span></h2>
-          <div id="cockpitOppChangeStrip" class="change-strip"></div>
-          <div id="cockpitOpportunitiesBody" data-async-state="idle"></div>
-        </section>
-
-        <section class="lane" id="laneBlotter">
-          <h2>Execution Blotter <span class="lane-prov" data-prov="blotter"></span></h2>
-          <div id="cockpitBlotterQualityStrip" class="change-strip"></div>
-          <div id="cockpitBlotterBody" data-async-state="idle"></div>
-        </section>
-      </section>
-
-      <aside class="cockpit-drawer" id="cockpitDrawer" aria-hidden="true">
-        <div class="cockpit-drawer-inner">
-          <span class="cockpit-drawer-close" id="cockpitDrawerClose" role="button" aria-label="Close">✕</span>
-          <div id="cockpitDrawerBody"></div>
-        </div>
-      </aside>
-
-      <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface" aria-label="Diagnostics workspace">
+      <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Diagnostics</p>
           <h2>Health, validation, and readiness</h2>
@@ -1096,6 +1148,48 @@
           <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
         </div>
       </section>
+
+      <section
+        id="systemAlertBanner"
+        class="card system-alert-banner diagnostics-surface action-center hidden"
+        aria-live="assertive"
+        aria-hidden="true"
+      >
+        <div class="action-center-icon" aria-hidden="true"></div>
+        <div class="action-center-body">
+          <strong id="systemAlertBannerTitle">System alert</strong>
+          <p id="systemAlertBannerText" class="muted"></p>
+          <a id="systemAlertBannerLink" class="btn small secondary hidden" href="#healthRibbon">Open health</a>
+        </div>
+      </section>
+
+      <section id="systemSummaryLanding" class="card system-summary-landing diagnostics-surface" aria-label="System at a glance">
+        <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
+        <div class="system-summary-grid">
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Auth</span>
+            <strong id="systemSummaryAuth" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryAuthHint" class="muted">broker connection</small>
+          </div>
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Quotes</span>
+            <strong id="systemSummaryQuotes" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryQuotesHint" class="muted">market data probe</small>
+          </div>
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Validation</span>
+            <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
+          </div>
+        </div>
+        <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
+          <a class="btn small secondary" href="#healthRibbon">Health tiles</a>
+          <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
+          <a class="btn small secondary" href="#systemQualityDiagnostics">Calibration &amp; scoreboard</a>
+        </nav>
+      </section>
+
+      <p id="systemStatusCompact" class="card system-status-compact diagnostics-surface hidden muted" aria-hidden="true" aria-live="polite"></p>
 
       <section
         id="healthRibbon"
@@ -1147,9 +1241,14 @@
         </div>
       </section>
 
+      <details id="systemDecisionPanel" class="card section-advanced panel-disclosure diagnostics-surface system-decision-disclosure">
+        <summary class="panel-disclosure-summary">
+          <span class="ops-disclosure-title">Decision dashboard</span>
+          <span class="disclosure-hint muted">Reliability, promotion readiness, ablation cycle</span>
+        </summary>
       <section
         id="decisionDashboardCard"
-        class="card diagnostics-surface"
+        class="card diagnostics-surface system-decision-nested"
         aria-label="Leadership decision dashboard"
         data-async-state="loading"
       >
@@ -1192,7 +1291,15 @@
         </div>
       </section>
 
-      <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface nav-advanced" aria-label="Diagnostics workflow lanes">
+      <div class="inline-form compact system-ablation-actions">
+        <button id="ablationCycleBtn" class="btn small secondary" type="button">Run ablation cycle</button>
+        <button id="ablationStatusRefreshBtn" class="btn small secondary" type="button">Refresh ablation status</button>
+        <small id="ablationCycleStatus" class="muted">Status: idle</small>
+        <small id="ablationCycleMeta" class="muted">No cycle run yet.</small>
+      </div>
+      </details>
+
+      <section id="diagnosticsWorkflowStrip" class="card diagnostics-workflow-strip section-advanced diagnostics-surface nav-advanced workspace-intro--deprecated hidden" aria-hidden="true">
         <article class="diagnostics-lane">
           <h3>Live health</h3>
           <p class="muted">Check auth, quotes, and error-rate signals first.</p>
@@ -1218,11 +1325,8 @@
           <h3>Ablation cycle</h3>
           <p class="muted">Run parameter ablation + scoring artifacts and track progress.</p>
           <div class="inline-form compact">
-            <button id="ablationCycleBtn" class="btn small secondary" type="button">Run ablation cycle</button>
-            <button id="ablationStatusRefreshBtn" class="btn small secondary" type="button">Refresh status</button>
+            <a class="btn small secondary" href="#systemDecisionPanel">Open decision dashboard</a>
           </div>
-          <small id="ablationCycleStatus" class="muted">Status: idle</small>
-          <small id="ablationCycleMeta" class="muted">No cycle run yet.</small>
         </article>
       </section>
       <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced diagnostics-surface status-details-wrap">
@@ -1330,25 +1434,59 @@
           </details>
         </article>
 
-        <article id="learningSection" class="card">
-          <div class="section-title">
-            <h2>Learning Engine</h2>
-            <small class="muted">Closed-loop analysis: features logged per scan, ML identifies what predicts failure, challenger tests suggested thresholds.</small>
-          </div>
-          <div class="inline-form">
-            <button id="evolveBtn" class="btn secondary" type="button">Run Post-Mortem Analysis</button>
-            <button id="challengerBtn" class="btn secondary" type="button">Run Challenger Scan</button>
-          </div>
-          <div id="learningPanel" class="performance-panel" aria-live="polite">
-            <div class="report-empty">No learning engine results yet. Workflow: execute trades so outcomes are recorded → <em>Run Post-Mortem Analysis</em> (requires persisted outcomes) → <em>Run Challenger Scan</em> (requires post-mortem overrides).</div>
-          </div>
-          <div id="challengerPanel" class="performance-panel" aria-live="polite" style="margin-top:1rem;">
-          </div>
-          <details id="learningRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="learningRaw" class="code-block"></pre>
-          </details>
-        </article>
+      <details id="cockpitMergedPanel" class="card section-advanced panel-disclosure research-cockpit-disclosure">
+        <summary class="panel-disclosure-summary">
+          <span class="ops-disclosure-title">Market context</span>
+          <span class="disclosure-hint muted">Regime, portfolio risk, blotter — with provenance on every lane</span>
+        </summary>
+      <section id="cockpitWorkspaceIntro" class="card workspace-intro cockpit-surface cockpit-merged-intro hidden" aria-hidden="true">
+        <div>
+          <p class="workspace-eyebrow">Cockpit</p>
+          <h2>🛰️ Trading Cockpit</h2>
+          <p class="muted">
+            Market regime, ranked opportunities, portfolio risk, and the execution blotter in one
+            glance view. Every lane shows its data source and freshness; click an opportunity for the
+            decision card and order-intent preview.
+          </p>
+        </div>
+        <div class="inline-form compact">
+          <button class="btn small secondary" id="cockpitReviewBtn" type="button" title="Weekly learning diagnostics and tuning proposals"><span id="cockpitReview">🧠 Review</span></button>
+          <span class="muted" id="cockpitUpdated">—</span>
+          <button class="btn small secondary" id="cockpitRefresh" type="button">Refresh</button>
+        </div>
+      </section>
+
+      <section id="cockpitSection" class="cockpit-surface cockpit-grid section-advanced" aria-label="Market context lanes">
+        <section class="lane" id="laneMarket">
+          <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
+          <div id="cockpitMarketBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="lanePortfolio">
+          <h2>Portfolio Risk + Exposure <span class="lane-prov" data-prov="portfolio"></span></h2>
+          <div id="cockpitPortfolioBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneOpportunities">
+          <h2>Ranked Opportunities <span class="lane-prov" data-prov="opportunities"></span></h2>
+          <div id="cockpitOppChangeStrip" class="change-strip"></div>
+          <div id="cockpitOpportunitiesBody" data-async-state="idle"></div>
+        </section>
+
+        <section class="lane" id="laneBlotter">
+          <h2>Execution Blotter <span class="lane-prov" data-prov="blotter"></span></h2>
+          <div id="cockpitBlotterQualityStrip" class="change-strip"></div>
+          <div id="cockpitBlotterBody" data-async-state="idle"></div>
+        </section>
+      </section>
+
+      <aside class="cockpit-drawer" id="cockpitDrawer" aria-hidden="true">
+        <div class="cockpit-drawer-inner">
+          <span class="cockpit-drawer-close" id="cockpitDrawerClose" role="button" aria-label="Close">✕</span>
+          <div id="cockpitDrawerBody"></div>
+        </div>
+      </aside>
+      </details>
 
         <article id="backtestSection" class="card backtest-hub" data-lazy-api="backtest">
           <div class="section-title">
@@ -1590,9 +1728,13 @@
           </div>
         </article>
       </section>
-
+      <details id="systemQualityDiagnostics" class="card section-advanced panel-disclosure diagnostics-surface system-quality-disclosure">
+        <summary class="panel-disclosure-summary">
+          <span class="ops-disclosure-title">Calibration &amp; plugin quality</span>
+          <span class="disclosure-hint muted">Self-study, shadow scoreboard, trade review loop</span>
+        </summary>
       <section class="section-advanced">
-        <article id="calibrationSection" class="card" data-lazy-api="calibration">
+        <article id="calibrationSection" class="card system-quality-nested" data-lazy-api="calibration">
           <div class="section-title">
             <h2>Calibration and learning</h2>
             <small class="muted">Self-study and hypothesis ledger summaries (when available)</small>
@@ -1607,7 +1749,7 @@
       </section>
 
       <section class="section-advanced">
-        <article id="shadowScoreboardSection" class="card" data-lazy-api="shadowScoreboard">
+        <article id="shadowScoreboardSection" class="card system-quality-nested" data-lazy-api="shadowScoreboard">
           <div class="section-title">
             <h2>Shadow scoreboard</h2>
             <small class="muted">Would-have counters for every shadow-mode plugin (scan + 7-day execution window)</small>
@@ -1622,7 +1764,7 @@
       </section>
 
       <section class="section-advanced">
-        <article id="reviewLoopSection" class="card" data-lazy-api="reviewLoop">
+        <article id="reviewLoopSection" class="card system-quality-nested" data-lazy-api="reviewLoop">
           <div class="section-title">
             <h2>Trade review loop</h2>
             <small class="muted">Weekly false-positive diagnostics, tuning proposals, and recent decision packets</small>
@@ -1636,6 +1778,7 @@
           </div>
         </article>
       </section>
+      </details>
 
       <section class="layout-2">
         <article id="reportSectionCard" class="card">
@@ -1703,8 +1846,8 @@
 
         <article id="secCompareSection" class="card section-advanced">
           <div class="section-title">
-            <h3>Management Execution &amp; Integrity Dashboard</h3>
-            <small class="muted">SEC guidance tracking, execution integrity, and dilution risk map</small>
+            <h3>SEC Filing Compare</h3>
+            <small class="muted">Filing-language diff for thesis validation — guidance tone, risk deltas, and evidence snippets</small>
           </div>
           <div class="sec-compare-controls">
             <div class="sec-compare-grid">
@@ -1741,13 +1884,61 @@
                 <input id="secCompareRuthlessMode" type="checkbox" />
                 Ruthless mode
               </label>
+              <label class="muted" title="Runs DEF 14A + extra filing analyzes (slower)">
+                <input id="secCompareDeepScan" type="checkbox" />
+                Deep proxy scan (slower)
+              </label>
             </div>
 
             <div class="sec-compare-actions">
               <button id="secCompareBtn" class="btn secondary" type="button">Run SEC Compare</button>
               <small id="secCompareProfileStatus" class="muted">Profile source: auto-detect</small>
             </div>
-
+          </div>
+          <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
+            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="" title="Load preset. Shift+click to load and run.">NVDA over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AAPL" data-b="" title="Load preset. Shift+click to load and run.">AAPL over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AMZN" data-b="" title="Load preset. Shift+click to load and run.">AMZN over time</button>
+            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="NVDA" data-b="AMD" title="Load preset. Shift+click to load and run.">NVDA vs AMD (advanced)</button>
+          </div>
+          <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
+          <div id="secCompareFidelityBanner" class="sec-fidelity-top" hidden></div>
+          <div id="secCompareActionRow" class="sec-compare-action-row inline-form compact" hidden>
+            <button id="secCompareOpenDossierBtn" class="btn small secondary" type="button">Open dossier</button>
+            <button id="secCompareOpenDrawerBtn" class="btn small secondary" type="button">Open trade drawer</button>
+          </div>
+          <div id="secCompareFilingResults" class="sec-filing-results">
+            <div id="secCompareHeadline" class="compare-headline"><div class="report-empty">Headline verdict appears here after you run compare.</div></div>
+            <div id="secCompareNarrative" class="compare-narrative"><div class="report-empty">What changed and why it matters will appear here.</div></div>
+            <div id="secCompareVisual" class="report-visual"><div class="report-empty">Side-by-side filing evidence cards will appear here.</div></div>
+          </div>
+          <details id="secCompareDerivedPanel" class="panel-disclosure panel-disclosure--advanced sec-derived-panel">
+            <summary class="panel-disclosure-summary">
+              Derived integrity metrics
+              <span class="disclosure-hint muted">modeled from compare deltas — not audited KPIs</span>
+            </summary>
+            <div id="secCompareChanges" class="compare-changes"><div class="report-empty">PM support context and metric deltas appear here.</div></div>
+            <div id="secCompareDashboard" class="mgmt-dashboard">
+              <section id="secSayDoTimeline" class="mgmt-card compare-headline rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
+                <div class="mgmt-card-title-row">
+                  <h4 class="font-semibold tracking-wide text-slate-100">The Say-Do Timeline</h4>
+                  <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: Last 8Q</span>
+                </div>
+                <div class="report-empty">Run SEC compare to generate management guidance vs realized KPI checkpoints.</div>
+              </section>
+              <section id="secIntegrityScorecard" class="mgmt-card compare-narrative rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
+                <h4 class="font-semibold tracking-wide text-slate-100">The Integrity Scorecard</h4>
+                <div class="report-empty">Integrity pillar scoring will appear here.</div>
+              </section>
+              <section id="secDilutionHeatmap" class="mgmt-card compare-changes rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/10 backdrop-blur-md">
+                <h4 class="font-semibold tracking-wide text-slate-100">Dilution &amp; SBC Heatmap</h4>
+                <div class="report-empty">Dilution pressure and price/earnings performance correlation will appear here.</div>
+              </section>
+              <section id="secRedFlagsPanel" class="mgmt-card compare-narrative rounded-xl border border-rose-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/20 backdrop-blur-md">
+                <h4 class="font-semibold tracking-wide text-slate-100">Ruthless Mode Red Flags</h4>
+                <div class="report-empty">Enable Ruthless Mode to surface filing anomalies and governance alerts.</div>
+              </section>
+            </div>
             <details class="panel-disclosure panel-disclosure--advanced sec-compare-profile-panel">
               <summary class="panel-disclosure-summary">
                 Profile override settings
@@ -1785,53 +1976,9 @@
                 </ul>
               </details>
             </details>
-          </div>
-          <div id="secComparePresetButtons" class="compare-presets" aria-label="Common rivalries">
-            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="NVDA" data-b="">NVDA over time</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AAPL" data-b="">AAPL over time</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_over_time" data-a="AMZN" data-b="">AMZN over time</button>
-            <button class="btn small secondary" type="button" data-mode="ticker_vs_ticker" data-a="NVDA" data-b="AMD">NVDA vs AMD (advanced)</button>
-          </div>
-          <div id="secCompareMeta" class="muted compare-meta">No SEC compare run yet. Pick mode and tickers to start.</div>
-          <div id="secCompareDashboard" class="mgmt-dashboard">
-            <section id="secSayDoTimeline" class="mgmt-card compare-headline rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
-              <div class="mgmt-card-title-row">
-                <h4 class="font-semibold tracking-wide text-slate-100">The Say-Do Timeline</h4>
-                <span id="secTimelineWindow" class="mgmt-badge mono-nums">Window: Last 8Q</span>
-              </div>
-              <div class="report-empty">Run SEC compare to generate management guidance vs realized KPI checkpoints.</div>
-            </section>
-            <section id="secIntegrityScorecard" class="mgmt-card compare-narrative rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-emerald-500/10 backdrop-blur-md">
-              <h4 class="font-semibold tracking-wide text-slate-100">The Integrity Scorecard</h4>
-              <div class="report-empty">Integrity pillar scoring will appear here.</div>
-            </section>
-            <section id="secDilutionHeatmap" class="mgmt-card compare-changes rounded-xl border border-slate-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/10 backdrop-blur-md">
-              <h4 class="font-semibold tracking-wide text-slate-100">Dilution &amp; SBC Heatmap</h4>
-              <div class="report-empty">Dilution pressure and price/earnings performance correlation will appear here.</div>
-            </section>
-            <section id="secRedFlagsPanel" class="mgmt-card compare-narrative rounded-xl border border-rose-500/30 bg-slate-950/55 p-4 shadow-xl shadow-rose-500/20 backdrop-blur-md">
-              <h4 class="font-semibold tracking-wide text-slate-100">Ruthless Mode Red Flags</h4>
-              <div class="report-empty">Enable Ruthless Mode to surface filing anomalies and governance alerts.</div>
-            </section>
-          </div>
-          <details id="secCompareDeepPanel" class="panel-disclosure panel-disclosure--advanced">
-            <summary class="panel-disclosure-summary">
-              Underlying SEC compare narrative &amp; evidence
-              <span class="disclosure-hint muted">expand for full compare output</span>
-            </summary>
-            <div id="secCompareHeadline" class="compare-headline"><div class="report-empty">Headline verdict appears here.</div></div>
-            <div id="secCompareNarrative" class="compare-narrative"><div class="report-empty">Narrative summary will appear here.</div></div>
-            <div id="secCompareChanges" class="compare-changes"><div class="report-empty">Material changes and shared signals will appear here.</div></div>
-            <div id="secCompareVisual" class="report-visual"><div class="report-empty">Side-by-side evidence cards will appear here.</div></div>
           </details>
         </article>
-        <article id="activitySection" class="card">
-          <div class="section-title">
-            <h2>Execution Notes</h2>
-            <small class="muted">Use the bottom drawer for real-time activity.</small>
-          </div>
-          <div class="report-empty">Activity has moved to the collapsible drawer at bottom.</div>
-        </article>
+        <article id="activitySection" class="card hidden" aria-hidden="true"></article>
       </section>
 
       <footer class="site-footer card" role="contentinfo" aria-label="Legal notices">
@@ -1936,6 +2083,7 @@
       <div class="modal-stack">
         <h3>Stage trade for approval</h3>
         <p id="queueScanHeadline" class="muted"></p>
+        <div id="queueScanChecklist" class="queue-scan-checklist-host" aria-live="polite"></div>
         <div class="inline-form compact modal-form-grid">
           <label class="field-label" for="queueScanQty">Quantity</label>
           <input
@@ -1961,13 +2109,14 @@
       <form method="dialog">
         <h3>Website feature guide</h3>
         <p class="muted">
-          This app follows one flow: scan in Operations, validate in Research, verify safety in Diagnostics, and configure controls in Settings.
+          Four workspaces: <strong>Today</strong> (scan → stage → approve), <strong>Research</strong> (validate ideas),
+          <strong>System</strong> (health + calibration), and <strong>Settings</strong> (connectivity + guardrails).
         </p>
         <ul class="muted" style="margin: 0.5rem 0 0.75rem 1rem">
-          <li><strong>Operations:</strong> execute your daily queue.</li>
-          <li><strong>Research:</strong> pressure-test ideas.</li>
-          <li><strong>Diagnostics:</strong> check health and blockers.</li>
-          <li><strong>Settings:</strong> configure account and risk controls.</li>
+          <li><strong>Today:</strong> scan with provenance, review rank/score, stage tradeable setups only.</li>
+          <li><strong>Research:</strong> quick check, backtest, dossier, SEC compare, Kronos forecast.</li>
+          <li><strong>System:</strong> health ribbon, calibration drift, shadow scoreboard.</li>
+          <li><strong>Settings:</strong> Schwab connect, strategy presets, live-trading guardrails.</li>
         </ul>
         <p class="muted">
           For full per-setting behavior, open <strong>Settings -> Full settings logic guide</strong>.

@@ -2,11 +2,12 @@
 """
 OAuth with local callback server - no copy/paste. Browser redirects to us; we capture automatically.
 
-STEP 1: Add callback URL in Schwab Developer Portal for BOTH apps:
+STEP 1: Add callback URL in Schwab Developer Portal for BOTH apps (same URL on each app):
   https://127.0.0.1:8182/
   (My Apps -> your app -> App Details -> Callback URL - add this one)
 
-STEP 2: Run: python run_dual_auth_browser.py
+STEP 2: Stop the local dashboard if it is running on port 8182, then run:
+  python run_dual_auth_browser.py
 
 You'll get a browser security warning (self-signed cert) - click Advanced -> Proceed.
 """
@@ -23,8 +24,8 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 SKILL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL_DIR))
 
-CALLBACK_PORT = 8182
-CALLBACK_URL = f"https://127.0.0.1:{CALLBACK_PORT}/"
+CALLBACK_PORT = int(os.getenv("LOCAL_WEB_PORT", "8182") or "8182")
+CALLBACK_URL = (os.getenv("SCHWAB_CALLBACK_URL") or f"https://127.0.0.1:{CALLBACK_PORT}/").strip()
 
 _captured = {"code": None, "error": None}
 _expected_state: str | None = None

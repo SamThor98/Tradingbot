@@ -159,5 +159,8 @@ export async function quickCheck() {
   const secInput = document.getElementById("secCompareTickerA");
   if (secInput && !secInput.value.trim()) secInput.value = ticker;
   renderTickerChart(ticker);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("research_summary_refresh"));
+  }
   logEvent({ kind: "system", severity: "info", message: `Check complete for ${ticker}.` });
 }

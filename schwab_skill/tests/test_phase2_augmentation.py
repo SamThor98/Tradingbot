@@ -189,6 +189,12 @@ def _fat_trade(**overrides) -> dict:
         "exec_quality_effective_slippage_bps": 5.0,
         "exit_manager_partial_done": True,
         "ohlc_path": [{"date": "2017-01-06", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1e6}],
+        "rank_score": 72.5,
+        "composite_score": 68.0,
+        "pts_52w": 22.0,
+        "pts_sma": 8.0,
+        "pts_volume": 12.0,
+        "pts_mirofish": 3.0,
     }
     base.update(overrides)
     return base
@@ -256,6 +262,8 @@ AUGMENTED_REQUIRED_KEYS = LEGACY_KEYS | {
     "exec_quality_regime",
     "exec_quality_effective_slippage_bps",
     "exit_manager_partial_done",
+    "rank_score",
+    "pts_volume",
 }
 
 

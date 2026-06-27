@@ -30,20 +30,19 @@ export function setupKeyboardShortcuts({
       return;
     }
 
-    if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4", "5", "6"].includes(e.key)) {
+    if ((e.ctrlKey || e.metaKey) && ["1", "2", "3", "4"].includes(e.key)) {
       e.preventDefault();
       const screenMap = {
         "1": "operations",
         "2": "research",
-        "3": "kronos",
-        "4": "diagnostics",
-        "5": "settings",
-        "6": "cockpit",
+        "3": "diagnostics",
+        "4": "settings",
       };
       const mode = screenMap[e.key];
       if (mode) {
         applyScreenMode?.(mode, { updateUrl: true });
-        const pretty = mode.charAt(0).toUpperCase() + mode.slice(1);
+        const pretty =
+          mode === "operations" ? "Today" : mode === "diagnostics" ? "System" : mode.charAt(0).toUpperCase() + mode.slice(1);
         showToast?.(`Switched to ${pretty}`, "info", 1800);
       }
       return;

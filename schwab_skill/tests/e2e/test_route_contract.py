@@ -33,7 +33,13 @@ from playwright.sync_api import Page, expect  # noqa: E402
 
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
-SCREEN_MODES = ["operations", "research", "kronos", "diagnostics", "settings", "cockpit"]
+SCREEN_MODES = ["operations", "research", "diagnostics", "settings"]
+
+# Legacy ?screen= aliases normalize to a topbar tab (see SCREEN_ALIASES in app.js).
+SCREEN_MODE_ALIASES = [
+    ("kronos", "research"),
+    ("cockpit", "research"),
+]
 
 # alias -> canonical DOM id (must stay in sync with SECTION_ALIASES in
 # modules/router.js; the static test asserts the full map, this suite
@@ -79,6 +85,13 @@ def test_screen_param_activates_tab(page: Page, errors: list[str], mode: str) ->
     assert errors == [], f"uncaught JS errors on ?screen={mode}: {errors}"
 
 
+@pytest.mark.parametrize(("alias", "expected_tab"), SCREEN_MODE_ALIASES)
+def test_screen_alias_activates_normalized_tab(page: Page, alias: str, expected_tab: str) -> None:
+    page.goto(f"{BASE_URL}/?screen={alias}")
+    tab = page.locator(f'.screen-switch-btn[data-screen-mode="{expected_tab}"]')
+    expect(tab).to_have_attribute("aria-selected", "true")
+
+
 def test_invalid_screen_falls_back_to_operations(page: Page) -> None:
     page.goto(f"{BASE_URL}/?screen=not-a-real-screen")
     tab = page.locator('.screen-switch-btn[data-screen-mode="operations"]')
@@ -97,7 +110,7 @@ def test_section_alias_rewrites_to_hash(page: Page, alias: str, dom_id: str) -> 
 
 
 def test_hash_change_reopens_collapsed_details(page: Page) -> None:
-    page.goto(f"{BASE_URL}/?screen=operations")
+    page.goto(f"{BASE_URL}/?screen=research")
     target = page.locator("#sectorsSection")
     expect(target).to_have_count(1)
     # Force-close the disclosure, then navigate to it by hash: the router's
@@ -148,10 +161,9 @@ def test_simple_redirects_to_display_preset(page: Page) -> None:
 
 
 def test_cockpit_redirects_to_screen(page: Page) -> None:
-    """/cockpit folded into the dashboard 2026-06-10: it 302s to the
-    cockpit screen of the main dashboard."""
+    """/cockpit folded into Research portfolio context on the main dashboard."""
     page.goto(f"{BASE_URL}/cockpit")
-    tab = page.locator('.screen-switch-btn[data-screen-mode="cockpit"]')
+    tab = page.locator('.screen-switch-btn[data-screen-mode="research"]')
     expect(tab).to_have_attribute("aria-selected", "true")
     expect(page.locator("#cockpitSection")).to_be_visible()
     expect(page.locator("#scanSection")).to_be_hidden()

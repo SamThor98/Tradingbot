@@ -164,7 +164,7 @@ function renderOpportunities(body, data) {
       return `<div class="opp-row" data-ticker="${safeText(c.ticker)}">
         <span class="tk">${safeText(c.ticker)}</span>
         <span class="muted small">${safeText(c.setup?.strategy_top_live || "")} ${c.setup?.breakout_confirmed ? "· breakout" : ""}</span>
-        <span class="rank">${formatDecimal(c.rank?.rank_score, 1, "—")}</span>
+        <span class="rank">${formatDecimal(c.rank?.composite_score ?? c.rank?.rank_score_v2 ?? c.rank?.rank_score, 1, "—")}</span>
         ${badge}
       </div>`;
     })
@@ -230,7 +230,8 @@ async function openDrawer(ticker) {
   bodyEl.innerHTML = `
     <h3>${safeText(ticker)} <span class="muted small">decision card</span></h3>
     ${cardOut.ok ? "" : `<div class="pill bad">${safeText(cardOut.user_message || cardOut.error)}</div>`}
-    <div class="kv"><span>Composite / Rank</span><span>${formatDecimal(conf.signal_score, 1, "—")} / ${formatDecimal(conf.rank_score, 1, "—")}</span></div>
+    <div class="kv"><span>Signal / Composite</span><span>${formatDecimal(conf.signal_score, 1, "—")} / ${formatDecimal(conf.composite_score ?? conf.rank_score, 1, "—")}</span></div>
+    ${conf.rank_score_v2 != null ? `<div class="kv muted small"><span>Rank v2 (diag)</span><span>${formatDecimal(conf.rank_score_v2, 1, "—")}</span></div>` : ""}
     <div class="kv"><span>Confidence</span><span>${safeText(conf.bucket || "—")}</span></div>
     <div class="kv"><span>Entry zone</span><span>${safeText(card.entry_zone?.low ?? "—")} – ${safeText(card.entry_zone?.high ?? "—")}</span></div>
     <div class="kv"><span>Stop / invalidation</span><span>${formatDecimal(card.stop_invalidation, 2, "—")}</span></div>

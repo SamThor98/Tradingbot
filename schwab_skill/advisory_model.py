@@ -59,11 +59,16 @@ INTERACTION_FEATURE_COLUMNS: list[str] = [
 LABEL_COLUMNS: list[str] = [
     "y_up_5d",
     "y_up_10d",
+    "y_up_20d",
+    "y_up_40d",
     "y_return_bucket_10d",
     "y_drawdown_gt5_10d",
     "ret_5d_fwd",
     "ret_10d_fwd",
+    "ret_20d_fwd",
+    "ret_40d_fwd",
     "drawdown_10d",
+    "drawdown_40d",
 ]
 
 _MODEL_CACHE: dict[str, Any] = {"path": None, "artifact": None}
@@ -249,17 +254,23 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _future_labels(df: pd.DataFrame, idx: int) -> dict[str, Any] | None:
-    if idx + 10 >= len(df):
+    if idx + 40 >= len(df):
         return None
     close_t = _safe_float(df["close"].iloc[idx], 0.0)
     close_5 = _safe_float(df["close"].iloc[idx + 5], close_t)
     close_10 = _safe_float(df["close"].iloc[idx + 10], close_t)
+    close_20 = _safe_float(df["close"].iloc[idx + 20], close_t)
+    close_40 = _safe_float(df["close"].iloc[idx + 40], close_t)
     if close_t <= 0:
         return None
     ret_5 = (close_5 - close_t) / close_t
     ret_10 = (close_10 - close_t) / close_t
-    lows = df["close"].iloc[idx + 1 : idx + 11].astype(float)
-    dd = float((lows.min() - close_t) / close_t) if len(lows) else 0.0
+    ret_20 = (close_20 - close_t) / close_t
+    ret_40 = (close_40 - close_t) / close_t
+    lows_10 = df["close"].iloc[idx + 1 : idx + 11].astype(float)
+    lows_40 = df["close"].iloc[idx + 1 : idx + 41].astype(float)
+    dd_10 = float((lows_10.min() - close_t) / close_t) if len(lows_10) else 0.0
+    dd_40 = float((lows_40.min() - close_t) / close_t) if len(lows_40) else 0.0
     bucket = 0
     if ret_10 <= -0.02:
         bucket = -1
@@ -268,11 +279,16 @@ def _future_labels(df: pd.DataFrame, idx: int) -> dict[str, Any] | None:
     return {
         "y_up_5d": int(ret_5 > 0),
         "y_up_10d": int(ret_10 > 0),
+        "y_up_20d": int(ret_20 > 0),
+        "y_up_40d": int(ret_40 > 0),
         "y_return_bucket_10d": int(bucket),
-        "y_drawdown_gt5_10d": int(dd <= -0.05),
+        "y_drawdown_gt5_10d": int(dd_10 <= -0.05),
         "ret_5d_fwd": float(ret_5),
         "ret_10d_fwd": float(ret_10),
-        "drawdown_10d": float(dd),
+        "ret_20d_fwd": float(ret_20),
+        "ret_40d_fwd": float(ret_40),
+        "drawdown_10d": float(dd_10),
+        "drawdown_40d": float(dd_40),
     }
 
 
@@ -282,6 +298,9 @@ def build_advisory_dataset(
     start_date: str | None = None,
     end_date: str | None = None,
     max_tickers: int | None = None,
+    *,
+    include_mirofish: bool = False,
+    mirofish_max_rows: int | None = None,
 ) -> pd.DataFrame:
     """
     Build canonical advisory dataset.
@@ -314,6 +333,7 @@ def build_advisory_dataset(
 
     breakout_enabled = bool(get_breakout_confirm_enabled(skill_dir))
     rows: list[dict[str, Any]] = []
+    mirofish_rows_built = 0
 
     for ticker in universe:
         df_raw = _fetch_history(ticker, start, end)
@@ -327,7 +347,7 @@ def build_advisory_dataset(
         etf_df = sector_perf.get(sector_etf) if sector_etf else None
         spy_df = sector_perf.get("SPY")
 
-        for i in range(200, len(df) - 10):
+        for i in range(200, len(df) - 40):
             window = df.iloc[: i + 1].copy()
             if not is_stage_2(window, skill_dir):
                 continue
@@ -340,7 +360,30 @@ def build_advisory_dataset(
             if labels is None:
                 continue
 
-            components = compute_signal_components(window)
+            miro_result: dict[str, Any] | None = None
+            miro_conviction: float | None = None
+            if include_mirofish and (
+                mirofish_max_rows is None or mirofish_rows_built < int(mirofish_max_rows)
+            ):
+                try:
+                    from core.mirofish_entry import run_mirofish_for_entry
+
+                    miro_result = run_mirofish_for_entry(ticker, window, skill_dir=skill_dir)
+                    if miro_result and miro_result.get("conviction_score") is not None:
+                        miro_conviction = float(miro_result["conviction_score"])
+                        mirofish_rows_built += 1
+                        cap = int(mirofish_max_rows) if mirofish_max_rows else 0
+                        if cap and (mirofish_rows_built == 1 or mirofish_rows_built % 10 == 0 or mirofish_rows_built >= cap):
+                            print(f"MiroFish progress: {mirofish_rows_built}/{cap} rows")
+                except Exception as e:
+                    LOG.debug("Audit MiroFish skipped for %s: %s", ticker, e)
+
+            components = compute_signal_components(
+                window,
+                mirofish_conviction=miro_conviction,
+                mirofish_result=miro_result,
+                skill_dir=skill_dir,
+            )
             score = _safe_float(components.get("score"), 0.0)
             sector_rel = _sector_relative_return(df, i, etf_df, spy_df)
             feat = _extract_row_features(
@@ -349,7 +392,7 @@ def build_advisory_dataset(
                 components=components,
                 sector_rel_21d=sector_rel,
                 sec_risk_tag=None,
-                miro_result=None,
+                miro_result=miro_result,
             )
             entry_date = pd.Timestamp(df.index[i]).isoformat()
             rows.append(
@@ -360,6 +403,11 @@ def build_advisory_dataset(
                     "breakout_confirmed": int(
                         i < 1 or (_safe_float(df["close"].iloc[i]) >= _safe_float(df["high"].iloc[i - 1]))
                     ),
+                    "mirofish_included": int(miro_conviction is not None),
+                    "pts_52w": components.get("pts_52w"),
+                    "pts_sma": components.get("pts_sma"),
+                    "pts_volume": components.get("pts_volume"),
+                    "pts_mirofish": components.get("pts_mirofish"),
                     **feat,
                     **labels,
                 }

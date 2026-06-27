@@ -114,6 +114,20 @@ def _steps_for_profile(
             None,
         ),
         (
+            "validate_replay_exit_guardrail",
+            [py, str(SCRIPTS_DIR / "validate_replay_exit_guardrail.py")],
+            None,
+        ),
+        (
+            "validate_scoring_metrics",
+            [
+                py,
+                str(SCRIPTS_DIR / "validate_scoring_metrics.py"),
+                "--skip-if-missing",
+            ],
+            None,
+        ),
+        (
             "validate_regime_counterfactual_guardrail",
             [py, str(SCRIPTS_DIR / "validate_regime_counterfactual_guardrail.py")],
             None,

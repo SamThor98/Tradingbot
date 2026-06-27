@@ -53,12 +53,30 @@ export function getCalibratedPUp(row = {}) {
 export function getReliabilityScore(row = {}) {
   const direct = optionalNum(row.reliability_score);
   if (direct !== null) return direct;
-  const advisory = row.advisory || {};
-  const bucket = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
-  if (bucket === "HIGH") return 82;
-  if (bucket === "MEDIUM") return 64;
-  if (bucket === "LOW") return 46;
-  return 35;
+  return null;
+}
+
+/** Primary sort key — defaults to signal_score until composite beats it on trades. */
+export function getRankScore(row = {}) {
+  return (
+    optionalNum(row.sort_score ?? row.signal_score ?? row.composite_score ?? row.rank_score_v2 ?? row.rank_score)
+    ?? getCompositeScore(row)
+  );
+}
+
+/** Shadow/diagnostic rank v2 (component IC blend). */
+export function getDiagnosticRankV2(row = {}) {
+  return optionalNum(row.rank_score_v2);
+}
+
+/** Legacy composite-based rank (v1); for comparison only. */
+export function getLegacyRankScore(row = {}) {
+  return optionalNum(row.rank_score_v1 ?? row.rank_score);
+}
+
+/** True when reliability was inferred from advisory bucket (legacy payloads). */
+export function isReliabilityEstimated(row = {}) {
+  return optionalNum(row.reliability_score) === null;
 }
 
 export function getEdgeScore(row = {}) {

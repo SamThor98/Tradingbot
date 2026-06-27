@@ -2,6 +2,22 @@
 
 This file defines how autonomous coding agents should operate in this repository.
 
+## Cursor rules and prompts
+
+Strategic and tactical guidance is split on purpose:
+
+| Artifact | Role |
+|----------|------|
+| `.cursor/rules/tradingbot-orchestrator.mdc` | **Strategy** — north star, P0–P3 priorities, safety gates, session-start ritual (always applied) |
+| `.cursor/rules/project-conventions.mdc` | **Architecture & style** — scanner pipeline, config, plugins, testing |
+| `.cursor/rules/webapp-frontend.mdc` | **Dashboard JS/CSS** — state, `api` object, module layout |
+| `.cursor/rules/signal-edge-priority.mdc` | **P0 signal edge** — backtest/scanner/scoring; auto-applies on those file globs |
+| `.cursor/rules/validation-release.mdc` | **Release gate** — validate_all, promotion ledger, ship/no-ship; auto-applies on `scripts/` |
+| `agent_mode_prompt.md` | **Operator capabilities** — module map and “when user says X, do Y” for live research/trading |
+| `docs/KRONOS_FEATURE_PROMPT.md` | **Feature spec** — Kronos advisory forecast isolation and rollout |
+
+See `wiki/governance-source-of-truth.md` for precedence when docs conflict.
+
 ## Repository Scope
 
 - Application/runtime code lives under `schwab_skill/`.

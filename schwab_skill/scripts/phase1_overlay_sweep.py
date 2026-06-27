@@ -77,6 +77,20 @@ def _build_configs() -> list[SweepConfig]:
         },
     ))
     configs.append(SweepConfig(
+        config_id="control_legacy_exits",
+        description="Legacy exit sim: hold=20, no trail grace, no soft-exit deferral.",
+        env={
+            "META_POLICY_MODE": "off",
+            "UNCERTAINTY_MODE": "off",
+            "EVENT_RISK_MODE": "off",
+            "EXIT_MANAGER_MODE": "off",
+            "EXEC_QUALITY_MODE": "off",
+            "BACKTEST_HOLD_DAYS": "20",
+            "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": "0",
+            "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "false",
+        },
+    ))
+    configs.append(SweepConfig(
         config_id="control_prod_default",
         description="event_risk=live, exec_quality=live (current production defaults).",
         env={
@@ -113,6 +127,29 @@ def _build_configs() -> list[SweepConfig]:
             "EXEC_QUALITY_MODE": "live",
         },
     ))
+    # Exit grace: defer trailing/soft exits so winners can reach the 21-40d edge
+    # bucket (see phase1_trade_diagnostics hold-bucket decomposition).
+    _exit_grace_base = {
+        "META_POLICY_MODE": "off",
+        "UNCERTAINTY_MODE": "off",
+        "EVENT_RISK_MODE": "off",
+        "EXIT_MANAGER_MODE": "off",
+        "EXEC_QUALITY_MODE": "off",
+        "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "true",
+    }
+    for min_trail, hold in ((15, 40), (10, 40), (15, 30)):
+        configs.append(SweepConfig(
+            config_id=f"exit_grace_t{min_trail}_h{hold}",
+            description=(
+                f"Exit grace: defer soft/trailing exits until day {min_trail}, "
+                f"max hold {hold} days (no exit-manager overlay)."
+            ),
+            env={
+                **_exit_grace_base,
+                "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": str(min_trail),
+                "BACKTEST_HOLD_DAYS": str(hold),
+            },
+        ))
     # Exit manager 3x3 sweep: R-mult x max-hold.
     for r_mult in (1.0, 1.5, 2.0):
         for hold in (15, 25, 40):
@@ -400,7 +437,14 @@ def _write_progress(state: dict[str, Any], path: Path | None = None) -> None:
         pass
 
 
-def _run_one(cfg: SweepConfig, max_workers: int, chunk_size: int, ticker_limit: int) -> int:
+def _run_one(
+    cfg: SweepConfig,
+    max_workers: int,
+    chunk_size: int,
+    ticker_limit: int,
+    *,
+    no_resume: bool = False,
+) -> int:
     env_path = _write_env_overrides_file(cfg)
     cmd = [
         sys.executable,
@@ -412,6 +456,8 @@ def _run_one(cfg: SweepConfig, max_workers: int, chunk_size: int, ticker_limit: 
     ]
     if ticker_limit and ticker_limit > 0:
         cmd += ["--ticker-limit", str(ticker_limit)]
+    if no_resume:
+        cmd += ["--no-resume"]
     print(f"[phase1] launching {cfg.config_id}: {cfg.description}")
     proc = subprocess.run(cmd, cwd=str(SKILL_DIR))
     return int(proc.returncode)
@@ -470,7 +516,14 @@ def main() -> int:
         help="Override the progress JSON path. Use a unique value per parallel orchestrator "
              "(e.g. phase1_progress_a.json, phase1_progress_b.json) to avoid write races.",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore existing multi-era progress/chunks for each config (required for ticker-limit smoke).",
+    )
     args = parser.parse_args()
+
+    no_resume = bool(args.no_resume or (args.ticker_limit and args.ticker_limit > 0))
 
     progress_path: Path | None = (
         Path(args.progress_path) if args.progress_path else DEFAULT_PROGRESS_PATH
@@ -498,9 +551,11 @@ def main() -> int:
     def _order(c: SweepConfig) -> tuple[int, str]:
         if c.config_id == "control_legacy":
             return (0, c.config_id)
-        if c.config_id == "control_prod_default":
+        if c.config_id == "control_legacy_exits":
             return (1, c.config_id)
-        return (2, c.config_id)
+        if c.config_id == "control_prod_default":
+            return (2, c.config_id)
+        return (3, c.config_id)
     configs.sort(key=_order)
 
     for cfg in configs:
@@ -511,7 +566,13 @@ def main() -> int:
             continue
         state["currently_running"] = cfg.config_id
         _write_progress(state, progress_path)
-        rc = _run_one(cfg, max_workers=args.max_workers, chunk_size=args.chunk_size, ticker_limit=args.ticker_limit)
+        rc = _run_one(
+            cfg,
+            max_workers=args.max_workers,
+            chunk_size=args.chunk_size,
+            ticker_limit=args.ticker_limit,
+            no_resume=no_resume,
+        )
         if rc != 0 and not _artifact_is_complete(cfg.config_id):
             state["failed"].append({"config_id": cfg.config_id, "rc": rc})
             print(f"[phase1] config {cfg.config_id} failed with rc={rc}")

@@ -121,6 +121,18 @@ function renderAuthBootstrapSection(portalConfig) {
   const supabaseAnon = cfg?.supabase?.anon_key || "";
   const portal = portalConfig && typeof portalConfig === "object" ? portalConfig : {};
 
+  const localConnectHint =
+    !cfg.saas_mode && portal.account_callback_url
+      ? `<div class="card" style="margin-top:10px; border-color: rgba(251, 191, 36, 0.45);">
+          <p style="margin:0 0 6px;"><strong>Local Schwab setup</strong></p>
+          <p class="muted" style="margin:0 0 8px;">
+            Open this dashboard at <strong>${esc(window?.location?.origin || "https://127.0.0.1:8000")}</strong>
+            (HTTPS, not HTTP). Register the callback URL below on <em>both</em> Schwab Developer Portal apps before clicking Connect.
+          </p>
+          <p class="muted" style="margin:0;">Callback URL for account and market apps: <strong>${esc(portal.account_callback_url || portal.market_callback_url || "")}</strong></p>
+        </div>`
+      : "";
+
   const keyRows = [
     keyRowHtml("Supabase URL", supabaseUrl),
     keyRowHtml("Supabase anon key", supabaseAnon),
@@ -140,6 +152,7 @@ function renderAuthBootstrapSection(portalConfig) {
       Missing auth setup is listed first. Available keys/URLs are auto-populated below so you can copy them directly.
     </p>
     ${missingList}
+    ${localConnectHint}
     <details class="onboarding-help" style="margin-top:10px;">
       <summary>Auto-populated keys and OAuth URLs</summary>
       <div class="onboarding-help-body">
@@ -151,18 +164,32 @@ function renderAuthBootstrapSection(portalConfig) {
 
 function buildPortalConfigFallback() {
   const origin = window?.location?.origin || "";
-  // Both the local server (main.py) and the SaaS tenant routes expose
-  // /api/oauth/schwab/start and /api/oauth/schwab/market/start; the older
-  // "authorize-start" paths never existed on either backend.
-  const accountAuthorizeStartPath = "/api/oauth/schwab/start";
-  const marketAuthorizeStartPath = "/api/oauth/schwab/market/start";
+  const cfg = state.publicConfig || {};
+  const localRootCallback = origin ? `${origin}/` : "";
+  const accountCallback =
+    cfg.schwab_account_callback_url ||
+    (cfg.saas_mode ? (origin ? `${origin}/api/oauth/schwab/callback` : "") : localRootCallback);
+  const marketCallback =
+    cfg.schwab_market_callback_url ||
+    (cfg.saas_mode
+      ? (origin ? `${origin}/api/oauth/schwab/market/callback` : "")
+      : localRootCallback);
   return {
     frontend_return_url: origin ? `${origin}/?section=connect` : "",
-    account_callback_url: origin ? `${origin}/api/oauth/schwab/callback` : "",
-    market_callback_url: origin ? `${origin}/api/oauth/schwab/market/callback` : "",
-    account_authorize_start_url: origin ? `${origin}${accountAuthorizeStartPath}` : "",
-    market_authorize_start_url: origin ? `${origin}${marketAuthorizeStartPath}` : "",
+    account_callback_url: accountCallback,
+    market_callback_url: marketCallback,
+    account_authorize_start_url: origin ? `${origin}/api/oauth/schwab/start` : "",
+    market_authorize_start_url: origin ? `${origin}/api/oauth/schwab/market/start` : "",
   };
+}
+
+function schwabAuthorizeStartUrl(kind, portalConfig) {
+  const portal = portalConfig && typeof portalConfig === "object" ? portalConfig : {};
+  const key = kind === "market" ? "market_authorize_start_url" : "account_authorize_start_url";
+  const fromPortal = String(portal[key] || "").trim();
+  if (fromPortal) return fromPortal;
+  const path = kind === "market" ? "/api/oauth/schwab/market/start" : "/api/oauth/schwab/start";
+  return `${window.location.origin}${path}`;
 }
 
 function wireOnboardingCopyButtons(rootEl) {
@@ -504,6 +531,11 @@ function wireInlineAuthUi() {
 }
 
 async function ensureSessionForSchwabConnect() {
+  // Local single-user installs authenticate Schwab OAuth via API key / loopback.
+  if (!state.publicConfig?.saas_mode) {
+    return true;
+  }
+
   if (await ensureCookieAuthSession()) {
     await renderConnectAuthStatus();
     return true;
@@ -564,24 +596,7 @@ export async function triggerSchwabAccountOAuth() {
     );
     return;
   }
-  try {
-    // API-first uses Bearer auth and works even if the cookie bridge needs a
-    // refresh; this keeps "verify email" effectively one-time per session.
-    const out = await api.get("/api/oauth/schwab/authorize-url");
-    if (!out.ok || !out.data?.url) {
-      _flashOAuthError(
-        "Could not start Schwab account OAuth",
-        out.error || "The /api/oauth/schwab/authorize-url request failed. Check server logs.",
-      );
-      return;
-    }
-    window.location.href = out.data.url;
-  } catch (err) {
-    _flashOAuthError(
-      "Could not start Schwab account OAuth",
-      `OAuth start failed: ${err?.message || err || "unknown error"}`,
-    );
-  }
+  window.location.href = schwabAuthorizeStartUrl("account");
 }
 
 export async function triggerSchwabMarketOAuth() {
@@ -593,24 +608,7 @@ export async function triggerSchwabMarketOAuth() {
     );
     return;
   }
-  try {
-    // API-first uses Bearer auth and works even if the cookie bridge needs a
-    // refresh; this keeps "verify email" effectively one-time per session.
-    const out = await api.get("/api/oauth/schwab/market/authorize-url");
-    if (!out.ok || !out.data?.url) {
-      _flashOAuthError(
-        "Could not start Schwab market OAuth",
-        out.error || "The /api/oauth/schwab/market/authorize-url request failed. Check server logs.",
-      );
-      return;
-    }
-    window.location.href = out.data.url;
-  } catch (err) {
-    _flashOAuthError(
-      "Could not start Schwab market OAuth",
-      `OAuth start failed: ${err?.message || err || "unknown error"}`,
-    );
-  }
+  window.location.href = schwabAuthorizeStartUrl("market");
 }
 
 export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {

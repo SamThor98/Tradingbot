@@ -357,7 +357,9 @@ def simulate_exit_with_manager(
     * ``live`` — returns the multi-leg result.
     """
     mode = _normalise_mode(mode)
-    legacy_exit = _legacy_simulate_exit(df, entry_idx, hold_days_default, stop_pct)
+    legacy_exit = _legacy_simulate_exit(
+        df, entry_idx, hold_days_default, stop_pct, skill_dir=skill_dir
+    )
     if mode == "off":
         return legacy_exit[0], legacy_exit[1], legacy_exit[2], {"mode": "off"}
 
@@ -386,21 +388,25 @@ def simulate_exit_with_manager(
 
 
 def _legacy_simulate_exit(
-    df: pd.DataFrame, entry_idx: int, hold_days: int, stop_pct: float
+    df: pd.DataFrame,
+    entry_idx: int,
+    hold_days: int,
+    stop_pct: float,
+    *,
+    skill_dir: Path | None = None,
 ) -> tuple[float, pd.Timestamp, str]:
     """Mirror of ``backtest._simulate_exit`` so the overlay can produce a true
     no-op when ``mode == "off"`` even from outside the backtest module.
     """
-    entry_price = float(df["close"].iloc[entry_idx])
-    highest_close = entry_price
-    last_idx = min(entry_idx + hold_days, len(df) - 1)
-    for j in range(entry_idx + 1, last_idx + 1):
-        px = float(df["close"].iloc[j])
-        highest_close = max(highest_close, px)
-        trail_stop = highest_close * (1.0 - stop_pct)
-        if px <= trail_stop:
-            return px, df.index[j], "trailing_stop"
-    return float(df["close"].iloc[last_idx]), df.index[last_idx], "time_exit"
+    from backtest import _simulate_exit
+
+    return _simulate_exit(
+        df,
+        entry_idx,
+        hold_days,
+        stop_pct,
+        skill_dir=skill_dir or Path(__file__).resolve().parent,
+    )
 
 
 def _managed_simulate_exit(

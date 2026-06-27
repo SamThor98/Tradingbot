@@ -456,6 +456,21 @@ class TestHealthAndStatus:
         assert data["data"]["scan_transport"] == "local_thread"
         assert data["data"]["ui_contract_version"] == "2026-04-webapp-stabilization"
         assert "api_key_value" not in data["data"]
+        assert data["data"]["supabase"] is None
+
+    def test_public_config_exposes_supabase_only_when_opted_in(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_ANON_KEY", "anon-test-key")
+        monkeypatch.setenv("WEB_ENABLE_SUPABASE_SIGNIN", "1")
+        resp = client.get("/api/public-config")
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["supabase"] == {
+            "url": "https://example.supabase.co",
+            "anon_key": "anon-test-key",
+        }
 
     def test_runtime_contract(self, client: TestClient):
         resp = client.get("/api/runtime-contract")
@@ -477,7 +492,7 @@ class TestHealthAndStatus:
         # /cockpit folded into the dashboard as a screen.
         cockpit_resp = client.get("/cockpit", follow_redirects=False)
         assert cockpit_resp.status_code == 302
-        assert cockpit_resp.headers.get("location") == "/?screen=cockpit"
+        assert cockpit_resp.headers.get("location") == "/?screen=research#cockpitSection"
         login_resp = client.get("/login", follow_redirects=False)
         assert login_resp.status_code == 302
         assert login_resp.headers.get("location") == "/?section=connect"

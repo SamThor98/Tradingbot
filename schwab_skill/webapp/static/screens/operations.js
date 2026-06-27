@@ -6,6 +6,8 @@
  * to the previous inline wireEvents/maybePrimeScreenData code.
  */
 
+import { isScanSignalStageable } from "../modules/signalProvenance.js";
+
 export function createOperationsController(ctx) {
   const {
     bindEvent,
@@ -28,6 +30,7 @@ export function createOperationsController(ctx) {
     getScanDetailSignal,
     approveTradeById,
     syncApproveDialogGuardrails,
+    openResearchForTicker,
   } = ctx;
 
   function init() {
@@ -38,14 +41,20 @@ export function createOperationsController(ctx) {
       const sig = getScanDetailSignal();
       if (!sig) return;
       const normalized = normalizeScanSignal(sig);
-      const status = safeText(normalized._filter_status || "kept").toLowerCase();
-      if (status !== "kept") return;
+      if (!isScanSignalStageable(normalized)) return;
       openQueueScanDialog(normalized);
+    });
+    document.getElementById("scanDetailResearchBtn")?.addEventListener("click", () => {
+      const sig = getScanDetailSignal();
+      const ticker = safeText(sig?.ticker || sig?.symbol || "");
+      if (!ticker) return;
+      openResearchForTicker(ticker);
     });
     document.getElementById("queueScanDialog")?.addEventListener("click", (e) => {
       if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
     });
     bindEvent("scanBtn", "click", runScan);
+    document.getElementById("todaySummaryScanBtn")?.addEventListener("click", runScan);
     document.getElementById("scanModeSelect")?.addEventListener("change", () => {
       state.scanRowsExpanded = false;
       updateScanModeHelperText();
@@ -142,7 +151,7 @@ export function createOperationsController(ctx) {
   }
 
   function prime() {
-    // Sectors/movers are collapsed disclosures that load on first expand.
+    void ctx.refreshScanDeltas?.();
   }
 
   return { id: "operations", init, prime };

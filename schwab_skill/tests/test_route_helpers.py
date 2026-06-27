@@ -153,6 +153,22 @@ def test_resolve_schwab_redirect_uri_overrides_legacy_loopback_callback(monkeypa
     assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://dash.example.com/api/oauth/schwab/callback"
 
 
+def test_resolve_schwab_redirect_uri_honors_root_loopback_callback_for_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182/")
+    req = _make_request(scheme="https", netloc="127.0.0.1:8182")
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://127.0.0.1:8182/"
+
+
+def test_resolve_schwab_redirect_uri_remaps_loopback_port_to_active_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182/")
+    req = _make_request(scheme="https", netloc="127.0.0.1:8000")
+    assert rh.resolve_schwab_redirect_uri(req, market=False) == "https://127.0.0.1:8000/"
+
+
 def test_resolve_schwab_redirect_uri_prefers_configured_when_path_matches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "SCHWAB_CALLBACK_URL",

@@ -30,12 +30,17 @@ from config import (  # noqa: E402
     get_exit_max_hold_days,
     get_exit_partial_tp_fraction,
     get_exit_partial_tp_r_mult,
+    get_rank_score_v2_mode,
+    get_rank_v2_mirofish_weight,
+    get_rank_v2_signal_weight,
+    get_rank_v2_volume_weight,
     get_regime_v2_entry_min_score,
     get_regime_v2_min_confidence,
     get_regime_v2_mode,
     get_regime_v2_size_mult_high,
     get_regime_v2_size_mult_low,
     get_regime_v2_size_mult_med,
+    get_score_pts_sma_multiplier,
 )
 from env_overrides import temporary_env  # noqa: E402
 
@@ -45,6 +50,7 @@ MODE_GETTERS = {
     "EVENT_RISK_MODE": get_event_risk_mode,
     "CORRELATION_GUARD_MODE": get_correlation_guard_mode,
     "REGIME_V2_MODE": get_regime_v2_mode,
+    "RANK_SCORE_V2_MODE": get_rank_score_v2_mode,
 }
 
 # Promoted defaults (2026-Q2): see docs/RELEASE_NOTES_PLUGIN_PROMOTIONS.md
@@ -53,6 +59,8 @@ MODE_GETTERS = {
 PROMOTED_DEFAULTS = {
     "EXEC_QUALITY_MODE": "live",
     "EVENT_RISK_MODE": "live",
+    "EXIT_MANAGER_MODE": "live",
+    "RANK_SCORE_V2_MODE": "shadow",
 }
 
 
@@ -63,7 +71,7 @@ THRESHOLD_GETTERS = [
     ("EXEC_QUALITY_MIN_SIGNAL_SCORE", get_exec_quality_min_signal_score, 55),
     ("EXIT_PARTIAL_TP_R_MULT", get_exit_partial_tp_r_mult, 1.5),
     ("EXIT_PARTIAL_TP_FRACTION", get_exit_partial_tp_fraction, 0.5),
-    ("EXIT_MAX_HOLD_DAYS", get_exit_max_hold_days, 12),
+    ("EXIT_MAX_HOLD_DAYS", get_exit_max_hold_days, 40),
     ("EXIT_MANAGER_TRAIL_ATR_MULT", get_exit_manager_trail_atr_mult, 2.0),
     ("EVENT_BLOCK_EARNINGS_DAYS", get_event_block_earnings_days, 2),
     ("EVENT_DOWNSIZE_FACTOR", get_event_downsize_factor, 0.5),
@@ -74,6 +82,10 @@ THRESHOLD_GETTERS = [
     ("REGIME_V2_SIZE_MULT_HIGH", get_regime_v2_size_mult_high, 1.0),
     ("REGIME_V2_SIZE_MULT_MED", get_regime_v2_size_mult_med, 0.7),
     ("REGIME_V2_SIZE_MULT_LOW", get_regime_v2_size_mult_low, 0.4),
+    ("SCORE_PTS_SMA_MULTIPLIER", get_score_pts_sma_multiplier, 0.0),
+    ("RANK_V2_SIGNAL_WEIGHT", get_rank_v2_signal_weight, 0.35),
+    ("RANK_V2_VOLUME_WEIGHT", get_rank_v2_volume_weight, 0.50),
+    ("RANK_V2_MIROFISH_WEIGHT", get_rank_v2_mirofish_weight, 0.15),
 ]
 
 

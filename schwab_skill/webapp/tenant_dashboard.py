@@ -2422,6 +2422,9 @@ def tenant_sec_compare(
     ticker_b: str = "",
     form_type: str = "10-K",
     highlight_changes_only: bool = False,
+    include_management_dashboard: bool = False,
+    ruthless_mode: bool = False,
+    profile_override: str = "",
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> ApiResponse:
@@ -2473,7 +2476,35 @@ def tenant_sec_compare(
 
             if not out.get("ok"):
                 return ApiResponse(ok=False, error=str(out.get("error", "SEC compare failed")))
-            return _ok(_normalize_sec_compare_payload_sd(out))
+            compare_payload = _normalize_sec_compare_payload_sd(out)
+            if include_management_dashboard:
+                persisted = _load_state(db, user.id, SEC_MGMT_PROFILE_STATE_KEY, {})
+                persisted_override = str(persisted.get("profile_override") or "").strip().lower()
+                history = persisted.get("history") if isinstance(persisted.get("history"), list) else []
+                last_override = history[-1] if history else None
+                safe_override = profile_override.strip().lower() or persisted_override
+                if safe_override and safe_override not in PROFILE_WEIGHTS:
+                    supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
+                    return ApiResponse(
+                        ok=False,
+                        error=f"Invalid profile_override '{safe_override}'. Use one of: {supported}.",
+                    )
+                dashboard = build_management_dashboard(
+                    compare_payload=compare_payload,
+                    mode=safe_mode,
+                    ticker=safe_ticker,
+                    ticker_b=safe_ticker_b,
+                    form_type=safe_form,
+                    ruthless_mode=bool(ruthless_mode),
+                    profile_override=safe_override or None,
+                )
+                dashboard["profile"]["persisted_override"] = persisted_override or None
+                dashboard["profile"]["last_override"] = last_override
+                dashboard["profile"]["history_tail"] = history[-10:]
+                bundled = dict(compare_payload)
+                bundled["management_dashboard"] = dashboard
+                return _ok(bundled)
+            return _ok(compare_payload)
     except Exception as exc:
         return _saas_error_response(exc, source="sec_compare", fallback="SEC compare failed.")
 

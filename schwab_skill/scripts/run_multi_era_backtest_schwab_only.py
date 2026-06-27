@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -173,6 +174,33 @@ def _maybe_float(v: Any) -> float | None:
         return None
 
 
+SCORE_EXPORT_KEYS = (
+    "edge_score",
+    "reliability_score",
+    "execution_score",
+    "composite_score",
+    "rank_score",
+    "rank_score_v2",
+    "p_up_calibrated",
+    "ev_10d",
+    "pts_52w",
+    "pts_sma",
+    "pts_volume",
+    "pts_mirofish",
+    "close_vs_sma200_pct",
+    "entry_sma_200",
+    "entry_price_ref",
+)
+
+
+def _score_projection_fields(t: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in SCORE_EXPORT_KEYS:
+        if t.get(key) is not None:
+            out[key] = _maybe_float(t.get(key))
+    return out
+
+
 def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[dict[str, Any]]:
     """Pure projection from the in-memory trade dicts produced by
     ``backtest.run_backtest`` to the per-chunk JSON schema. Pulled out as a
@@ -206,6 +234,12 @@ def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[di
                 "exec_quality_regime": t.get("exec_quality_regime"),
                 "exec_quality_effective_slippage_bps": _maybe_float(t.get("exec_quality_effective_slippage_bps")),
                 "exit_manager_partial_done": bool(t.get("exit_manager_partial_done")),
+                "advisory_confidence_bucket": t.get("advisory_confidence_bucket"),
+                "advisory_feature_coverage": _maybe_float(t.get("advisory_feature_coverage")),
+                "data_provider": t.get("data_provider"),
+                "data_provider_primary": t.get("data_provider_primary"),
+                "used_fallback_data": t.get("used_fallback_data"),
+                **_score_projection_fields(t),
             }
             path = t.get("ohlc_path") or []
             if path:
@@ -238,9 +272,9 @@ def _run_single_chunk(
     tickers_file: Path,
     out_file: Path,
 ) -> int:
-    os.environ["SCHWAB_ONLY_DATA"] = "true"
-    os.environ["BACKTEST_SKIP_MIROFISH"] = "true"
-    os.environ["SEC_FILING_LLM_SUMMARY_ENABLED"] = "false"
+    os.environ.setdefault("SCHWAB_ONLY_DATA", "true")
+    os.environ.setdefault("BACKTEST_SKIP_MIROFISH", "true")
+    os.environ.setdefault("SEC_FILING_LLM_SUMMARY_ENABLED", "false")
     from backtest import run_backtest
     from backtest_intelligence import BacktestIntelligenceConfig
 
@@ -323,9 +357,9 @@ def _run_chunk_subprocess(
         if end_date:
             cmd += ["--end-date", end_date]
         env = os.environ.copy()
-        env["SCHWAB_ONLY_DATA"] = "true"
-        env["BACKTEST_SKIP_MIROFISH"] = "true"
-        env["SEC_FILING_LLM_SUMMARY_ENABLED"] = "false"
+        env.setdefault("SCHWAB_ONLY_DATA", "true")
+        env.setdefault("BACKTEST_SKIP_MIROFISH", "true")
+        env.setdefault("SEC_FILING_LLM_SUMMARY_ENABLED", "false")
         try:
             proc = subprocess.run(
                 cmd,
@@ -508,6 +542,13 @@ def _orchestrate(
                 [],
             )
         )
+    if not resume and run_id:
+        chunk_root = ARTIFACT_DIR / "multi_era_chunks" / run_id
+        if chunk_root.exists():
+            shutil.rmtree(chunk_root, ignore_errors=True)
+        progress_path = _progress_path_for(run_id)
+        if progress_path.exists():
+            progress_path.unlink(missing_ok=True)
     completed_by_era = {str(r.get("era")) for r in completed}
     failed = []
     era_state: dict[str, Any] = {}

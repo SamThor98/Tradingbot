@@ -244,9 +244,10 @@ html, body {
 .layout-onboarding-presets > * {
   animation: card-enter 0.5s var(--ease-out-expo) both;
 }
-/* Fixed-position slide-in panels must not inherit card-enter: its fill-mode
-   pins transform and breaks translateX slide behavior. */
-.container > .cockpit-drawer {
+/* Fixed/sticky panels must not inherit card-enter: its fill-mode pins
+   transform and breaks translateX slide behavior and position: sticky. */
+.container > .cockpit-drawer,
+.container > #healthRibbon {
   animation: none;
 }
 .container > :nth-child(2) { animation-delay: 0.04s; }
@@ -1607,6 +1608,31 @@ select:focus-visible,
 #secCompareSection {
   background: #020617;
   border-color: rgba(148, 163, 184, 0.24);
+}
+.sec-filing-results {
+  display: grid;
+  gap: 10px;
+  margin: 0 18px 12px;
+}
+.sec-fidelity-top {
+  margin: 0 18px 8px;
+}
+.sec-compare-action-row {
+  margin: 0 18px 10px;
+}
+.sec-diff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.sec-derived-panel {
+  margin: 0 18px 12px;
+}
+[data-derived="true"] {
+  opacity: 0.92;
+  border-left: 3px solid rgba(251, 191, 36, 0.55);
+  padding-left: 8px;
 }
 .mgmt-dashboard {
   display: grid;
@@ -3968,13 +3994,17 @@ body.ui-screen-settings .diagnostics-surface {
   display: none !important;
 }
 
+body.ui-screen-operations .settings-surface,
+body.ui-screen-research .settings-surface,
+body.ui-screen-diagnostics .settings-surface {
+  display: none !important;
+}
+
 /* ── Kronos screen visibility ─────────────────────────────────────────── */
 /* Hide Kronos surfaces on every other screen. */
 body.ui-screen-operations .kronos-surface,
-body.ui-screen-research .kronos-surface,
 body.ui-screen-diagnostics .kronos-surface,
-body.ui-screen-settings .kronos-surface,
-body.ui-screen-cockpit .kronos-surface {
+body.ui-screen-settings .kronos-surface {
   display: none !important;
 }
 /* On the Kronos screen, hide all other workspaces' content. */
@@ -4022,15 +4052,347 @@ body.ui-screen-kronos .cockpit-surface {
   display: none !important;
 }
 
-/* ── Cockpit screen visibility ────────────────────────────────────────── */
-/* Hide cockpit surfaces on every other screen. */
-body.ui-screen-operations .cockpit-surface,
-body.ui-screen-research .cockpit-surface,
-body.ui-screen-diagnostics .cockpit-surface,
-body.ui-screen-settings .cockpit-surface,
-body.ui-screen-kronos .cockpit-surface {
+/* ── Cockpit on Research (Portfolio sub-tab) ────────────────────────────── */
+body.ui-screen-operations #cockpitMergedPanel,
+body.ui-screen-operations #cockpitSection,
+body.ui-screen-operations #sectorsSection,
+body.ui-screen-operations #moversSection {
   display: none !important;
 }
+body.ui-screen-research #cockpitMergedPanel {
+  display: block !important;
+}
+body.ui-screen-research #cockpitSection.cockpit-grid {
+  display: grid !important;
+}
+body.ui-screen-diagnostics #cockpitMergedPanel,
+body.ui-screen-settings #cockpitMergedPanel {
+  display: none !important;
+}
+body.ui-screen-research .kronos-surface {
+  display: revert !important;
+}
+body.ui-screen-research .cockpit-drawer,
+body.ui-screen-diagnostics .cockpit-drawer,
+body.ui-screen-settings .cockpit-drawer {
+  display: revert !important;
+}
+
+/* Trust + scan integrity UI */
+.scan-integrity-banner {
+  margin: 0.5rem 0 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  border: 1px solid rgba(26, 26, 26, 0.12);
+  background: rgba(26, 26, 26, 0.03);
+}
+.scan-integrity-banner[data-integrity="warn"] {
+  border-color: rgba(180, 83, 9, 0.45);
+  background: rgba(180, 83, 9, 0.06);
+}
+.scan-delta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+}
+.prov-chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(26, 26, 26, 0.14);
+  white-space: nowrap;
+}
+.prov-chip.prov-high { color: #2d5a4a; }
+.prov-chip.prov-medium { color: #8a6d1f; }
+.prov-chip.prov-low { color: #b23b3b; }
+.scan-detail-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+.scan-tradeable-verdict { font-size: 0.72rem; margin-left: 4px; }
+.system-status-compact {
+  padding: 0.45rem 0.75rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+}
+.research-tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 1rem;
+}
+.research-tab-btn {
+  border: 1px solid rgba(26, 26, 26, 0.14);
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.research-tab-btn.active {
+  background: rgba(26, 26, 26, 0.08);
+  font-weight: 600;
+}
+.research-tab-hidden { display: none !important; }
+
+.research-summary-landing {
+  margin-bottom: 0.75rem;
+}
+
+.research-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.research-summary-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.research-summary-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.research-summary-value {
+  font-size: 1.2rem;
+  line-height: 1.1;
+}
+
+.research-summary-actions {
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.layout-quick-tools.research-check-panel {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.ui-screen-research .mode-header-kpis {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .research-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.system-summary-landing {
+  margin-bottom: 0.75rem;
+}
+
+.system-summary-status {
+  margin: 0 0 0.65rem;
+  font-size: 0.88rem;
+}
+
+.system-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.system-summary-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.system-summary-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.system-summary-value {
+  font-size: 1.2rem;
+  line-height: 1.1;
+}
+
+.system-summary-actions {
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.system-alert-banner {
+  margin-bottom: 0.75rem;
+}
+
+.system-alert-banner .action-center-body {
+  gap: 0.35rem;
+}
+
+.system-alert-banner #systemAlertBannerLink {
+  margin-top: 0.25rem;
+  width: fit-content;
+}
+
+.system-decision-nested,
+.system-quality-nested {
+  box-shadow: none;
+  border: 1px solid rgba(100, 116, 139, 0.22);
+}
+
+.system-ablation-actions {
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid rgba(100, 116, 139, 0.22);
+}
+
+body.ui-screen-diagnostics #healthRibbonSummary {
+  display: none !important;
+}
+
+body.ui-screen-diagnostics .mode-header-kpis {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .system-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-summary-landing {
+  margin-bottom: 0.75rem;
+}
+
+.settings-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.settings-summary-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-summary-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.settings-summary-value {
+  font-size: 1.2rem;
+  line-height: 1.1;
+}
+
+.settings-summary-actions {
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.settings-workspace {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.ui-screen-settings .mode-header-kpis {
+  display: none !important;
+}
+
+.settings-summary-lead {
+  margin: 0 0 0.75rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.settings-summary-grid--pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-summary-guardrails {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.settings-summary-guardrails-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.settings-summary-guardrails-lead {
+  margin: 0 0 0.65rem;
+}
+
+.settings-summary-guardrails--blocked {
+  opacity: 0.72;
+}
+
+.settings-guardrails-row {
+  margin-top: 0.55rem;
+}
+
+.plain-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  line-height: 1.35;
+}
+
+.connect-schwab-banner:not(.hidden) {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+body.ui-simple.ui-screen-settings #settingsSection,
+body.ui-simple.ui-screen-settings .settings-summary-presets-link,
+body.ui-simple.ui-screen-settings .settings-presets-nav {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .settings-summary-grid--pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.queue-scan-checklist ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+.queue-scan-checklist .check-ok { color: #2d5a4a; }
+.queue-scan-checklist .check-fail { color: #b23b3b; }
+.queue-scan-checklist--blocked {
+  border: 1px solid rgba(180, 83, 9, 0.35);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+.near-miss-reason { font-size: 0.82rem; }
+body:not(.ui-pro) .workspace-intro--deprecated { display: none !important; }
+body.ui-simple #decisionDashboardCard { display: none !important; }
 /* On the Cockpit screen, hide all other workspaces' content (mirror of the
    Kronos deny list, plus the Kronos surfaces themselves). */
 body.ui-screen-cockpit .operations-surface,
@@ -4144,6 +4506,10 @@ body:not(.ui-screen-cockpit) .cockpit-drawer {
   overflow: hidden;
 }
 
+.kronos-chart.kronos-chart-active {
+  display: block;
+}
+
 .kronos-chart > * {
   max-width: 100%;
 }
@@ -4229,13 +4595,16 @@ body.ui-screen-research #onboardingSection,
 body.ui-screen-research #settingsSection,
 body.ui-screen-research #settingsWorkflowStrip,
 body.ui-screen-research #diagnosticsWorkflowStrip,
+body.ui-screen-research #systemSummaryLanding,
+body.ui-screen-research #systemDecisionPanel,
+body.ui-screen-research #systemQualityDiagnostics,
+body.ui-screen-research #healthRibbon,
+body.ui-screen-research #decisionDashboardCard,
 body.ui-screen-research #statusDetailsPanel,
 body.ui-screen-research #workflowPrimary,
 body.ui-screen-research #scanSection,
 body.ui-screen-research #scanDetailPanel,
 body.ui-screen-research #pendingSection,
-body.ui-screen-research #sectorsSection,
-body.ui-screen-research #moversSection,
 body.ui-screen-research #calibrationSection,
 body.ui-screen-research #shadowScoreboardSection,
 body.ui-screen-research #reviewLoopSection {
@@ -4262,9 +4631,66 @@ body.ui-screen-research #workflowPrimary .workflow-strapline {
   display: none !important;
 }
 
-body.ui-screen-research #workflowPrimary .operate-kanban {
-  grid-template-columns: minmax(0, 1fr);
+body.ui-screen-operations .mode-header-kpis {
+  display: none !important;
 }
+
+.today-summary-landing {
+  margin-bottom: 0.75rem;
+}
+
+.today-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.today-summary-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.today-summary-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.today-summary-value {
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.today-summary-actions {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .today-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+body.ui-screen-operations #workflowPrimaryHeading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+body.ui-screen-research .research-market-disclosure,
+body.ui-screen-research .research-cockpit-disclosure {
+  margin-top: 0.75rem;
+}
+
 body.ui-screen-diagnostics .operations-surface,
 body.ui-screen-diagnostics #workflowPrimary,
 body.ui-screen-diagnostics #researchWorkflowStrip,

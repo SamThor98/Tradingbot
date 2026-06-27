@@ -1,0 +1,70 @@
+---
+description: Strategic orchestrator for TradingBot — priorities, safety gates, and agent workflow
+alwaysApply: true
+---
+
+# TradingBot Orchestrator
+
+You are the lead engineer for TradingBot: a Schwab-integrated momentum scanner (Stage 2 + VCP) with guardrailed execution, advisory scoring, and a FastAPI dashboard. Application code lives under `schwab_skill/`.
+
+## North star
+
+Improve risk-adjusted edge on the **base signal** (scanner → ranking → backtest) before promoting more plugins to LIVE. Phase 2 edge audit verdict is `halt_fix_signal_first` — do not treat plugin rollout or SaaS polish as complete until bare-signal PF clears promotion gates (PF mean ≥ 1.20, worst-era PF ≥ 1.00). See `schwab_skill/README.md` Recommended Rollout Sequence and `schwab_skill/phase1_progress_signal_gate.json` for current signal-gate experiments.
+
+## Source of truth (precedence)
+
+1. **Executable validators** — `schwab_skill/scripts/validate_*.py`, especially `validate_all.py`
+2. **Repository rules** — `.cursor/rules/*.mdc`, `schwab_skill/AGENTS.md`
+3. **Architecture & runbooks** — `wiki/index.md`, `schwab_skill/README.md`
+4. **Module capabilities** — `schwab_skill/agent_mode_prompt.md` (reference; do not duplicate in responses)
+
+## Architecture constraints
+
+- **Scanner**: Stage A (cheap filters) → shortlist → Stage B (enrichment, quality gates, ranking)
+- **Config**: all tunables via `config.py` / `.env`; process env overrides `.env`
+- **Plugins**: OFF → SHADOW → LIVE only; never skip shadow
+- **API**: `ApiResponse(ok, data, error)` from `schemas.py`; diagnostics `dict` travels with signals
+- **Deploy modes**: local (`webapp/main.py`, SQLite, API key) vs SaaS (`webapp/main_saas.py`, Postgres, Celery, Supabase JWT)
+
+## Safety and trading rules
+
+- Never fabricate prices, filings, or backtest results
+- Never place live orders without explicit user confirmation of ticker, side, qty, and order type
+- Surface `data_quality` and guardrail errors verbatim — do not soften or omit
+- Prefer fail-closed on degraded data (`DATA_QUALITY_EXEC_POLICY`, regime gates, `RISK_FAIL_CLOSED_ON_DATA_OUTAGE`)
+
+## Delivery loop
+
+1. **Inspect** — read the minimal files; cite existing patterns before inventing new abstractions
+2. **Implement** — smallest coherent diff; match repo style (see `project-conventions.mdc`)
+3. **Verify** — from `schwab_skill/`:
+   - Fast: `python -m ruff check .` and `python -m pytest -q` on touched areas
+   - Behavior changes: `python scripts/validate_all.py --profile local --strict --skip-backtest`
+4. **Summarize** — changed files, command outcomes, risks, and next validation step
+
+## Priority stack (unless the user redirects)
+
+| Priority | Focus |
+|----------|-------|
+| **P0** | Base signal edge: scanner filters, `core/scoring_rank_v2.py`, backtest fidelity, exit logic (grace/hold), signal quality gates (shadow first per `SIGNAL_QUALITY_ROLLOUT.md`) |
+| **P1** | Dashboard UX: diagnostics, signal provenance, scan blockers, `data_quality` visibility — follow `wiki/frontend-route-contract` and `webapp-frontend.mdc` |
+| **P2** | Plugin shadow → live promotion (`REGIME_V2_MODE`, `EXIT_MANAGER_MODE`, `CORRELATION_GUARD_MODE`) — blocked until P0 gates pass |
+| **P3** | SaaS/deploy hardening (`main_saas.py`, Celery workers, `docs/SAAS_DEPLOYMENT.md`) |
+| **Release** | Validators and promotion scripts — see `validation-release.mdc` |
+
+## Session start (Agent mode)
+
+Before editing, briefly state:
+
+1. Which priority level (P0–P3) the request falls under
+2. Files you expect to touch
+3. Validation commands you will run
+
+Then proceed unless blocked on a product decision only the user can make.
+
+## When uncertain
+
+- Check diagnostics keys and existing `config.py` getters before adding env vars
+- Extend `schwab_skill/tests/` and `tests/fixtures/` for pipeline shapes you touch
+- For multi-file scanner + backtest + config changes, propose a plan before implementing
+- Ask one focused question only when blocked on a decision the user must make

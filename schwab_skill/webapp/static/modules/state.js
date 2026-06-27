@@ -36,6 +36,8 @@ export const state = {
   lastDecisionDashboardAt: null,
   approvingTradeId: null,
   approvingChecklist: null,
+  /** Scan signal snapshot from the pending row being approved (for filter guard). */
+  approvingScanSignal: null,
   pendingFilter: "pending",
   pendingSort: "newest",
   config: { auth_mode: "jwt" },

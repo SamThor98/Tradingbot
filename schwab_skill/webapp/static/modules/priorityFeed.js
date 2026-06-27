@@ -157,13 +157,28 @@ export function pushPriorityItem({ key = "", title = "Update", message = "", sev
   });
   pruneItems();
   render();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("priority_feed_change"));
+  }
   return true;
+}
+
+/** Top ranked feed item, if any (for System alert banner mirroring). */
+export function getTopPriorityItem() {
+  if (!installed) return null;
+  const ordered = sortedItems();
+  return ordered[0] || null;
 }
 
 /** Remove an item (resolved state — e.g. pending queue emptied). */
 export function removePriorityItem(key) {
   if (!installed) return;
-  if (items.delete(safeText(key))) render();
+  if (items.delete(safeText(key))) {
+    render();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("priority_feed_change"));
+    }
+  }
 }
 
 /** True once the feed has taken over the action-center surface. */

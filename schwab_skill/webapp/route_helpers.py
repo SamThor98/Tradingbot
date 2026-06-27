@@ -135,6 +135,20 @@ def request_origin(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _loopback_port(parsed: urllib.parse.ParseResult) -> int | None:
+    host = str(parsed.hostname or "").strip().lower()
+    if not is_loopback_host(host):
+        return None
+    if parsed.port is not None:
+        return int(parsed.port)
+    scheme = (parsed.scheme or "").lower()
+    if scheme == "https":
+        return 443
+    if scheme == "http":
+        return 80
+    return None
+
+
 def resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
     """Pick the right Schwab OAuth callback URL for the current request.
 
@@ -171,6 +185,26 @@ def resolve_schwab_redirect_uri(request: Request, *, market: bool) -> str:
     ).strip().lower()
     if is_loopback_host(configured_host) and not is_loopback_host(inferred_host):
         return inferred
+    # Legacy local .env often sets https://127.0.0.1:PORT/ for run_dual_auth_browser.
+    # Honour that root URL when registered in the Schwab Developer Portal.
+    # Local .env often keeps an old loopback port (8182) while the dashboard runs
+    # on 8000. Schwab requires the redirect_uri to match the active listener.
+    configured_port = _loopback_port(parsed)
+    inferred_port = _loopback_port(urllib.parse.urlparse(inferred))
+    if (
+        configured_host
+        and inferred_host
+        and configured_host == inferred_host
+        and is_loopback_host(configured_host)
+        and configured_port is not None
+        and inferred_port is not None
+        and configured_port != inferred_port
+    ):
+        origin = request_origin(request).rstrip("/")
+        configured_path = (parsed.path or "/").rstrip("/") or "/"
+        if configured_path == "/":
+            return f"{origin}/"
+        return f"{origin}{configured_path}"
     # Render host migrations can leave stale callback env vars (old service host).
     # If both hosts are Render-managed and differ, prefer the active request host.
     if (

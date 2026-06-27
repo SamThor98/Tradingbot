@@ -160,12 +160,12 @@ def apply_options_scoring(
             sig["options_score_reasons"] = scored["reasons"]
             summary["evaluated"] += 1
             if mode == "live" and scored["delta"]:
-                base_rank = _f(sig.get("rank_score"))
-                if base_rank is not None:
-                    sig["rank_score"] = round(base_rank + scored["delta"], 2)
                 base_comp = _f(sig.get("composite_score"))
                 if base_comp is not None:
                     sig["composite_score"] = round(base_comp + scored["delta"], 2)
+                base_rank = _f(sig.get("rank_score"))
+                if base_rank is not None:
+                    sig["rank_score"] = round(base_rank + scored["delta"], 2)
                 sig["options_score_applied"] = True
                 summary["applied"] += 1
         except Exception as exc:
@@ -173,7 +173,7 @@ def apply_options_scoring(
             LOG.debug("options scoring failed for %s: %s", ticker, exc)
 
     if mode == "live" and summary["applied"]:
-        signals.sort(key=lambda s: s.get("rank_score") or 0.0, reverse=True)
+        signals.sort(key=lambda s: s.get("composite_score") or s.get("rank_score") or 0.0, reverse=True)
 
     diag["options_scoring"] = summary
     return signals

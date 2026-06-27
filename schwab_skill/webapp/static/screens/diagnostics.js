@@ -16,6 +16,8 @@ export function createDiagnosticsController(ctx) {
     runReviewBackfill,
     loadDecisionCard,
     runLazyApi,
+    runAblationCycle,
+    refreshAblationCycleStatus,
   } = ctx;
 
   function init() {
@@ -24,12 +26,17 @@ export function createDiagnosticsController(ctx) {
     document.getElementById("reviewLoopRefreshBtn")?.addEventListener("click", () => void refreshReviewLoop());
     document.getElementById("reviewBackfillBtn")?.addEventListener("click", () => void runReviewBackfill());
     bindEvent("decisionBtn", "click", loadDecisionCard);
+    document.getElementById("ablationCycleBtn")?.addEventListener("click", () => void runAblationCycle());
+    document.getElementById("ablationStatusRefreshBtn")?.addEventListener("click", () =>
+      void refreshAblationCycleStatus(),
+    );
   }
 
   function prime() {
     void runLazyApi("calibration");
     void runLazyApi("shadowScoreboard");
     void runLazyApi("reviewLoop");
+    void refreshAblationCycleStatus({ quiet: true });
   }
 
   return { id: "diagnostics", init, prime };

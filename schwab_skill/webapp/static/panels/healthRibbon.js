@@ -103,8 +103,7 @@ export function setHealthRibbonTiles(authState, quoteOk, errRate, validation) {
 // Keeps the diagnostics page understandable at a glance without reading tiles.
 export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, lastScan }) {
   const el = document.getElementById("healthRibbonSummary");
-  if (!el) return;
-  clearUnavailable(el);
+  const compact = document.getElementById("systemStatusCompact");
   const broker =
     authState === "connected"
       ? "Broker connected"
@@ -121,7 +120,15 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
       scan = mins < 1 ? "last scan just now" : mins < 60 ? `last scan ${mins}m ago` : `last scan ${Math.round(mins / 60)}h ago`;
     }
   }
-  el.textContent = `System status: ${broker}, ${market}, ${scan}.`;
+  const line = `System status: ${broker}, ${market}, ${scan}.`;
+  if (el) {
+    clearUnavailable(el);
+    el.textContent = line;
+  }
+  if (compact) {
+    compact.textContent = line;
+    compact.classList.remove("hidden");
+  }
 }
 
 export function prioritizeActionCenterFromHealth({ authState, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
