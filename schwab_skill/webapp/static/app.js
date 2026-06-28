@@ -3605,6 +3605,57 @@ async function refreshStatus() {
     });
   }
   updateHeroInfographic();
+  void maybeResumeLocalScanPolling();
+}
+
+async function maybeResumeLocalScanPolling() {
+  if (state.publicConfig?.saas_mode) return;
+  if (localScanPollActive) return;
+  const lifecycle = await api.get("/api/scan-lifecycle", { timeoutMs: 20000 });
+  if (!lifecycle.ok) return;
+  const data = lifecycle.data || {};
+  if (safeText(data.status).toLowerCase() !== "running") return;
+  const jobId = safeText(data.job_id || "").trim();
+  if (jobId && jobId === resumedLocalScanJobId) return;
+  if (jobId) resumedLocalScanJobId = jobId;
+  const scanBtn = document.getElementById("scanBtn");
+  try {
+    if (scanBtn) scanBtn.disabled = true;
+    await waitForScanCompletion();
+  } finally {
+    if (scanBtn) scanBtn.disabled = false;
+  }
+}
+
+function applyEntryTimingExperimentPreflight(preflight) {
+  if (!preflight || typeof preflight !== "object") return;
+  state.entryTimingScanPreflight = preflight;
+  const scanBtn = document.getElementById("scanBtn");
+  const needsRestart = preflight.needs_dashboard_restart === true;
+  const needsRescan = preflight.stale_last_scan === true;
+  const needsConfig = preflight.experiment_recommended && !preflight.experiment_env_ready && !preflight.experiment_env_file_ready;
+  if (scanBtn) {
+    if (needsRestart) {
+      scanBtn.title = "Restart the dashboard to load experiment .env vars, then Run Scan.";
+    } else if (needsRescan) {
+      scanBtn.title = "Experiment env is loaded — Run Scan to refresh entry-timing shadow counters.";
+    } else if (needsConfig) {
+      scanBtn.title = "Run scripts/apply_entry_timing_experiment_env.py, restart server, then Run Scan.";
+    } else {
+      scanBtn.title = "";
+    }
+  }
+  const warn = (preflight.warnings || [])[0];
+  if (!warn) return;
+  updateActionCenter({
+    title: needsRestart
+      ? "Restart dashboard for experiment env"
+      : needsRescan
+        ? "Run Scan for experiment evidence"
+        : "Configure entry-timing experiment",
+    message: warn,
+    severity: "warn",
+  });
 }
 
 async function refreshDecisionDashboard() {
@@ -3666,6 +3717,7 @@ async function refreshDecisionDashboard() {
   ].forEach((id) => clearUnavailable(document.getElementById(id)));
   state.lastDecisionDashboardAt = new Date().toISOString();
   renderDecisionDashboard(out.data || {});
+  applyEntryTimingExperimentPreflight(out.data?.scan_preflight || null);
   applyFreshness(freshEl, {
     asOf: state.lastDecisionDashboardAt,
     source: "/api/decision-dashboard",
@@ -3782,6 +3834,8 @@ async function runAblationCycle() {
 }
 
 const SCAN_START_META = "Scanning S&P 1500 candidates…";
+let localScanPollActive = false;
+let resumedLocalScanJobId = null;
 
 function scanBodyFromBacktestSpec(spec) {
   if (!spec || typeof spec !== "object") return {};
@@ -4134,6 +4188,14 @@ async function runScan() {
     message: `${profile.label} scan running (score >= ${profile.minScore}, vol ratio >= ${profile.minVolumeRatio.toFixed(1)}).`,
     severity: "info",
   });
+  const pf = state.entryTimingScanPreflight;
+  if (pf?.experiment_recommended && !pf?.experiment_env_ready) {
+    logEvent({
+      kind: "scan",
+      severity: "warn",
+      message: (pf.warnings || [])[0] || "Entry-timing experiment env not ready; shadow compare will skip.",
+    });
+  }
   try {
     if (!readScanOptionsFromForm()) return;
     const baseScanBody =
@@ -4222,10 +4284,15 @@ async function runScan() {
 }
 
 async function waitForScanCompletion() {
+  if (localScanPollActive) {
+    return;
+  }
+  localScanPollActive = true;
   const maxPolls = 360;
   const metaEl = document.getElementById("scanMeta");
   let unknownStatusStreak = 0;
   let transientFailures = 0;
+  try {
   for (let i = 0; i < maxPolls; i++) {
     // Bounded per-poll timeout: a heavy in-process scan can make the single
     // web instance slow to answer status checks. Abort a stuck poll and retry
@@ -4248,7 +4315,7 @@ async function waitForScanCompletion() {
         statusCode === 503 ||
         statusCode === 504;
       transientFailures += 1;
-      if (looksTransient && transientFailures <= 20) {
+      if (looksTransient && transientFailures <= 60) {
         metaEl.textContent = "Scan running… (server busy, status check slow — retrying)";
         updateActionCenter({
           title: "Scan Running",
@@ -4305,6 +4372,7 @@ async function waitForScanCompletion() {
         message: `Found ${data.signals_found ?? state.latestSignals.length} signal(s).`,
         severity: "success",
       });
+      void refreshDecisionDashboard();
       return;
     }
     if (data.status === "failed") {
@@ -4357,6 +4425,9 @@ async function waitForScanCompletion() {
     message: "Polling window ended. Use Refresh All to check progress.",
     severity: "warn",
   });
+  } finally {
+    localScanPollActive = false;
+  }
 }
 
 async function approveTradeById(id) {

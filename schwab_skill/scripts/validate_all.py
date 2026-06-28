@@ -109,6 +109,56 @@ def _steps_for_profile(
         ("validate_regime_v2", [py, str(SCRIPTS_DIR / "validate_regime_v2.py")], None),
         ("validate_signal_quality", [py, str(SCRIPTS_DIR / "validate_signal_quality.py")], None),
         (
+            "validate_entry_timing_shadow_evidence",
+            [py, str(SCRIPTS_DIR / "validate_entry_timing_shadow_evidence.py")],
+            None,
+        ),
+        (
+            "validate_entry_timing_experiment_env",
+            [py, str(SCRIPTS_DIR / "validate_entry_timing_experiment_env.py")],
+            None,
+        ),
+        (
+            "compare_live_entry_shadow_to_offline",
+            [py, str(SCRIPTS_DIR / "compare_live_entry_shadow_to_offline.py"), "--write-artifact"],
+            None,
+        ),
+        (
+            "entry_timing_experiment_status",
+            [py, str(SCRIPTS_DIR / "entry_timing_experiment_status.py")],
+            None,
+        ),
+        (
+            "validate_entry_timing_stage2b_evidence",
+            [py, str(SCRIPTS_DIR / "validate_entry_timing_stage2b_evidence.py")],
+            None,
+        ),
+        (
+            "validate_signal_stack_promotion",
+            [py, str(SCRIPTS_DIR / "validate_signal_stack_promotion.py")],
+            None,
+        ),
+        (
+            "validate_entry_timing_live_promotion_readiness",
+            [py, str(SCRIPTS_DIR / "validate_entry_timing_live_promotion_readiness.py")],
+            None,
+        ),
+        (
+            "validate_entry_timing_live_active",
+            [py, str(SCRIPTS_DIR / "validate_entry_timing_live_active.py")],
+            None,
+        ),
+        (
+            "validate_signal_gate_stack",
+            [py, str(SCRIPTS_DIR / "validate_signal_gate_stack.py")],
+            None,
+        ),
+        (
+            "validate_signal_gate_phase2_readiness",
+            [py, str(SCRIPTS_DIR / "validate_signal_gate_phase2_readiness.py")],
+            None,
+        ),
+        (
             "validate_hold_duration_guardrail",
             [py, str(SCRIPTS_DIR / "validate_hold_duration_guardrail.py")],
             None,

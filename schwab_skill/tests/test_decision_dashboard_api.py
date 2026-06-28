@@ -103,6 +103,43 @@ def test_decision_dashboard_ready(monkeypatch: pytest.MonkeyPatch, client: TestC
     assert data["reliability"]["state"] == "healthy"
     assert data["promotion_readiness"]["release_gate_ready"] is True
     assert data["strategy_quality"]["dominant_strategy"] == "breakout"
+    assert "signal_edge" in data
+    assert data["signal_edge"]["state"] in {
+        "shadow_only",
+        "fix_entry_first",
+        "rank_filter_candidate",
+        "experiment_shadow",
+    }
+
+
+def test_decision_dashboard_includes_signal_edge(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import main as webapp_main
+
+    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
+    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
+    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
+    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(
+        webapp_main,
+        "_signal_edge_validation_status",
+        lambda run_id="control_legacy_aug": {
+            "run_id": run_id,
+            "state": "fix_entry_first",
+            "binding_constraint": "entry_timing_not_rank_filter",
+            "early_stopout_pct": 33.86,
+            "hold_21_40d_pf": 3.42,
+            "rank_filter_recommendation": "no_rank_filter_yet",
+            "entry_quality_recommendation": "fix_entry_timing_not_rank_filter",
+            "entry_quality_reason": "Early stop-outs driven by trailing_stop.",
+        },
+    )
+    monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
+
+    resp = client.get("/api/decision-dashboard", headers=_auth_headers())
+    assert resp.status_code == 200
+    signal_edge = resp.json()["data"]["signal_edge"]
+    assert signal_edge["state"] == "fix_entry_first"
+    assert signal_edge["rank_filter_recommendation"] == "no_rank_filter_yet"
 
 
 def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
@@ -129,3 +166,51 @@ def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPa
     assert data["reliability"]["state"] == "at_risk"
     assert data["promotion_readiness"]["release_gate_ready"] is False
     assert data["reliability"]["slo_failures"] == ["api_5xx_rate"]
+
+
+def test_decision_dashboard_includes_scan_preflight(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import main as webapp_main
+
+    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
+    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
+    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
+    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
+    monkeypatch.setattr(
+        webapp_main,
+        "_signal_edge_scan_preflight",
+        lambda run_id="control_legacy_aug": {
+            "experiment_recommended": True,
+            "experiment_env_ready": False,
+            "missing_env": ["ENTRY_SHADOW_DISABLE_SMA50_FILTERS=true"],
+            "warnings": ["env not ready"],
+            "ready_for_experiment_scan": False,
+        },
+    )
+
+    resp = client.get("/api/decision-dashboard", headers=_auth_headers())
+    assert resp.status_code == 200
+    preflight = resp.json()["data"]["scan_preflight"]
+    assert preflight["experiment_recommended"] is True
+    assert preflight["experiment_env_ready"] is False
+
+
+def test_scan_lifecycle_includes_signal_edge_preflight(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import main as webapp_main
+
+    monkeypatch.setattr(
+        webapp_main,
+        "_signal_edge_scan_preflight",
+        lambda run_id="control_legacy_aug": {
+            "experiment_recommended": True,
+            "experiment_env_ready": True,
+            "ready_for_experiment_scan": True,
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
+
+    resp = client.get("/api/scan-lifecycle", headers=_auth_headers())
+    assert resp.status_code == 200
+    preflight = resp.json()["data"]["signal_edge_preflight"]
+    assert preflight["experiment_env_ready"] is True

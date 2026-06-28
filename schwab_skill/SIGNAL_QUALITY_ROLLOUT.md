@@ -47,6 +47,52 @@ Go/No-Go:
 
 - Go if would-filter behavior is sensible (not overly aggressive, not zero when expected).
 
+## Stage 2b: Entry-Timing Shadow Experiment (1 week, P0)
+
+Offline replay on `control_legacy_aug` recommends **breakout buffer only** at 1.0%
+(~50% trade retention, overlap PF +0.32, early stops −3.9pp). Do **not** enforce live.
+
+Set:
+
+```env
+ENTRY_TIMING_SHADOW_MODE=shadow
+ENTRY_SHADOW_DISABLE_SMA50_FILTERS=true
+ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT=0.01
+```
+
+Preflight:
+
+```bash
+python scripts/apply_entry_timing_experiment_env.py
+python scripts/validate_entry_timing_experiment_env.py
+```
+
+Or start the local dashboard with experiment vars applied:
+
+```bash
+python scripts/start_local_dashboard.py --entry-timing-experiment
+```
+
+Headless refresh when ``last_scan`` is stale (requires Schwab market data auth):
+
+```bash
+python scripts/run_entry_timing_experiment_scan.py --smoke
+python scripts/compare_live_entry_shadow_to_offline.py --write-artifact
+```
+
+After each scan (local dashboard auto-writes artifact on completion):
+
+```bash
+python scripts/compare_live_entry_shadow_to_offline.py --write-artifact
+```
+
+Go/No-Go:
+
+- Go if live would-filter rate on Stage A is **~40–60%** and profile is
+  `breakout_buffer_only_0.010` for 1–2 scans; compare verdict `pass`.
+- No-Go if rate is near 0% (experiment env not loaded) or outside band with env ready.
+- Do **not** enable rank filter or SMA50 extension cap (12% cap hurt overlap PF offline).
+
 ## Stage 3: Narrow Enforcement (1 week)
 
 Set:

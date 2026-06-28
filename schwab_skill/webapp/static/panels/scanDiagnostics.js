@@ -124,9 +124,26 @@ export function diagnosticsHeadline(diagOrSummary = null) {
   return "";
 }
 
+const SIGNAL_EDGE_SHADOW_BLOCKER_KEYS = new Set([
+  "rank_filter_would_drop_composite",
+  "rank_filter_would_drop_rank_v2",
+  "rank_filter_would_drop_signal",
+  "rank_filter_would_drop_any",
+  "stage2_shadow_would_filter",
+  "entry_shadow_would_filter_sma50_low",
+  "entry_shadow_would_filter_sma50_high",
+  "entry_shadow_would_filter_breakout_buffer",
+  "entry_shadow_would_filter_any",
+]);
+
 export function buildDiagnosticsSummary(diag = {}) {
   const blockers = Object.entries(diag)
-    .filter(([k, v]) => safeNum(v, 0) > 0 && !["watchlist_size"].includes(k))
+    .filter(
+      ([k, v]) =>
+        safeNum(v, 0) > 0 &&
+        !["watchlist_size"].includes(k) &&
+        !SIGNAL_EDGE_SHADOW_BLOCKER_KEYS.has(k),
+    )
     .map(([k, v]) => ({
       key: k,
       label: DIAG_LABELS[k] || k.replaceAll("_", " "),
@@ -186,6 +203,10 @@ export function assertScanDeltasReconcile(diag, funnel, signals) {
 const DIAGNOSTIC_DETAIL_SKIP_KEYS = new Set([
   "data_quality",
   "data_quality_reasons",
+  "rank_filter_shadow",
+  "signal_edge_shadow_mode",
+  "entry_timing_shadow_mode",
+  ...SIGNAL_EDGE_SHADOW_BLOCKER_KEYS,
 ]);
 
 function dataQualityChipClass(value) {
@@ -268,6 +289,9 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
   const sectorWouldFilter =
     safeNum(diag.stage_a_sector_would_filter, 0) +
     safeNum(diag.stage_a_no_sector_would_filter, 0);
+  const signalEdgeShadowMode = safeText(diag.signal_edge_shadow_mode || "").toLowerCase() || null;
+  const stage2ShadowWouldFilter = safeNum(diag.stage2_shadow_would_filter, 0);
+  const rankFilterWouldDropAny = safeNum(diag.rank_filter_would_drop_any, 0);
 
   const vcpGateMode = safeText(diag.scan_vcp_gate_mode || "").toLowerCase() || null;
   const sectorGateMode = safeText(diag.scan_sector_gate_mode || "").toLowerCase() || null;
@@ -319,8 +343,10 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       label: "Passed uptrend check",
       value: nStage2,
       filtered: stage2Fail,
+      shadow_filtered: signalEdgeShadowMode === "shadow" ? stage2ShadowWouldFilter : 0,
+      mode: stage2ShadowWouldFilter > 0 ? signalEdgeShadowMode : null,
       tooltip:
-        "Symbols in a confirmed uptrend (above the long-term average with healthy trend structure). Failures did not pass the uptrend check.",
+        "Symbols in a confirmed uptrend (above the long-term average with healthy trend structure). Failures did not pass the uptrend check. Shadow mode shows how many would fail tighter Stage 2 thresholds.",
     },
     {
       key: "vcp",
@@ -378,6 +404,19 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
   ];
 
+  if (signalEdgeShadowMode === "shadow" && rankFilterWouldDropAny > 0) {
+    stages.push({
+      key: "rank_filter_shadow",
+      label: "After rank-filter shadow",
+      value: Math.max(0, finalCount - rankFilterWouldDropAny),
+      filtered: rankFilterWouldDropAny,
+      shadow_filtered: rankFilterWouldDropAny,
+      mode: "shadow",
+      tooltip:
+        "Post-scan shadow rank filter (composite p50, rank v2 p70, signal p70). Would drop signals below batch quantile thresholds. Does not remove live signals.",
+    });
+  }
+
   return {
     watchlist: nWatchlist,
     stage2_pass: nStage2,
@@ -415,6 +454,66 @@ export function renderDiagnostics(diag = {}, deps = {}) {
         ? `${dq} (${rs.slice(0, 2).map((x) => safeText(x)).join("; ")})`
         : dq,
       dataQualityChipClass(dq),
+    );
+  }
+
+  const shadowMode = safeText(diag.signal_edge_shadow_mode || "").toLowerCase();
+  if (shadowMode === "shadow") {
+    appendDiagnosticChip(
+      chipWrap,
+      "Rank-filter shadow",
+      safeNum(diag.rank_filter_would_drop_any, 0),
+      "warn",
+    );
+    appendDiagnosticChip(
+      chipWrap,
+      "Stage 2 shadow",
+      safeNum(diag.stage2_shadow_would_filter, 0),
+      "warn",
+    );
+  }
+  const entryShadowMode = safeText(diag.entry_timing_shadow_mode || "").toLowerCase();
+  const preflight = state.entryTimingScanPreflight;
+  if (preflight?.needs_dashboard_restart) {
+    appendDiagnosticChip(
+      chipWrap,
+      "Entry experiment env",
+      "restart dashboard to load .env",
+      "error",
+    );
+  } else if (preflight?.stale_last_scan) {
+    appendDiagnosticChip(
+      chipWrap,
+      "Entry experiment env",
+      "loaded — Run Scan to refresh counters",
+      "info",
+    );
+  } else if (preflight?.experiment_recommended && !preflight?.experiment_env_ready) {
+    const missing = (preflight.missing_env || []).slice(0, 2).join("; ");
+    appendDiagnosticChip(
+      chipWrap,
+      "Entry experiment env",
+      missing || "not configured — restart server after .env update",
+      "error",
+    );
+  } else if (entryShadowMode === "shadow") {
+    const profile = safeText(diag.entry_timing_shadow_profile || "default");
+    const stage2Eval = safeNum(diag.entry_shadow_stage2_evaluated, 0);
+    const stage2Drop = safeNum(diag.entry_shadow_stage2_would_filter_any, 0);
+    const stage2Part =
+      stage2Eval > 0 ? ` | stage2 ${stage2Drop}/${stage2Eval}` : "";
+    appendDiagnosticChip(
+      chipWrap,
+      "Entry-timing shadow",
+      `${safeNum(diag.entry_shadow_would_filter_any, 0)} stageA (${profile})${stage2Part}`,
+      "warn",
+    );
+  } else if (preflight?.experiment_recommended && preflight?.experiment_env_ready) {
+    appendDiagnosticChip(
+      chipWrap,
+      "Entry-timing shadow",
+      "env ready — run scan to populate counters",
+      "info",
     );
   }
 

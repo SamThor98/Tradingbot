@@ -10,7 +10,8 @@ Schwab requires an https://127.0.0.1 callback. This script:
 Usage (from schwab_skill):
   python scripts/start_local_dashboard.py
   python scripts/start_local_dashboard.py --port 8182 --no-sync-env
-  python scripts/start_local_dashboard.py --reload
+  python scripts/start_local_dashboard.py --entry-timing-experiment
+  python scripts/start_local_dashboard.py --entry-timing-live
 """
 from __future__ import annotations
 
@@ -78,9 +79,36 @@ def main() -> int:
         action="store_true",
         help="Enable auto-reload on webapp/ changes (slower; can loop on OneDrive sync)",
     )
+    parser.add_argument(
+        "--entry-timing-experiment",
+        action="store_true",
+        help="Upsert P0 entry-timing SHADOW experiment vars into .env before starting",
+    )
+    parser.add_argument(
+        "--entry-timing-live",
+        action="store_true",
+        help="Upsert P0 entry-timing LIVE vars (1%% breakout buffer) into .env before starting",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(SKILL_DIR))
+    if args.entry_timing_live:
+        from core.env_local import apply_entry_timing_live_env
+
+        changed = apply_entry_timing_live_env(ENV_PATH)
+        if changed:
+            print(f"Entry-timing LIVE env updated in {ENV_PATH}: {', '.join(changed)}")
+        else:
+            print(f"Entry-timing LIVE env already set in {ENV_PATH}")
+    elif args.entry_timing_experiment:
+        from core.env_local import apply_entry_timing_experiment_env
+
+        changed = apply_entry_timing_experiment_env(ENV_PATH)
+        if changed:
+            print(f"Entry-timing experiment env updated in {ENV_PATH}: {', '.join(changed)}")
+        else:
+            print(f"Entry-timing experiment env already set in {ENV_PATH}")
+
     from run_dual_auth_browser import _make_cert
 
     cert_path, key_path = _make_cert()

@@ -66,7 +66,7 @@ def hermetic_chain(monkeypatch):
         lambda signals, diagnostics, skill_dir: signals,
     )
     monkeypatch.setattr(signal_scanner, "_record_quality_snapshot", lambda *_a, **_k: None)
-    for var in ("QUALITY_GATES_MODE", "EVENT_RISK_MODE"):
+    for var in ("QUALITY_GATES_MODE", "EVENT_RISK_MODE", "SIGNAL_EDGE_SHADOW_MODE"):
         monkeypatch.setenv(var, "off")
 
 

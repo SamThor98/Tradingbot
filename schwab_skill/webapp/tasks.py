@@ -150,6 +150,21 @@ def _persist_user_last_scan(
         "data_provider_primary_count",
         "data_provider_fallback_count",
         "primary_provider_filtered",
+        "signal_edge_shadow_mode",
+        "rank_filter_would_drop_composite",
+        "rank_filter_would_drop_rank_v2",
+        "rank_filter_would_drop_signal",
+        "rank_filter_would_drop_any",
+        "stage2_shadow_would_filter",
+        "entry_timing_shadow_mode",
+        "entry_timing_shadow_profile",
+        "entry_shadow_would_filter_sma50_low",
+        "entry_shadow_would_filter_sma50_high",
+        "entry_shadow_would_filter_breakout_buffer",
+        "entry_shadow_would_filter_any",
+        "entry_shadow_stage2_evaluated",
+        "entry_shadow_stage2_would_filter_any",
+        "entry_shadow_stage2_would_filter_breakout_buffer",
     )
     diagnostics_summary = {k: diagnostics.get(k) for k in summary_keys}
     payload = {

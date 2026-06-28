@@ -34,6 +34,8 @@ export const state = {
   lastStatusAt: null,
   /** ISO timestamp of the last decision-dashboard response. */
   lastDecisionDashboardAt: null,
+  /** P0 entry-timing experiment scan preflight (decision dashboard / scan-lifecycle). */
+  entryTimingScanPreflight: null,
   approvingTradeId: null,
   approvingChecklist: null,
   /** Scan signal snapshot from the pending row being approved (for filter guard). */

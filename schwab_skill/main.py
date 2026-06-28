@@ -327,6 +327,8 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
             f"Scans: {quality.get('scan_count', 0)} | Signals: {quality.get('signals_total', 0)}",
             f"Avg score: {quality.get('avg_signal_score', 0):.1f} | Avg conviction: {quality.get('avg_conviction', 0):.1f}",
             f"Would-filter/filtered: {d.get('quality_gates_would_filter', 0)}/{d.get('quality_gates_filtered', 0)}",
+            f"Rank-filter shadow: {d.get('rank_filter_would_drop_any', 0)} | Stage2 shadow: {d.get('stage2_shadow_would_filter', 0)}",
+            f"Entry-timing shadow: {d.get('entry_shadow_would_filter_any', 0)}",
             f"Weak breakout vol: {d.get('low_breakout_volume', 0)} | Weak MiroFish: {d.get('weak_mirofish_alignment', 0)}",
         ]
         embed["fields"].append({

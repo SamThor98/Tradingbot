@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent
 
@@ -244,6 +245,140 @@ def get_stage2_52w_pct(skill_dir: Path | None = None) -> float:
 # Stage 2: 200 SMA must be upward for this many days
 def get_stage2_sma_upward_days(skill_dir: Path | None = None) -> int:
     return _get_int("STAGE2_SMA_UPWARD_DAYS", 20, skill_dir)
+
+
+def get_signal_edge_shadow_mode(skill_dir: Path | None = None) -> str:
+    """P0 signal-edge shadow diagnostics (rank-filter + Stage 2 tighten counters).
+
+    off — disable shadow counters. shadow — count would-filter actions only (no blocking).
+    """
+    return _get_mode("SIGNAL_EDGE_SHADOW_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_rank_filter_shadow_min_percentile_composite(skill_dir: Path | None = None) -> int:
+    """Min score percentile for composite rank-filter shadow (default p50 from counterfactual)."""
+    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_COMPOSITE", 50, skill_dir)))
+
+
+def get_rank_filter_shadow_min_percentile_rank_v2(skill_dir: Path | None = None) -> int:
+    """Min score percentile for rank_score_v2 shadow filter (default p70)."""
+    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", 70, skill_dir)))
+
+
+def get_rank_filter_shadow_min_percentile_signal(skill_dir: Path | None = None) -> int:
+    """Min score percentile for signal_score shadow filter (default p70)."""
+    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_SIGNAL", 70, skill_dir)))
+
+
+def get_stage2_shadow_52w_pct(skill_dir: Path | None = None) -> float:
+    """Stricter 52w proximity for Stage 2 shadow tighten (live default 0.85)."""
+    val = _get_float("STAGE2_SHADOW_52W_PCT", 0.88, skill_dir)
+    return max(0.5, min(0.99, val))
+
+
+def get_stage2_shadow_sma_upward_days(skill_dir: Path | None = None) -> int:
+    """Stricter 200-SMA upward window for Stage 2 shadow tighten (live default 20)."""
+    return max(1, _get_int("STAGE2_SHADOW_SMA_UPWARD_DAYS", 25, skill_dir))
+
+
+def get_entry_timing_shadow_mode(skill_dir: Path | None = None) -> str:
+    """P0 entry-timing gates (SMA50 cushion, breakout buffer, extension cap).
+
+    off — disable. shadow — annotate/count only (never blocks).
+    live — drop Stage A candidates that fail entry-timing rules.
+    """
+    return _get_mode("ENTRY_TIMING_SHADOW_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_entry_shadow_min_pct_above_sma50(skill_dir: Path | None = None) -> float:
+    """Min % above 50 SMA at entry; shadow rejects hugging support (default 1%)."""
+    val = _get_float("ENTRY_SHADOW_MIN_PCT_ABOVE_SMA50", 0.01, skill_dir)
+    return max(0.0, min(0.25, val))
+
+
+def get_entry_shadow_max_pct_above_sma50(skill_dir: Path | None = None) -> float:
+    """Max % above 50 SMA at entry; shadow flags extended/chase entries (default 25%).
+
+    Full replay on control_legacy_aug showed 12% was too tight (222 false positives,
+    overlap PF -0.18). Keep high until a narrower cap shows early-stop reduction
+    with >=50% retention in ``analyze_entry_timing_shadow_counterfactual.py``.
+    """
+    val = _get_float("ENTRY_SHADOW_MAX_PCT_ABOVE_SMA50", 0.25, skill_dir)
+    return max(0.02, min(0.50, val))
+
+
+def get_entry_shadow_min_breakout_buffer_pct(skill_dir: Path | None = None) -> float:
+    """Min close buffer above prior-bar high for breakout shadow (default 0.2%)."""
+    val = _get_float("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT", 0.002, skill_dir)
+    return max(0.0, min(0.05, val))
+
+
+def get_entry_shadow_disable_sma50_filters(skill_dir: Path | None = None) -> bool:
+    """When true, entry-timing shadow only evaluates breakout buffer (P0 experiment path)."""
+    return _get_bool("ENTRY_SHADOW_DISABLE_SMA50_FILTERS", False, skill_dir)
+
+
+def get_entry_timing_shadow_profile(skill_dir: Path | None = None) -> str:
+    """Human-readable active entry-timing shadow profile for diagnostics."""
+    if get_entry_timing_shadow_mode(skill_dir) == "off":
+        return "off"
+    if get_entry_shadow_disable_sma50_filters(skill_dir):
+        buf = get_entry_shadow_min_breakout_buffer_pct(skill_dir)
+        return f"breakout_buffer_only_{buf:.3f}"
+    return "default_sma50_and_buffer"
+
+
+def get_entry_timing_breakout_buffer_readiness(skill_dir: Path | None = None) -> dict[str, Any]:
+    """Profile readiness for breakout-buffer-only path (shadow or live mode)."""
+    expected_profile = "breakout_buffer_only_0.010"
+    mode = get_entry_timing_shadow_mode(skill_dir)
+    profile = get_entry_timing_shadow_profile(skill_dir)
+    buffer = get_entry_shadow_min_breakout_buffer_pct(skill_dir)
+    disable_sma50 = get_entry_shadow_disable_sma50_filters(skill_dir)
+
+    missing_env: list[str] = []
+    if mode not in {"shadow", "live"}:
+        missing_env.append("ENTRY_TIMING_SHADOW_MODE=shadow|live")
+    if not disable_sma50:
+        missing_env.append("ENTRY_SHADOW_DISABLE_SMA50_FILTERS=true")
+    if abs(buffer - 0.01) > 1e-9:
+        missing_env.append("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT=0.01")
+
+    ready = not missing_env and profile == expected_profile
+    return {
+        "ready": ready,
+        "mode": mode,
+        "profile": profile,
+        "expected_profile": expected_profile,
+        "missing_env": missing_env,
+        "live_enforced": mode == "live",
+    }
+
+
+def get_entry_timing_experiment_readiness(skill_dir: Path | None = None) -> dict[str, Any]:
+    """Whether process env matches the offline breakout-buffer-only experiment (shadow)."""
+    expected_profile = "breakout_buffer_only_0.010"
+    base = get_entry_timing_breakout_buffer_readiness(skill_dir)
+    mode = str(base.get("mode") or "")
+    missing_env = list(base.get("missing_env") or [])
+    if mode == "live":
+        missing_env.append("ENTRY_TIMING_SHADOW_MODE=shadow (live active — use breakout_buffer_readiness)")
+    elif mode != "shadow":
+        missing_env.append("ENTRY_TIMING_SHADOW_MODE=shadow")
+
+    recommended_env = {
+        "ENTRY_TIMING_SHADOW_MODE": "shadow",
+        "ENTRY_SHADOW_DISABLE_SMA50_FILTERS": "true",
+        "ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT": "0.01",
+    }
+    ready = not missing_env and base.get("profile") == expected_profile
+    return {
+        "ready": ready,
+        "profile": base.get("profile"),
+        "expected_profile": expected_profile,
+        "missing_env": missing_env,
+        "recommended_env": recommended_env,
+    }
 
 
 # VCP: number of consecutive days volume below 50d avg

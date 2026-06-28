@@ -760,6 +760,7 @@ def _scan_lifecycle_payload(
             out["scan_id"] = diag.get("scan_id")
     if status == "failed":
         out["error"] = snapshot.get("error")
+    out["signal_edge_preflight"] = _signal_edge_scan_preflight()
     return out
 
 
@@ -954,6 +955,221 @@ def _latest_registry_decision() -> dict[str, Any] | None:
     return None
 
 
+def _load_validation_artifact(name: str) -> dict[str, Any] | None:
+    path = VALIDATION_ARTIFACT_DIR / name
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _signal_edge_validation_status(run_id: str = "control_legacy_aug") -> dict[str, Any]:
+    """Offline P0 signal-edge evidence for leadership dashboard."""
+    shadow = _load_validation_artifact(f"signal_edge_shadow_counterfactual_{run_id}.json")
+    early = _load_validation_artifact(f"early_stopout_cohorts_{run_id}.json")
+    entry_timing = _load_validation_artifact(f"entry_timing_shadow_counterfactual_{run_id}.json")
+    rank = _load_validation_artifact(f"rank_filter_counterfactual_{run_id}.json")
+
+    shadow_rec = (shadow or {}).get("recommendation") if shadow else None
+    early_rec = (early or {}).get("recommendation") if early else None
+    early_baseline = (early or {}).get("baseline") if early else None
+
+    rank_action = None
+    if isinstance(shadow_rec, dict):
+        rank_action = shadow_rec.get("action")
+    elif isinstance(rank, dict):
+        rank_action = (rank.get("recommendation") or {}).get("action")
+
+    entry_rec = (entry_timing or {}).get("recommendation") if entry_timing else None
+    entry_action = entry_rec.get("action") if isinstance(entry_rec, dict) else None
+    binding_constraint = "entry_quality" if entry_action else None
+    if entry_action in {
+        "fix_entry_timing_not_rank_filter",
+        "revise_shadow_thresholds",
+        "keep_entry_timing_shadow_only",
+        "experiment_breakout_buffer_only",
+    }:
+        binding_constraint = "entry_timing_not_rank_filter"
+
+    enforce_rank_filter = rank_action == "shadow_rank_filter"
+    state = "shadow_only"
+    if enforce_rank_filter:
+        state = "rank_filter_candidate"
+    elif entry_action == "experiment_breakout_buffer_only":
+        state = "experiment_shadow"
+    elif binding_constraint:
+        state = "fix_entry_first"
+
+    experiment_row = None
+    if isinstance(entry_rec, dict):
+        experiment_row = entry_rec.get("breakout_buffer_only")
+    if experiment_row is None and isinstance(entry_timing, dict):
+        for row in entry_timing.get("breakout_buffer_only_sweep") or []:
+            if row.get("min_breakout_buffer_pct") == 0.01:
+                experiment_row = row
+                break
+
+    live_compare = _load_validation_artifact(f"live_entry_shadow_compare_{run_id}.json")
+    stack_art = _load_validation_artifact(f"signal_stack_counterfactual_{run_id}.json")
+    live_compare_summary = None
+    if isinstance(live_compare, dict):
+        comparison = live_compare.get("comparison") if isinstance(live_compare.get("comparison"), dict) else {}
+        live_metrics = live_compare.get("live") if isinstance(live_compare.get("live"), dict) else {}
+        live_compare_summary = {
+            "verdict": comparison.get("verdict"),
+            "generated_at": live_compare.get("generated_at"),
+            "would_filter_pct": live_metrics.get("would_filter_pct"),
+            "would_filter_pct_stage2": live_metrics.get("would_filter_pct_stage2"),
+            "rate_source": live_metrics.get("rate_source"),
+            "stage_a_candidates": live_metrics.get("stage_a_candidates"),
+            "entry_shadow_would_filter_any": live_metrics.get("entry_shadow_would_filter_any"),
+            "entry_shadow_stage2_evaluated": live_metrics.get("entry_shadow_stage2_evaluated"),
+            "entry_shadow_stage2_would_filter_any": live_metrics.get("entry_shadow_stage2_would_filter_any"),
+            "entry_timing_shadow_profile": live_metrics.get("entry_timing_shadow_profile"),
+            "delta_would_filter_pp": comparison.get("delta_would_filter_pp"),
+            "errors": comparison.get("errors") or [],
+            "warnings": comparison.get("warnings") or [],
+            "skipped": bool(live_compare.get("skipped")),
+        }
+
+    stack_summary = None
+    if isinstance(stack_art, dict):
+        scenarios = stack_art.get("scenarios") if isinstance(stack_art.get("scenarios"), dict) else {}
+        stack_row = scenarios.get("exit_grace_breakout_buffer_0.010") or {}
+        stack_rec = stack_art.get("recommendation") if isinstance(stack_art.get("recommendation"), dict) else {}
+        stack_summary = {
+            "generated_at": stack_art.get("generated_at"),
+            "pf_mean": stack_row.get("pf_mean"),
+            "worst_era_pf": stack_row.get("worst_era_pf"),
+            "retention_pct": stack_row.get("retention_pct"),
+            "passes_promotion_gates": stack_row.get("passes_promotion_gates"),
+            "recommendation": stack_rec.get("action"),
+            "reason": stack_rec.get("reason"),
+        }
+
+    from config import get_entry_timing_experiment_readiness
+
+    experiment_env = get_entry_timing_experiment_readiness(SKILL_DIR)
+
+    return {
+        "run_id": run_id,
+        "state": state,
+        "binding_constraint": binding_constraint,
+        "experiment_env": experiment_env,
+        "live_entry_shadow_compare": live_compare_summary,
+        "signal_stack_counterfactual": stack_summary,
+        "early_stopout_pct": (early_baseline or {}).get("early_stopout_pct"),
+        "hold_21_40d_pf": (early_baseline or {}).get("hold_21_40d_pf"),
+        "rank_filter_recommendation": rank_action,
+        "entry_quality_recommendation": entry_action or early_rec.get("action") if isinstance(early_rec, dict) else None,
+        "entry_quality_reason": early_rec.get("reason") if isinstance(early_rec, dict) else None,
+        "entry_timing_recommendation": entry_action,
+        "entry_timing_reason": entry_rec.get("reason") if isinstance(entry_rec, dict) else None,
+        "entry_timing_experiment": experiment_row,
+        "offline_experiment_targets": {
+            "would_drop_retention_pct": (experiment_row or {}).get("retention_pct"),
+            "delta_early_stopout_pp": (experiment_row or {}).get("delta_early_stopout_pp"),
+            "delta_overlap_pf_mean": (experiment_row or {}).get("delta_overlap_pf_mean"),
+            "env": {
+                "ENTRY_SHADOW_DISABLE_SMA50_FILTERS": "true",
+                "ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT": "0.01",
+            },
+        },
+        "shadow_generated_at": (shadow or {}).get("generated_at"),
+        "early_stop_generated_at": (early or {}).get("generated_at"),
+        "entry_timing_generated_at": (entry_timing or {}).get("generated_at"),
+        "artifacts": {
+            "shadow_counterfactual": f"validation_artifacts/signal_edge_shadow_counterfactual_{run_id}.json",
+            "early_stopout_cohorts": f"validation_artifacts/early_stopout_cohorts_{run_id}.json",
+            "entry_timing_shadow_counterfactual": f"validation_artifacts/entry_timing_shadow_counterfactual_{run_id}.json",
+            "rank_filter_counterfactual": f"validation_artifacts/rank_filter_counterfactual_{run_id}.json",
+        },
+    }
+
+
+def _signal_edge_scan_preflight(run_id: str = "control_legacy_aug") -> dict[str, Any]:
+    """Compact scan-time guidance for the P0 entry-timing experiment path."""
+    from config import get_entry_timing_breakout_buffer_readiness
+    from core.env_local import entry_timing_experiment_file_readiness
+
+    edge = _signal_edge_validation_status(run_id)
+    experiment_env = edge.get("experiment_env") if isinstance(edge.get("experiment_env"), dict) else {}
+    live_compare = edge.get("live_entry_shadow_compare") if isinstance(edge.get("live_entry_shadow_compare"), dict) else {}
+    entry_rec = edge.get("entry_timing_recommendation")
+    experiment_recommended = entry_rec == "experiment_breakout_buffer_only"
+    profile_status = get_entry_timing_breakout_buffer_readiness(SKILL_DIR)
+    file_env = entry_timing_experiment_file_readiness(SKILL_DIR / ".env")
+    process_mode = str(profile_status.get("mode") or "")
+    file_mode = str(file_env.get("mode") or "")
+    profile_ready = bool(profile_status.get("ready"))
+    process_ready = bool(experiment_env.get("ready")) or (profile_ready and process_mode == "live")
+    file_ready = bool(file_env.get("profile_ready")) or bool(file_env.get("ready"))
+    needs_dashboard_restart = profile_ready and file_mode != process_mode
+    stale_last_scan = live_compare.get("verdict") in {"skip", "stale_scan"} and profile_ready and process_mode != "live"
+
+    warnings: list[str] = []
+    if profile_ready and process_mode == "live":
+        warnings.append("Entry timing LIVE enforcement is active — expect ~50% fewer Stage A candidates.")
+    if experiment_recommended and needs_dashboard_restart:
+        warnings.append(
+            f".env has mode={file_mode} but process has mode={process_mode}. "
+            "Restart uvicorn, then Run Scan."
+        )
+    elif experiment_recommended and not profile_ready:
+        warnings.append(
+            "Offline replay recommends breakout-buffer-only path, but profile env is not configured. "
+            "Run scripts/apply_entry_timing_experiment_env.py or apply_entry_timing_live_env.py."
+        )
+        for item in profile_status.get("missing_env") or []:
+            warnings.append(f"Set {item}")
+    elif experiment_recommended and profile_ready and process_mode == "shadow" and stale_last_scan:
+        warnings.append(
+            "Experiment env is loaded, but last_scan predates it. Run Scan to refresh shadow counters."
+        )
+    elif profile_ready and process_mode == "live" and live_compare.get("verdict") == "fail":
+        warnings.append("Live enforcement active but compare verdict failed — run a fresh full scan.")
+
+    from core.entry_timing_live_compare import assess_stage2b_readiness, load_entry_timing_evidence_log
+
+    evidence_log = load_entry_timing_evidence_log(SKILL_DIR, run_id)
+    stage2b = evidence_log.get("stage2b")
+    if not isinstance(stage2b, dict):
+        stage2b = assess_stage2b_readiness(evidence_log.get("records") or [])
+
+    from core.entry_timing_live_compare import assess_entry_timing_live_promotion_readiness
+
+    live_promotion = assess_entry_timing_live_promotion_readiness(SKILL_DIR, run_id=run_id)
+
+    return {
+        "experiment_recommended": experiment_recommended,
+        "experiment_env_ready": process_ready,
+        "experiment_env_file_ready": file_ready,
+        "entry_timing_mode": process_mode,
+        "entry_timing_profile_ready": profile_ready,
+        "entry_timing_live_enforced": process_mode == "live",
+        "needs_dashboard_restart": needs_dashboard_restart,
+        "stale_last_scan": stale_last_scan,
+        "entry_timing_recommendation": entry_rec,
+        "expected_profile": experiment_env.get("expected_profile"),
+        "current_profile": experiment_env.get("profile"),
+        "file_profile": file_env.get("profile"),
+        "missing_env": list(experiment_env.get("missing_env") or []),
+        "recommended_env": dict(experiment_env.get("recommended_env") or {}),
+        "live_compare_verdict": live_compare.get("verdict"),
+        "stage2b_ready": bool(stage2b.get("ready")),
+        "stage2b_pass_scans": stage2b.get("pass_scans"),
+        "stage2b_required_pass_scans": stage2b.get("required_pass_scans"),
+        "stage2b_messages": list(stage2b.get("messages") or []),
+        "entry_timing_live_promotion_ready": bool(live_promotion.get("ready")),
+        "entry_timing_live_promotion_errors": list(live_promotion.get("errors") or []),
+        "warnings": warnings,
+        "ready_for_experiment_scan": process_ready if experiment_recommended else True,
+    }
+
+
 def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
     validation = _latest_validation_status()
     ablation = _latest_ablation_status()
@@ -973,6 +1189,11 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
     diagnostics_summary = (
         last_scan.get("diagnostics_summary")
         if isinstance(last_scan, dict) and isinstance(last_scan.get("diagnostics_summary"), dict)
+        else {}
+    )
+    last_scan_diagnostics = (
+        last_scan.get("diagnostics")
+        if isinstance(last_scan, dict) and isinstance(last_scan.get("diagnostics"), dict)
         else {}
     )
     strategy_summary = (
@@ -1021,7 +1242,11 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
                 if isinstance(diagnostics_summary.get("top_blockers"), list)
                 else None
             ),
+            "signal_edge_shadow": diagnostics_summary.get("signal_edge_shadow")
+            or _signal_edge_shadow_summary(last_scan_diagnostics),
         },
+        "signal_edge": _signal_edge_validation_status(),
+        "scan_preflight": _signal_edge_scan_preflight(),
         "promotion_readiness": {
             "release_gate_ready": gate_ready,
             "checks": readiness_checks,
@@ -1033,6 +1258,37 @@ def _decision_dashboard_snapshot(db: Session) -> dict[str, Any]:
 
 def _strategy_summary(signals: list[dict[str, Any]] | None) -> dict[str, Any]:
     return summarize_live_strategy(signals)
+
+
+_SIGNAL_EDGE_SHADOW_BLOCKER_KEYS = frozenset(
+    {
+        "rank_filter_would_drop_composite",
+        "rank_filter_would_drop_rank_v2",
+        "rank_filter_would_drop_signal",
+        "rank_filter_would_drop_any",
+        "stage2_shadow_would_filter",
+        "entry_shadow_would_filter_sma50_low",
+        "entry_shadow_would_filter_sma50_high",
+        "entry_shadow_would_filter_breakout_buffer",
+        "entry_shadow_would_filter_any",
+    }
+)
+
+
+def _signal_edge_shadow_summary(diagnostics: dict[str, Any]) -> dict[str, Any] | None:
+    mode = str(diagnostics.get("signal_edge_shadow_mode") or "").strip().lower()
+    if not mode:
+        return None
+    rank_meta = diagnostics.get("rank_filter_shadow")
+    return {
+        "mode": mode,
+        "rank_filter_would_drop_composite": _safe_int(diagnostics.get("rank_filter_would_drop_composite")),
+        "rank_filter_would_drop_rank_v2": _safe_int(diagnostics.get("rank_filter_would_drop_rank_v2")),
+        "rank_filter_would_drop_signal": _safe_int(diagnostics.get("rank_filter_would_drop_signal")),
+        "rank_filter_would_drop_any": _safe_int(diagnostics.get("rank_filter_would_drop_any")),
+        "stage2_shadow_would_filter": _safe_int(diagnostics.get("stage2_shadow_would_filter")),
+        "thresholds": (rank_meta or {}).get("thresholds") if isinstance(rank_meta, dict) else {},
+    }
 
 
 def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -1049,7 +1305,7 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
             value = int(raw)
         except Exception:
             continue
-        if value <= 0 or key == "watchlist_size":
+        if value <= 0 or key == "watchlist_size" or key in _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS:
             continue
         ranked.append(
             {
@@ -1068,6 +1324,7 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
         "top_blockers": ranked[:5],
         "data_quality": diagnostics.get("data_quality"),
         "data_quality_reasons": list(diagnostics.get("data_quality_reasons") or []),
+        "signal_edge_shadow": _signal_edge_shadow_summary(diagnostics),
         "funnel": funnel,
     }
 
@@ -1122,6 +1379,9 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
     sector_gate_mode = str(diagnostics.get("scan_sector_gate_mode") or "").strip().lower() or None
     primary_provider_mode = str(diagnostics.get("scan_primary_provider_mode") or "").strip().lower() or None
     quality_gates_mode = str(diagnostics.get("quality_gates_mode") or "").strip().lower() or None
+    signal_edge_shadow_mode = str(diagnostics.get("signal_edge_shadow_mode") or "").strip().lower() or None
+    stage2_shadow_would_filter = _safe_int(diagnostics.get("stage2_shadow_would_filter"))
+    rank_filter_would_drop_any = _safe_int(diagnostics.get("rank_filter_would_drop_any"))
 
     n_watchlist = watchlist
     n_stage2 = max(0, n_watchlist - stage2_fail)
@@ -1155,8 +1415,12 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
             "label": "Passed Stage 2",
             "value": n_stage2,
             "filtered": stage2_fail,
+            "shadow_filtered": stage2_shadow_would_filter if signal_edge_shadow_mode == "shadow" else 0,
+            "mode": signal_edge_shadow_mode if stage2_shadow_would_filter > 0 else None,
             "tooltip": (
-                "Tickers in a Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail."
+                "Tickers in a Stage 2 uptrend (above 30-week SMA, proper trend structure). Failures: stage2_fail. "
+                "When signal-edge shadow is on, the would-filter count shows candidates that pass live Stage 2 "
+                "but fail the tighter shadow thresholds (higher 52-week proximity, longer SMA uptrend)."
             ),
         },
         {
@@ -1230,6 +1494,23 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
             ),
         },
     ]
+
+    if signal_edge_shadow_mode == "shadow" and rank_filter_would_drop_any > 0:
+        n_after_rank_shadow = max(0, final_count - rank_filter_would_drop_any)
+        stages.append(
+            {
+                "key": "rank_filter_shadow",
+                "label": "After rank-filter shadow",
+                "value": n_after_rank_shadow,
+                "filtered": rank_filter_would_drop_any,
+                "shadow_filtered": rank_filter_would_drop_any,
+                "mode": "shadow",
+                "tooltip": (
+                    "Post-scan shadow rank filter (composite p50, rank_v2 p70, signal p70). "
+                    "Would drop signals below batch quantile thresholds. Does not remove live signals."
+                ),
+            }
+        )
 
     return {
         # Legacy keys preserved for any external consumer that still reads them.
@@ -1484,6 +1765,23 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                 "strategy_summary": strategy_summary,
             }
             _save_last_scan(db, last_scan)
+            try:
+                from config import get_entry_timing_experiment_readiness
+                from core.entry_timing_live_compare import write_live_entry_shadow_compare_report
+
+                write_live_entry_shadow_compare_report(
+                    diagnostics,
+                    skill_dir=SKILL_DIR,
+                    live_meta={
+                        "source": "post_scan",
+                        "scan_at": finished_at,
+                        "signals_found": len(signals),
+                        "watchlist_size": diagnostics.get("watchlist_size"),
+                    },
+                    experiment_env_ready=bool(get_entry_timing_experiment_readiness(SKILL_DIR).get("ready")),
+                )
+            except Exception as exc:
+                LOG.debug("Entry timing live compare artifact skipped: %s", exc)
         finally:
             db.close()
         with _scan_lock:

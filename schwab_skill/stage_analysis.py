@@ -8,6 +8,7 @@ Configurable via STAGE2_52W_PCT, STAGE2_SMA_UPWARD_DAYS, VCP_DAYS in .env.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -66,12 +67,20 @@ def _slope_per_step(values: pd.Series) -> float:
     return numer / denom
 
 
-def is_stage_2(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
+def is_stage_2(
+    df: pd.DataFrame,
+    skill_dir: Path | None = None,
+    *,
+    pct_min_override: float | None = None,
+    sma_upward_days_override: int | None = None,
+) -> bool:
     """
     True only if ALL conditions hold on most recent trading day:
     1. Price > 50 SMA > 150 SMA > 200 SMA
     2. 200 SMA strictly upward for last N days (STAGE2_SMA_UPWARD_DAYS)
     3. Price within (1 - STAGE2_52W_PCT) of 52-week high
+
+    Optional overrides support shadow-tighten counterfactuals without changing live gates.
     """
     from config import get_stage2_52w_pct, get_stage2_sma_upward_days
 
@@ -86,7 +95,12 @@ def is_stage_2(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
     if price <= latest[SMA_50] or latest[SMA_50] <= latest[SMA_150] or latest[SMA_150] <= latest[SMA_200]:
         return False
 
-    n_days = get_stage2_sma_upward_days(skill_dir) + 1
+    upward_days = (
+        int(sma_upward_days_override)
+        if sma_upward_days_override is not None
+        else get_stage2_sma_upward_days(skill_dir)
+    )
+    n_days = upward_days + 1
     sma_200 = df[SMA_200].dropna()
     if len(sma_200) < n_days:
         return False
@@ -94,7 +108,7 @@ def is_stage_2(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
     if _slope_per_step(last_n) <= 0:
         return False
 
-    pct_min = get_stage2_52w_pct(skill_dir)
+    pct_min = float(pct_min_override) if pct_min_override is not None else get_stage2_52w_pct(skill_dir)
     lookback = min(TRADING_DAYS_52W, len(df))
     high_52w = df["high"].iloc[-lookback:].max()
     if price < pct_min * high_52w:
@@ -260,3 +274,80 @@ def compute_signal_components(
         "bull_trap_probability": round(float(bull_prob), 4) if bull_prob is not None else None,
         "continuation_probability": round(float(continuation_prob), 4) if continuation_prob is not None else None,
     }
+
+
+def compute_entry_timing_metrics(
+    df: pd.DataFrame,
+    skill_dir: Path | None = None,
+) -> dict[str, float | None]:
+    """Entry-time observables for entry-timing shadow gates."""
+    if df.empty or len(df) < 2:
+        return {
+            "pct_above_sma50": None,
+            "breakout_buffer_pct": None,
+            "pct_from_52w_high": None,
+        }
+    df = add_indicators(df)
+    latest = df.iloc[-1]
+    price = float(latest["close"])
+    sma50 = float(latest.get(SMA_50, 0) or 0)
+    pct_above_sma50 = ((price - sma50) / sma50) if sma50 > 0 else None
+    prior_high = float(df["high"].iloc[-2]) if len(df) >= 2 else float(df["high"].iloc[-1])
+    breakout_buffer_pct = ((price - prior_high) / prior_high) if prior_high > 0 else None
+    lookback = min(TRADING_DAYS_52W, len(df))
+    high_52w = float(df["high"].iloc[-lookback:].max())
+    pct_from_52w_high = (price / high_52w) if high_52w > 0 else None
+    return {
+        "pct_above_sma50": round(float(pct_above_sma50), 4) if pct_above_sma50 is not None else None,
+        "breakout_buffer_pct": round(float(breakout_buffer_pct), 4) if breakout_buffer_pct is not None else None,
+        "pct_from_52w_high": round(float(pct_from_52w_high), 4) if pct_from_52w_high is not None else None,
+    }
+
+
+def evaluate_entry_timing_shadow(
+    df: pd.DataFrame,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Shadow-only entry timing evaluation. Never blocks — returns would-filter reasons."""
+    from config import (
+        get_entry_shadow_disable_sma50_filters,
+        get_entry_shadow_max_pct_above_sma50,
+        get_entry_shadow_min_breakout_buffer_pct,
+        get_entry_shadow_min_pct_above_sma50,
+        get_entry_timing_shadow_mode,
+    )
+
+    mode = get_entry_timing_shadow_mode(skill_dir)
+    metrics = compute_entry_timing_metrics(df, skill_dir)
+    out: dict[str, Any] = {
+        "mode": mode,
+        "would_filter": False,
+        "would_filter_reasons": [],
+        "sma50_filters_disabled": get_entry_shadow_disable_sma50_filters(skill_dir),
+        **metrics,
+    }
+    if mode == "off":
+        return out
+
+    reasons: list[str] = []
+    if not get_entry_shadow_disable_sma50_filters(skill_dir):
+        pct_above = metrics.get("pct_above_sma50")
+        if pct_above is not None and float(pct_above) < float(get_entry_shadow_min_pct_above_sma50(skill_dir)):
+            reasons.append("sma50_cushion_low")
+        if pct_above is not None and float(pct_above) > float(get_entry_shadow_max_pct_above_sma50(skill_dir)):
+            reasons.append("sma50_extension_high")
+    buffer_pct = metrics.get("breakout_buffer_pct")
+    if buffer_pct is not None and float(buffer_pct) < float(get_entry_shadow_min_breakout_buffer_pct(skill_dir)):
+        reasons.append("breakout_buffer_low")
+    out["would_filter_reasons"] = reasons
+    out["would_filter"] = bool(reasons)
+    return out
+
+
+def entry_timing_blocks_stage_a(entry_shadow: dict[str, Any] | None, skill_dir: Path | None = None) -> bool:
+    """True when entry-timing live mode should reject a Stage A candidate."""
+    from config import get_entry_timing_shadow_mode
+
+    if not isinstance(entry_shadow, dict):
+        return False
+    return get_entry_timing_shadow_mode(skill_dir) == "live" and bool(entry_shadow.get("would_filter"))

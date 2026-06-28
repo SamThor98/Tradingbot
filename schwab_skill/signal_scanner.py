@@ -898,35 +898,57 @@ def _scan_stage_a_one(
                 "used_fallback": used_fallback,
                 "fallback_reason": history_meta.get("fallback_reason"),
             }
+
+        entry_timing_at_stage2 = None
+        try:
+            from config import get_entry_timing_shadow_mode
+            from stage_analysis import evaluate_entry_timing_shadow
+
+            if get_entry_timing_shadow_mode(skill_dir) != "off":
+                entry_timing_at_stage2 = evaluate_entry_timing_shadow(df, skill_dir)
+        except Exception as _e:
+            LOG.debug("Entry timing stage2 shadow skipped for %s: %s", ticker, _e)
+
+        def _with_stage2_shadow(payload: dict[str, Any]) -> dict[str, Any]:
+            if isinstance(entry_timing_at_stage2, dict):
+                payload["entry_timing_at_stage2"] = entry_timing_at_stage2
+            return payload
+
         vcp_ok = bool(check_vcp_volume(df, skill_dir))
         if not vcp_ok and vcp_gate_mode == "hard":
-            return {
-                "ok": False,
-                "reason": "vcp_fail",
-                "provider": provider,
-                "used_fallback": used_fallback,
-                "fallback_reason": history_meta.get("fallback_reason"),
-            }
+            return _with_stage2_shadow(
+                {
+                    "ok": False,
+                    "reason": "vcp_fail",
+                    "provider": provider,
+                    "used_fallback": used_fallback,
+                    "fallback_reason": history_meta.get("fallback_reason"),
+                }
+            )
 
         sector_etf = get_ticker_sector_etf(ticker, skill_dir=skill_dir)
         sector_unresolved = sector_etf is None
         sector_winning = sector_etf in winning_etfs if sector_etf is not None else False
         if sector_unresolved and sector_gate_mode == "hard":
-            return {
-                "ok": False,
-                "reason": "no_sector_etf",
-                "provider": provider,
-                "used_fallback": used_fallback,
-                "fallback_reason": history_meta.get("fallback_reason"),
-            }
+            return _with_stage2_shadow(
+                {
+                    "ok": False,
+                    "reason": "no_sector_etf",
+                    "provider": provider,
+                    "used_fallback": used_fallback,
+                    "fallback_reason": history_meta.get("fallback_reason"),
+                }
+            )
         if (not sector_unresolved and not sector_winning) and sector_gate_mode == "hard":
-            return {
-                "ok": False,
-                "reason": "sector_not_winning",
-                "provider": provider,
-                "used_fallback": used_fallback,
-                "fallback_reason": history_meta.get("fallback_reason"),
-            }
+            return _with_stage2_shadow(
+                {
+                    "ok": False,
+                    "reason": "sector_not_winning",
+                    "provider": provider,
+                    "used_fallback": used_fallback,
+                    "fallback_reason": history_meta.get("fallback_reason"),
+                }
+            )
 
         price = float(df["close"].iloc[-1])
         # The live quote is only needed to anchor an intraday breakout decision.
@@ -968,13 +990,15 @@ def _scan_stage_a_one(
                             breakout_ok = False
                             break
                 if not breakout_ok:
-                    return {
-                        "ok": False,
-                        "reason": "breakout_not_confirmed",
-                        "provider": provider,
-                        "used_fallback": used_fallback,
-                        "fallback_reason": history_meta.get("fallback_reason"),
-                    }
+                    return _with_stage2_shadow(
+                        {
+                            "ok": False,
+                            "reason": "breakout_not_confirmed",
+                            "provider": provider,
+                            "used_fallback": used_fallback,
+                            "fallback_reason": history_meta.get("fallback_reason"),
+                        }
+                    )
 
         try:
             from engine_analysis import compute_seed_fingerprint, get_cached_conviction
@@ -995,13 +1019,15 @@ def _scan_stage_a_one(
                     except (TypeError, ValueError):
                         cv = None
                     if cv is not None and cv < float(min_conv):
-                        return {
-                            "ok": False,
-                            "reason": "self_study_low_cached_conviction",
-                            "provider": provider,
-                            "used_fallback": used_fallback,
-                            "fallback_reason": history_meta.get("fallback_reason"),
-                        }
+                        return _with_stage2_shadow(
+                            {
+                                "ok": False,
+                                "reason": "self_study_low_cached_conviction",
+                                "provider": provider,
+                                "used_fallback": used_fallback,
+                                "fallback_reason": history_meta.get("fallback_reason"),
+                            }
+                        )
         except Exception as _e:
             LOG.debug("Stage A self-study conviction gate skipped for %s: %s", ticker, _e)
 
@@ -1017,6 +1043,49 @@ def _scan_stage_a_one(
         elif not sector_winning:
             stage_a_score -= float(sector_penalty_points)
             stage_a_penalties.append("sector_not_winning")
+        try:
+            from config import (
+                get_signal_edge_shadow_mode,
+                get_stage2_shadow_52w_pct,
+                get_stage2_shadow_sma_upward_days,
+            )
+
+            if get_signal_edge_shadow_mode(skill_dir) != "off":
+                shadow_pass = is_stage_2(
+                    df,
+                    skill_dir,
+                    pct_min_override=get_stage2_shadow_52w_pct(skill_dir),
+                    sma_upward_days_override=get_stage2_shadow_sma_upward_days(skill_dir),
+                )
+                if not shadow_pass:
+                    stage_a_penalties.append("stage2_shadow_would_filter")
+        except Exception as _e:
+            LOG.debug("Stage 2 shadow tighten skipped for %s: %s", ticker, _e)
+        try:
+            from config import get_entry_timing_shadow_mode
+            from stage_analysis import evaluate_entry_timing_shadow
+
+            candidate_entry_shadow = None
+            if get_entry_timing_shadow_mode(skill_dir) != "off":
+                entry_shadow = entry_timing_at_stage2 or evaluate_entry_timing_shadow(df, skill_dir)
+                candidate_entry_shadow = entry_shadow
+                for reason in list(entry_shadow.get("would_filter_reasons") or []):
+                    stage_a_penalties.append(f"entry_shadow_{reason}")
+                from stage_analysis import entry_timing_blocks_stage_a
+
+                if entry_timing_blocks_stage_a(entry_shadow, skill_dir):
+                    return _with_stage2_shadow(
+                        {
+                            "ok": False,
+                            "reason": "entry_timing_blocked",
+                            "provider": provider,
+                            "used_fallback": used_fallback,
+                            "fallback_reason": history_meta.get("fallback_reason"),
+                        }
+                    )
+        except Exception as _e:
+            LOG.debug("Entry timing shadow skipped for %s: %s", ticker, _e)
+            candidate_entry_shadow = None
         stage_a_score = max(0.0, stage_a_score)
         candidate = {
             "ticker": ticker,
@@ -1031,12 +1100,13 @@ def _scan_stage_a_one(
             "stage_a_score": stage_a_score,
             "score_components_stage_a": components,
             "stage_a_penalties": stage_a_penalties,
+            "entry_timing_shadow": candidate_entry_shadow,
             "data_provider": provider,
             "data_provider_primary": provider == "schwab",
             "used_fallback_data": used_fallback,
             "fallback_reason": history_meta.get("fallback_reason"),
         }
-        return {"ok": True, "candidate": candidate}
+        return _with_stage2_shadow({"ok": True, "candidate": candidate})
     except Exception as e:
         LOG.warning("Scan stage A error for %s: %s", ticker, e)
         return {
@@ -1383,6 +1453,7 @@ def _scan_stage_b_enrich(
             "used_fallback_data": bool(candidate.get("used_fallback_data")),
             "fallback_reason": candidate.get("fallback_reason"),
             "_data_quality": candidate.get("data_quality"),
+            "entry_timing_shadow": candidate.get("entry_timing_shadow"),
         }
         advisory_payload: dict[str, Any] | None = None
         try:
@@ -1643,6 +1714,151 @@ def _accumulate_provider_fallback_diagnostics(
             diagnostics["fallback_reason_missing_count"] = int(
                 diagnostics.get("fallback_reason_missing_count", 0) or 0
             ) + 1
+
+
+def _accumulate_entry_shadow_stage2_diagnostics(
+    diagnostics: dict[str, Any],
+    out: dict[str, Any],
+) -> None:
+    """Count entry-timing shadow on the Stage 2 pass universe (broader than Stage A keeps)."""
+    shadow = out.get("entry_timing_at_stage2")
+    if not isinstance(shadow, dict):
+        return
+    diagnostics["entry_shadow_stage2_evaluated"] = int(
+        diagnostics.get("entry_shadow_stage2_evaluated", 0) or 0
+    ) + 1
+    if not bool(shadow.get("would_filter")):
+        return
+    diagnostics["entry_shadow_stage2_would_filter_any"] = int(
+        diagnostics.get("entry_shadow_stage2_would_filter_any", 0) or 0
+    ) + 1
+    for reason in list(shadow.get("would_filter_reasons") or []):
+        if reason == "breakout_buffer_low":
+            diagnostics["entry_shadow_stage2_would_filter_breakout_buffer"] = int(
+                diagnostics.get("entry_shadow_stage2_would_filter_breakout_buffer", 0) or 0
+            ) + 1
+
+
+def _score_quantile_threshold(values: list[float], min_percentile: int) -> float:
+    """Return the score at ``min_percentile`` (0-100) using linear interpolation."""
+    if not values:
+        return 0.0
+    ordered = sorted(float(v) for v in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    q = max(0.0, min(1.0, float(min_percentile) / 100.0))
+    pos = q * (len(ordered) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    if lo == hi:
+        return ordered[lo]
+    weight = pos - lo
+    return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
+
+
+def _apply_signal_edge_shadow_diagnostics(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    skill_dir: Path,
+) -> None:
+    """Shadow-only P0 counters: rank-filter thresholds and Stage 2 tighten metadata.
+
+    Never drops signals — only annotates ``rank_filter_shadow`` on each row and
+    increments ``rank_filter_would_drop_*`` / ``stage2_shadow_would_filter`` counters.
+    """
+    from config import (
+        get_rank_filter_shadow_min_percentile_composite,
+        get_rank_filter_shadow_min_percentile_rank_v2,
+        get_rank_filter_shadow_min_percentile_signal,
+        get_signal_edge_shadow_mode,
+        get_stage2_shadow_52w_pct,
+        get_stage2_shadow_sma_upward_days,
+    )
+
+    mode = get_signal_edge_shadow_mode(skill_dir)
+    diagnostics["signal_edge_shadow_mode"] = mode
+    shadow_meta: dict[str, Any] = {
+        "mode": mode,
+        "evaluated_signals": len(signals),
+        "stage2_shadow_52w_pct": get_stage2_shadow_52w_pct(skill_dir),
+        "stage2_shadow_sma_upward_days": get_stage2_shadow_sma_upward_days(skill_dir),
+        "thresholds": {},
+        "would_drop": {},
+    }
+    if mode == "off" or not signals:
+        diagnostics["rank_filter_shadow"] = shadow_meta
+        return
+
+    specs: list[tuple[str, int, str]] = [
+        (
+            "composite_score",
+            get_rank_filter_shadow_min_percentile_composite(skill_dir),
+            "rank_filter_would_drop_composite",
+        ),
+        (
+            "rank_score_v2",
+            get_rank_filter_shadow_min_percentile_rank_v2(skill_dir),
+            "rank_filter_would_drop_rank_v2",
+        ),
+        (
+            "signal_score",
+            get_rank_filter_shadow_min_percentile_signal(skill_dir),
+            "rank_filter_would_drop_signal",
+        ),
+    ]
+
+    for col, min_pct, counter_key in specs:
+        values: list[tuple[int, float]] = []
+        for idx, signal in enumerate(signals):
+            raw = signal.get(col)
+            if raw is None and col == "rank_score_v2":
+                try:
+                    from core.scoring_rank_v2 import rank_v2_from_signal_row
+
+                    raw = rank_v2_from_signal_row(signal, skill_dir=skill_dir)
+                    signal[col] = raw
+                except Exception:
+                    raw = None
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            values.append((idx, val))
+        if len(values) < 3:
+            shadow_meta["would_drop"][col] = {"skipped": True, "reason": "insufficient_scores", "n": len(values)}
+            continue
+        threshold = _score_quantile_threshold([v for _, v in values], min_pct)
+        drop_count = 0
+        for idx, val in values:
+            would_drop = val < threshold
+            row = signals[idx]
+            per_signal = row.get("rank_filter_shadow")
+            if not isinstance(per_signal, dict):
+                per_signal = {}
+            per_signal[f"{col}_would_drop"] = would_drop
+            per_signal[f"{col}_threshold"] = round(threshold, 2)
+            row["rank_filter_shadow"] = per_signal
+            if would_drop:
+                drop_count += 1
+        diagnostics[counter_key] = int(diagnostics.get(counter_key, 0) or 0) + drop_count
+        shadow_meta["thresholds"][col] = {
+            "min_percentile": min_pct,
+            "value": round(threshold, 4),
+        }
+        shadow_meta["would_drop"][col] = drop_count
+
+    would_drop_any = 0
+    for signal in signals:
+        per_signal = signal.get("rank_filter_shadow")
+        if not isinstance(per_signal, dict):
+            continue
+        if any(bool(per_signal.get(f"{col}_would_drop")) for col, _, _ in specs):
+            per_signal["would_drop_any"] = True
+            would_drop_any += 1
+    diagnostics["rank_filter_would_drop_any"] = int(
+        diagnostics.get("rank_filter_would_drop_any", 0) or 0
+    ) + would_drop_any
+    diagnostics["rank_filter_shadow"] = shadow_meta
 
 
 def _apply_post_stage_b_chain(
@@ -1918,6 +2134,10 @@ def _apply_post_stage_b_chain(
         if sort_val is None:
             sort_val = s.get("composite_score") or s.get("signal_score") or s.get("rank_score") or 0.0
         s["sort_score"] = float(sort_val) if sort_val is not None else 0.0
+    try:
+        _apply_signal_edge_shadow_diagnostics(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Signal-edge shadow diagnostics skipped: %s", e)
     signals.sort(
         key=lambda s: s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
         reverse=True,
@@ -2146,6 +2366,21 @@ def scan_for_signals_detailed(
         "stage_a_vcp_would_filter": 0,
         "stage_a_sector_would_filter": 0,
         "stage_a_no_sector_would_filter": 0,
+        "stage2_shadow_would_filter": 0,
+        "entry_timing_shadow_mode": None,
+        "entry_shadow_would_filter_sma50_low": 0,
+        "entry_shadow_would_filter_sma50_high": 0,
+        "entry_shadow_would_filter_breakout_buffer": 0,
+        "entry_shadow_would_filter_any": 0,
+        "entry_shadow_stage2_evaluated": 0,
+        "entry_shadow_stage2_would_filter_any": 0,
+        "entry_shadow_stage2_would_filter_breakout_buffer": 0,
+        "entry_timing_blocked": 0,
+        "entry_timing_live_enforced": 0,
+        "rank_filter_would_drop_composite": 0,
+        "rank_filter_would_drop_rank_v2": 0,
+        "rank_filter_would_drop_signal": 0,
+        "rank_filter_would_drop_any": 0,
         "stage_a_timeouts": 0,
         "stage_b_processed": 0,
         "stage_b_exceptions": 0,
@@ -2565,6 +2800,17 @@ def scan_for_signals_detailed(
     regime_v2_entry_min_score = get_regime_v2_entry_min_score(skill_dir)
     diagnostics["scan_vcp_gate_mode"] = vcp_gate_mode
     diagnostics["scan_sector_gate_mode"] = sector_gate_mode
+    try:
+        from config import get_entry_timing_shadow_mode, get_entry_timing_shadow_profile
+
+        diagnostics["entry_timing_shadow_mode"] = get_entry_timing_shadow_mode(skill_dir)
+        diagnostics["entry_timing_shadow_profile"] = get_entry_timing_shadow_profile(skill_dir)
+        diagnostics["entry_timing_live_enforced"] = int(
+            diagnostics.get("entry_timing_shadow_mode") == "live"
+        )
+    except Exception:
+        diagnostics["entry_timing_shadow_mode"] = "off"
+        diagnostics["entry_timing_shadow_profile"] = "off"
 
     # Optional composite regime diagnostics/gate.
     regime_v2_snapshot: dict[str, Any] | None = None
@@ -2603,6 +2849,7 @@ def scan_for_signals_detailed(
         "no_sector_etf",
         "sector_not_winning",
         "breakout_not_confirmed",
+        "entry_timing_blocked",
         "exceptions",
     }
     future_map_a: dict[cf.Future[Any], str] = {}
@@ -2637,6 +2884,7 @@ def scan_for_signals_detailed(
                 try:
                     out = fut.result()
                     _accumulate_provider_fallback_diagnostics(diagnostics, out)
+                    _accumulate_entry_shadow_stage2_diagnostics(diagnostics, out)
                     if out.get("ok"):
                         candidate = out["candidate"]
                         stage_a_candidates.append(candidate)
@@ -2653,6 +2901,31 @@ def scan_for_signals_detailed(
                                 diagnostics["stage_a_no_sector_would_filter"] = int(
                                     diagnostics.get("stage_a_no_sector_would_filter", 0) or 0
                                 ) + 1
+                            elif penalty == "stage2_shadow_would_filter":
+                                diagnostics["stage2_shadow_would_filter"] = int(
+                                    diagnostics.get("stage2_shadow_would_filter", 0) or 0
+                                ) + 1
+                            elif penalty == "entry_shadow_sma50_cushion_low":
+                                diagnostics["entry_shadow_would_filter_sma50_low"] = int(
+                                    diagnostics.get("entry_shadow_would_filter_sma50_low", 0) or 0
+                                ) + 1
+                            elif penalty == "entry_shadow_sma50_extension_high":
+                                diagnostics["entry_shadow_would_filter_sma50_high"] = int(
+                                    diagnostics.get("entry_shadow_would_filter_sma50_high", 0) or 0
+                                ) + 1
+                            elif penalty == "entry_shadow_breakout_buffer_low":
+                                diagnostics["entry_shadow_would_filter_breakout_buffer"] = int(
+                                    diagnostics.get("entry_shadow_would_filter_breakout_buffer", 0) or 0
+                                ) + 1
+                        entry_shadow_hits = [
+                            p
+                            for p in list(candidate.get("stage_a_penalties") or [])
+                            if str(p).startswith("entry_shadow_")
+                        ]
+                        if entry_shadow_hits:
+                            diagnostics["entry_shadow_would_filter_any"] = int(
+                                diagnostics.get("entry_shadow_would_filter_any", 0) or 0
+                            ) + 1
                     else:
                         reason = str(out.get("reason") or "exceptions")
                         if reason in stage_a_reason_keys:

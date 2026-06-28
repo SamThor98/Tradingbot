@@ -50,6 +50,8 @@ export function renderDecisionDashboard(payload = {}) {
   const strategy = payload.strategy_quality || {};
   const readiness = payload.promotion_readiness || {};
   const ablation = payload.ablation || {};
+  const signalEdge = payload.signal_edge || {};
+  const liveShadow = strategy.signal_edge_shadow || {};
 
   const validationPassed = reliability.validation_passed === true;
   const sloPassed = reliability.slo_gate_passed === true;
@@ -81,6 +83,53 @@ export function renderDecisionDashboard(payload = {}) {
     "decisionDataQuality",
     safeText(strategy.data_quality) ? `Data quality: ${safeText(strategy.data_quality)}` : "Data quality: unknown"
   );
+
+  const edgeState = safeText(signalEdge.state || "unknown");
+  const earlyPct = Number(signalEdge.early_stopout_pct);
+  const holdPf = Number(signalEdge.hold_21_40d_pf);
+  const edgeParts = [`Signal edge: ${edgeState.replaceAll("_", " ")}`];
+  if (Number.isFinite(earlyPct)) edgeParts.push(`early stops ${earlyPct.toFixed(1)}%`);
+  if (Number.isFinite(holdPf)) edgeParts.push(`21-40d PF ${holdPf.toFixed(2)}`);
+  _setText("decisionSignalEdgeState", edgeParts.join(" | "));
+
+  const entryReason = safeText(
+    signalEdge.entry_timing_reason || signalEdge.entry_quality_reason || "",
+  );
+  _setText(
+    "decisionEarlyStopConstraint",
+    entryReason
+      ? `Entry constraint: ${entryReason.slice(0, 140)}${entryReason.length > 140 ? "…" : ""}`
+      : "Entry constraint: run early-stop cohort analysis"
+  );
+
+  const rankRec = safeText(signalEdge.rank_filter_recommendation || "unknown");
+  const liveDrop = Number(liveShadow.rank_filter_would_drop_any);
+  const rankLine = [`Rank-filter shadow: ${rankRec.replaceAll("_", " ")}`];
+  if (Number.isFinite(liveDrop) && liveDrop > 0) rankLine.push(`last scan would-drop ${liveDrop}`);
+  _setText("decisionRankFilterShadow", rankLine.join(" | "));
+
+  const experiment = signalEdge.entry_timing_experiment || signalEdge.offline_experiment_targets || {};
+  const expRetention = Number(experiment.retention_pct ?? experiment.would_drop_retention_pct);
+  const expEarly = Number(experiment.delta_early_stopout_pp);
+  const expPf = Number(experiment.delta_overlap_pf_mean);
+  const expParts = ["Entry-timing experiment: breakout buffer only (shadow)"];
+  const experimentEnv = signalEdge.experiment_env || {};
+  if (experimentEnv.ready === true) {
+    expParts.push("env ready");
+  } else if (experimentEnv.ready === false) {
+    expParts.push("env not configured");
+  }
+  if (Number.isFinite(expRetention)) expParts.push(`offline retain ${expRetention.toFixed(1)}%`);
+  if (Number.isFinite(expEarly)) expParts.push(`d early ${expEarly >= 0 ? "+" : ""}${expEarly.toFixed(1)}pp`);
+  if (Number.isFinite(expPf)) expParts.push(`d overlap PF ${expPf >= 0 ? "+" : ""}${expPf.toFixed(2)}`);
+  const liveCompare = signalEdge.live_entry_shadow_compare || {};
+  const livePct = Number(liveCompare.would_filter_pct);
+  const liveVerdict = safeText(liveCompare.verdict || "");
+  if (Number.isFinite(livePct)) {
+    expParts.push(`live would-filter ${livePct.toFixed(1)}%`);
+  }
+  if (liveVerdict) expParts.push(`live/offline ${liveVerdict}`);
+  _setText("decisionEntryTimingExperiment", expParts.join(" | "));
 
   const latestDecision = readiness.latest_decision || {};
   const decisionAt = safeText(latestDecision.recorded_at || "");
