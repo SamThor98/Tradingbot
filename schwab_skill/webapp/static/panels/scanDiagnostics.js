@@ -117,7 +117,15 @@ export function diagnosticsHeadline(diagOrSummary = null) {
   if (safeNum(diagOrSummary.scan_blocked, 0) > 0) {
     const reason = safeText(diagOrSummary.scan_blocked_reason || "").trim();
     if (reason === "bear_regime_spy_below_200sma") {
+      const spyPx = diagOrSummary.spy_price;
+      const spySma = diagOrSummary.spy_sma_200;
+      if (spyPx != null && spySma != null) {
+        return `Scan blocked by regime gate: SPY $${spyPx} below 200 SMA $${spySma}.`;
+      }
       return "Scan blocked by regime gate: SPY is below 200 SMA.";
+    }
+    if (reason === "regime_check_failed_data_unavailable") {
+      return "Scan blocked: SPY regime data unavailable (not a confirmed bear market). Check market data auth.";
     }
     return "Scan blocked by active risk gates.";
   }
@@ -136,13 +144,21 @@ const SIGNAL_EDGE_SHADOW_BLOCKER_KEYS = new Set([
   "entry_shadow_would_filter_any",
 ]);
 
+const DIAGNOSTIC_FLAG_KEYS = new Set([
+  "regime_fail_closed_mode",
+  "scan_allow_bear_regime",
+  "regime_bullish",
+  "regime_data_unavailable",
+]);
+
 export function buildDiagnosticsSummary(diag = {}) {
   const blockers = Object.entries(diag)
     .filter(
       ([k, v]) =>
         safeNum(v, 0) > 0 &&
         !["watchlist_size"].includes(k) &&
-        !SIGNAL_EDGE_SHADOW_BLOCKER_KEYS.has(k),
+        !SIGNAL_EDGE_SHADOW_BLOCKER_KEYS.has(k) &&
+        !DIAGNOSTIC_FLAG_KEYS.has(k),
     )
     .map(([k, v]) => ({
       key: k,
@@ -268,6 +284,45 @@ function appendDiagnosticChip(chipWrap, label, value, className) {
 }
 
 export function buildFunnelStages(diag, watchlistOverride, finalCount) {
+  const scanBlocked = safeNum(diag.scan_blocked, 0) > 0;
+  const watchRaw = safeNum(diag.watchlist_size, 0);
+  if (scanBlocked && watchRaw <= 0) {
+    const reason = safeText(diag.scan_blocked_reason || "").trim();
+    const spyPx = diag.spy_price;
+    const spySma = diag.spy_sma_200;
+    let tooltip = "Scan stopped before the watchlist was evaluated.";
+    if (reason === "bear_regime_spy_below_200sma" && spyPx != null && spySma != null) {
+      tooltip = `Regime gate: SPY $${spyPx} vs 200 SMA $${spySma}.`;
+    } else if (reason === "regime_check_failed_data_unavailable") {
+      tooltip =
+        "SPY regime data was unavailable (insufficient history or auth failure). This is not a confirmed bear-market signal.";
+    } else if (reason) {
+      tooltip = `Scan blocked: ${reason.replaceAll("_", " ")}.`;
+    }
+    return {
+      watchlist: 0,
+      stage2_pass: 0,
+      vcp_pass: 0,
+      final: finalCount,
+      stages: [
+        {
+          key: "regime_gate",
+          label: "Regime gate",
+          value: 0,
+          filtered: 1,
+          tooltip,
+        },
+        {
+          key: "final",
+          label: "Final signals",
+          value: finalCount,
+          filtered: 0,
+          tooltip: "No tickers were screened because the regime gate blocked the scan.",
+        },
+      ],
+    };
+  }
+
   const stage2Fail = safeNum(diag.stage2_fail, 0);
   const vcpFail = safeNum(diag.vcp_fail, 0);
   const noSectorEtf = safeNum(diag.no_sector_etf, 0);
@@ -455,6 +510,16 @@ export function renderDiagnostics(diag = {}, deps = {}) {
         : dq,
       dataQualityChipClass(dq),
     );
+  }
+  if (diag.spy_price != null && diag.spy_sma_200 != null) {
+    appendDiagnosticChip(
+      chipWrap,
+      "SPY vs 200 SMA",
+      `${formatDiagnosticValue(diag.spy_price)} / ${formatDiagnosticValue(diag.spy_sma_200)}`,
+      safeNum(diag.regime_bullish, 0) > 0 || diag.regime_bullish === true ? "good" : "warn",
+    );
+  } else if (safeNum(diag.regime_data_unavailable, 0) > 0) {
+    appendDiagnosticChip(chipWrap, "SPY regime data", "unavailable", "bad");
   }
 
   const shadowMode = safeText(diag.signal_edge_shadow_mode || "").toLowerCase();

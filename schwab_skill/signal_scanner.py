@@ -2556,15 +2556,31 @@ def scan_for_signals_detailed(
         diagnostics["regime_fail_closed_mode"] = fail_closed_on_outage
         diagnostics["spy_price"] = regime_ctx.get("spy_price")
         diagnostics["spy_sma_200"] = regime_ctx.get("spy_sma_200")
+        diagnostics["regime_data_unavailable"] = int(bool(regime_ctx.get("data_unavailable")))
+        diagnostics["regime_history_bars"] = regime_ctx.get("regime_history_bars")
+        diagnostics["regime_history_provider"] = regime_ctx.get("regime_history_provider")
         if not regime_bullish and not allow_bear_regime:
+            data_unavailable = bool(regime_ctx.get("data_unavailable"))
             diagnostics["scan_blocked"] = 1
-            diagnostics["scan_blocked_reason"] = "bear_regime_spy_below_200sma"
-            msg = (
-                f"Scan skipped: **bear regime** (SPY ${regime_ctx.get('spy_price', '?')} "
-                f"< 200 SMA ${regime_ctx.get('spy_sma_200', '?')}). No new entries."
-            )
-            send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
-            LOG.info("Regime gate blocked scan: SPY below 200 SMA")
+            if data_unavailable:
+                diagnostics["scan_blocked_reason"] = "regime_check_failed_data_unavailable"
+                diagnostics["regime_check_failed"] = 1
+                msg = (
+                    "Scan blocked: SPY regime data unavailable "
+                    f"(bars={regime_ctx.get('regime_history_bars', '?')}, "
+                    f"provider={regime_ctx.get('regime_history_provider', '?')}). "
+                    "Check Schwab market auth or yfinance fallback."
+                )
+                send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
+                LOG.warning(msg)
+            else:
+                diagnostics["scan_blocked_reason"] = "bear_regime_spy_below_200sma"
+                msg = (
+                    f"Scan skipped: **bear regime** (SPY ${regime_ctx.get('spy_price', '?')} "
+                    f"< 200 SMA ${regime_ctx.get('spy_sma_200', '?')}). No new entries."
+                )
+                send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
+                LOG.info("Regime gate blocked scan: SPY below 200 SMA")
             return [], diagnostics
         if not regime_bullish and allow_bear_regime:
             LOG.info("Regime gate override active: scan continues while SPY below 200 SMA")

@@ -1274,6 +1274,15 @@ _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS = frozenset(
     }
 )
 
+_DIAGNOSTIC_FLAG_KEYS = frozenset(
+    {
+        "regime_fail_closed_mode",
+        "scan_allow_bear_regime",
+        "regime_bullish",
+        "regime_data_unavailable",
+    }
+)
+
 
 def _signal_edge_shadow_summary(diagnostics: dict[str, Any]) -> dict[str, Any] | None:
     mode = str(diagnostics.get("signal_edge_shadow_mode") or "").strip().lower()
@@ -1297,7 +1306,22 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
     blocked_reason = str(blocked_reason_raw).strip() if blocked_reason_raw else None
     blocked_human = None
     if blocked_reason == "bear_regime_spy_below_200sma":
-        blocked_human = "Scan blocked by regime gate: SPY is below 200 SMA."
+        spy_px = diagnostics.get("spy_price")
+        spy_sma = diagnostics.get("spy_sma_200")
+        if spy_px is not None and spy_sma is not None:
+            blocked_human = (
+                f"Scan blocked by regime gate: SPY ${spy_px} below 200 SMA ${spy_sma}."
+            )
+        else:
+            blocked_human = "Scan blocked by regime gate: SPY is below 200 SMA."
+    elif blocked_reason == "regime_check_failed_data_unavailable":
+        bars = diagnostics.get("regime_history_bars")
+        provider = diagnostics.get("regime_history_provider")
+        blocked_human = (
+            "Scan blocked: SPY regime data unavailable "
+            f"(bars={bars if bars is not None else '?'}, provider={provider or '?'}). "
+            "Not a confirmed bear market — check market data auth."
+        )
 
     ranked: list[dict[str, Any]] = []
     for key, raw in diagnostics.items():
@@ -1305,7 +1329,12 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
             value = int(raw)
         except Exception:
             continue
-        if value <= 0 or key == "watchlist_size" or key in _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS:
+        if (
+            value <= 0
+            or key == "watchlist_size"
+            or key in _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS
+            or key in _DIAGNOSTIC_FLAG_KEYS
+        ):
             continue
         ranked.append(
             {
@@ -2386,29 +2415,41 @@ def health_deep(
 def _probe_kronos_health() -> dict[str, Any]:
     """Lightweight probe of the Kronos inference service for /api/health/deep.
 
-    Only reaches out when the scanner plugin is active (mode != off); otherwise
-    reports the configured mode without a network call. Never raises.
+    On-demand ``/api/forecast/{ticker}`` needs the inference service even when
+    ``KRONOS_MODE=off``, so we always reach out when a URL is configured. Never
+    raises.
     """
     try:
         from config import get_kronos_inference_url, get_kronos_mode
 
         mode = get_kronos_mode(SKILL_DIR)
+        url = get_kronos_inference_url(SKILL_DIR)
     except Exception:
         return {"enabled": False, "mode": "off", "service_ok": None}
-    status: dict[str, Any] = {"enabled": mode != "off", "mode": mode, "service_ok": None}
-    if mode == "off":
+    status: dict[str, Any] = {
+        "enabled": mode != "off",
+        "mode": mode,
+        "service_ok": None,
+        "inference_url": url,
+    }
+    if not url:
         return status
     try:
         import requests
 
-        url = get_kronos_inference_url(SKILL_DIR)
         resp = requests.get(f"{url}/health", timeout=2.5)
         body = resp.json() if resp.ok else {}
         status["service_ok"] = bool(body.get("ok"))
         status["model_id"] = body.get("model_id")
+        status["loaded"] = body.get("loaded")
+        if body.get("error"):
+            status["error"] = str(body.get("error"))[:200]
+        if not status["service_ok"] and body.get("local_model_ready") is False:
+            status["hint"] = "Run kronos_service/fetch_weights.py or fix Hugging Face access."
     except Exception as exc:
         status["service_ok"] = False
         status["error"] = str(exc)[:200]
+        status["hint"] = "Start the Kronos inference service (port 8100 by default)."
     return status
 
 

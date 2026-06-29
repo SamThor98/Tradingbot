@@ -85,6 +85,32 @@ def test_regime_failure_fails_closed_by_default(monkeypatch) -> None:
     assert diagnostics["regime_check_failed"] == 1
 
 
+def test_regime_data_unavailable_not_labeled_bear(monkeypatch) -> None:
+    _install_common_modules(
+        monkeypatch,
+        regime_fn=lambda *_a, **_k: (
+            False,
+            {
+                "spy_price": None,
+                "spy_sma_200": None,
+                "data_unavailable": True,
+                "regime_history_bars": 157,
+                "regime_history_provider": "schwab",
+            },
+        ),
+    )
+    signals, diagnostics = signal_scanner.scan_for_signals_detailed(
+        skill_dir=signal_scanner.SKILL_DIR,
+        env_overrides={"SCAN_ALLOW_BEAR_REGIME": "false"},
+        watchlist_override=[],
+    )
+    assert signals == []
+    assert diagnostics["scan_blocked"] == 1
+    assert diagnostics["scan_blocked_reason"] == "regime_check_failed_data_unavailable"
+    assert diagnostics["regime_data_unavailable"] == 1
+    assert diagnostics["regime_check_failed"] == 1
+
+
 def test_regime_failure_can_fail_open_with_env_override(monkeypatch) -> None:
     _install_common_modules(monkeypatch, regime_fn=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("regime down")))
     signals, diagnostics = signal_scanner.scan_for_signals_detailed(

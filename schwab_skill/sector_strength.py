@@ -13,6 +13,8 @@ import statistics
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from config import get_schwab_only_data
 
 # Sector name (from yfinance) -> sector ETF
@@ -331,6 +333,66 @@ def get_sector_heatmap(
     }
 
 
+# Calendar-day lookback for SPY regime gate. 200 trading sessions need ~280+
+# calendar days; 420 provides headroom for holidays and partial Schwab windows.
+_REGIME_SPY_HISTORY_CALENDAR_DAYS = 420
+_MIN_REGIME_TRADING_BARS = 200
+
+
+def _load_regime_spy_history(auth: Any, skill_dir: Path) -> tuple[Any, dict[str, Any]]:
+    """Fetch SPY daily bars with enough history for a 200 SMA."""
+    from market_data import get_daily_history_with_meta
+
+    df, meta = get_daily_history_with_meta(
+        "SPY",
+        days=_REGIME_SPY_HISTORY_CALENDAR_DAYS,
+        auth=auth,
+        skill_dir=skill_dir,
+    )
+    lineage = {
+        "provider": meta.get("provider"),
+        "used_fallback": bool(meta.get("used_fallback")),
+        "fallback_reason": meta.get("fallback_reason"),
+        "bars": int(len(df)),
+    }
+    if len(df) >= _MIN_REGIME_TRADING_BARS:
+        return df, lineage
+
+    # Primary path can still be short when Schwab returns a partial window.
+    try:
+        import yfinance as yf
+
+        from _io_utils import yfinance_call
+
+        with yfinance_call():
+            yf_df = yf.Ticker("SPY").history(period="2y", auto_adjust=True)
+        if yf_df is not None and not yf_df.empty:
+            df = yf_df.rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
+            idx = pd.to_datetime(df.index)
+            if getattr(idx, "tz", None) is not None:
+                idx = idx.tz_localize(None)
+            df.index = idx.normalize()
+            df.index.name = "date"
+            lineage = {
+                "provider": "yfinance",
+                "used_fallback": True,
+                "fallback_reason": "regime_spy_short_primary_history",
+                "bars": int(len(df)),
+            }
+    except Exception as exc:
+        LOG.debug("Regime SPY yfinance fallback skipped: %s", exc)
+
+    return df, lineage
+
+
 def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str, Any]]:
     """
     Hard binary regime gate: SPY must be above its 200 SMA.
@@ -344,7 +406,8 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
 
     Returns (is_bullish, context_dict).
     """
-    from market_data import get_daily_history
+    import math
+
     from stage_analysis import add_indicators
 
     try:
@@ -360,30 +423,18 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
         "bullish": False,
         "fail_closed_mode": fail_closed,
         "data_unavailable": False,
+        "regime_history_bars": 0,
+        "regime_history_provider": None,
     }
     try:
-        df = get_daily_history("SPY", days=220, auth=auth, skill_dir=skill_dir)
-        if df.empty or len(df) < 200:
-            yf_df = None
-            try:
-                import yfinance as yf
-
-                from _io_utils import yfinance_call
-
-                with yfinance_call():
-                    yf_df = yf.Ticker("SPY").history(period="1y", auto_adjust=True)
-                if yf_df is not None and not yf_df.empty:
-                    df = yf_df.rename(columns={
-                        "Open": "open", "High": "high", "Low": "low",
-                        "Close": "close", "Volume": "volume",
-                    })
-            except Exception:
-                pass
-        if df.empty or len(df) < 200:
+        df, lineage = _load_regime_spy_history(auth, skill_dir)
+        ctx["regime_history_bars"] = lineage.get("bars")
+        ctx["regime_history_provider"] = lineage.get("provider")
+        if df.empty or len(df) < _MIN_REGIME_TRADING_BARS:
             ctx["data_unavailable"] = True
             if fail_closed:
                 LOG.error(
-                    "Regime check: insufficient SPY data (%d bars). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; treating regime as BEARISH and blocking new entries.",
+                    "Regime check: insufficient SPY data (%d bars). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; blocking scan (data unavailable, not confirmed bear regime).",
                     len(df),
                 )
                 ctx["bullish"] = False
@@ -397,6 +448,16 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
         df = add_indicators(df)
         price = float(df["close"].iloc[-1])
         sma_200 = float(df["sma_200"].iloc[-1])
+        if math.isnan(price) or math.isnan(sma_200):
+            ctx["data_unavailable"] = True
+            if fail_closed:
+                LOG.error(
+                    "Regime check: SPY price/SMA unavailable (NaN). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; blocking scan."
+                )
+                ctx["bullish"] = False
+                return False, ctx
+            ctx["bullish"] = True
+            return True, ctx
         ctx["spy_price"] = round(price, 2)
         ctx["spy_sma_200"] = round(sma_200, 2)
         ctx["bullish"] = price > sma_200
@@ -405,7 +466,7 @@ def is_market_regime_bullish(auth: Any, skill_dir: Path) -> tuple[bool, dict[str
         ctx["data_unavailable"] = True
         if fail_closed:
             LOG.error(
-                "Regime check failed (%s). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; treating regime as BEARISH and blocking new entries.",
+                "Regime check failed (%s). RISK_FAIL_CLOSED_ON_DATA_OUTAGE=true; blocking scan (data unavailable).",
                 e,
             )
             ctx["bullish"] = False
