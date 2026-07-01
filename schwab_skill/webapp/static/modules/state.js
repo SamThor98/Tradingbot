@@ -87,6 +87,10 @@ export const state = {
    *  is intentionally session-scoped — it survives re-renders within the
    *  same session but is not persisted to localStorage. */
   scanSort: { field: null, dir: "desc" },
+  /** Active funnel-stage filter from diagnostics drill-down (null = show all). */
+  scanFunnelFilter: null,
+  /** Last full diagnostics dict from the most recent scan (for funnel re-render). */
+  lastScanDiagnostics: null,
   /** Presentation mode for rank explainers in scan tables:
    *  - tooltip: compact score + "?" hover details
    *  - inline: score with short inline rationale text */

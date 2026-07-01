@@ -21,6 +21,7 @@ import {
 import { logEvent } from "../modules/logger.js";
 import { state } from "../modules/state.js";
 import { applyFreshness, markUnavailable, clearUnavailable } from "../modules/freshness.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 
 export async function refreshPortfolio() {
   const card = document.getElementById("portfolioSection");
@@ -28,6 +29,12 @@ export async function refreshPortfolio() {
   const meta = document.getElementById("portfolioMeta");
   if (!body) return;
   if (card) card.setAttribute("data-async-state", "loading");
+  setResearchStatusStrip(
+    "portfolioStatusStrip",
+    "loading",
+    "Loading portfolio.",
+    "Fetching positions, market value, and account exposure.",
+  );
   body.innerHTML = `<tr><td colspan="5" class="muted">
     <div class="async-state async-state--loading">
       <span class="async-spinner" aria-hidden="true"></span>
@@ -41,6 +48,12 @@ export async function refreshPortfolio() {
     // 401 → signed-out banner. 409 → "link Schwab in Settings". Other → generic.
     if (out.status === 401) {
       if (card) card.setAttribute("data-async-state", "signed_out");
+      setResearchStatusStrip(
+        "portfolioStatusStrip",
+        "error",
+        "Sign in required.",
+        "Sign in to load tenant-scoped portfolio data.",
+      );
       if (meta) {
         markUnavailable(meta, "signed out");
         meta.textContent = "Sign in to load positions.";
@@ -55,6 +68,12 @@ export async function refreshPortfolio() {
       return;
     }
     if (card) card.setAttribute("data-async-state", "error");
+    setResearchStatusStrip(
+      "portfolioStatusStrip",
+      "error",
+      "Portfolio unavailable.",
+      reason,
+    );
     if (meta) {
       markUnavailable(meta, reason);
       meta.textContent = `Portfolio unavailable: ${reason}`;
@@ -84,6 +103,12 @@ export async function refreshPortfolio() {
   body.innerHTML = "";
   if (!Array.isArray(data.positions) || !data.positions.length) {
     if (card) card.setAttribute("data-async-state", "empty");
+    setResearchStatusStrip(
+      "portfolioStatusStrip",
+      "empty",
+      "No open positions.",
+      "Connect Schwab or add positions before analyzing exposure.",
+    );
     body.innerHTML = `
       <tr>
         <td colspan="5" class="muted">
@@ -101,6 +126,12 @@ export async function refreshPortfolio() {
     return;
   }
   if (card) card.setAttribute("data-async-state", "success");
+  setResearchStatusStrip(
+    "portfolioStatusStrip",
+    "success",
+    `${formatCount(data.positions_count, "0")} position(s) loaded.`,
+    `${formatMoney(data.total_market_value)} total market value. Open Risk Analysis for concentration.`,
+  );
   data.positions.slice(0, 25).forEach((p) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -132,6 +163,12 @@ export async function loadPortfolioRisk() {
   const panel = document.getElementById("portfolioRiskContent");
   if (!panel) return;
   panel.innerHTML = `<div class="muted">Loading risk analytics...</div>`;
+  setResearchStatusStrip(
+    "portfolioStatusStrip",
+    "loading",
+    "Loading portfolio risk.",
+    "Calculating concentration, sector allocation, and day P/L.",
+  );
   const out = await api.get("/api/portfolio/risk");
   if (!out.ok) {
     state.lastPortfolioRiskData = null;
@@ -142,6 +179,12 @@ export async function loadPortfolioRisk() {
           ? "Sign in first to load tenant-scoped portfolio analytics."
           : "Retry in a moment. If this persists, check backend logs.";
     panel.innerHTML = `<div class="muted">Risk analytics unavailable: ${safeText(out.error)}</div><div class="muted small">${safeText(hint)}</div><button id="portfolioRiskRetryBtn" class="btn small secondary" type="button" style="margin-top:0.5rem">Retry</button>`;
+    setResearchStatusStrip(
+      "portfolioStatusStrip",
+      "partial",
+      "Positions loaded; risk unavailable.",
+      safeText(hint),
+    );
     document.getElementById("portfolioRiskRetryBtn")?.addEventListener("click", () => void loadPortfolioRisk());
     return;
   }
@@ -156,6 +199,12 @@ export async function loadPortfolioRisk() {
         <div>${safeText(emptyRec.headline || "Build a diversified starter allocation")}</div>
         <div class="muted small">${safeText(emptyRec.suggested_action || "When adding positions, spread exposure across multiple sectors and avoid oversized initial positions.")}</div>
       </div>`;
+    setResearchStatusStrip(
+      "portfolioStatusStrip",
+      "empty",
+      "No positions to analyze.",
+      safeText(emptyRec.headline || "Build a diversified starter allocation."),
+    );
     return;
   }
 
@@ -255,4 +304,10 @@ export async function loadPortfolioRisk() {
   }
 
   panel.innerHTML = html;
+  setResearchStatusStrip(
+    "portfolioStatusStrip",
+    "success",
+    `${safeText(d.position_count)} position(s) analyzed.`,
+    `Concentration ${safeText(d.concentration?.hhi_label || "—")} · Day P/L ${formatMoney(d.day_pl_total)}.`,
+  );
 }

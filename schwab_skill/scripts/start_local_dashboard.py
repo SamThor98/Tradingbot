@@ -11,6 +11,7 @@ Usage (from schwab_skill):
   python scripts/start_local_dashboard.py
   python scripts/start_local_dashboard.py --port 8182 --no-sync-env
   python scripts/start_local_dashboard.py --entry-timing-experiment
+  python scripts/start_local_dashboard.py --with-kronos
   python scripts/start_local_dashboard.py --entry-timing-live
 """
 from __future__ import annotations
@@ -89,6 +90,17 @@ def main() -> int:
         action="store_true",
         help="Upsert P0 entry-timing LIVE vars (1%% breakout buffer) into .env before starting",
     )
+    parser.add_argument(
+        "--with-kronos",
+        action="store_true",
+        help="Start the Kronos inference service on port 8100 before the dashboard",
+    )
+    parser.add_argument(
+        "--kronos-port",
+        type=int,
+        default=int(os.getenv("KRONOS_PORT", "8100")),
+        help="Port for --with-kronos (default 8100)",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(SKILL_DIR))
@@ -118,6 +130,40 @@ def main() -> int:
 
     _run_alembic_once()
 
+    kronos_proc: subprocess.Popen[str] | None = None
+    if args.with_kronos:
+        kronos_dir = SKILL_DIR.parent / "kronos_service"
+        kronos_url = f"http://127.0.0.1:{args.kronos_port}"
+        if not ENV_PATH.exists():
+            ENV_PATH.write_text("", encoding="utf-8")
+        env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+        out_lines: list[str] = []
+        saw_url = False
+        for line in env_lines:
+            if line.startswith("KRONOS_INFERENCE_URL="):
+                out_lines.append(f"KRONOS_INFERENCE_URL={kronos_url}")
+                saw_url = True
+                continue
+            out_lines.append(line)
+        if not saw_url:
+            out_lines.append(f"KRONOS_INFERENCE_URL={kronos_url}")
+        ENV_PATH.write_text("\n".join(out_lines).rstrip() + "\n", encoding="utf-8")
+        print(f"Starting Kronos inference service on {kronos_url} …")
+        kronos_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(args.kronos_port),
+            ],
+            cwd=kronos_dir,
+        )
+        print("Kronos service booting (first load downloads weights; can take several minutes).")
+
     print(f"Dashboard URL : https://{args.host}:{args.port}/")
     print(f"Schwab callback: {callback}")
     print("Register that callback URL on BOTH Schwab Developer Portal apps.")
@@ -142,7 +188,16 @@ def main() -> int:
         cmd.extend(["--reload", "--reload-dir", "webapp"])
     env = os.environ.copy()
     env["WEBAPP_SKIP_ALEMBIC"] = "1"
-    return subprocess.call(cmd, cwd=SKILL_DIR, env=env)
+    if args.with_kronos:
+        env["KRONOS_INFERENCE_URL"] = f"http://127.0.0.1:{args.kronos_port}"
+    rc = subprocess.call(cmd, cwd=SKILL_DIR, env=env)
+    if kronos_proc is not None:
+        kronos_proc.terminate()
+        try:
+            kronos_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            kronos_proc.kill()
+    return rc
 
 
 if __name__ == "__main__":

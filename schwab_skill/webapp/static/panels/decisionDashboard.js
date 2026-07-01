@@ -1,10 +1,32 @@
-import { safeText, timeAgo } from "../modules/format.js";
+import { escapeHtml, safeNum, safeText, timeAgo } from "../modules/format.js";
 import { healthBadgeClass } from "../modules/logger.js";
+import {
+  renderDecisionGateTiles,
+  renderDecisionPfChart,
+  renderDecisionSummaryStrip,
+} from "./decisionCharts.js";
 
 function _setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
 }
+
+const EVIDENCE_ROW_IDS = [
+  "decisionValidationStatus",
+  "decisionSloStatus",
+  "decisionLastScan",
+  "decisionSignalsFound",
+  "decisionStrategyLead",
+  "decisionDataQuality",
+  "decisionSignalEdgeState",
+  "decisionEarlyStopConstraint",
+  "decisionRankFilterShadow",
+  "decisionEntryTimingExperiment",
+  "decisionLatestPromotion",
+  "decisionAblationStatus",
+  "decisionAblationLift",
+  "decisionAblationSummary",
+];
 
 function _setBadge(id, text, ok) {
   const el = document.getElementById(id);
@@ -18,6 +40,120 @@ function _fmtSignedPct(value) {
   if (!Number.isFinite(n)) return "—";
   const scaled = n * 100;
   return `${scaled >= 0 ? "+" : ""}${scaled.toFixed(1)}%`;
+}
+
+function _dataQualityState(value) {
+  const dq = safeText(value || "").trim().toLowerCase();
+  if (!dq || ["unknown", "—"].includes(dq)) return "empty";
+  if (["ok", "fresh", "healthy", "good"].includes(dq)) return "success";
+  if (["failed", "fail", "blocked", "conflict"].includes(dq)) return "error";
+  return "partial";
+}
+
+function _hasDecisionEvidence(payload = {}) {
+  const reliability = payload.reliability || {};
+  const strategy = payload.strategy_quality || {};
+  const signalEdge = payload.signal_edge || {};
+  const stack = signalEdge.signal_stack_counterfactual || {};
+  return Boolean(
+    reliability.validation_run_status ||
+      strategy.last_scan_at ||
+      signalEdge.state ||
+      Number.isFinite(Number(stack.pf_mean)) ||
+      Number.isFinite(Number(signalEdge.hold_21_40d_pf)),
+  );
+}
+
+function _setStateStrip(stateName, title, detail) {
+  const strip = document.getElementById("decisionDashboardStateStrip");
+  if (!strip) return;
+  strip.dataset.state = stateName;
+  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+  strip.innerHTML = `
+    <span class="decision-dashboard-state-pill">${escapeHtml(label)}</span>
+    <strong>${escapeHtml(title)}</strong>
+    <span class="muted">${escapeHtml(detail)}</span>
+  `;
+}
+
+function _decisionState(payload = {}) {
+  if (!_hasDecisionEvidence(payload)) {
+    return {
+      state: "empty",
+      title: "No decision evidence yet.",
+      detail: "Run validation, signal-stack counterfactuals, or strategy comparison to populate this board.",
+    };
+  }
+  const reliability = payload.reliability || {};
+  const strategy = payload.strategy_quality || {};
+  const readiness = payload.promotion_readiness || {};
+  const signalEdge = payload.signal_edge || {};
+  const stack = signalEdge.signal_stack_counterfactual || {};
+  const dataState = _dataQualityState(strategy.data_quality);
+  const validationPassed = reliability.validation_passed === true;
+  const sloPassed = reliability.slo_gate_passed === true;
+  const releaseReady = readiness.release_gate_ready === true;
+  const stackPass = stack.passes_promotion_gates === true;
+  const pfMean = safeNum(stack.pf_mean ?? signalEdge.hold_21_40d_pf, NaN);
+  const worstEra = safeNum(stack.worst_era_pf, NaN);
+  if (dataState === "error") {
+    return {
+      state: "error",
+      title: "Decision data quality is blocked.",
+      detail: `Data quality: ${safeText(strategy.data_quality)}. Resolve market-data or artifact issues before promotion.`,
+    };
+  }
+  if (releaseReady && validationPassed && sloPassed && (stackPass || Number.isFinite(pfMean)) && dataState === "success") {
+    return {
+      state: "success",
+      title: "Release gates are ready.",
+      detail: `Validation and SLO pass; PF ${Number.isFinite(pfMean) ? pfMean.toFixed(2) : "—"} / worst ${Number.isFinite(worstEra) ? worstEra.toFixed(2) : "—"}.`,
+    };
+  }
+  const blockers = [];
+  if (!releaseReady) blockers.push("release gate blocked");
+  if (!validationPassed) blockers.push("validation not passed");
+  if (!sloPassed) blockers.push("SLO at risk");
+  if (dataState === "partial") blockers.push(`data ${safeText(strategy.data_quality || "degraded")}`);
+  if (stack.passes_promotion_gates === false) blockers.push("PF gate below threshold");
+  return {
+    state: "partial",
+    title: "Promotion needs review.",
+    detail: blockers.slice(0, 3).join(" · ") || "Some evidence is incomplete; review gates before promotion.",
+  };
+}
+
+export function renderDecisionDashboardLoading() {
+  _setStateStrip(
+    "loading",
+    "Loading decision summary.",
+    "Fetching signal-edge gates, validation health, and promotion readiness.",
+  );
+  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, {
+    state: "loading",
+  });
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, { state: "loading" });
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, { state: "loading" });
+  _setBadge("decisionReliabilityState", "Loading", false);
+  _setBadge("decisionPromotionState", "Loading", false);
+  EVIDENCE_ROW_IDS.forEach((id) => _setText(id, `${document.getElementById(id)?.textContent?.split(":")[0] || "Status"}: loading…`));
+}
+
+export function renderDecisionDashboardUnavailable(message) {
+  const msg = safeText(message || "Decision dashboard unavailable.");
+  _setStateStrip("error", "Decision data unavailable.", msg);
+  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, {
+    state: "error",
+    message: msg,
+  });
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, {
+    state: "error",
+    message: msg,
+  });
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, {
+    state: "error",
+    message: msg,
+  });
 }
 
 function _renderAblationTop(topRows = []) {
@@ -56,9 +192,16 @@ export function renderDecisionDashboard(payload = {}) {
   const validationPassed = reliability.validation_passed === true;
   const sloPassed = reliability.slo_gate_passed === true;
   const releaseReady = readiness.release_gate_ready === true;
+  const decisionState = _decisionState(payload);
+
+  _setStateStrip(decisionState.state, decisionState.title, decisionState.detail);
 
   _setBadge("decisionReliabilityState", validationPassed && sloPassed ? "Healthy" : "At Risk", validationPassed && sloPassed);
   _setBadge("decisionPromotionState", releaseReady ? "Ready" : "Blocked", releaseReady);
+
+  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), payload, decisionState);
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), signalEdge, readiness);
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), signalEdge);
 
   const runStatus = safeText(reliability.validation_run_status || "unknown");
   const validationLine = `Validation: ${runStatus}${validationPassed ? " (pass)" : ""}`;

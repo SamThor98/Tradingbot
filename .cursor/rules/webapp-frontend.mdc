@@ -52,3 +52,7 @@ state.publicConfig = cfg.data;
 - Template literals for HTML fragments
 - Error display via toast/banner pattern using `showError(msg)` or inline `.error` elements
 - Numeric formatting helpers: `fmtPct()`, `fmtUSD()`, `safeNum()`
+
+## Figma / UI redesign
+
+For Figma-first dashboard work (8182, Old Logan DS, MCP workflow), follow `.cursor/rules/webapp-figma-workflow.mdc`.

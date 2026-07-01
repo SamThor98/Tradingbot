@@ -7,8 +7,10 @@
  */
 
 import { api } from "../modules/api.js";
-import { escapeHtml } from "../modules/format.js";
+import { escapeHtml, safeNum } from "../modules/format.js";
 import { humanizeRolloutMode } from "../modules/humanize.js";
+
+const PRIOR_SNAPSHOT_KEY = "tradingbot.shadow_scoreboard_prior";
 
 const COUNTER_LABELS = {
   confirmed: "Confirmed",
@@ -37,14 +39,106 @@ const COUNTER_LABELS = {
   filtered: "Filtered",
 };
 
+const WOULD_KEYS = new Set([
+  "would_block",
+  "would_demote",
+  "would_filter",
+  "would_partial_tp",
+  "would_move_stop",
+  "would_time_stop",
+  "scan_blocked",
+  "exec_blocked",
+]);
+
 function modeBadge(mode) {
   const m = String(mode || "off").toLowerCase();
   const cls = m === "live" ? "good" : m === "shadow" ? "warn" : "neutral";
   return `<span class="pill ${cls}">${escapeHtml(humanizeRolloutMode(m))}</span>`;
 }
 
-function renderPlugin(p) {
+function sumWouldHave(counters = {}) {
+  return Object.entries(counters).reduce((sum, [key, val]) => {
+    if (!WOULD_KEYS.has(key)) return sum;
+    return sum + (Number(val) || 0);
+  }, 0);
+}
+
+function totalWouldHave(plugins = []) {
+  return plugins.reduce((sum, plugin) => sum + sumWouldHave(plugin.counters), 0);
+}
+
+function nextRolloutStep(mode, counters = {}) {
+  const m = String(mode || "off").toLowerCase();
+  const would = sumWouldHave(counters);
+  if (m === "live") return "Maintain LIVE — review counters weekly";
+  if (m === "shadow") {
+    return would > 0
+      ? `SHADOW active — ${would} would-have action(s) this window`
+      : "SHADOW active — no would-have actions; evaluate LIVE promotion";
+  }
+  if (would > 0) return `OFF — ${would} would-have action(s); consider SHADOW`;
+  return "OFF — no shadow signal yet";
+}
+
+function readPriorSnapshot() {
+  try {
+    const raw = sessionStorage.getItem(PRIOR_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePriorSnapshot(data) {
+  try {
+    sessionStorage.setItem(
+      PRIOR_SNAPSHOT_KEY,
+      JSON.stringify({
+        scan_at: data.scan_at || null,
+        total_would_have: totalWouldHave(data.plugins || []),
+        plugins: (data.plugins || []).map((p) => ({
+          id: p.id,
+          would: sumWouldHave(p.counters),
+        })),
+      }),
+    );
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function renderHeadline(data, prior) {
+  const total = totalWouldHave(data.plugins || []);
+  const priorTotal = safeNum(prior?.total_would_have, NaN);
+  let trend = "";
+  if (Number.isFinite(priorTotal)) {
+    const delta = total - priorTotal;
+    if (delta > 0) trend = `<span class="shadow-scoreboard-trend shadow-scoreboard-trend--up">+${delta} vs prior scan</span>`;
+    else if (delta < 0) trend = `<span class="shadow-scoreboard-trend shadow-scoreboard-trend--down">${delta} vs prior scan</span>`;
+    else trend = `<span class="shadow-scoreboard-trend muted">unchanged vs prior scan</span>`;
+  }
+  return `
+    <div class="shadow-scoreboard-headline">
+      <strong>${total} would-have action${total === 1 ? "" : "s"}</strong>
+      <span class="muted">across trial-run plugins this window</span>
+      ${trend}
+    </div>
+  `;
+}
+
+function renderPlugin(p, priorPlugin) {
   const counters = p.counters || {};
+  const would = sumWouldHave(counters);
+  const priorWould = safeNum(priorPlugin?.would, NaN);
+  let trendHtml = "";
+  if (Number.isFinite(priorWould)) {
+    const delta = would - priorWould;
+    if (delta !== 0) {
+      trendHtml = `<span class="shadow-plugin-trend mono-nums">${delta > 0 ? "+" : ""}${delta}</span>`;
+    }
+  }
   const rows = Object.entries(counters)
     .map(([key, val]) => {
       const label = COUNTER_LABELS[key] || key;
@@ -60,9 +154,11 @@ function renderPlugin(p) {
     if (p.context.bucket != null) bits.push(`bucket ${escapeHtml(String(p.context.bucket))}`);
     contextHtml = `<small class="muted">${bits.join(" · ")}</small>`;
   }
-  return `<div class="preset-subsection">
-    <h3>${escapeHtml(p.label || p.id)} ${modeBadge(p.mode)} <small class="muted">${escapeHtml(p.scope || "")}</small></h3>
+  const nextStep = nextRolloutStep(p.mode, counters);
+  return `<div class="preset-subsection shadow-plugin-card">
+    <h3>${escapeHtml(p.label || p.id)} ${modeBadge(p.mode)} ${trendHtml} <small class="muted">${escapeHtml(p.scope || "")}</small></h3>
     ${contextHtml}
+    <p class="shadow-plugin-next muted">${escapeHtml(nextStep)}</p>
     ${rows || '<div class="muted">No counters.</div>'}
   </div>`;
 }
@@ -77,13 +173,19 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     panel.innerHTML = `<div class="report-empty">No shadow scoreboard data yet — run a scan first.</div>`;
     return;
   }
+  const prior = readPriorSnapshot();
+  const priorById = Object.fromEntries((prior?.plugins || []).map((p) => [p.id, p]));
   const meta = [];
   if (data.scan_at) meta.push(`Last scan: ${escapeHtml(String(data.scan_at))}`);
   if (data.execution_window_days) {
     meta.push(`Execution window: ${data.execution_window_days}d (${data.execution_days_present || 0} days with data)`);
   }
   const metaHtml = meta.length ? `<div class="muted" style="margin-bottom: 8px;">${meta.join(" · ")}</div>` : "";
-  panel.innerHTML = metaHtml + data.plugins.map(renderPlugin).join("");
+  panel.innerHTML =
+    metaHtml +
+    renderHeadline(data, prior) +
+    data.plugins.map((p) => renderPlugin(p, priorById[p.id])).join("");
+  writePriorSnapshot(data);
 }
 
 export async function refreshShadowScoreboard() {

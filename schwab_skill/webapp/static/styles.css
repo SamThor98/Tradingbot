@@ -4475,8 +4475,8 @@ body.ui-screen-cockpit #cockpitWorkspaceIntro {
 body.ui-screen-cockpit #cockpitSection {
   display: grid !important;
 }
-/* The slide-in drawer only exists on the cockpit screen. */
-body:not(.ui-screen-cockpit) .cockpit-drawer {
+/* The slide-in drawer is hosted by the Research cockpit panel after /cockpit was folded in. */
+body:not(.ui-screen-cockpit):not(.ui-screen-research) .cockpit-drawer {
   display: none !important;
 }
 
@@ -6500,7 +6500,7 @@ html, body {
   background: var(--ol-surface, #fffefb);
   border-left: 1px solid var(--ol-border, rgba(26, 26, 26, 0.12));
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
-  transform: translateX(100%);
+  transform: translateX(110vw);
   transition: transform 0.2s ease;
   overflow-y: auto;
   z-index: 50;

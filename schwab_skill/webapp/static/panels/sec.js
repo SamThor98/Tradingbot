@@ -16,6 +16,7 @@ import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, safeNum } from "../modules/format.js";
 import { humanizeAnalysisMode, humanizeKey } from "../modules/humanize.js";
 import { logEvent, updateActionCenter, statusClass, sentimentTagClass } from "../modules/logger.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 
 export function applySecCompareMode() {
   const modeEl = document.getElementById("secCompareMode");
@@ -1114,11 +1115,33 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   const btn = document.getElementById("secCompareBtn");
   const meta = document.getElementById("secCompareMeta");
 
-  if (!tickerA) return;
-  if (mode === "ticker_vs_ticker" && !tickerB) return;
+  if (!tickerA) {
+    setResearchStatusStrip(
+      "secCompareStatusStrip",
+      "empty",
+      "Ticker A required.",
+      "Choose a company before running filing compare.",
+    );
+    return;
+  }
+  if (mode === "ticker_vs_ticker" && !tickerB) {
+    setResearchStatusStrip(
+      "secCompareStatusStrip",
+      "empty",
+      "Ticker B required.",
+      "Two-company compare needs a second ticker.",
+    );
+    return;
+  }
 
   btn.disabled = true;
   meta.textContent = "Status: queued";
+  setResearchStatusStrip(
+    "secCompareStatusStrip",
+    "loading",
+    `Running SEC compare for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
+    "Fetching filing evidence, profile, red flags, and narrative changes.",
+  );
   renderSecCompareEmpty("Running SEC compare...");
   updateActionCenter({ title: "SEC Compare Running", message: "Comparing filing evidence. This can take a moment.", severity: "info" });
   try {
@@ -1160,6 +1183,12 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
       if (!fallback.ok) {
         meta.textContent = "Status: partial failure (fetching failed)";
         renderSecCompareEmpty(safeText(fallback.error || "Compare failed."));
+        setResearchStatusStrip(
+          "secCompareStatusStrip",
+          "error",
+          "SEC compare failed.",
+          safeText(fallback.error || "Compare failed."),
+        );
         logEvent({ kind: "report", severity: "error", message: `SEC compare fallback failed: ${fallback.error}` });
         return;
       }
@@ -1167,6 +1196,12 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     } else {
       meta.textContent = "Status: partial failure (fetching failed)";
       renderSecCompareEmpty(safeText(compareOut.error || "Compare failed."));
+      setResearchStatusStrip(
+        "secCompareStatusStrip",
+        "error",
+        "SEC compare failed.",
+        safeText(compareOut.user_message || compareOut.error || "Compare failed."),
+      );
       logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${compareOut.error}` });
       return;
     }
@@ -1197,6 +1232,14 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     }
     renderProfileStatusFromDashboard(payload.management_dashboard);
     renderSecCompareVisual(payload, { getDisplayMode });
+    setResearchStatusStrip(
+      "secCompareStatusStrip",
+      partialFailure ? "partial" : "success",
+      `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
+      partialFailure
+        ? `Completed with fallback source: ${safeText(dashboardOut.source)}.`
+        : `Profile ${activeProfile}; filing evidence and red flags ready.`,
+    );
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });
     updateActionCenter({
       title: "SEC Compare Complete",

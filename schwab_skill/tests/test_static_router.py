@@ -86,6 +86,7 @@ EXPECTED_ALIASES = {
     "movers": "moversSection",
     "sec": "secCompareSection",
     "seccompare": "secCompareSection",
+    "calibration": "calibrationSection",
 }
 
 

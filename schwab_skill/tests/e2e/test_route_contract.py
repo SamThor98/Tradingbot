@@ -6,12 +6,12 @@ the same contract):
 
 * ``?section=<alias>`` deep links — rewritten to the canonical ``#id``
   hash by ``modules/router.js`` (``applyQuerySectionDeepLink``).
-* ``?screen=<mode>`` workspace deep links — activate one of the six
-  topbar tabs (operations/research/kronos/diagnostics/settings/cockpit).
-* Keyboard shortcuts — Ctrl/Cmd+1..6 screen switch and Ctrl+K palette
+* ``?screen=<mode>`` workspace deep links — activate one of the four
+  topbar tabs (operations/research/diagnostics/settings).
+* Keyboard shortcuts — Ctrl/Cmd+1..4 screen switch and Ctrl+K palette
   (``modules/shortcuts.js``).
 
-Run with a local dashboard already serving (default port 8000):
+Run with a local dashboard already serving (default port 8182 via start_local_dashboard.py):
 
     python -m pytest schwab_skill/tests/e2e -q
 
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import ssl
 import urllib.request
 
 import pytest
@@ -31,7 +32,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Page, expect  # noqa: E402
 
-BASE_URL = os.environ.get("E2E_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+BASE_URL = os.environ.get("E2E_BASE_URL", "https://127.0.0.1:8182").rstrip("/")
 
 SCREEN_MODES = ["operations", "research", "diagnostics", "settings"]
 
@@ -50,12 +51,17 @@ ALIAS_CASES = [
     ("scan", "scanSection"),
     ("forecast", "kronosForecastSection"),
     ("health", "healthRibbon"),
+    ("calibration", "calibrationSection"),
 ]
 
 
 def _server_reachable() -> bool:
     try:
-        with urllib.request.urlopen(BASE_URL + "/", timeout=3) as resp:
+        ctx = ssl.create_default_context()
+        if BASE_URL.startswith("https://127.0.0.1") or BASE_URL.startswith("https://localhost"):
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(BASE_URL + "/", timeout=3, context=ctx) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -63,8 +69,16 @@ def _server_reachable() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _server_reachable(),
-    reason=f"dashboard not reachable at {BASE_URL} (start uvicorn or set E2E_BASE_URL)",
+    reason=f"dashboard not reachable at {BASE_URL} (run: python scripts/start_local_dashboard.py)",
 )
+
+
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args: dict) -> dict:
+    """Accept the self-signed local 8182 HTTPS cert used by start_local_dashboard.py."""
+    if BASE_URL.startswith(("https://127.0.0.1", "https://localhost")):
+        return {**browser_context_args, "ignore_https_errors": True}
+    return browser_context_args
 
 
 @pytest.fixture()
@@ -129,7 +143,12 @@ def test_hash_change_reopens_collapsed_details(page: Page) -> None:
 
 @pytest.mark.parametrize(
     ("key", "mode"),
-    [("Control+2", "research"), ("Control+4", "diagnostics"), ("Control+1", "operations")],
+    [
+        ("Control+1", "operations"),
+        ("Control+2", "research"),
+        ("Control+3", "diagnostics"),
+        ("Control+4", "settings"),
+    ],
 )
 def test_keyboard_screen_shortcuts(page: Page, key: str, mode: str) -> None:
     page.goto(f"{BASE_URL}/")

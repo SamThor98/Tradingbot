@@ -22,6 +22,7 @@ import {
   clampPct,
   pct,
   formatCount,
+  formatMoney,
 } from "../modules/format.js";
 import { setAsyncState, busyButton, ASYNC_ERROR } from "../modules/asyncState.js";
 import { markUnavailable, clearUnavailable } from "../modules/freshness.js";
@@ -77,6 +78,18 @@ function renderPendingContext(row) {
     conviction: ${conviction !== null ? safeText(conviction) : "—"}`;
 }
 
+function setPendingStatusStrip(stateName, title, detail) {
+  const strip = document.getElementById("pendingStatusStrip");
+  if (!strip) return;
+  strip.dataset.state = stateName;
+  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+  strip.innerHTML = `
+    <span class="operations-status-pill">${escapeHtml(label)}</span>
+    <strong>${escapeHtml(title)}</strong>
+    <span class="muted">${escapeHtml(detail)}</span>
+  `;
+}
+
 function getPendingRiskProfile(row) {
   const sig = row?.signal || {};
   const score = safeNum(getCompositeScore(sig), 0);
@@ -88,6 +101,47 @@ function getPendingRiskProfile(row) {
   if (!hasSector || score < 60 || lowConfidence || reliability < 45) return { label: "Requires extra review", severity: "high" };
   if (score < 72) return { label: "Moderate confidence", severity: "medium" };
   return { label: "Ready to review", severity: "low" };
+}
+
+const PRESET_NOTIONAL_CAP = Object.freeze({
+  conservative: 300,
+  balanced: 500,
+  aggressive: 900,
+});
+
+function renderPendingThesis(row) {
+  const note = safeText(row?.note || row?.notes || "").trim();
+  if (note) return escapeHtml(note.length > 140 ? `${note.slice(0, 137)}…` : note);
+  const sig = row?.signal || {};
+  const summary = safeText(sig.mirofish_summary || sig.summary || "").trim();
+  if (summary) return escapeHtml(summary.length > 140 ? `${summary.slice(0, 137)}…` : summary);
+  const strategy = safeText(sig?.strategy_attribution?.top_live || "").trim();
+  const score = getCompositeScore(sig);
+  const parts = [];
+  if (strategy) parts.push(strategy.replace(/_/g, " "));
+  if (score !== null) parts.push(`score ${safeNum(score, 0).toFixed(0)}`);
+  return parts.length
+    ? escapeHtml(parts.join(" · "))
+    : `<span class="muted">Review chart context before approving.</span>`;
+}
+
+function renderPositionCapMeter(row, getDisplayMode) {
+  const sig = row?.signal || {};
+  const price = safeNum(sig.price ?? sig.current_price, NaN);
+  const qty = safeNum(row?.qty, NaN);
+  if (!Number.isFinite(price) || !Number.isFinite(qty) || qty <= 0) return "";
+  const mode = typeof getDisplayMode === "function" ? getDisplayMode() : "balanced";
+  const cap = PRESET_NOTIONAL_CAP[mode] || PRESET_NOTIONAL_CAP.balanced;
+  const notional = price * qty;
+  const pct = clampPct((notional / cap) * 100);
+  const cls = pct >= 95 ? "bad" : pct >= 80 ? "warn" : "good";
+  return `
+    <div class="pending-cap-meter">
+      <span class="meter-label">Notional vs preset cap ($${cap})</span>
+      <div class="meter meter--${cls}"><span style="width:${pct}%"></span></div>
+      <span class="muted mono-nums">${formatMoney(notional)} (${pct.toFixed(0)}%)</span>
+    </div>
+  `;
 }
 
 function renderTimeline(row) {
@@ -105,6 +159,7 @@ export async function refreshPendingBoard(deps = {}) {
     updateHeroInfographic,
     trackFunnelMilestoneOnce,
     FUNNEL_EVENTS,
+    getDisplayMode,
   } = deps;
   const filter = document.getElementById("pendingFilter")?.value || state.pendingFilter;
   const sort = document.getElementById("pendingSort")?.value || state.pendingSort;
@@ -114,6 +169,11 @@ export async function refreshPendingBoard(deps = {}) {
   if (board) {
     board.innerHTML = `<div class="task-empty muted">Loading pending trades...</div>`;
   }
+  setPendingStatusStrip(
+    "loading",
+    "Pending queue loading.",
+    "Counts remain unavailable until /api/pending-trades answers.",
+  );
   const query = new URLSearchParams({ status: filter, sort });
   const pendingOnlyQuery = new URLSearchParams({ status: "pending", sort });
   const [out, pendingOnlyOut] = await Promise.all([
@@ -133,6 +193,11 @@ export async function refreshPendingBoard(deps = {}) {
     const pcEl = document.getElementById("pendingCount");
     if (pcEl) markUnavailable(pcEl, msg || "fetch failed");
     state.lastPendingCount = null;
+    setPendingStatusStrip(
+      "error",
+      "Pending queue unavailable.",
+      safeText(msg || "Fetch failed. Retry keeps the same filter and sort."),
+    );
     if (typeof updateHeroInfographic === "function") updateHeroInfographic();
     updateActionCenter({ title: "Pending queue unavailable", message: msg, severity: "error" });
     return;
@@ -162,8 +227,34 @@ export async function refreshPendingBoard(deps = {}) {
   board.innerHTML = "";
   if (!rows.length) {
     board.innerHTML = `<div class="task-empty muted">No trades match current filter.</div>`;
+    setPendingStatusStrip(
+      "empty",
+      pendingN === 0 ? "No staged trades." : "No trades match this filter.",
+      pendingN === 0
+        ? "Stage from Scan results or add a manual trade when needed."
+        : `${pendingN} pending trade(s) exist outside the current filter.`,
+    );
     return;
   }
+
+  const riskCounts = rows.reduce(
+    (acc, row) => {
+      const risk = getPendingRiskProfile(row);
+      acc[risk.severity] = (acc[risk.severity] || 0) + 1;
+      return acc;
+    },
+    { high: 0, medium: 0, low: 0 },
+  );
+  const highRisk = safeNum(riskCounts.high, 0);
+  const mediumRisk = safeNum(riskCounts.medium, 0);
+  const statusState = highRisk > 0 ? "partial" : "success";
+  setPendingStatusStrip(
+    statusState,
+    `${pendingN} pending approval${pendingN === 1 ? "" : "s"}.`,
+    highRisk > 0
+      ? `${highRisk} require extra review; ${mediumRisk} moderate-confidence setup(s).`
+      : "Approve/reject actions are visible on each staged trade.",
+  );
 
   const groups = rows.reduce((acc, row) => {
     const key = getSectorKeyFromTrade(row);
@@ -191,18 +282,24 @@ export async function refreshPendingBoard(deps = {}) {
         : "";
       const card = document.createElement("article");
       const risk = getPendingRiskProfile(row);
+      const sector = safeText(row?.signal?.sector_etf || "").trim();
+      const sectorChip = sector
+        ? `<span class="sector-chip pill info">${escapeHtml(sector)}</span>`
+        : `<span class="sector-chip pill neutral">No sector</span>`;
       card.className = `task-card task-card--risk-${risk.severity}`;
       card.innerHTML = `
         <div class="task-card-head">
           <div>
             <strong>${safeText(row.ticker)}</strong>
             <span class="muted">#${safeText(row.id)} • Qty ${safeText(row.qty)}</span>
+            ${sectorChip}
           </div>
           <div class="task-card-badges">
             <span class="risk-chip ${risk.severity}">${safeText(risk.label)}</span>
             <span class="${statusClass(row.status)}">${safeText(row.status)}</span>
           </div>
         </div>
+        <p class="pending-thesis-line">${renderPendingThesis(row)}</p>
         <div class="task-meters">
           <div>
             <span class="meter-label">Score ${safeNum(composite, 0).toFixed(0)}</span>
@@ -217,6 +314,7 @@ export async function refreshPendingBoard(deps = {}) {
             <div class="meter conviction"><span style="width:${conviction}%"></span></div>
           </div>
         </div>
+        ${renderPositionCapMeter(row, getDisplayMode)}
         <div class="context-mini">${renderTimeline(row)}<br/>${renderPendingContext(row)}</div>
         <div class="task-actions">
           <button class="btn small secondary" data-quick="${row.id}">Quick View</button>

@@ -14,6 +14,8 @@
 
 import { api } from "../modules/api.js";
 import { safeText, safeNum, formatDecimal } from "../modules/format.js";
+import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import {
   setAsyncState,
   ASYNC_LOADING,
@@ -23,6 +25,109 @@ import {
 } from "../modules/asyncState.js";
 
 const $ = (id) => document.getElementById(id);
+
+let _cockpitSpyChart = null;
+let _cockpitSpyResizeObserver = null;
+
+function disposeCockpitSpyChart() {
+  try {
+    _cockpitSpyResizeObserver?.disconnect();
+  } catch {
+    /* ignore */
+  }
+  _cockpitSpyResizeObserver = null;
+  try {
+    _cockpitSpyChart?.remove();
+  } catch {
+    /* ignore */
+  }
+  _cockpitSpyChart = null;
+}
+
+function renderSectorBreadthHeatmap(sectors) {
+  const rows = (sectors || [])
+    .filter((s) => s && typeof s === "object")
+    .slice(0, 11)
+    .sort((a, b) => safeNum(b.rel_strength_pct, -999) - safeNum(a.rel_strength_pct, -999));
+  if (!rows.length) {
+    return `<div class="cockpit-sector-heatmap muted small">No sector breadth data.</div>`;
+  }
+  const maxAbs = Math.max(
+    1,
+    ...rows.map((s) => Math.abs(safeNum(s.rel_strength_pct, 0))),
+  );
+  const cells = rows
+    .map((s) => {
+      const rel = safeNum(s.rel_strength_pct, NaN);
+      const width = Number.isFinite(rel) ? Math.min(100, (Math.abs(rel) / maxAbs) * 100) : 8;
+      const cls = s.is_winning ? "cockpit-sector-cell--win" : "cockpit-sector-cell--flat";
+      const sign = Number.isFinite(rel) && rel > 0 ? "+" : "";
+      return `
+        <div class="cockpit-sector-cell ${cls}" title="${safeText(s.name || s.etf)}">
+          <span class="cockpit-sector-etf">${safeText(s.etf)}</span>
+          <div class="cockpit-sector-bar-track">
+            <span class="cockpit-sector-bar-fill" style="width:${width}%"></span>
+          </div>
+          <span class="cockpit-sector-rel mono-nums">${Number.isFinite(rel) ? `${sign}${rel.toFixed(1)}%` : "—"}</span>
+        </div>
+      `;
+    })
+    .join("");
+  return `
+    <div class="cockpit-lane-subhead">Sector breadth</div>
+    <div class="cockpit-sector-heatmap">${cells}</div>
+  `;
+}
+
+async function renderCockpitSpyMiniChart(host, data) {
+  if (!host || typeof LightweightCharts === "undefined") return;
+  disposeCockpitSpyChart();
+  host.innerHTML = `<p class="muted small">Loading SPY chart…</p>`;
+  const out = await api.get("/api/chart/SPY");
+  if (!out.ok || !out.data?.candles?.length) {
+    host.innerHTML = `<p class="muted small">SPY chart unavailable.</p>`;
+    return;
+  }
+  host.innerHTML = "";
+  const canvas = document.createElement("div");
+  canvas.className = "cockpit-spy-chart-canvas";
+  host.appendChild(canvas);
+  const theme = getLightweightChartsProps();
+  const chart = LightweightCharts.createChart(canvas, {
+    width: Math.max(240, host.clientWidth || 280),
+    height: 120,
+    layout: theme.layout,
+    grid: theme.grid,
+    rightPriceScale: theme.rightPriceScale,
+    timeScale: { ...theme.timeScale, timeVisible: false },
+  });
+  const series = chart.addLineSeries({
+    color: theme.candlestick?.upColor || "#34d399",
+    lineWidth: 2,
+  });
+  series.setData(
+    out.data.candles.map((c) => ({
+      time: c.time,
+      value: Number(c.close),
+    })),
+  );
+  if (Number.isFinite(Number(data.spy_sma_200))) {
+    series.createPriceLine({
+      price: Number(data.spy_sma_200),
+      color: theme.candlestick?.downColor || "#fb7185",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: "200 SMA",
+    });
+  }
+  chart.timeScale().fitContent();
+  _cockpitSpyChart = chart;
+  _cockpitSpyResizeObserver = new ResizeObserver(() => {
+    chart.applyOptions({ width: Math.max(240, host.clientWidth || 280) });
+  });
+  _cockpitSpyResizeObserver.observe(host);
+}
 
 function provBadge(prov) {
   if (!prov) return "";
@@ -110,8 +215,13 @@ function renderMarket(body, data, movers) {
     <div class="kv"><span>Volatility</span><span>${safeText(data.volatility_state || "—")}${data.vix_level != null ? ` (VIX ${formatDecimal(data.vix_level, 1, "—")})` : ""}</span></div>
     <div class="kv"><span>Scan blocked by regime</span><span>${data.scan_blocked_by_regime ? '<span class="pill bad">YES</span>' : '<span class="pill good">no</span>'}</span></div>
     <div class="kv"><span>Winning sectors</span><span>${(data.sector_breadth || []).map((s) => safeText(s.etf)).join(", ") || "—"}</span></div>
+    <div id="cockpitSectorHeatmap">${renderSectorBreadthHeatmap(data.sector_breadth)}</div>
+    <div id="cockpitSpyChart" class="cockpit-spy-chart-wrap">
+      <div class="cockpit-lane-subhead">SPY trend</div>
+    </div>
     <div id="cockpitMarketMovers">${moversHtml(movers)}</div>
   `;
+  void renderCockpitSpyMiniChart(document.getElementById("cockpitSpyChart"), data);
 }
 
 // --- Lane 2: Portfolio ---------------------------------------------------- //
@@ -411,8 +521,27 @@ let _refreshing = false;
 async function guardedRefreshAll() {
   if (_refreshing) return;
   _refreshing = true;
+  setResearchStatusStrip(
+    "cockpitStatusStrip",
+    "loading",
+    "Loading market context.",
+    "Refreshing regime, portfolio risk, opportunities, and blotter provenance.",
+  );
   try {
     await refreshAll();
+    setResearchStatusStrip(
+      "cockpitStatusStrip",
+      "success",
+      "Market context refreshed.",
+      "Regime, risk, opportunities, and blotter lanes are visible with provenance.",
+    );
+  } catch (err) {
+    setResearchStatusStrip(
+      "cockpitStatusStrip",
+      "error",
+      "Market context refresh failed.",
+      safeText(err?.message || err || "Request failed."),
+    );
   } finally {
     _refreshing = false;
   }

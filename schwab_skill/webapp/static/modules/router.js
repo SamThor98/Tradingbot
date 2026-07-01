@@ -59,6 +59,7 @@ export const SECTION_ALIASES = Object.freeze({
   cockpit: "cockpitWorkspaceIntro",
   sec: "secCompareSection",
   seccompare: "secCompareSection",
+  calibration: "calibrationSection",
 });
 
 /**

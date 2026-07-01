@@ -73,6 +73,7 @@ import {
   isPriorityFeedActive,
   getTopPriorityItem,
 } from "./modules/priorityFeed.js";
+import { initFeatureFlags, isFlagEnabled } from "./modules/featureFlags.js";
 import {
   setupCommandPalette,
   openCommandPalette,
@@ -224,7 +225,20 @@ import {
   renderTradeableVerdict,
 } from "./modules/signalProvenance.js";
 import { initResearchTabs, applyResearchTab } from "./modules/researchTabs.js";
-import { renderDecisionDashboard } from "./panels/decisionDashboard.js";
+import {
+  applyScanDetailOverlays,
+  renderChartOverlayLegend,
+} from "./modules/chartOverlays.js";
+import { getLightweightChartsProps } from "./modules/chartThemeAdapters.js";
+import {
+  filterSignalsByFunnelStage,
+  funnelStageFilterHint,
+} from "./modules/funnelFilter.js";
+import {
+  renderDecisionDashboard,
+  renderDecisionDashboardLoading,
+  renderDecisionDashboardUnavailable,
+} from "./panels/decisionDashboard.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
 import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
 import { initCockpitPanel, primeCockpitPanel } from "./panels/cockpit.js";
@@ -266,8 +280,31 @@ const showScQueueCallout = (taskId, runId) =>
   _showScQueueCalloutPanel(taskId, runId, { switchBacktestHubTab });
 const sendStrategyChat = () =>
   _sendStrategyChatPanel({ refreshBacktestRuns, switchBacktestHubTab });
+function handleFunnelStageClick(stageKey) {
+  const next = state.scanFunnelFilter === stageKey ? null : stageKey;
+  state.scanFunnelFilter = next;
+  const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+  renderScanRows(Array.isArray(rows) ? rows : []);
+  if (state.lastScanDiagnostics) {
+    _renderDiagnosticsPanel(state.lastScanDiagnostics, {
+      updateHeroInfographic,
+      getDisplayMode,
+      onFunnelStageClick: handleFunnelStageClick,
+      activeFunnelStage: state.scanFunnelFilter,
+    });
+  }
+  const nearMissPanel = document.getElementById("nearMissPanel");
+  if (next && nearMissPanel) nearMissPanel.open = true;
+}
+
 const renderDiagnostics = (diag) => {
-  _renderDiagnosticsPanel(diag, { updateHeroInfographic, getDisplayMode });
+  state.lastScanDiagnostics = diag && typeof diag === "object" ? diag : null;
+  _renderDiagnosticsPanel(diag, {
+    updateHeroInfographic,
+    getDisplayMode,
+    onFunnelStageClick: handleFunnelStageClick,
+    activeFunnelStage: state.scanFunnelFilter,
+  });
   void refreshScanDeltas();
 };
 const refreshPending = () =>
@@ -277,6 +314,7 @@ const refreshPending = () =>
     updateTodaySummaryLanding,
     trackFunnelMilestoneOnce,
     FUNNEL_EVENTS,
+    getDisplayMode,
   });
 
 const lazyLoaded = {
@@ -1210,6 +1248,68 @@ function updateTodaySummaryLanding() {
       if (scanHint) scanHint.textContent = "run scan to begin";
     }
   }
+  updateWorkflowStatusStrip();
+}
+
+function setOperationsStatusStrip(id, stateName, title, detail) {
+  const strip = document.getElementById(id);
+  if (!strip) return;
+  strip.dataset.state = stateName;
+  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+  strip.innerHTML = `
+    <span class="operations-status-pill">${escapeHtml(label)}</span>
+    <strong>${escapeHtml(title)}</strong>
+    <span class="muted">${escapeHtml(detail)}</span>
+  `;
+}
+
+function updateWorkflowStatusStrip() {
+  const scanCount = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
+  const pendingCount = Number(state.lastPendingCount);
+  const hasScan = Boolean(state.lastScanAt);
+  const pendingKnown = Number.isFinite(pendingCount);
+  const diag = state.lastScanDiagnostics || {};
+  const dq = safeText(diag.data_quality || (hasScan ? "ok" : "")).toLowerCase();
+  const blocked = safeNum(diag.scan_blocked, 0) > 0;
+  if (blocked || ["failed", "stale", "conflict", "blocked"].includes(dq)) {
+    setOperationsStatusStrip(
+      "workflowStatusStrip",
+      "error",
+      "Workflow blocked.",
+      `Data ${dq || "unavailable"}; resolve scan or market-data issue before approving.`,
+    );
+  } else if (!hasScan) {
+    setOperationsStatusStrip(
+      "workflowStatusStrip",
+      "empty",
+      "No scan this session.",
+      "Run scan, review a setup, then approve staged trades.",
+    );
+  } else if (!pendingKnown || ["degraded", "partial", "unknown", "warning", "warn"].includes(dq)) {
+    setOperationsStatusStrip(
+      "workflowStatusStrip",
+      "partial",
+      "Workflow needs review.",
+      `Data ${dq || "unknown"} · ${scanCount} candidate(s) · pending queue ${pendingKnown ? pendingCount : "unavailable"}.`,
+    );
+  } else {
+    setOperationsStatusStrip(
+      "workflowStatusStrip",
+      scanCount > 0 || pendingCount > 0 ? "success" : "empty",
+      pendingCount > 0 ? `${pendingCount} trade(s) awaiting decision.` : `${scanCount} candidate(s) from last scan.`,
+      pendingCount > 0 ? "Review pending approvals before placing live orders." : "Select a scan row to inspect evidence and stage a trade.",
+    );
+  }
+}
+
+function setScanStatusLoading(title, detail) {
+  setOperationsStatusStrip("scanStatusStrip", "loading", title, detail);
+  updateWorkflowStatusStrip();
+}
+
+function setScanStatusError(title, detail) {
+  setOperationsStatusStrip("scanStatusStrip", "error", title, detail);
+  updateWorkflowStatusStrip();
 }
 
 function updateHeroInfographic() {
@@ -1572,6 +1672,7 @@ let _scanDetailResizeObserver = null;
 let _scanDetailSignal = null;
 let _scanDetailChartTicker = null;
 let _scanDetailForecastSeries = null;
+let _scanDetailOverlayDispose = null;
 let _scanDetailForecastBtnBound = false;
 
 function syncScanDetailStageButton(signal) {
@@ -1831,6 +1932,14 @@ async function renderScanDetailChart(ticker) {
     _scanDetailResizeObserver.disconnect();
     _scanDetailResizeObserver = null;
   }
+  if (typeof _scanDetailOverlayDispose === "function") {
+    try {
+      _scanDetailOverlayDispose();
+    } catch {
+      // ignore overlay cleanup failures
+    }
+    _scanDetailOverlayDispose = null;
+  }
   if (_scanDetailChart) {
     try {
       _scanDetailChart.remove();
@@ -1852,36 +1961,41 @@ async function renderScanDetailChart(ticker) {
   }
 
   container.innerHTML = "";
+  const chartHost = document.createElement("div");
+  chartHost.className = "scan-detail-chart-canvas";
+  container.appendChild(chartHost);
   const out = await api.get(`/api/chart/${encodeURIComponent(ticker)}`);
   if (!out.ok || !out.data?.candles?.length) {
     renderScanDetailChartMessage(`No chart data available for ${ticker}.`);
     return;
   }
 
-  const chart = LightweightCharts.createChart(container, {
+  const candles = out.data.candles;
+  const chartTheme = getLightweightChartsProps();
+  const chart = LightweightCharts.createChart(chartHost, {
     width: getScanDetailChartWidth(container),
     height: 240,
-    layout: { background: { type: "solid", color: "transparent" }, textColor: "#5a5a5a" },
-    grid: {
-      vertLines: { color: "rgba(26,26,26,0.06)" },
-      horzLines: { color: "rgba(26,26,26,0.06)" },
-    },
-    rightPriceScale: { borderColor: "rgba(26,26,26,0.14)" },
-    timeScale: { borderColor: "rgba(26,26,26,0.14)", timeVisible: false },
+    layout: chartTheme.layout,
+    grid: chartTheme.grid,
+    rightPriceScale: chartTheme.rightPriceScale,
+    timeScale: { ...chartTheme.timeScale, timeVisible: false },
   });
-  const candleSeries = chart.addCandlestickSeries({
-    upColor: "#2d5a4a",
-    downColor: "#c94949",
-    borderUpColor: "#2d5a4a",
-    borderDownColor: "#c94949",
-    wickUpColor: "#2d5a4a",
-    wickDownColor: "#c94949",
-  });
-  candleSeries.setData(out.data.candles);
+  const candleSeries = chart.addCandlestickSeries(chartTheme.candlestick);
+  candleSeries.setData(candles);
   chart.timeScale().fitContent();
   _scanDetailChart = chart;
   _scanDetailForecastSeries = null;
   _scanDetailChartTicker = ticker;
+  const signal = _scanDetailSignal && safeText(_scanDetailSignal.ticker || _scanDetailSignal.symbol).toUpperCase() === safeText(ticker).toUpperCase()
+    ? _scanDetailSignal
+    : null;
+  if (signal) {
+    _scanDetailOverlayDispose = applyScanDetailOverlays(chart, candleSeries, signal, candles);
+    const diag = state.lastScanDiagnostics || {};
+    renderChartOverlayLegend(container, signal, {
+      scanBlocked: safeNum(diag.scan_blocked, 0) > 0,
+    });
+  }
   _scanDetailResizeObserver = new ResizeObserver(() => {
     if (_scanDetailChart) _scanDetailChart.applyOptions({ width: getScanDetailChartWidth(container) });
   });
@@ -2001,6 +2115,29 @@ async function renderScanDetail(sig) {
   setText("scanDetailReliability", reliabilityLabel);
   setText("scanDetailExecution", execution === null ? "—" : formatDecimal(execution, 1));
   setText("scanDetailEv10d", ev10d === null ? "—" : pct(ev10d, 2));
+  if (!ticker) {
+    setOperationsStatusStrip(
+      "scanDetailStatusStrip",
+      "empty",
+      "No ticker selected.",
+      "Pick a candidate row to review evidence before staging.",
+    );
+  } else {
+    const stageable = isScanSignalStageable(row);
+    const missingEvidence = [
+      score === null ? "score" : "",
+      reliability === null ? "reliability" : "",
+      row.price == null && row.current_price == null ? "price" : "",
+    ].filter(Boolean);
+    setOperationsStatusStrip(
+      "scanDetailStatusStrip",
+      stageable && missingEvidence.length === 0 ? "success" : "partial",
+      stageable ? `${ticker} ready for evidence review.` : `${ticker} is filtered or guarded.`,
+      missingEvidence.length
+        ? `Missing ${missingEvidence.join(", ")}; keep guardrails visible before staging.`
+        : `Score ${score === null ? "—" : formatDecimal(score, 1)} · Reliability ${reliabilityLabel} · Execution ${execution === null ? "—" : formatDecimal(execution, 1)}.`,
+    );
+  }
   const trustEl = document.getElementById("scanDetailTrust");
   if (trustEl) {
     trustEl.innerHTML = ticker
@@ -2364,6 +2501,32 @@ function bindScanSortHandlers() {
   applyScanSortIndicators();
 }
 
+function renderScanFunnelFilterBanner(diag = {}) {
+  const host = document.getElementById("scanFunnelFilterBanner");
+  if (!host) return;
+  const key = state.scanFunnelFilter;
+  if (!key) {
+    host.innerHTML = "";
+    host.classList.add("hidden");
+    return;
+  }
+  const hint = funnelStageFilterHint(key, diag);
+  host.classList.remove("hidden");
+  host.innerHTML = `
+    <div class="scan-funnel-filter-banner">
+      <span>Funnel filter: <strong>${escapeHtml(key.replace(/_/g, " "))}</strong></span>
+      <span class="muted">${escapeHtml(hint)}</span>
+      <button type="button" class="btn small secondary" id="scanFunnelFilterClear">Clear filter</button>
+    </div>
+  `;
+  document.getElementById("scanFunnelFilterClear")?.addEventListener("click", () => {
+    state.scanFunnelFilter = null;
+    const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
+    renderScanRows(Array.isArray(rows) ? rows : []);
+    if (state.lastScanDiagnostics) renderDiagnostics(state.lastScanDiagnostics);
+  });
+}
+
 function renderScanRows(signalsInput = []) {
   const body = document.getElementById("scanTableBody");
   const nearMissBody = document.getElementById("nearMissTableBody");
@@ -2375,7 +2538,9 @@ function renderScanRows(signalsInput = []) {
   // SSE / poll updates don't snap the operator back to backend order.
   const allSignals = sortScanSignalsForRender(Array.isArray(signalsInput) ? signalsInput : []);
   const qualifiedSignals = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() === "kept");
-  const nearMissSignals = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() !== "kept");
+  const nearMissAll = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() !== "kept");
+  const nearMissSignals = filterSignalsByFunnelStage(nearMissAll, state.scanFunnelFilter);
+  renderScanFunnelFilterBanner(state.lastScanDiagnostics || {});
   const expanded = Boolean(state.scanRowsExpanded);
   const signals = expanded
     ? qualifiedSignals
@@ -2389,7 +2554,10 @@ function renderScanRows(signalsInput = []) {
     qualifiedMetaEl.textContent = `${total} qualified breakout${total === 1 ? "" : "s"}${suffix}`;
   }
   if (nearMissCountEl) {
-    nearMissCountEl.textContent = `(${nearMissSignals.length})`;
+    const suffix = state.scanFunnelFilter && nearMissSignals.length !== nearMissAll.length
+      ? ` (${nearMissSignals.length} match filter)`
+      : "";
+    nearMissCountEl.textContent = `(${nearMissAll.length}${suffix})`;
   }
   if (showMoreBtn) {
     if (qualifiedSignals.length > QUALIFIED_ROWS_DEFAULT_LIMIT) {
@@ -2411,7 +2579,10 @@ function renderScanRows(signalsInput = []) {
     nearMissBody.innerHTML = "";
     const nearMissRows = nearMissSignals.slice(0, NEAR_MISS_DEFAULT_LIMIT);
     if (!nearMissRows.length) {
-      nearMissBody.innerHTML = `<tr><td colspan="13" class="muted">No near-miss candidates for this scan mode.</td></tr>`;
+      const msg = state.scanFunnelFilter
+        ? "No near-miss rows match the selected funnel stage."
+        : "No near-miss candidates for this scan mode.";
+      nearMissBody.innerHTML = `<tr><td colspan="13" class="muted">${msg}</td></tr>`;
     } else {
       nearMissRows.forEach((sig, idx) => {
         const row = normalizeScanSignal(sig);
@@ -3661,10 +3832,13 @@ function applyEntryTimingExperimentPreflight(preflight) {
 async function refreshDecisionDashboard() {
   const card = document.getElementById("decisionDashboardCard");
   const freshEl = document.getElementById("decisionDashboardFresh");
+  if (card) card.setAttribute("data-async-state", "loading");
+  renderDecisionDashboardLoading();
   const out = await api.get("/api/decision-dashboard");
   if (!out.ok) {
     if (card) card.setAttribute("data-async-state", "error");
     const msg = safeText(out.user_message || out.error || "Decision dashboard unavailable.");
+    renderDecisionDashboardUnavailable(msg);
     [
       "decisionReliabilityState",
       "decisionPromotionState",
@@ -3682,6 +3856,10 @@ async function refreshDecisionDashboard() {
       "decisionSignalsFound",
       "decisionStrategyLead",
       "decisionDataQuality",
+      "decisionSignalEdgeState",
+      "decisionEarlyStopConstraint",
+      "decisionRankFilterShadow",
+      "decisionEntryTimingExperiment",
       "decisionLatestPromotion",
       "decisionAblationStatus",
       "decisionAblationLift",
@@ -3710,6 +3888,10 @@ async function refreshDecisionDashboard() {
     "decisionSignalsFound",
     "decisionStrategyLead",
     "decisionDataQuality",
+    "decisionSignalEdgeState",
+    "decisionEarlyStopConstraint",
+    "decisionRankFilterShadow",
+    "decisionEntryTimingExperiment",
     "decisionLatestPromotion",
     "decisionAblationStatus",
     "decisionAblationLift",
@@ -4182,6 +4364,10 @@ async function runScan() {
   btn.textContent = "Scanning...";
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
   setLoading({ scan: SCAN_START_META });
+  setScanStatusLoading(
+    "Scan running.",
+    `${profile.label} mode · score >= ${profile.minScore} · volume >= ${profile.minVolumeRatio.toFixed(1)}.`,
+  );
   trackUiEvent("scan_started", { mode });
   updateActionCenter({
     title: "Scan Running",
@@ -4204,11 +4390,13 @@ async function runScan() {
         : {};
     const scanBody = mergeScanRunOptionsWithMode(baseScanBody);
     state.scanRowsExpanded = false;
+    state.scanFunnelFilter = null;
     const out = await api.post("/api/scan?async_mode=true", scanBody);
     if (!out.ok) {
       scanMetaEl.textContent = "Scan failed.";
       updateTopStrategyChip(null);
       logEvent({ kind: "scan", severity: "error", message: out.error });
+      setScanStatusError("Scan failed.", out.user_message || out.error || "Check API logs and retry.");
       updateActionCenter({ title: "Scan Failed", message: out.error, severity: "error" });
       return;
     }
@@ -4274,6 +4462,12 @@ async function runScan() {
     btn.textContent = "Run Scan";
     if (scanMetaEl && scanMetaEl.textContent === SCAN_START_META) {
       scanMetaEl.textContent = "No scan run yet.";
+      setOperationsStatusStrip(
+        "scanStatusStrip",
+        "empty",
+        "No scan yet.",
+        "Run scan to populate candidates, blockers, and data quality.",
+      );
       updateActionCenter({
         title: "Scan",
         message: "Scan did not start. Check connection and try again.",
@@ -5106,6 +5300,9 @@ function connectSSE() {
     }
   }
 
+  safeInit("initFeatureFlags", () => {
+    initFeatureFlags();
+  });
   safeInit("applyResearchSlimDefault", () => {
     ["sectorsSection", "moversSection", "cockpitMergedPanel", "researchAdvancedTools"].forEach((id) => {
       const el = document.getElementById(id);
@@ -5141,6 +5338,7 @@ function connectSSE() {
     window.addEventListener("priority_feed_change", () => refreshSystemAlertBanner());
   });
   safeInit("initPriorityFeed", () => {
+    if (!isFlagEnabled("priority_feed")) return;
     initPriorityFeed({
       onAction: ({ key, severity }) => trackUiEvent("priority_feed_action_clicked", { item_key: key, severity }),
     });
@@ -5161,6 +5359,13 @@ function connectSSE() {
     }),
   );
   safeInit("setupNotifications", setupNotifications);
+  safeInit("installRouter", () => {
+    installRouter();
+    // installRouter rewrites ?section= deep links into a #hash via
+    // history.replaceState, which does NOT fire hashchange. Run the route
+    // handler once here before applyScreenMode writes any ?screen= param.
+    if (window.location.hash) handleRouteHash();
+  });
   safeInit("applyDisplayMode", () => applyDisplayMode(consumeDisplayModeFromUrl() || getDisplayMode()));
   safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
   safeInit("applyReportViewMode", applyReportViewMode);
@@ -5192,18 +5397,6 @@ function connectSSE() {
     await safeInit("maybeAutoRunScanOnLoad", maybeAutoRunScanOnLoad);
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   }
-  safeInit("installRouter", () => {
-    installRouter();
-    // installRouter rewrites ?section= deep links into a #hash via
-    // history.replaceState, which does NOT fire hashchange. The boot-time
-    // applyScreenMode above ran before the rewrite, so re-infer the screen
-    // from the (possibly new) hash and re-run the route handler once.
-    const inferred = inferScreenFromHash();
-    if (inferred && inferred !== currentScreenMode) {
-      applyScreenMode(inferred, { updateUrl: true });
-    }
-    if (window.location.hash) handleRouteHash();
-  });
   safeInit("updateActivityBadge", updateActivityBadge);
   logEvent({ kind: "system", severity: "info", message: "Dashboard loaded." });
 })();

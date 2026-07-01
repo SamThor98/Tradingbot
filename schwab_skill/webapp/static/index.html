@@ -263,6 +263,11 @@
 
       <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Operations workflow</h2>
+        <div id="workflowStatusStrip" class="operations-status-strip operations-status-strip--workflow" data-state="empty" aria-live="polite">
+          <span class="operations-status-pill">Empty</span>
+          <strong>No scan this session.</strong>
+          <span class="muted">Run scan, review a setup, then approve staged trades.</span>
+        </div>
         <p class="muted workflow-strapline operations-surface hidden workspace-intro--deprecated">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
         <article id="scanSection" class="card card--primary-task kanban-lane">
@@ -306,8 +311,14 @@
               </button>
             </div>
           </div>
+          <div id="scanStatusStrip" class="operations-status-strip" data-state="empty" aria-live="polite">
+            <span class="operations-status-pill">Empty</span>
+            <strong>No scan yet.</strong>
+            <span class="muted">Run scan to populate candidates, blockers, and data quality.</span>
+          </div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
           <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
+          <div id="scanFunnelFilterBanner" class="scan-funnel-filter-host hidden" aria-live="polite"></div>
           <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
             <progress id="scanJobProgress" max="100" value="0"></progress>
             <span id="scanJobProgressLabel" class="muted"></span>
@@ -446,6 +457,11 @@
             <p id="scanDetailStrategy" class="muted">Click <strong>Chart</strong> on any candidate row to load price action and scoring detail.</p>
             <div id="scanDetailTrust" class="scan-detail-trust"></div>
           </div>
+          <div id="scanDetailStatusStrip" class="operations-status-strip" data-state="empty" aria-live="polite">
+            <span class="operations-status-pill">Empty</span>
+            <strong>No ticker selected.</strong>
+            <span class="muted">Pick a candidate row to review evidence before staging.</span>
+          </div>
           <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
             <h4>Decision brief</h4>
             <div id="scanDetailBrief" class="scan-brief-content">
@@ -558,6 +574,11 @@
               Delete All
             </button>
           </div>
+          <div id="pendingStatusStrip" class="operations-status-strip" data-state="loading" aria-live="polite">
+            <span class="operations-status-pill">Loading</span>
+            <strong>Pending queue status loading.</strong>
+            <span class="muted">Counts stay unavailable until /api/pending-trades responds.</span>
+          </div>
           <div class="inline-form compact">
             <label class="muted">Status
               <select id="pendingFilter">
@@ -662,7 +683,8 @@
           <h3>Deep diligence</h3>
           <p class="muted">Run full report and filing compare before larger risk.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#reportSectionCard">Open deep diligence</a>
+            <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="diligence">Open deep diligence</a>
+            <a class="btn small secondary" href="#kronosForecastSection" data-research-tab-link="diligence">Kronos forecast</a>
           </div>
         </article>
       </section>
@@ -671,6 +693,11 @@
           <div class="section-title">
             <h2>Quick ticker check</h2>
             <small class="muted">Fast symbol health check.</small>
+          </div>
+          <div id="quickCheckStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>No ticker checked.</strong>
+            <span class="muted">Enter a ticker to load chart, score, and raw evidence.</span>
           </div>
           <div class="inline-form">
             <label class="field-label" for="tickerInput">Ticker</label>
@@ -694,6 +721,11 @@
             <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
             <span id="sectorSummaryMeta" class="disclosure-hint sector-summary-meta muted hidden" aria-live="polite"></span>
           </summary>
+          <div id="sectorsStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>Sector leadership not loaded.</strong>
+            <span class="muted">Open this disclosure to load 21-day relative strength.</span>
+          </div>
           <div id="sectorGrid" class="sector-grid"></div>
         </details>
         <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure" data-lazy-api="movers">
@@ -701,6 +733,11 @@
             <span class="ops-disclosure-title">Market Movers</span>
             <span class="disclosure-hint muted">Top gainers, losers, and most active</span>
           </summary>
+          <div id="moversStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>Movers not loaded.</strong>
+            <span class="muted">Open this disclosure to load gainers, losers, and active names.</span>
+          </div>
           <div id="moversGrid" data-async-state="idle"></div>
         </details>
 
@@ -1051,6 +1088,11 @@
           <h2 id="kronosForecastHeading">Kronos forecast</h2>
           <small class="muted">Projected candles, direction, and confidence for a single symbol.</small>
         </div>
+        <div id="kronosStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+          <span class="research-status-pill">Empty</span>
+          <strong>No forecast run.</strong>
+          <span class="muted">Enter a ticker and horizon to load forecast path and uncertainty.</span>
+        </div>
 
         <form id="kronosForecastForm" class="kronos-form" aria-describedby="kronosFormHint">
           <div class="kronos-form-row">
@@ -1247,6 +1289,7 @@
       <details id="systemDecisionPanel" class="card section-advanced panel-disclosure diagnostics-surface system-decision-disclosure">
         <summary class="panel-disclosure-summary">
           <span class="ops-disclosure-title">Decision dashboard</span>
+          <span id="decisionDashboardSummaryStrip" class="decision-summary-strip" aria-live="polite"></span>
           <span class="disclosure-hint muted">Reliability, readiness, strategy comparison</span>
         </summary>
       <section
@@ -1259,8 +1302,13 @@
           <h3 style="margin: 0">Decision Dashboard</h3>
           <span class="muted">Reliability + strategy quality + promotion readiness</span>
         </div>
-        <div class="dashboard-today-stack" style="gap: 8px">
-          <div class="health-ribbon" style="grid-template-columns: repeat(2, minmax(140px, 1fr))">
+        <div id="decisionDashboardStateStrip" class="decision-dashboard-state-strip" data-state="loading" aria-live="polite">
+          <span class="decision-dashboard-state-pill">Loading</span>
+          <strong>Loading decision summary.</strong>
+          <span class="muted">Fetching signal-edge gates and promotion readiness.</span>
+        </div>
+        <div class="dashboard-today-stack decision-dashboard-stack">
+          <div class="health-ribbon decision-dashboard-ribbon">
             <div class="health-tile" data-state="unknown">
               <div class="health-tile-copy">
                 <span class="health-label">Reliability</span>
@@ -1274,20 +1322,27 @@
               </div>
             </div>
           </div>
-          <p id="decisionValidationStatus" class="muted" data-unavailable="true" style="margin: 0">Validation: —</p>
-          <p id="decisionSloStatus" class="muted" data-unavailable="true" style="margin: 0">Reliability check: —</p>
-          <p id="decisionLastScan" class="muted" data-unavailable="true" style="margin: 0">Last scan: —</p>
-          <p id="decisionSignalsFound" class="muted" data-unavailable="true" style="margin: 0">Signals: —</p>
-          <p id="decisionStrategyLead" class="muted" data-unavailable="true" style="margin: 0">Dominant strategy: —</p>
-          <p id="decisionDataQuality" class="muted" data-unavailable="true" style="margin: 0">Data quality: —</p>
-          <p id="decisionSignalEdgeState" class="muted" data-unavailable="true" style="margin: 0">Signal edge: —</p>
-          <p id="decisionEarlyStopConstraint" class="muted" data-unavailable="true" style="margin: 0">Entry constraint: —</p>
-          <p id="decisionRankFilterShadow" class="muted" data-unavailable="true" style="margin: 0">Rank-filter shadow: —</p>
-          <p id="decisionEntryTimingExperiment" class="muted" data-unavailable="true" style="margin: 0">Entry-timing experiment: —</p>
-          <p id="decisionLatestPromotion" class="muted" data-unavailable="true" style="margin: 0">Latest promotion: —</p>
-          <p id="decisionAblationStatus" class="muted" data-unavailable="true" style="margin: 0">Strategy test: —</p>
-          <p id="decisionAblationLift" class="muted" data-unavailable="true" style="margin: 0">Best lift: —</p>
-          <p id="decisionAblationSummary" class="muted" data-unavailable="true" style="margin: 0">Test summary: —</p>
+          <section id="decisionSignalEdgeBoard" class="decision-signal-edge-board" aria-label="Signal edge promotion gates">
+            <h4 class="decision-board-title">Signal edge evidence</h4>
+            <div id="decisionGateTiles" class="decision-gate-tiles"></div>
+            <div id="decisionEraPfChart" class="decision-era-pf-chart"></div>
+          </section>
+          <div class="decision-evidence-grid" aria-label="Decision dashboard evidence">
+            <p id="decisionValidationStatus" class="decision-evidence-row muted" data-unavailable="true">Validation: —</p>
+            <p id="decisionSloStatus" class="decision-evidence-row muted" data-unavailable="true">Reliability check: —</p>
+            <p id="decisionDataQuality" class="decision-evidence-row muted" data-unavailable="true">Data quality: —</p>
+            <p id="decisionSignalEdgeState" class="decision-evidence-row muted" data-unavailable="true">Signal edge: —</p>
+            <p id="decisionLastScan" class="decision-evidence-row muted" data-unavailable="true">Last scan: —</p>
+            <p id="decisionSignalsFound" class="decision-evidence-row muted" data-unavailable="true">Signals: —</p>
+            <p id="decisionStrategyLead" class="decision-evidence-row muted" data-unavailable="true">Dominant strategy: —</p>
+            <p id="decisionLatestPromotion" class="decision-evidence-row muted" data-unavailable="true">Latest promotion: —</p>
+            <p id="decisionEarlyStopConstraint" class="decision-evidence-row decision-evidence-row--wide muted" data-unavailable="true">Entry constraint: —</p>
+            <p id="decisionRankFilterShadow" class="decision-evidence-row decision-evidence-row--wide muted" data-unavailable="true">Rank-filter shadow: —</p>
+            <p id="decisionEntryTimingExperiment" class="decision-evidence-row decision-evidence-row--wide muted" data-unavailable="true">Entry-timing experiment: —</p>
+            <p id="decisionAblationStatus" class="decision-evidence-row muted" data-unavailable="true">Strategy test: —</p>
+            <p id="decisionAblationLift" class="decision-evidence-row muted" data-unavailable="true">Best lift: —</p>
+            <p id="decisionAblationSummary" class="decision-evidence-row decision-evidence-row--wide muted" data-unavailable="true">Test summary: —</p>
+          </div>
           <details id="decisionAblationTopWrap" class="validation-steps">
             <summary>Top strategy variants</summary>
             <ul id="decisionAblationTopList" class="validation-steps-list">
@@ -1392,6 +1447,11 @@
             <h2>Portfolio</h2>
             <small id="portfolioMeta" class="muted">Loads automatically on Research or when you scroll here.</small>
           </div>
+          <div id="portfolioStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>Portfolio not loaded.</strong>
+            <span class="muted">Open Portfolio to load positions, exposure, and risk analytics.</span>
+          </div>
           <div class="table-wrap">
             <table>
               <caption class="visually-hidden">Portfolio positions table</caption>
@@ -1463,6 +1523,11 @@
         </div>
       </section>
 
+      <div id="cockpitStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+        <span class="research-status-pill">Empty</span>
+        <strong>Market context not loaded.</strong>
+        <span class="muted">Open Market context to load regime, portfolio, opportunities, and blotter.</span>
+      </div>
       <section id="cockpitSection" class="cockpit-surface cockpit-grid section-advanced" aria-label="Market context lanes">
         <section class="lane" id="laneMarket">
           <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
@@ -1498,6 +1563,11 @@
         <article id="backtestSection" class="card backtest-hub" data-lazy-api="backtest">
           <div class="section-title">
             <h2>Run a historical backtest</h2>
+          </div>
+          <div id="backtestStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>No backtest run selected.</strong>
+            <span class="muted">Choose a universe and date range before queueing a run.</span>
           </div>
           <p class="backtest-intro muted">
             Replays the <strong>uptrend + volatility pattern</strong> rules on past prices using your saved scanner settings — no live trades.
@@ -1699,6 +1769,11 @@
               <span id="btJobProgressLabel" class="muted"></span>
             </div>
             <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
+            <div id="btEquityChartWrap" class="bt-equity-chart-wrap hidden" aria-hidden="true">
+              <div class="section-title"><h3>Equity &amp; drawdown</h3></div>
+              <div id="btEquityChart" class="bt-equity-chart" role="img" aria-label="Backtest equity curve"></div>
+              <div id="btDrawdownChart" class="bt-drawdown-chart" role="img" aria-label="Backtest drawdown curve"></div>
+            </div>
             <details id="btResultRawDetails" class="details-raw">
               <summary>Full result JSON</summary>
               <pre id="btResult" class="code-block">No run yet.</pre>
@@ -1738,6 +1813,7 @@
       <details id="systemQualityDiagnostics" class="card section-advanced panel-disclosure diagnostics-surface system-quality-disclosure">
         <summary class="panel-disclosure-summary">
           <span class="ops-disclosure-title">Calibration &amp; plugin quality</span>
+          <span id="calibrationSummaryStrip" class="decision-summary-strip calibration-summary-strip" aria-live="polite"></span>
           <span class="disclosure-hint muted">Self-study, shadow scoreboard, trade review loop</span>
         </summary>
       <section class="section-advanced">
@@ -1745,6 +1821,7 @@
           <div class="section-title">
             <h2>Calibration and learning</h2>
             <small class="muted">Self-study and hypothesis ledger summaries (when available)</small>
+            <small id="calibrationFresh" class="muted" data-freshness="unknown">—</small>
           </div>
           <div class="inline-form">
             <button id="calibrationRefreshBtn" type="button" class="btn secondary">Refresh calibration</button>
@@ -1792,6 +1869,11 @@
           <div class="section-title">
             <h2>Institutional Dossier</h2>
             <small class="muted">Primary output: decision-ready markdown/PDF dossier with evidence trail</small>
+          </div>
+          <div id="reportStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>No dossier generated.</strong>
+            <span class="muted">Enter a ticker to produce narrative, appendix, and exports.</span>
           </div>
           <div class="inline-form">
             <label class="field-label" for="reportTickerInput">Ticker</label>
@@ -1855,6 +1937,11 @@
           <div class="section-title">
             <h3>SEC Filing Compare</h3>
             <small class="muted">Filing-language diff for thesis validation — guidance tone, risk deltas, and evidence snippets</small>
+          </div>
+          <div id="secCompareStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
+            <span class="research-status-pill">Empty</span>
+            <strong>No filing compare run.</strong>
+            <span class="muted">Choose mode and tickers to inspect language drift.</span>
           </div>
           <div class="sec-compare-controls">
             <div class="sec-compare-grid">

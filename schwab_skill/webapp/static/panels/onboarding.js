@@ -126,7 +126,7 @@ function renderAuthBootstrapSection(portalConfig) {
       ? `<div class="card" style="margin-top:10px; border-color: rgba(251, 191, 36, 0.45);">
           <p style="margin:0 0 6px;"><strong>Local Schwab setup</strong></p>
           <p class="muted" style="margin:0 0 8px;">
-            Open this dashboard at <strong>${esc(window?.location?.origin || "https://127.0.0.1:8000")}</strong>
+            Open this dashboard at <strong>${esc(window?.location?.origin || "https://127.0.0.1:8182")}</strong>
             (HTTPS, not HTTP). Register the callback URL below on <em>both</em> Schwab Developer Portal apps before clicking Connect.
           </p>
           <p class="muted" style="margin:0;">Callback URL for account and market apps: <strong>${esc(portal.account_callback_url || portal.market_callback_url || "")}</strong></p>

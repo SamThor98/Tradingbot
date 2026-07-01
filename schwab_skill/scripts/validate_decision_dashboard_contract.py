@@ -40,6 +40,14 @@ def main() -> int:
         for token in ("decisionDashboardCard", "decisionReliabilityState", "decisionPromotionState", "decisionLatestPromotion"):
             if token not in html:
                 errors.append(f"index.html missing token: {token}")
+        for token in (
+            "decisionDashboardSummaryStrip",
+            "decisionGateTiles",
+            "decisionEraPfChart",
+            "decisionSignalEdgeBoard",
+        ):
+            if token not in html:
+                errors.append(f"index.html missing signal-edge board token: {token}")
 
     if errors:
         print("decision dashboard contract validation failed:")

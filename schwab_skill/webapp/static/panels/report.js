@@ -11,6 +11,7 @@ import { api } from "../modules/api.js";
 import { safeText, safeNum, formatMoney, pct, verdictFromScore, escapeHtml } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { normalizeReportPayload, runReportNormalizationSmokeChecks } from "../modules/reportNormalization.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 
 let smokeChecked = false;
 
@@ -1046,7 +1047,15 @@ export async function runReport() {
   }
 
   const ticker = document.getElementById("reportTickerInput").value.trim().toUpperCase();
-  if (!ticker) return;
+  if (!ticker) {
+    setResearchStatusStrip(
+      "reportStatusStrip",
+      "empty",
+      "Ticker required.",
+      "Enter a ticker before running a report or dossier.",
+    );
+    return;
+  }
   const section = document.getElementById("reportSection").value.trim();
   const skipMirofish = document.getElementById("skipMirofish").checked;
   const skipEdgar = document.getElementById("skipEdgar").checked;
@@ -1056,6 +1065,12 @@ export async function runReport() {
 
   btn.disabled = true;
   btn.textContent = "Running...";
+  setResearchStatusStrip(
+    "reportStatusStrip",
+    "loading",
+    `Generating report for ${ticker}.`,
+    "Fetching technical, valuation, filing, sentiment, and portfolio evidence.",
+  );
   setReportRunStatus("Status: queued", "muted");
   output.textContent = "Generating report...";
   visual.setAttribute("data-async-state", "loading");
@@ -1080,6 +1095,12 @@ export async function runReport() {
         <button type="button" class="btn small secondary" data-report-retry>Retry</button>
       </div>`;
       visual.querySelector("[data-report-retry]")?.addEventListener("click", () => void runReport());
+      setResearchStatusStrip(
+        "reportStatusStrip",
+        "error",
+        `Report failed for ${ticker}.`,
+        safeText(out.user_message || out.error || "Request failed."),
+      );
       setReportRunStatus("Status: partial failure (fetching/scoring failed)", "warn");
       logEvent({ kind: "report", severity: "error", message: `Report ${ticker} failed: ${out.error}` });
       return;
@@ -1106,8 +1127,20 @@ export async function runReport() {
     renderReportVisual(out.data);
     visual.setAttribute("data-async-state", "success");
     if (portfolioRiskFailed) {
+      setResearchStatusStrip(
+        "reportStatusStrip",
+        "partial",
+        `Report ready for ${ticker}.`,
+        "Portfolio risk was unavailable; review remaining evidence before exporting.",
+      );
       setReportRunStatus("Status: complete with partial failure (portfolio risk unavailable)", "warn");
     } else {
+      setResearchStatusStrip(
+        "reportStatusStrip",
+        "success",
+        `Report ready for ${ticker}.`,
+        "Narrative, appendix tabs, and raw JSON are available.",
+      );
       setReportRunStatus("Status: complete", "good");
     }
     logEvent({ kind: "report", severity: "info", message: `Report complete for ${ticker}${section ? ` (${section})` : ""}.` });
@@ -1461,6 +1494,12 @@ export async function runResearchDossier() {
   const ticker = resolveDossierTicker();
   if (!ticker) {
     setDossierMeta("Enter a ticker in Full Report or SEC Compare first.", "warn");
+    setResearchStatusStrip(
+      "reportStatusStrip",
+      "empty",
+      "Ticker required.",
+      "Enter a ticker in Full Report or SEC Compare first.",
+    );
     updateActionCenter({
       title: "Ticker Required",
       message: "Set a ticker in Full Report or SEC Compare before generating a dossier.",
@@ -1474,12 +1513,24 @@ export async function runResearchDossier() {
     btn.textContent = "Generating...";
   }
   setDossierMeta(`Generating dossier for ${ticker}...`);
+  setResearchStatusStrip(
+    "reportStatusStrip",
+    "loading",
+    `Generating dossier for ${ticker}.`,
+    "Building narrative preview, provenance, quality badge, and export package.",
+  );
   updateActionCenter({ title: "Dossier Running", message: `Building research dossier for ${ticker}...`, severity: "info" });
   try {
     const out = await api.getResearchDossier(ticker, { timeoutMs: 300000, includeMarkdown: true });
     if (handleDossierRuntimeUnavailable(out)) return;
     if (!out.ok) {
       setDossierMeta(out.error || "Dossier generation failed.", "warn");
+      setResearchStatusStrip(
+        "reportStatusStrip",
+        "error",
+        `Dossier failed for ${ticker}.`,
+        safeText(out.user_message || out.error || "Request failed."),
+      );
       logEvent({ kind: "report", severity: "error", message: `Dossier ${ticker} failed: ${out.error}` });
       return;
     }
@@ -1492,6 +1543,14 @@ export async function runResearchDossier() {
         ? `Dossier ready for ${ticker} (${fallbackCount} fallback note${fallbackCount === 1 ? "" : "s"})`
         : `Dossier ready for ${ticker}`,
       fallbackCount ? "warn" : "good",
+    );
+    setResearchStatusStrip(
+      "reportStatusStrip",
+      fallbackCount ? "partial" : "success",
+      `Dossier ready for ${ticker}.`,
+      fallbackCount
+        ? `${fallbackCount} fallback note${fallbackCount === 1 ? "" : "s"}; review provenance before export.`
+        : "Narrative preview and exports are ready.",
     );
     updateActionCenter({
       title: "Dossier Ready",

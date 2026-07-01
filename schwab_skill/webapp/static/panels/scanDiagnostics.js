@@ -81,7 +81,7 @@ export function renderScanDeltaStrip(delta) {
   const moves = Array.isArray(delta.rank_moves) ? delta.rank_moves : [];
   const bigMoves = moves.filter((m) => Math.abs(safeNum(m?.delta, 0)) >= 10).slice(0, 5);
   if (!newTickers.length && !dropped.length && !bigMoves.length) {
-    el.innerHTML = `<span class="muted">No material changes vs previous scan.</span>`;
+    el.innerHTML = `<div class="scan-delta-strip-inner"><span class="scan-delta-label">vs prev scan</span><span class="muted">No material changes.</span></div>`;
     el.classList.remove("hidden");
     return;
   }
@@ -98,7 +98,7 @@ export function renderScanDeltaStrip(delta) {
     const sign = d >= 0 ? "+" : "";
     chips.push(`<span class="delta-chip delta-move">${t} rank ${sign}${d.toFixed(1)}</span>`);
   });
-  el.innerHTML = chips.join("");
+  el.innerHTML = `<div class="scan-delta-strip-inner"><span class="scan-delta-label">vs prev scan</span>${chips.join("")}</div>`;
   el.classList.remove("hidden");
 }
 
@@ -231,6 +231,18 @@ function dataQualityChipClass(value) {
   if (["stale", "conflict", "blocked", "failed", "fail"].includes(dq)) return "bad";
   if (["degraded", "partial", "unknown", "warning", "warn"].includes(dq)) return "warn";
   return "neutral";
+}
+
+function setScanStatusStrip(stateName, title, detail) {
+  const strip = document.getElementById("scanStatusStrip");
+  if (!strip) return;
+  strip.dataset.state = stateName;
+  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+  strip.innerHTML = `
+    <span class="operations-status-pill">${escapeHtml(label)}</span>
+    <strong>${escapeHtml(title)}</strong>
+    <span class="muted">${escapeHtml(detail)}</span>
+  `;
 }
 
 function formatDiagnosticValue(value) {
@@ -491,7 +503,8 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
  * (same DI pattern as the other panels/*.js modules).
  */
 export function renderDiagnostics(diag = {}, deps = {}) {
-  const { updateHeroInfographic, getDisplayMode } = deps;
+  const { updateHeroInfographic, getDisplayMode, onFunnelStageClick, activeFunnelStage } = deps;
+  state.lastScanDiagnostics = diag && typeof diag === "object" ? diag : null;
   const chipWrap = document.getElementById("scanDiagnostics");
   const blockersEl = document.getElementById("scanBlockers");
   const funnelEl = document.getElementById("scanFunnel");
@@ -583,6 +596,31 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   }
 
   const summary = buildDiagnosticsSummary(diag);
+  const dqState = dataQualityChipClass(dq || "ok");
+  const finalCount = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
+  const screened = safeNum(diag.watchlist_size, 0) || safeNum(summary.funnel.watchlist, 0);
+  const blockerCount = summary.blockers.length;
+  const scanBlocked = safeNum(diag.scan_blocked, 0) > 0;
+  const stateName =
+    dqState === "bad" || scanBlocked
+      ? "error"
+      : dqState === "warn" || blockerCount > 0
+        ? "partial"
+        : finalCount > 0
+          ? "success"
+          : "empty";
+  const title =
+    stateName === "error"
+      ? "Scan blocked or data unavailable."
+      : finalCount > 0
+        ? `${finalCount} candidate${finalCount === 1 ? "" : "s"} ready.`
+        : "No qualified candidates.";
+  const detailParts = [
+    `Data ${dq || "ok"}`,
+    screened > 0 ? `${finalCount} kept / ${screened} screened` : `${finalCount} kept`,
+    blockerCount > 0 ? `${blockerCount} blocker group${blockerCount === 1 ? "" : "s"}` : "no major blockers",
+  ];
+  setScanStatusStrip(stateName, title, detailParts.join(" · "));
   const headerChip = document.getElementById("scanBlockersChip");
   const headerChipCount = document.getElementById("scanBlockersChipCount");
   if (headerChip && !headerChip.dataset.wired) {
@@ -625,15 +663,27 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     const shadowFiltered = safeNum(stage.shadow_filtered, 0);
     const mode = safeText(stage.mode || "").toLowerCase();
     const tooltip = safeText(stage.tooltip || "");
+    const stageKey = safeText(stage.key || "");
     const showShadowBadge = shadowFiltered > 0 && (mode === "shadow" || mode === "soft" || mode === "off" || !mode);
-    const node = document.createElement("div");
+    const node = document.createElement("button");
+    node.type = "button";
     node.className = "funnel-node";
     if (mode) node.dataset.gateMode = mode;
-    if (tooltip) node.title = tooltip;
+    if (stageKey) node.dataset.funnelStage = stageKey;
+    if (activeFunnelStage && stageKey === activeFunnelStage) node.classList.add("funnel-node--active");
+    if (tooltip) node.title = `${tooltip} Click to filter near-miss rows.`;
+    else node.title = "Click to filter near-miss rows by this funnel stage.";
     const filteredLine =
       i === 0 || filtered <= 0
         ? ""
         : `<div class="funnel-node-filtered" title="Removed at this step">&minus;${filtered}</div>`;
+    const shadowCompare =
+      showShadowBadge && shadowFiltered > 0
+        ? `<div class="funnel-shadow-compare" aria-hidden="true">
+            <span class="funnel-shadow-live">Live ${n}</span>
+            <span class="funnel-shadow-would">Would &minus;${shadowFiltered}</span>
+          </div>`
+        : "";
     const shadowBadge = showShadowBadge
       ? `<span class="funnel-shadow-badge" title="${escapeHtml(
           `Gate is in ${mode || "shadow"} mode. Would have filtered ${shadowFiltered} more in hard mode.`,
@@ -651,8 +701,12 @@ export function renderDiagnostics(diag = {}, deps = {}) {
         <span class="value mono-nums" aria-label="pass count">${n}</span>
         ${filteredLine}
       </div>
+      ${shadowCompare}
       ${shadowBadge}
     `;
+    if (typeof onFunnelStageClick === "function" && stageKey) {
+      node.addEventListener("click", () => onFunnelStageClick(stageKey));
+    }
     funnelEl.appendChild(node);
   });
 

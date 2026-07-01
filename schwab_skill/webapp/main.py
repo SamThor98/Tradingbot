@@ -1040,6 +1040,24 @@ def _signal_edge_validation_status(run_id: str = "control_legacy_aug") -> dict[s
         scenarios = stack_art.get("scenarios") if isinstance(stack_art.get("scenarios"), dict) else {}
         stack_row = scenarios.get("exit_grace_breakout_buffer_0.010") or {}
         stack_rec = stack_art.get("recommendation") if isinstance(stack_art.get("recommendation"), dict) else {}
+        promotion_gates = stack_art.get("promotion_gates")
+        if not isinstance(promotion_gates, dict):
+            promotion_gates = {"pf_mean_min": 1.20, "worst_era_pf_min": 1.00}
+        scenario_rows: list[dict[str, Any]] = []
+        for key, row in scenarios.items():
+            if not isinstance(row, dict):
+                continue
+            scenario_rows.append(
+                {
+                    "key": key,
+                    "label": row.get("label") or key,
+                    "pf_mean": row.get("pf_mean"),
+                    "worst_era_pf": row.get("worst_era_pf"),
+                    "retention_pct": row.get("retention_pct"),
+                    "early_stopout_pct": row.get("early_stopout_pct"),
+                    "passes_promotion_gates": row.get("passes_promotion_gates"),
+                }
+            )
         stack_summary = {
             "generated_at": stack_art.get("generated_at"),
             "pf_mean": stack_row.get("pf_mean"),
@@ -1048,6 +1066,8 @@ def _signal_edge_validation_status(run_id: str = "control_legacy_aug") -> dict[s
             "passes_promotion_gates": stack_row.get("passes_promotion_gates"),
             "recommendation": stack_rec.get("action"),
             "reason": stack_rec.get("reason"),
+            "promotion_gates": promotion_gates,
+            "scenarios": scenario_rows,
         }
 
     from config import get_entry_timing_experiment_readiness

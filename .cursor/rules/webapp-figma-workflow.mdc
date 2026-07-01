@@ -1,0 +1,190 @@
+---
+description: Figma-first UI/UX workflow for TradingBot dashboard (8182, Old Logan DS, MCP orchestration)
+globs: schwab_skill/webapp/static/**/*.{js,html,css}
+alwaysApply: false
+---
+
+# Figma-First Dashboard UI/UX Workflow
+
+Use this rule when the user asks for dashboard UI/UX work, Figma sync, or design-to-code.
+Companion: [[webapp-frontend]] patterns, [[frontend-route-contract]] routing.
+
+## North star
+
+Build the **full dashboard component library in Figma first** (net-new frames for every primary panel), get user approval per wave, then implement in vanilla JS/CSS on **https://127.0.0.1:8182** only.
+
+Do **not** code from the Cover frame (node 1-25) alone — it is tokens only.
+
+## Master prompt (copy for each run)
+
+When starting a component wave, state:
+
+1. **Goal** — one sentence (screen + job-to-be-done)
+2. **Deliverable** — net-new Figma → approve → code (default for this rule)
+3. **Figma file** — `FMWpss3fGm0yzbjiyP3wSx` (Old Logan Capital Design System)
+4. **Target node** — existing frame URL or `"create frame: <Name> — Success"`
+5. **Verify URL** — `https://127.0.0.1:8182/?screen=<mode>&section=<alias>`
+6. **Scope** — section id(s), in/out of scope, success criteria
+
+## Local server (mandatory)
+
+| Item | Value |
+|------|--------|
+| Start | `cd schwab_skill && python scripts/start_local_dashboard.py` |
+| URL | `https://127.0.0.1:8182/` |
+| Demo data | `python scripts/seed_calibration_demo.py` (calibration only) |
+| **Never** default to port 8000 | Plain uvicorn is debug-only |
+
+E2E default: `E2E_BASE_URL=https://127.0.0.1:8182`
+
+## Figma DS catalog (existing)
+
+| Asset | Node | URL suffix |
+|-------|------|------------|
+| Cover / swatches | 1-25 | `?node-id=1-25` |
+| Token map frame | 7-12 | `?node-id=7-12` |
+| KPI tile components | 7-24 | `?node-id=7-24` |
+| Calibration Success | 5-2 | `?node-id=5-2` |
+| Calibration Empty | 5-68 | `?node-id=5-68` |
+| Calibration Loading | 5-73 | `?node-id=5-73` |
+| Calibration Error | 5-77 | `?node-id=5-77` |
+
+**Variables collection:** `Old Logan Editorial` — `ol/bg`, `ol/surface`, `ol/accent`, `ol/gold`, `ol/ok`, `ol/warn`, `ol/bad`, `ol/text`, `ol/muted`
+
+Base file URL: https://www.figma.com/design/FMWpss3fGm0yzbjiyP3wSx/Old-Logan-Capital-Design-System
+
+## Token map (Figma → CSS)
+
+| Figma variable | CSS token | Hex |
+|----------------|-----------|-----|
+| ol/bg | --ol-bg | #f5f1e8 |
+| ol/surface | --ol-surface | #fffefb |
+| ol/accent | --ol-accent | #1a3a2e |
+| ol/gold | --ol-gold | #c9a962 |
+| ol/ok | --ol-ok | #2d5a4a |
+| ol/warn | --ol-warn | #8a5c1f |
+| ol/bad | --ol-bad | #c94949 |
+| ol/text | --ol-text | #1a1a1a |
+| ol/muted | --ol-muted | #5a5a5a |
+
+Visual changes go in `readability.css` under `body[data-theme="editorial"]`. No hex in panel JS.
+
+## Component rollout matrix (all components)
+
+Build **5 states per panel** in Figma before coding: Success, Partial, Empty, Loading, Error.
+Annotate each frame: DOM `#id`, `?section=` alias, API endpoint, key data fields.
+
+### Wave 1 — Today / Operations (P1)
+
+| Priority | Section id | Panel module | ?section alias | Job-to-be-done |
+|----------|------------|--------------|----------------|----------------|
+| W1a | pendingSection | pendingBoard.js | pending, queue, approvals | Approve/reject in <10s; blockers + data_quality visible |
+| W1b | scanSection | scanDiagnostics.js | scan, candidates | Scan funnel + blockers scannable at a glance |
+| W1c | scanDetailPanel | (inline app.js) | — | Ticker detail + decision brief without losing scan context |
+| W1d | workflowPrimary | — | workflow | Kanban lane hierarchy for scan → review → approve |
+
+### Wave 2 — System / Diagnostics (P1)
+
+| Priority | Section id | Panel module | ?section alias | Status |
+|----------|------------|--------------|----------------|--------|
+| W2a | calibrationSection | calibration.js | calibration | **Figma done** (5-2…) — code synced |
+| W2b | decisionDashboardCard | decisionDashboard.js | — (in disclosure) | Signal edge gates + PF chart |
+| W2c | healthRibbon | healthRibbon.js | health | Auth, quotes, errors, validation tiles |
+| W2d | shadowScoreboardSection | shadowScoreboard.js | — | Plugin shadow counters |
+| W2e | reviewLoopSection | reviewLoop.js | — | False-positive diagnostics |
+| W2f | statusDetailsPanel | — | — | Token/session detail |
+
+### Wave 3 — Research (P2)
+
+| Section id | Panel module | ?section alias |
+|------------|--------------|----------------|
+| quickCheckSection | quickCheck.js | — |
+| backtestSection | backtest.js, backtestCharts.js | backtest |
+| reportSectionCard | report.js | — |
+| secCompareSection | sec.js | sec, seccompare |
+| kronosForecastSection | kronosWorkspace.js, forecast.js | kronos, forecast |
+| portfolioSection | portfolio.js | — |
+| sectorsSection | sectors.js | sectors |
+| moversSection | movers.js | movers |
+| cockpitMergedPanel | cockpit.js | cockpit |
+
+### Wave 4 — Settings (P2)
+
+| Section id | Panel module | ?section alias |
+|------------|--------------|----------------|
+| onboardingSection | onboarding.js | connect, onboarding, setup |
+| settingsSection | profile.js, twoFa.js | settings |
+
+### Wave 5 — Global chrome (P3)
+
+| Surface | Module | Notes |
+|---------|--------|-------|
+| tradeDrawer | tradeDrawer.js | Slide-over; Decision + Recovery tabs |
+| App topbar | app.js | Screen tabs, refresh, scan CTA |
+| Command palette | commandPalette.js | Ctrl+K jumps |
+
+## Figma MCP workflow (strict order)
+
+### Phase 1 — Understand
+
+1. Read `index.html` anchors, `panels/<name>.js`, `modules/router.js`, `readability.css`
+2. Read `wiki/frontend-route-contract.md`
+3. `get_metadata` on file `0:1` — confirm target frame exists
+
+### Phase 2 — Figma (net-new default)
+
+Load `/figma-use` before any `use_figma` write.
+
+1. `search_design_system` — reuse `ol/*` variables and Components — Calibration (7-24)
+2. `use_figma` — create frames for **all 5 states**; place on Design System page below prior waves
+3. Annotate: API fields, DOM ids, pass/fail semantics
+4. **Approval gate** — share node URLs; do not code until user approves wave
+5. Optional: `generate_figma_design` capture from 8182 for parity; refine; delete capture layer
+
+**If design already exists:**
+
+- `get_design_context` + `get_screenshot` + `get_variable_defs` on target node
+- `get_code_connect_map` (Javascript) if Org seat allows — else manual map to panel modules
+
+### Phase 3 — Implement
+
+- Adapt Figma output to vanilla ES modules (not React/Tailwind verbatim)
+- Fix API/UI field mismatches when KPIs render empty
+- Preserve `data_quality` and guardrail visibility
+- New alias: `router.js` + `wiki/frontend-route-contract.md` + `tests/test_static_router.py`
+- CSS only in `readability.css`
+
+### Phase 4 — Verify
+
+1. Browser MCP: `https://127.0.0.1:8182/?screen=<mode>&section=<alias>`
+2. Expand ancestor `<details>`; exercise load/error/empty/retry
+3. `python -m pytest -q` on touched tests
+4. Report: Figma links, changed files, token map, QA checklist
+
+## Reusable Figma primitives (extend in DS)
+
+When building new panels, compose from:
+
+- **KPI tile** — match `decision-gate-tile` / Components 7-24 (label, value, sub, pass border)
+- **Summary strip** — gold muted text in disclosure `<summary>` (see calibrationSummaryStrip)
+- **Reliability bar** — forest fill, gold 50% gate, ok/bad row border (calibration-reliability-*)
+- **Ledger pills** — cream bg, rounded source counts (calibration-ledger-pill)
+- **Health tile** — healthRibbon grid pattern
+- **Disclosure card** — panel-disclosure + card system-quality-nested
+
+## Output format (every delivery)
+
+1. UX rationale (hierarchy, scan path, failure modes)
+2. IA / state table
+3. Token map (Figma ol/* → --ol-*)
+4. Figma link(s) OR approval gate links
+5. Verification (8182 screenshots + pytest)
+
+## Session start checklist
+
+When user says "next Figma wave" or pastes the master prompt:
+
+1. Identify wave from matrix above (default: next incomplete wave after calibration)
+2. State P-level, files to touch, validation commands
+3. Run Phase 1–2 in Figma only unless user says "approved, implement"
+4. One wave per session unless user explicitly requests parallel waves

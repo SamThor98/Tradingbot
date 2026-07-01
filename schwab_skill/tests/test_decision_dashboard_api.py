@@ -142,6 +142,55 @@ def test_decision_dashboard_includes_signal_edge(monkeypatch: pytest.MonkeyPatch
     assert signal_edge["rank_filter_recommendation"] == "no_rank_filter_yet"
 
 
+def test_decision_dashboard_includes_signal_stack_scenarios(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    from webapp import main as webapp_main
+
+    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
+    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
+    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
+    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
+    monkeypatch.setattr(
+        webapp_main,
+        "_signal_edge_validation_status",
+        lambda run_id="control_legacy_aug": {
+            "run_id": run_id,
+            "state": "fix_entry_first",
+            "signal_stack_counterfactual": {
+                "pf_mean": 1.05,
+                "worst_era_pf": 0.92,
+                "passes_promotion_gates": False,
+                "promotion_gates": {"pf_mean_min": 1.20, "worst_era_pf_min": 1.00},
+                "scenarios": [
+                    {
+                        "key": "legacy_baseline",
+                        "label": "legacy_baseline",
+                        "pf_mean": 0.88,
+                        "worst_era_pf": 0.71,
+                        "passes_promotion_gates": False,
+                    },
+                    {
+                        "key": "exit_grace_breakout_buffer_0.010",
+                        "label": "exit_grace_breakout_buffer_0.010",
+                        "pf_mean": 1.05,
+                        "worst_era_pf": 0.92,
+                        "passes_promotion_gates": False,
+                    },
+                ],
+            },
+        },
+    )
+
+    resp = client.get("/api/decision-dashboard", headers=_auth_headers())
+    assert resp.status_code == 200
+    stack = resp.json()["data"]["signal_edge"]["signal_stack_counterfactual"]
+    assert isinstance(stack.get("scenarios"), list)
+    assert len(stack["scenarios"]) == 2
+    assert stack["promotion_gates"]["pf_mean_min"] == 1.20
+
+
 def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     from webapp import main as webapp_main
 

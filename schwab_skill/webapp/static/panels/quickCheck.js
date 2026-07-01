@@ -11,6 +11,7 @@ import { humanizeFieldLabel } from "../modules/humanize.js";
 import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 
 export function renderQuickCheckCard(data, error) {
   const ph = document.getElementById("checkPlaceholder");
@@ -128,9 +129,23 @@ export async function renderTickerChart(ticker) {
 
 export async function quickCheck() {
   const ticker = document.getElementById("tickerInput").value.trim().toUpperCase();
-  if (!ticker) return;
+  if (!ticker) {
+    setResearchStatusStrip(
+      "quickCheckStatusStrip",
+      "empty",
+      "No ticker entered.",
+      "Enter a ticker to load chart, score, and raw evidence.",
+    );
+    return;
+  }
   const ph = document.getElementById("checkPlaceholder");
   renderQuickCheckCard(null, "");
+  setResearchStatusStrip(
+    "quickCheckStatusStrip",
+    "loading",
+    `Checking ${ticker}.`,
+    "Loading quick score, chart context, and raw evidence.",
+  );
   if (ph) {
     ph.setAttribute("data-async-state", "loading");
     ph.innerHTML = `<span class="async-state async-state--loading" role="status">
@@ -150,11 +165,23 @@ export async function quickCheck() {
       </span>`;
       ph.querySelector("[data-check-retry]")?.addEventListener("click", () => void quickCheck());
     }
+    setResearchStatusStrip(
+      "quickCheckStatusStrip",
+      "error",
+      `Check failed for ${ticker}.`,
+      safeText(String(msg)),
+    );
     logEvent({ kind: "system", severity: "error", message: `Check ${ticker} failed: ${out.error}` });
     return;
   }
   if (ph) ph.setAttribute("data-async-state", "success");
   renderQuickCheckCard(out.data, null);
+  setResearchStatusStrip(
+    "quickCheckStatusStrip",
+    "success",
+    `${ticker} quick check ready.`,
+    "Review chart, score, and raw evidence before deeper research.",
+  );
   const reportInput = document.getElementById("reportTickerInput");
   if (reportInput && !reportInput.value.trim()) reportInput.value = ticker;
   const secInput = document.getElementById("secCompareTickerA");

@@ -13,6 +13,7 @@
 import { api } from "../modules/api.js";
 import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
 import { safeText } from "../modules/format.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import { buildForecastSummary, buildForecastUnavailable } from "./forecast.js";
 
 let _kronosChart = null;
@@ -184,6 +185,12 @@ async function runKronosForecast() {
   if (!ticker) {
     input?.focus();
     if (summary) summary.innerHTML = buildForecastUnavailable("Enter a ticker symbol first.");
+    setResearchStatusStrip(
+      "kronosStatusStrip",
+      "empty",
+      "Ticker required.",
+      "Enter a ticker and horizon to load forecast path and uncertainty.",
+    );
     return;
   }
   const horizon = parseInt(horizonSel?.value || "24", 10) || 24;
@@ -195,6 +202,12 @@ async function runKronosForecast() {
   if (summary) {
     summary.innerHTML = `<p class="muted">Requesting Kronos forecast for ${ticker} (${interval})… base model on CPU can take up to ~90s.</p>`;
   }
+  setResearchStatusStrip(
+    "kronosStatusStrip",
+    "loading",
+    `Forecasting ${ticker}.`,
+    `${interval} · ${horizon} bars · base model can take up to ~90s.`,
+  );
   if (container) {
     container.classList.remove("kronos-chart-active");
     container.innerHTML = '<p class="muted">Loading chart…</p>';
@@ -206,13 +219,31 @@ async function runKronosForecast() {
     const data = out?.data || {};
     if (!out.ok || !data.direction) {
       if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Kronos forecast unavailable.");
+      setResearchStatusStrip(
+        "kronosStatusStrip",
+        "error",
+        `Forecast unavailable for ${ticker}.`,
+        safeText(out.user_message || out.error || "Kronos forecast unavailable."),
+      );
       renderKronosChart(container, data);
       return;
     }
     if (summary) summary.innerHTML = buildForecastSummary(data);
     renderKronosChart(container, data);
+    setResearchStatusStrip(
+      "kronosStatusStrip",
+      "success",
+      `${ticker} forecast ready.`,
+      `Direction ${safeText(data.direction)} · horizon ${safeText(data.pred_len || horizon)} bars · advisory only.`,
+    );
   } catch (err) {
     if (summary) summary.innerHTML = buildForecastUnavailable(`Forecast error: ${err}`);
+    setResearchStatusStrip(
+      "kronosStatusStrip",
+      "error",
+      `Forecast failed for ${ticker}.`,
+      safeText(String(err)),
+    );
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -242,7 +273,10 @@ export async function primeKronosWorkspace() {
       text = `Inference service online · model ${k.model_id || "kronos"} · scanner mode ${mode}.`;
     } else if (k.service_ok === false) {
       cls = "kronos-status-warn";
-      text = "Inference service offline — on-demand forecasts may be unavailable.";
+      const detail = safeText(k.error || k.hint || "");
+      text = detail
+        ? `Inference service unavailable — ${detail}`
+        : "Inference service offline — start kronos_service on port 8100 or run fetch_weights.py.";
     } else {
       text = `On-demand forecasts ready · scanner mode ${mode}.`;
     }

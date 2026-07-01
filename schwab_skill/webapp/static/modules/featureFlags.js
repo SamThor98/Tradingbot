@@ -19,7 +19,9 @@
 export const FLAGS_STORAGE_KEY = "tradingbot.flags";
 
 /** Known flags and their shipped defaults. Unknown flag names are ignored. */
-export const FLAG_DEFAULTS = Object.freeze({});
+export const FLAG_DEFAULTS = Object.freeze({
+  priority_feed: true,
+});
 
 /** Resolved flag map for this session. Populated by `initFeatureFlags()`. */
 let resolved = { ...FLAG_DEFAULTS };

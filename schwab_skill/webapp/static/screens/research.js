@@ -192,6 +192,7 @@ export function createResearchController(ctx) {
     void runLazyApi("portfolio");
     void runLazyApi("performance");
     void ctx.primeCockpitPanel?.();
+    void ctx.primeKronosWorkspace?.();
     void runLazyApi("sectors");
     void runLazyApi("movers");
     void refreshBacktestRuns().then(() => ctx.updateResearchSummaryLanding?.());

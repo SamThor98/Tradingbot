@@ -169,6 +169,41 @@ class TestScanEndpoint:
         assert lifecycle["status"] in {"idle", "running", "completed", "failed"}
         assert lifecycle["task_id"] is None
 
+    def test_scan_lifecycle_completed_includes_signal_payload(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from webapp import main as webapp_main
+
+        monkeypatch.setattr(
+            webapp_main,
+            "_scan_snapshot",
+            lambda: {
+                "job_id": "job_test",
+                "status": "completed",
+                "started_at": "2026-07-01T12:00:00+00:00",
+                "finished_at": "2026-07-01T12:05:00+00:00",
+                "elapsed_seconds": 300,
+                "signals_found": 0,
+                "diagnostics": {"watchlist_size": 1500, "data_quality": "ok"},
+                "diagnostics_summary": {"data_quality": "ok", "headline": "0 kept"},
+                "strategy_summary": {"total_ranked": 0},
+                "signals": [],
+                "shortlist_signals": [
+                    {"ticker": "AAPL", "_filter_status": "filtered_quality_gates"},
+                ],
+                "error": None,
+            },
+        )
+        resp = client.get("/api/scan-lifecycle")
+        assert resp.status_code == 200
+        lifecycle = resp.json()["data"]
+        assert lifecycle["status"] == "completed"
+        assert lifecycle["signals_found"] == 0
+        assert len(lifecycle["shortlist_signals"]) == 1
+        assert lifecycle["shortlist_signals"][0]["ticker"] == "AAPL"
+        assert lifecycle["diagnostics"]["watchlist_size"] == 1500
+        assert lifecycle["diagnostics_summary"]["headline"] == "0 kept"
+
 
 class TestPendingTradeFlow:
     @patch("webapp.main.get_current_quote", return_value=FAKE_QUOTE)

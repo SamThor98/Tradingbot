@@ -32,7 +32,9 @@ import {
   formatPercentPoints,
 } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import { scrollStrategyChatToEnd } from "./strategyChat.js";
+import { renderBacktestEquityCharts, clearBacktestEquityCharts } from "./backtestCharts.js";
 
 /**
  * The hosted backtest queue (`/api/backtest-runs*`) only exists on the SaaS
@@ -215,6 +217,14 @@ export function setBacktestQueueUiBusy(busy) {
   const metaText = document.getElementById("btMetaText");
   if (spin) spin.classList.toggle("hidden", !busy);
   if (metaText && busy && !metaText.dataset.sticky) metaText.textContent = "Running…";
+  if (busy) {
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "loading",
+      "Backtest running.",
+      "Worker progress and results will appear in this panel.",
+    );
+  }
 }
 
 export function setBtMetaMessage(text, { sticky = false } = {}) {
@@ -324,14 +334,29 @@ export function collectBacktestSpecFromForm() {
 
 export function renderBacktestResultSummary(result) {
   const box = document.getElementById("btResultSummary");
+  const chartWrap = document.getElementById("btEquityChartWrap");
   if (!box) return;
   if (!result || typeof result !== "object") {
     box.innerHTML = "";
+    clearBacktestEquityCharts();
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "No backtest result selected.",
+      "Queue a run or refresh recent runs to inspect evidence.",
+    );
     return;
   }
   const tt = result.total_trades;
   if (tt === undefined || tt === null) {
     box.innerHTML = "";
+    clearBacktestEquityCharts();
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "partial",
+      "Backtest result incomplete.",
+      "Result returned without total trade count; inspect raw JSON.",
+    );
     return;
   }
   const findings = typeof result.findings === "string" ? result.findings : "";
@@ -345,6 +370,13 @@ export function renderBacktestResultSummary(result) {
     </div>
     ${findings ? `<div class="bt-findings">${escapeHtml(findings)}</div>` : ""}
   `;
+  renderBacktestEquityCharts(chartWrap, result);
+  setResearchStatusStrip(
+    "backtestStatusStrip",
+    "success",
+    "Backtest result ready.",
+    `Trades ${safeText(tt)} · Win ${formatPercentPoints(result.win_rate_net, 1)} · Return ${formatPercentPoints(result.total_return_net_pct, 2)}.`,
+  );
 }
 
 export function renderBacktestResultRaw(result, fallbackText, { getDisplayMode = () => "balanced" } = {}) {
@@ -391,17 +423,41 @@ export async function refreshBacktestRuns() {
   if (!list) return;
   if (!isHostedBacktestAvailable()) {
     list.innerHTML = `<li class="muted">${escapeHtml(LOCAL_BACKTEST_NOTICE)}</li>`;
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "partial",
+      "Hosted queue unavailable locally.",
+      "Run local backtest scripts to produce validation artifacts.",
+    );
     return;
   }
   list.innerHTML = `<li class="muted">Loading backtest runs...</li>`;
+  setResearchStatusStrip(
+    "backtestStatusStrip",
+    "loading",
+    "Loading recent backtest runs.",
+    "Fetching hosted run history and queue status.",
+  );
   const out = await api.get("/api/backtest-runs?limit=15");
   if (!out.ok) {
     list.innerHTML = `<li class="muted">List failed: ${safeText(out.user_message || out.error)}</li>`;
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "error",
+      "Backtest run list unavailable.",
+      safeText(out.user_message || out.error || "Request failed."),
+    );
     return;
   }
   const rows = Array.isArray(out.data) ? out.data : [];
   if (!rows.length) {
     list.innerHTML = `<li class="muted">No backtests yet.</li>`;
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "No hosted backtests yet.",
+      "Choose settings and queue a run to create evidence.",
+    );
     return;
   }
   list.innerHTML = rows
@@ -426,6 +482,12 @@ export async function refreshBacktestRuns() {
         <div class="bt-run-spec">${safeText(specLine)}</div>${metrics}</li>`;
     })
     .join("");
+  setResearchStatusStrip(
+    "backtestStatusStrip",
+    "success",
+    `${rows.length} recent backtest run${rows.length === 1 ? "" : "s"}.`,
+    "Review completed runs for PF, win rate, return, and drawdown.",
+  );
 }
 
 export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
@@ -438,6 +500,12 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
     const st = await api.get(`/api/backtest-runs/tasks/${encodeURIComponent(taskId)}`, { timeoutMs: 120000 });
     if (!st.ok) {
       setBtMetaMessage(`Status poll failed: ${st.error}`, { sticky: true });
+      setResearchStatusStrip(
+        "backtestStatusStrip",
+        "error",
+        "Backtest status poll failed.",
+        safeText(st.error || "Request failed."),
+      );
       return;
     }
     const d = st.data || {};
@@ -462,6 +530,12 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
       renderBacktestResultSummary(null);
       renderBacktestResultRaw(null, prettyJson(d.task_result || d), { getDisplayMode });
       setBtMetaMessage("Run finished with an error.", { sticky: true });
+      setResearchStatusStrip(
+        "backtestStatusStrip",
+        "error",
+        "Backtest run failed.",
+        "Open full result JSON for worker details.",
+      );
       setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
       return;
@@ -470,6 +544,12 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
       renderBacktestResultSummary(null);
       if (pre) pre.textContent = safeText(d.error_message);
       setBtMetaMessage(safeText(d.error_message), { sticky: true });
+      setResearchStatusStrip(
+        "backtestStatusStrip",
+        "error",
+        "Backtest run failed.",
+        safeText(d.error_message),
+      );
       setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
       return;
@@ -477,6 +557,12 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
     await new Promise((r) => setTimeout(r, 3000));
   }
   setBtMetaMessage("Still running; use Refresh list or check back later.", { sticky: true });
+  setResearchStatusStrip(
+    "backtestStatusStrip",
+    "partial",
+    "Backtest still running.",
+    "Use Refresh list or check back later for completed evidence.",
+  );
   setJobProgress("btJobProgress", "btJobProgressLabel", 0.9, "Still running…");
 }
 
@@ -484,17 +570,35 @@ export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayM
   if (state.backtestQueueBusy) return;
   if (!isHostedBacktestAvailable()) {
     setBtMetaMessage(LOCAL_BACKTEST_NOTICE, { sticky: true });
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "partial",
+      "Hosted queue unavailable locally.",
+      "Run local backtest scripts to produce validation artifacts.",
+    );
     return;
   }
   const start = document.getElementById("btStart")?.value;
   const end = document.getElementById("btEnd")?.value;
   if (!start || !end) {
     setBtMetaMessage("Choose start and end dates.");
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "Choose dates first.",
+      "Start and end dates are required before queueing a run.",
+    );
     return;
   }
   const spec = collectBacktestSpecFromForm();
   if (spec.universe_mode === "tickers" && (!spec.tickers || !spec.tickers.length)) {
     setBtMetaMessage("Add at least one ticker, or switch universe to saved watchlist.");
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "Add tickers first.",
+      "Custom ticker mode requires at least one symbol.",
+    );
     return;
   }
   setBacktestQueueUiBusy(true);
@@ -503,11 +607,23 @@ export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayM
     const out = await api.post("/api/backtest-runs", { spec }, { timeoutMs: 120000 });
     if (!out.ok) {
       setBtMetaMessage(safeText(out.error), { sticky: true });
+      setResearchStatusStrip(
+        "backtestStatusStrip",
+        "error",
+        "Backtest queue failed.",
+        safeText(out.user_message || out.error || "Request failed."),
+      );
       logEvent({ kind: "system", severity: "error", message: `Backtest queue failed: ${out.error}` });
       return;
     }
     const taskId = out.data?.task_id;
     setBtMetaMessage(taskId ? `Queued. Tracking task ${safeText(taskId).slice(0, 14)}…` : "Queued.", { sticky: true });
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "loading",
+      "Backtest queued.",
+      taskId ? `Tracking task ${safeText(taskId).slice(0, 14)}…` : "Waiting for hosted run status.",
+    );
     logEvent({ kind: "system", severity: "info", message: "Backtest queued." });
     if (taskId) await pollBacktestTask(taskId, { setJobProgress, getDisplayMode });
     else await refreshBacktestRuns();

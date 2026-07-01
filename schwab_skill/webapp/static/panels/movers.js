@@ -11,6 +11,7 @@
 import { api } from "../modules/api.js";
 import { safeText } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import {
   setAsyncState,
   ASYNC_LOADING,
@@ -32,12 +33,24 @@ export async function refreshMovers() {
   const grid = document.getElementById("moversGrid");
   if (!grid) return;
   setAsyncState(grid, ASYNC_LOADING, { message: "Loading movers…" });
+  setResearchStatusStrip(
+    "moversStatusStrip",
+    "loading",
+    "Loading market movers.",
+    "Fetching gainers, losers, and most-active names.",
+  );
   const out = await api.get("/api/cockpit/movers");
   if (!out.ok) {
     const msg = out.user_message || out.error;
     logEvent({ kind: "system", severity: "warn", message: `Movers load failed: ${msg}` });
     if (out.status === 401) {
       setAsyncState(grid, ASYNC_SIGNED_OUT, { message: "Sign in to load market movers." });
+      setResearchStatusStrip(
+        "moversStatusStrip",
+        "error",
+        "Sign in required.",
+        "Sign in to load market movers.",
+      );
       return;
     }
     setAsyncState(grid, ASYNC_ERROR, {
@@ -47,6 +60,12 @@ export async function refreshMovers() {
       </div>`,
       onRetry: () => void refreshMovers(),
     });
+    setResearchStatusStrip(
+      "moversStatusStrip",
+      "error",
+      "Movers unavailable.",
+      safeText(msg || "Request failed."),
+    );
     return;
   }
   const movers = out.data?.movers || {};
@@ -55,9 +74,21 @@ export async function refreshMovers() {
     setAsyncState(grid, ASYNC_EMPTY, {
       message: "No movers yet (enable MARKET_MOVERS_MODE and link Schwab market data).",
     });
+    setResearchStatusStrip(
+      "moversStatusStrip",
+      "empty",
+      "No movers returned.",
+      "Enable MARKET_MOVERS_MODE and link Schwab market data.",
+    );
     return;
   }
   grid.setAttribute("data-async-state", ASYNC_SUCCESS);
+  setResearchStatusStrip(
+    "moversStatusStrip",
+    "success",
+    `${total} mover names loaded.`,
+    "Review gainers, losers, and most-active names as market context only.",
+  );
   grid.innerHTML = `
     <div class="mover-grid">
       ${moverColumn("Gainers", movers.gainers, "good")}

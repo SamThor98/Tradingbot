@@ -10,6 +10,7 @@
 import { api } from "../modules/api.js";
 import { safeText, safeNum, formatDecimal } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import {
   setAsyncState,
   ASYNC_LOADING,
@@ -28,6 +29,12 @@ export async function refreshSectors() {
     summaryMeta.classList.add("hidden");
   }
   setAsyncState(grid, ASYNC_LOADING, { message: "Loading sectors…" });
+  setResearchStatusStrip(
+    "sectorsStatusStrip",
+    "loading",
+    "Loading sector strength.",
+    "Fetching 21-day relative performance vs SPY.",
+  );
   const out = await api.get("/api/sectors");
   if (!out.ok) {
     const msg = out.user_message || out.error;
@@ -36,6 +43,12 @@ export async function refreshSectors() {
       setAsyncState(grid, ASYNC_SIGNED_OUT, {
         message: "Sign in to load sector strength data.",
       });
+      setResearchStatusStrip(
+        "sectorsStatusStrip",
+        "error",
+        "Sign in required.",
+        "Sign in to load sector strength data.",
+      );
       return;
     }
     const hintHtml = out.hint ? `<div class="muted small">${safeText(out.hint)}</div>` : "";
@@ -49,11 +62,23 @@ export async function refreshSectors() {
       </div>`,
       onRetry: () => void refreshSectors(),
     });
+    setResearchStatusStrip(
+      "sectorsStatusStrip",
+      "error",
+      "Sectors unavailable.",
+      safeText(msg || "Request failed."),
+    );
     return;
   }
   const rows = out.data?.rows || [];
   if (!rows.length) {
     setAsyncState(grid, ASYNC_EMPTY, { message: "No sector data returned." });
+    setResearchStatusStrip(
+      "sectorsStatusStrip",
+      "empty",
+      "No sector data returned.",
+      "Check market-data token or retry later.",
+    );
     return;
   }
   // Switch to success-with-content. We render markup first, then stamp the
@@ -67,6 +92,12 @@ export async function refreshSectors() {
     summaryMeta.textContent = `${winningCount} winning / ${sortedRows.length - winningCount} lagging`;
     summaryMeta.classList.remove("hidden");
   }
+  setResearchStatusStrip(
+    "sectorsStatusStrip",
+    "success",
+    `${winningCount} winning sector${winningCount === 1 ? "" : "s"}.`,
+    `${sortedRows.length - winningCount} lagging vs SPY across ${sortedRows.length} tracked sectors.`,
+  );
   sortedRows.forEach((row) => {
     const card = document.createElement("div");
     card.className = `sector-card ${row.winning ? "win" : "loss"}`;

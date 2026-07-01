@@ -65,6 +65,7 @@ Default landing: `operations` (Today).
 | `cockpit` | `cockpitWorkspaceIntro` | research (via alias) |
 | `kronos`, `forecast` | `kronosForecastSection` | research (via alias) |
 | `sec`, `seccompare` | `secCompareSection` | research |
+| `calibration` | `calibrationSection` | diagnostics |
 | `diagnostics`, `health` | `healthRibbon` | diagnostics |
 | `connect`, `onboarding`, `setup` | `onboardingSection` | settings |
 | `settings` | `settingsWorkspaceIntro` | settings |
