@@ -131,19 +131,41 @@ def _fetch_df_through_entry(ticker: str, entry_date: pd.Timestamp) -> pd.DataFra
         return None
 
 
+def _trade_replay_key(era: str, ticker: str, entry_date: pd.Timestamp | Any) -> tuple[str, str, str]:
+    entry_iso = pd.to_datetime(entry_date).strftime("%Y-%m-%d")
+    return str(era), str(ticker).upper(), entry_iso
+
+
 def _replay_shadow_rules(
     df: pd.DataFrame,
     *,
     skill_dir: Path,
     max_trades: int | None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    trades = load_trades(df.attrs.get("run_id", DEFAULT_RUN_ID))
+    run_id = str(df.attrs.get("run_id", DEFAULT_RUN_ID))
+    trades = load_trades(run_id)
     if max_trades is not None:
         trades = trades[: max_trades]
-    replay_rows: list[dict[str, Any]] = []
+    existing = _load_replay_cache(run_id)
+    done_keys: set[tuple[str, str, str]] = set()
     metrics_rows: list[dict[str, Any]] = []
+    if not existing.empty:
+        for _, cached in existing.iterrows():
+            key = _trade_replay_key(
+                str(cached.get("era") or ""),
+                str(cached.get("ticker") or ""),
+                cached.get("entry_date"),
+            )
+            done_keys.add(key)
+            metrics_rows.append(cached.to_dict())
+        LOG.info("Resuming replay from cache: %s / %s trades already replayed", len(done_keys), len(trades))
+    replay_rows: list[dict[str, Any]] = []
+    new_since_checkpoint = 0
     for idx, trade in enumerate(trades, start=1):
         if not trade.ticker:
+            continue
+        key = _trade_replay_key(trade.era, str(trade.ticker), trade.entry_date)
+        if key in done_keys:
             continue
         if idx % 50 == 0:
             LOG.info("Replay progress: %s / %s", idx, len(trades))
@@ -151,7 +173,6 @@ def _replay_shadow_rules(
         if hist is None or hist.empty:
             continue
         shadow = evaluate_entry_timing_shadow(hist, skill_dir)
-        key = (trade.era, str(trade.ticker).upper(), trade.entry_date.strftime("%Y-%m-%d"))
         base = df[
             (df["era"] == trade.era)
             & (df["ticker"] == str(trade.ticker).upper())
@@ -167,6 +188,11 @@ def _replay_shadow_rules(
         row["pct_from_52w_high"] = shadow.get("pct_from_52w_high")
         metrics_rows.append(row)
         replay_rows.append({"key": key, **shadow})
+        done_keys.add(key)
+        new_since_checkpoint += 1
+        if new_since_checkpoint >= 50:
+            _save_replay_cache(pd.DataFrame(metrics_rows), run_id)
+            new_since_checkpoint = 0
     replay_df = pd.DataFrame(metrics_rows)
     meta = {
         "replayed_trades": len(replay_df),

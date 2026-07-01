@@ -63,12 +63,22 @@ from config import (
     get_pead_score_penalty_large,
     get_quality_gates_mode,
     get_quality_soft_min_reasons,
+    get_scan_allow_bear_regime,
+    get_scan_sector_gate_mode,
+    get_scan_vcp_gate_mode,
     get_schwab_only_data,
 )
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
 from signal_scanner import _apply_score_stack, _evaluate_confluence, _evaluate_quality_gates, _load_watchlist
-from stage_analysis import add_indicators, check_vcp_volume, compute_signal_components, is_stage_2
+from stage_analysis import (
+    add_indicators,
+    check_vcp_volume,
+    compute_signal_components,
+    entry_timing_blocks_stage_a,
+    evaluate_entry_timing_shadow,
+    is_stage_2,
+)
 
 SKILL_DIR = Path(__file__).resolve().parent
 LOG = logging.getLogger(__name__)
@@ -855,6 +865,33 @@ def _net_return_after_costs(
     return float(net), {"slippage_pct": float(slippage_pct), "fees_pct": float(fees_pct), "gross_return": float(gross)}
 
 
+def _serialize_equity_curves(
+    equity_curve: list[tuple[str, float]],
+    starting_equity: float,
+    *,
+    max_points: int = 800,
+) -> dict[str, Any]:
+    """Downsample and JSON-serialize portfolio equity + drawdown series."""
+    pairs: list[tuple[str, float]] = list(equity_curve) if equity_curve else [("", float(starting_equity))]
+    if len(pairs) > max_points:
+        step = max(1, len(pairs) // max_points)
+        sampled = [pairs[0], *pairs[step::step]]
+        if sampled[-1] != pairs[-1]:
+            sampled.append(pairs[-1])
+        pairs = sampled
+    values = [float(v) for _d, v in pairs]
+    eq_series = pd.Series(values)
+    peak = eq_series.cummax()
+    dd = (eq_series / peak) - 1.0
+    return {
+        "equity_curve": [{"date": d or None, "equity": round(v, 2)} for d, v in pairs],
+        "drawdown_curve": [
+            {"date": d or None, "drawdown_pct": round(100.0 * float(dd_i), 3)}
+            for (d, _), dd_i in zip(pairs, dd)
+        ],
+    }
+
+
 def _simulate_portfolio_equity(
     trades: list[dict[str, Any]],
     *,
@@ -1022,12 +1059,12 @@ def _max_drawdown(returns: pd.Series) -> float:
 def _quality_mode_should_filter(reasons: list[str], skill_dir: Path | None = None) -> bool:
     if not reasons:
         return False
-    if "weak_breakout_volume" in reasons:
-        return True
     sd = skill_dir or SKILL_DIR
     mode = get_quality_gates_mode(sd)
     if mode in {"off", "shadow"}:
         return False
+    if "weak_breakout_volume" in reasons and mode in {"soft", "hard"}:
+        return True
     if mode == "hard":
         return True
     soft_min = max(1, int(get_quality_soft_min_reasons(sd)))
@@ -1097,6 +1134,9 @@ def _run_backtest_core(
         "vcp_fail": 0,
         "breakout_not_confirmed": 0,
         "sector_not_winning": 0,
+        "no_sector_etf": 0,
+        "sector_would_block": 0,
+        "vcp_would_block": 0,
         "quality_gates_filtered": 0,
         "forensic_filtered": 0,
         "regime_blocked": 0,
@@ -1126,6 +1166,9 @@ def _run_backtest_core(
         "confluence_confirmed": 0,
         "confluence_blocked": 0,
         "confluence_would_block": 0,
+        "entry_timing_shadow_evaluated": 0,
+        "entry_timing_shadow_would_filter": 0,
+        "entry_timing_blocked": 0,
         "exits_trailing_stop": 0,
         "exits_time_exit": 0,
         "exits_sma50_break": 0,
@@ -1135,6 +1178,8 @@ def _run_backtest_core(
 
     breakout_enabled = get_breakout_confirm_enabled(sd)
     breakout_confirm_bars = int(get_breakout_confirm_bars(sd))
+    vcp_gate_mode = get_scan_vcp_gate_mode(sd)
+    sector_gate_mode = get_scan_sector_gate_mode(sd)
     confluence_mode = get_confluence_gate_mode(sd)
     confluence_require_count = int(get_confluence_require_count(sd))
     if confluence_mode in ("shadow", "live") and get_schwab_only_data(sd):
@@ -1210,7 +1255,8 @@ def _run_backtest_core(
 
     spy_df = context.sector_perf.get("SPY")
     spy_regime: pd.Series | None = None
-    if spy_df is not None and len(spy_df) >= 200:
+    allow_bear_regime = bool(get_scan_allow_bear_regime(sd))
+    if spy_df is not None and len(spy_df) >= 200 and not allow_bear_regime:
         spy_with_sma = add_indicators(spy_df)
         spy_regime = spy_with_sma["close"] > spy_with_sma["sma_200"]
 
@@ -1415,7 +1461,7 @@ def _run_backtest_core(
                 continue
             window = df.iloc[: idx + 1]
 
-            if spy_regime is not None:
+            if spy_regime is not None and not allow_bear_regime:
                 try:
                     spy_i = int(spy_regime.index.get_indexer([day_ts], method="pad")[0])
                     if spy_i >= 0 and not bool(spy_regime.iloc[spy_i]):
@@ -1427,9 +1473,12 @@ def _run_backtest_core(
             if not is_stage_2(window, sd):
                 diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
                 continue
-            if not check_vcp_volume(window, sd):
+            vcp_ok = check_vcp_volume(window, sd)
+            if not vcp_ok:
                 diagnostics["vcp_fail"] = int(diagnostics["vcp_fail"]) + 1
-                continue
+                if vcp_gate_mode == "hard":
+                    continue
+                diagnostics["vcp_would_block"] = int(diagnostics["vcp_would_block"]) + 1
             if breakout_enabled and idx >= breakout_confirm_bars:
                 # Each of the last BREAKOUT_CONFIRM_BARS closes must hold above
                 # the prior bar's high (bars=1 preserves legacy behavior).
@@ -1442,11 +1491,28 @@ def _run_backtest_core(
                     diagnostics["breakout_not_confirmed"] = int(diagnostics["breakout_not_confirmed"]) + 1
                     continue
 
+            entry_shadow = evaluate_entry_timing_shadow(window, sd)
+            if str(entry_shadow.get("mode") or "off") != "off":
+                diagnostics["entry_timing_shadow_evaluated"] = (
+                    int(diagnostics["entry_timing_shadow_evaluated"]) + 1
+                )
+                if entry_shadow.get("would_filter"):
+                    diagnostics["entry_timing_shadow_would_filter"] = (
+                        int(diagnostics["entry_timing_shadow_would_filter"]) + 1
+                    )
+                    if entry_timing_blocks_stage_a(entry_shadow, sd):
+                        diagnostics["entry_timing_blocked"] = int(diagnostics["entry_timing_blocked"]) + 1
+                        continue
+
             sector_ok, sector_reason = _sector_filter_pass(ticker, idx, context)
             if not sector_ok:
                 if sector_reason == "sector_not_winning":
                     diagnostics["sector_not_winning"] = int(diagnostics["sector_not_winning"]) + 1
-                continue
+                elif sector_reason == "no_sector_etf":
+                    diagnostics["no_sector_etf"] = int(diagnostics["no_sector_etf"]) + 1
+                if sector_gate_mode == "hard":
+                    continue
+                diagnostics["sector_would_block"] = int(diagnostics["sector_would_block"]) + 1
 
             forensic_snapshot = forensic_cache.get(ticker)
             if forensic_enabled and forensic_mode != "off":
@@ -1939,6 +2005,7 @@ def _run_backtest_core(
     )
     score_stack_metrics = _score_stack_metrics_from_trades(trades_df)
     provider_segment_metrics = _provider_segment_metrics_from_trades(trades_df)
+    curve_payload = _serialize_equity_curves(equity_curve, starting_equity)
 
     out: dict[str, Any] = {
         "start_date": start,
@@ -1960,6 +2027,8 @@ def _run_backtest_core(
         "profit_factor_net": round(float(profit_factor_net), 3) if profit_factor_net != float("inf") else "inf",
         "max_drawdown_pct": round(100.0 * max_dd, 2),
         "max_drawdown_net_pct": round(100.0 * max_dd, 2),
+        "equity_curve": curve_payload["equity_curve"],
+        "drawdown_curve": curve_payload["drawdown_curve"],
         "portfolio_enabled": True,
         "portfolio_summary": {
             "capacity_filtered": int(diagnostics.get("capital_filtered", 0)),

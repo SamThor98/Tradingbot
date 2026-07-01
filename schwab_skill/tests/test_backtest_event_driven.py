@@ -52,6 +52,7 @@ def _price_df(prices: list[float], volume: float = 1_000_000.0) -> pd.DataFrame:
 
 def _install_common_monkeypatches(monkeypatch) -> None:
 
+    monkeypatch.setenv("ENTRY_TIMING_SHADOW_MODE", "off")
     monkeypatch.setattr(backtest, "get_breakout_confirm_enabled", lambda _sd: False)
 
     monkeypatch.setattr(backtest, "get_quality_gates_mode", lambda _sd: "off")
@@ -665,4 +666,90 @@ def test_adaptive_guardrails_allow_extra_slots_for_strong_signals(monkeypatch) -
 
     assert int(out.get("total_trades") or 0) >= 2
     assert int((out.get("diagnostics") or {}).get("adaptive_guardrail_extra_slot_entries", 0)) >= 1
+
+
+def test_entry_timing_live_blocks_flat_breakout_buffer(monkeypatch) -> None:
+    _install_common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("ENTRY_TIMING_SHADOW_MODE", "live")
+    monkeypatch.setenv("ENTRY_SHADOW_DISABLE_SMA50_FILTERS", "true")
+    monkeypatch.setenv("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT", "0.01")
+
+    df = _price_df([100.0] * 230)
+    ctx = backtest.BacktestContext(
+        watchlist=["AAA"],
+        price_data={"AAA": df.copy()},
+        sector_etf_by_ticker={},
+        sector_perf={},
+        excluded_tickers=[],
+        data_integrity={},
+        history_meta_by_ticker={},
+    )
+    monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
+    monkeypatch.setattr(
+        backtest,
+        "_run_mirofish_for_entry",
+        lambda ticker, _window, skill_dir=None: {"conviction_score": 80.0},
+    )
+
+    out = backtest._run_backtest_core(
+        tickers=["AAA"],
+        start_date="2020-01-01",
+        end_date="2020-12-31",
+        include_all_trades=True,
+        intelligence_overlay=BacktestIntelligenceConfig.all_off(),
+    )
+
+    diagnostics = out.get("diagnostics") or {}
+    assert int(diagnostics.get("entry_timing_blocked", 0)) >= 1
+    assert len(out.get("trades") or []) == 0
+
+
+def test_run_backtest_core_exports_equity_curve(monkeypatch) -> None:
+    """Portfolio equity + drawdown series are exposed for dashboard charts."""
+    _install_common_monkeypatches(monkeypatch)
+    df = _price_df([100.0 + i * 0.05 for i in range(230)])
+    ctx = backtest.BacktestContext(
+        watchlist=["AAA"],
+        price_data={"AAA": df},
+        sector_etf_by_ticker={},
+        sector_perf={},
+        excluded_tickers=[],
+        data_integrity={},
+        history_meta_by_ticker={},
+    )
+    monkeypatch.setattr(backtest, "_prepare_context", lambda *args, **kwargs: ctx)
+    monkeypatch.setattr(
+        backtest,
+        "_run_mirofish_for_entry",
+        lambda ticker, _window, skill_dir=None: {"conviction_score": 80.0},
+    )
+
+    out = backtest._run_backtest_core(
+        tickers=["AAA"],
+        start_date="2020-01-01",
+        end_date="2020-12-31",
+        include_all_trades=False,
+        intelligence_overlay=BacktestIntelligenceConfig.all_off(),
+    )
+
+    curve = out.get("equity_curve") or []
+    dd = out.get("drawdown_curve") or []
+    assert isinstance(curve, list) and len(curve) >= 2
+    assert isinstance(dd, list) and len(dd) == len(curve)
+    assert "equity" in curve[0]
+    assert "drawdown_pct" in dd[0]
+
+
+def test_quality_mode_should_filter_respects_off_mode(monkeypatch):
+    monkeypatch.setenv("QUALITY_GATES_MODE", "off")
+    from config import get_quality_gates_mode
+
+    assert get_quality_gates_mode(SKILL_DIR) == "off"
+    assert backtest._quality_mode_should_filter(["weak_breakout_volume"], SKILL_DIR) is False
+    assert backtest._quality_mode_should_filter(["low_signal_score"], SKILL_DIR) is False
+
+
+def test_quality_mode_should_filter_weak_volume_when_soft(monkeypatch):
+    monkeypatch.setenv("QUALITY_GATES_MODE", "soft")
+    assert backtest._quality_mode_should_filter(["weak_breakout_volume"], SKILL_DIR) is True
 

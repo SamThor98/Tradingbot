@@ -1114,7 +1114,7 @@ def get_quality_gates_mode(skill_dir: Path | None = None) -> str:
     - shadow: disabled but tracks would-filter counts
     - soft: filter only when multiple weak reasons exist (default)
     - hard: filter on any weak reason
-    Note: weak_breakout_volume is always a hard gate regardless of mode.
+    Note: weak_breakout_volume is a hard gate when mode is soft or hard.
     """
     env = _load_env(skill_dir)
     raw = _env_value("QUALITY_GATES_MODE", env).strip().lower()
