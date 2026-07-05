@@ -54,22 +54,23 @@ def _auth_headers() -> dict[str, str]:
 
 
 def test_decision_dashboard_ready(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
 
     monkeypatch.setattr(
-        webapp_main,
-        "_latest_validation_status",
-        lambda: {"passed": True, "run_status": "completed"},
+        dds,
+        "latest_validation_status",
+        lambda skill_dir: {"passed": True, "run_status": "completed"},
     )
     monkeypatch.setattr(
-        webapp_main,
-        "_latest_slo_gate_status",
-        lambda: {"passed": True, "failures": [], "checked_at": "2026-04-30T00:00:00Z"},
+        dds,
+        "latest_slo_gate_status",
+        lambda skill_dir: {"passed": True, "failures": [], "checked_at": "2026-04-30T00:00:00Z"},
     )
     monkeypatch.setattr(
-        webapp_main,
-        "_latest_registry_decision",
-        lambda: {
+        dds,
+        "latest_registry_decision",
+        lambda skill_dir: {
             "recorded_at": "2026-04-30T00:00:00Z",
             "event_type": "strategy_promotion_decision",
             "target": "strategy_champion_params",
@@ -113,16 +114,19 @@ def test_decision_dashboard_ready(monkeypatch: pytest.MonkeyPatch, client: TestC
 
 
 def test_decision_dashboard_includes_signal_edge(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
 
-    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
-    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
-    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
-    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
     monkeypatch.setattr(
-        webapp_main,
-        "_signal_edge_validation_status",
-        lambda run_id="control_legacy_aug": {
+        dds, "latest_validation_status", lambda skill_dir: {"passed": True, "run_status": "completed"}
+    )
+    monkeypatch.setattr(dds, "latest_slo_gate_status", lambda skill_dir: {"passed": True, "failures": []})
+    monkeypatch.setattr(dds, "latest_ablation_status", lambda skill_dir: {"exists": False})
+    monkeypatch.setattr(dds, "latest_registry_decision", lambda skill_dir: None)
+    monkeypatch.setattr(
+        dds,
+        "signal_edge_validation_status",
+        lambda skill_dir, run_id="control_legacy_aug": {
             "run_id": run_id,
             "state": "fix_entry_first",
             "binding_constraint": "entry_timing_not_rank_filter",
@@ -145,17 +149,20 @@ def test_decision_dashboard_includes_signal_edge(monkeypatch: pytest.MonkeyPatch
 def test_decision_dashboard_includes_signal_stack_scenarios(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
+    from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
 
-    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
-    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
-    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
-    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(
+        dds, "latest_validation_status", lambda skill_dir: {"passed": True, "run_status": "completed"}
+    )
+    monkeypatch.setattr(dds, "latest_slo_gate_status", lambda skill_dir: {"passed": True, "failures": []})
+    monkeypatch.setattr(dds, "latest_ablation_status", lambda skill_dir: {"exists": False})
+    monkeypatch.setattr(dds, "latest_registry_decision", lambda skill_dir: None)
     monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
     monkeypatch.setattr(
-        webapp_main,
-        "_signal_edge_validation_status",
-        lambda run_id="control_legacy_aug": {
+        dds,
+        "signal_edge_validation_status",
+        lambda skill_dir, run_id="control_legacy_aug": {
             "run_id": run_id,
             "state": "fix_entry_first",
             "signal_stack_counterfactual": {
@@ -192,19 +199,20 @@ def test_decision_dashboard_includes_signal_stack_scenarios(
 
 
 def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
 
     monkeypatch.setattr(
-        webapp_main,
-        "_latest_validation_status",
-        lambda: {"passed": False, "run_status": "completed"},
+        dds,
+        "latest_validation_status",
+        lambda skill_dir: {"passed": False, "run_status": "completed"},
     )
     monkeypatch.setattr(
-        webapp_main,
-        "_latest_slo_gate_status",
-        lambda: {"passed": False, "failures": ["api_5xx_rate"]},
+        dds,
+        "latest_slo_gate_status",
+        lambda skill_dir: {"passed": False, "failures": ["api_5xx_rate"]},
     )
-    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(dds, "latest_registry_decision", lambda skill_dir: None)
     monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
 
     resp = client.get("/api/decision-dashboard", headers=_auth_headers())
@@ -218,17 +226,20 @@ def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPa
 
 
 def test_decision_dashboard_includes_scan_preflight(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
 
-    monkeypatch.setattr(webapp_main, "_latest_validation_status", lambda: {"passed": True, "run_status": "completed"})
-    monkeypatch.setattr(webapp_main, "_latest_slo_gate_status", lambda: {"passed": True, "failures": []})
-    monkeypatch.setattr(webapp_main, "_latest_ablation_status", lambda: {"exists": False})
-    monkeypatch.setattr(webapp_main, "_latest_registry_decision", lambda: None)
+    monkeypatch.setattr(
+        dds, "latest_validation_status", lambda skill_dir: {"passed": True, "run_status": "completed"}
+    )
+    monkeypatch.setattr(dds, "latest_slo_gate_status", lambda skill_dir: {"passed": True, "failures": []})
+    monkeypatch.setattr(dds, "latest_ablation_status", lambda skill_dir: {"exists": False})
+    monkeypatch.setattr(dds, "latest_registry_decision", lambda skill_dir: None)
     monkeypatch.setattr(webapp_main, "_load_state", lambda db, key, default: default)
     monkeypatch.setattr(
-        webapp_main,
-        "_signal_edge_scan_preflight",
-        lambda run_id="control_legacy_aug": {
+        dds,
+        "signal_edge_scan_preflight",
+        lambda skill_dir, run_id="control_legacy_aug": {
             "experiment_recommended": True,
             "experiment_env_ready": False,
             "missing_env": ["ENTRY_SHADOW_DISABLE_SMA50_FILTERS=true"],
@@ -250,7 +261,7 @@ def test_scan_lifecycle_includes_signal_edge_preflight(monkeypatch: pytest.Monke
     monkeypatch.setattr(
         webapp_main,
         "_signal_edge_scan_preflight",
-        lambda run_id="control_legacy_aug": {
+        lambda skill_dir, run_id="control_legacy_aug": {
             "experiment_recommended": True,
             "experiment_env_ready": True,
             "ready_for_experiment_scan": True,

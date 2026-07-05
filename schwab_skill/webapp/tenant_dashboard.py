@@ -32,6 +32,7 @@ from core.scan_service import run_scan
 from evolve_logic import LearningEngine
 from execution import get_account_status, get_position_size_usd
 from finnhub_data import get_finnhub_research_snapshot
+from forensic_accounting import compute_forensic_snapshot
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
 from market_data import (
     extract_schwab_last_price,
@@ -66,6 +67,12 @@ from ._shared import (
 from .audit import log_audit
 from .billing_stripe import user_has_paid_entitlement
 from .checklist_language import with_plain_language
+from .decision_dashboard_service import (
+    build_decision_dashboard_snapshot,
+    build_shadow_scoreboard_payload,
+    latest_validation_status,
+)
+from .dossier_sources import merge_research_snapshot
 from .dossier_style import polish_dossier_markdown
 from .learning_state import (
     LEARNING_LAST_RUN_KEY,
@@ -137,6 +144,8 @@ from .tenant_runtime import (
 LOG = logging.getLogger(__name__)
 
 router = APIRouter()
+_TENANT_DOSSIER_COMPOSE_CACHE: dict[str, dict[str, Any]] = {}
+_TENANT_DOSSIER_COMPOSE_TTL_SEC = 600.0
 
 ONBOARDING_TARGET_MINUTES = 20
 DEFAULT_AUTOMATION_OPT_IN = False
@@ -283,84 +292,6 @@ def _order_rate_limit(user_id: str) -> None:
     ok, n = fixed_window_rate_limit(user_id, "order", limit, window)
     if not ok:
         raise HTTPException(status_code=429, detail=f"Order rate limit exceeded ({n}/{limit} per {window}s).")
-
-
-def _latest_validation_status() -> dict[str, Any]:
-    status_file = VALIDATION_ARTIFACT_DIR / "continuous_validation_status.json"
-    if status_file.exists():
-        try:
-            data = json.loads(status_file.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                latest_artifacts = data.get("latest_artifacts") or {}
-                return {
-                    "source": "continuous_validation_status",
-                    "exists": True,
-                    "run_status": data.get("run_status"),
-                    "passed": bool(data.get("passed")) if data.get("passed") is not None else None,
-                    "started_at": data.get("started_at"),
-                    "finished_at": data.get("finished_at"),
-                    "generated_at": data.get("generated_at"),
-                    "current_step": data.get("current_step"),
-                    "current_step_index": data.get("current_step_index"),
-                    "completed_steps": data.get("completed_steps"),
-                    "total_steps": data.get("total_steps"),
-                    "progress_pct": data.get("progress_pct"),
-                    "failed_steps": list(data.get("failed_steps") or []),
-                    "latest_artifacts": latest_artifacts if isinstance(latest_artifacts, dict) else {},
-                }
-        except Exception:
-            pass
-
-    validate_runs = sorted(VALIDATION_ARTIFACT_DIR.glob("validate_all_*.json"))
-    if not validate_runs:
-        return {
-            "source": "none",
-            "exists": False,
-            "run_status": "idle",
-            "passed": None,
-            "started_at": None,
-            "finished_at": None,
-            "generated_at": None,
-            "current_step": None,
-            "current_step_index": 0,
-            "completed_steps": 0,
-            "total_steps": 0,
-            "progress_pct": 0,
-            "failed_steps": [],
-            "latest_artifacts": {},
-        }
-    latest = validate_runs[-1]
-    try:
-        payload = json.loads(latest.read_text(encoding="utf-8"))
-    except Exception:
-        payload = {}
-    failed_steps = list(payload.get("failed_steps") or [])
-    generated_at = payload.get("generated_at")
-    if not generated_at:
-        try:
-            generated_at = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat()
-        except Exception:
-            generated_at = None
-    try:
-        rel_path = str(latest.relative_to(SKILL_DIR))
-    except ValueError:
-        rel_path = str(latest)
-    return {
-        "source": "validate_all_summary",
-        "exists": True,
-        "run_status": "completed",
-        "passed": bool(payload.get("passed")) if "passed" in payload else None,
-        "started_at": None,
-        "finished_at": generated_at,
-        "generated_at": generated_at,
-        "current_step": None,
-        "current_step_index": 0,
-        "completed_steps": 0,
-        "total_steps": 0,
-        "progress_pct": 100,
-        "failed_steps": failed_steps,
-        "latest_artifacts": {"validate_all": rel_path},
-    }
 
 
 def _safe_float(value: Any) -> float | None:
@@ -1021,6 +952,98 @@ def _pick_catalysts_and_risks_sd(finnhub: dict[str, Any]) -> dict[str, list[str]
     }
 
 
+def _tenant_dossier_cache_key(user_id: str, ticker: str, compose_id: str) -> str:
+    return f"{user_id}:{str(ticker or '').strip().upper()}:{compose_id}"
+
+
+def _cache_tenant_dossier(user_id: str, dossier: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(dossier.get("ticker") or "").strip().upper()
+    if not symbol:
+        return dossier
+    compose_id = str(dossier.get("compose_id") or f"{symbol}-{int(time.time() * 1000)}")
+    dossier["compose_id"] = compose_id
+    _TENANT_DOSSIER_COMPOSE_CACHE[_tenant_dossier_cache_key(user_id, symbol, compose_id)] = {
+        "stored_at": time.time(),
+        "payload": dict(dossier),
+    }
+    cutoff = time.time() - _TENANT_DOSSIER_COMPOSE_TTL_SEC
+    stale = [
+        key
+        for key, entry in _TENANT_DOSSIER_COMPOSE_CACHE.items()
+        if float(entry.get("stored_at", 0.0) or 0.0) < cutoff
+    ]
+    for key in stale:
+        _TENANT_DOSSIER_COMPOSE_CACHE.pop(key, None)
+    return dossier
+
+
+def _cached_tenant_dossier(user_id: str, ticker: str, compose_id: str | None) -> dict[str, Any] | None:
+    if not compose_id:
+        return None
+    entry = _TENANT_DOSSIER_COMPOSE_CACHE.get(_tenant_dossier_cache_key(user_id, ticker, compose_id))
+    if not entry:
+        return None
+    if (time.time() - float(entry.get("stored_at", 0.0) or 0.0)) > _TENANT_DOSSIER_COMPOSE_TTL_SEC:
+        return None
+    payload = entry.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _build_dossier_preflight_sd(ticker: str, *, skill_dir: Path) -> dict[str, Any]:
+    from config import (
+        get_finnhub_api_key,
+        get_finnhub_cache_enabled,
+        get_finnhub_cache_hours,
+        get_finnhub_rate_limit_per_min,
+        is_real_edgar_user_agent,
+    )
+
+    symbol = ticker.upper().strip()
+    sec_cfg = _sec_analysis_settings_sd(skill_dir)
+    finnhub_key = get_finnhub_api_key(skill_dir)
+    edgar_real = is_real_edgar_user_agent(sec_cfg["user_agent"])
+    items = [
+        {
+            "id": "report_stack",
+            "label": "Integrated report stack",
+            "status": "ok",
+            "detail": "Technical, DCF, comps, health, and EDGAR fallbacks are available.",
+        },
+        {
+            "id": "finnhub",
+            "label": "Finnhub research data",
+            "status": "ok" if finnhub_key else "warn",
+            "detail": (
+                f"Configured; cache={'on' if get_finnhub_cache_enabled(skill_dir) else 'off'}, "
+                f"ttl={get_finnhub_cache_hours(skill_dir):.1f}h, rate={get_finnhub_rate_limit_per_min(skill_dir)}/min."
+                if finnhub_key
+                else "FINNHUB_API_KEY is missing; report-stack fallbacks will be used."
+            ),
+        },
+        {
+            "id": "edgar_user_agent",
+            "label": "SEC EDGAR contact",
+            "status": "ok" if edgar_real else "warn",
+            "detail": "EDGAR_USER_AGENT looks valid." if edgar_real else "EDGAR_USER_AGENT is missing or placeholder.",
+        },
+        {
+            "id": "sec_analysis",
+            "label": "SEC analysis and compare",
+            "status": "ok" if sec_cfg["analysis_enabled"] and sec_cfg["compare_enabled"] else "warn",
+            "detail": "SEC filing analysis and compare are enabled."
+            if sec_cfg["analysis_enabled"] and sec_cfg["compare_enabled"]
+            else "SEC filing analysis or compare is disabled by config.",
+        },
+    ]
+    return {
+        "ticker": symbol,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "warn" if any(item["status"] == "warn" for item in items) else "ok",
+        "can_generate": True,
+        "items": items,
+    }
+
+
 def _compose_research_dossier_sd(
     ticker: str,
     *,
@@ -1139,6 +1162,24 @@ def _compose_research_dossier_sd(
             _source_entry_sd("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True)
         )
 
+    try:
+        forensic_snapshot = compute_forensic_snapshot(symbol, skill_dir=skill_dir)
+        source_metadata.append(
+            _source_entry_sd(
+                "forensic",
+                status="ok" if forensic_snapshot.get("ok") else "degraded",
+                detail="Sloan, Beneish, Altman forensic accounting snapshot"
+                if forensic_snapshot.get("ok")
+                else str(forensic_snapshot.get("data_lineage") or "forensic snapshot unavailable"),
+                fallback_used=not bool(forensic_snapshot.get("ok")),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        forensic_snapshot = {"ok": False, "error": str(exc), "forensic_flags": []}
+        source_metadata.append(
+            _source_entry_sd("forensic", status="degraded", detail=str(exc)[:180], fallback_used=True)
+        )
+
     finnhub = get_finnhub_research_snapshot(symbol, skill_dir=skill_dir)
     finnhub_errors = list(finnhub.get("errors") or []) if isinstance(finnhub, dict) else []
     finnhub_status = "ok" if finnhub.get("ok") else ("disabled" if not finnhub.get("enabled") else "degraded")
@@ -1153,10 +1194,48 @@ def _compose_research_dossier_sd(
     )
 
     report_v2 = build_report_v2(report_data, portfolio_summary=portfolio_summary or None)
+    if isinstance(finnhub, dict):
+        finnhub = merge_research_snapshot(finnhub, report_data)
+        merged_sources = finnhub.get("merged_sources") or {}
+        fallback_fields = [
+            key
+            for key, source in (merged_sources.get("metrics") or {}).items()
+            if str(source).startswith("report.")
+        ]
+        if fallback_fields:
+            source_metadata.append(
+                _source_entry_sd(
+                    "report_stack_fallbacks",
+                    status="ok",
+                    detail=f"Filled {len(fallback_fields)} Finnhub metric gaps from report stack.",
+                )
+            )
     signal_score = _safe_float((report_data.get("technical") or {}).get("signal_score")) or 0.0
     margin_of_safety = _safe_float((report_data.get("dcf") or {}).get("margin_of_safety")) or 0.0
     confidence_score = max(0.0, min(100.0, (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))))
     catalyst_risk = _pick_catalysts_and_risks_sd(finnhub if isinstance(finnhub, dict) else {})
+    if sec_compare_data.get("ok"):
+        try:
+            management_dashboard = build_management_dashboard(
+                compare_payload=sec_compare_data,
+                mode="ticker_over_time",
+                ticker=symbol,
+                ticker_b="",
+                form_type="10-K",
+                ruthless_mode=False,
+                profile_override=None,
+            )
+            source_metadata.append(_source_entry_sd("management_integrity", status="ok", detail="SEC compare scorecard"))
+        except Exception as exc:  # noqa: BLE001
+            management_dashboard = {"ok": False, "error": str(exc)}
+            source_metadata.append(
+                _source_entry_sd("management_integrity", status="degraded", detail=str(exc)[:180], fallback_used=True)
+            )
+    else:
+        management_dashboard = {"ok": False, "error": sec_compare_data.get("error") or "SEC compare unavailable"}
+        source_metadata.append(
+            _source_entry_sd("management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True)
+        )
     report_trust = build_report_trust_payload(
         {
             **report_data,
@@ -1198,6 +1277,8 @@ def _compose_research_dossier_sd(
                 "catalysts": catalyst_risk["catalysts"],
                 "risks": catalyst_risk["risks"],
             },
+            "management_integrity": management_dashboard,
+            "forensic": forensic_snapshot,
         },
         "source_metadata": source_metadata,
         "fallback_notes": [
@@ -1247,6 +1328,9 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
     snapshot = fin.get("snapshot") or {}
     profile = snapshot.get("profile") or {}
     metrics = snapshot.get("metrics") or {}
+    metric_sources = (snapshot.get("merged_sources") or {}).get("metrics") or {}
+    management = sections.get("management_integrity") or {}
+    forensic = sections.get("forensic") or {}
     earnings = list(snapshot.get("earnings") or [])
     news = list(snapshot.get("news") or [])
     sec_summary = str(sec_analyze.get("narrative_summary") or sec_analyze.get("error") or "SEC analysis unavailable.")
@@ -1286,6 +1370,12 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         if not ids:
             return ""
         return " " + "".join(f"[{idx}]" for idx in sorted(set(ids)))
+
+    def _metric_source(key: str) -> str:
+        source = str(metric_sources.get(key) or "finnhub")
+        if source.startswith("report."):
+            return f"{source} fallback"
+        return "Finnhub metrics"
 
     lines: list[str] = [
         f"# {ticker} — Institutional Research Report",
@@ -1332,14 +1422,14 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
         "",
         "## Part II: Fundamental Performance Analysis",
         "",
-        "| Fundamental Metric | Value | Commentary |",
-        "|---|---:|---|",
-        f"| Revenue Growth (TTM YoY) | {_ratio_pct(metrics.get('revenue_growth_ttm_yoy'))} | Growth momentum from Finnhub metrics feed |",
-        f"| EPS Growth (TTM YoY) | {_ratio_pct(metrics.get('eps_growth_ttm_yoy'))} | Earnings trajectory check |",
-        f"| Operating Margin (TTM) | {_ratio_pct(metrics.get('operating_margin_ttm'))} | Operating efficiency trend |",
-        f"| Net Margin (TTM) | {_ratio_pct(metrics.get('net_margin_ttm'))} | Bottom-line profitability quality |",
-        f"| ROE / ROA (TTM) | {_ratio_pct(metrics.get('roe_ttm'))} / {_ratio_pct(metrics.get('roa_ttm'))} | Capital efficiency read-through |",
-        f"| Current Ratio / Debt-Equity | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('debt_to_equity_quarterly'))} | Liquidity and leverage posture |",
+        "| Fundamental Metric | Value | Source | Commentary |",
+        "|---|---:|---|---|",
+        f"| Revenue Growth (TTM YoY) | {_ratio_pct(metrics.get('revenue_growth_ttm_yoy'))} | {_metric_source('revenue_growth_ttm_yoy')} | Growth momentum |",
+        f"| EPS Growth (TTM YoY) | {_ratio_pct(metrics.get('eps_growth_ttm_yoy'))} | {_metric_source('eps_growth_ttm_yoy')} | Earnings trajectory check |",
+        f"| Operating Margin (TTM) | {_ratio_pct(metrics.get('operating_margin_ttm'))} | {_metric_source('operating_margin_ttm')} | Operating efficiency trend |",
+        f"| Net Margin (TTM) | {_ratio_pct(metrics.get('net_margin_ttm'))} | {_metric_source('net_margin_ttm')} | Bottom-line profitability quality |",
+        f"| ROE / ROA (TTM) | {_ratio_pct(metrics.get('roe_ttm'))} / {_ratio_pct(metrics.get('roa_ttm'))} | {_metric_source('roe_ttm')} / {_metric_source('roa_ttm')} | Capital efficiency read-through |",
+        f"| Current Ratio / Debt-Equity | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('debt_to_equity_quarterly'))} | {_metric_source('current_ratio_quarterly')} / {_metric_source('debt_to_equity_quarterly')} | Liquidity and leverage posture |",
         "",
         "### Earnings Quality (Recent Prints)",
         "",
@@ -1381,6 +1471,16 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
             f"- Analyze Narrative: {sec_summary}{_cite('sec_analyze')}",
             f"- Compare Headline: {sec_compare.get('summary_headline') or (sec_narr.get('compare') or {}).get('error') or 'Unavailable'}{_cite('sec_compare')}",
             f"- Compare Narrative: {compare_summary}{_cite('sec_compare')}",
+            "",
+            "### Management Integrity Scorecard",
+            "",
+            f"- Score: {(management.get('integrity_scorecard') or {}).get('score', 'n/a')}/100{_cite('management_integrity')}",
+            f"- Red flags: {len(management.get('red_flags') or [])}",
+            "",
+            "### Forensic Accounting Flags",
+            "",
+            f"- Snapshot status: {'available' if forensic.get('ok') else 'degraded'}{_cite('forensic')}",
+            f"- Flag count: {len(forensic.get('forensic_flags') or [])}",
             "",
             "## Part V: Portfolio Fit and Risk Budget Context",
             "",
@@ -1586,7 +1686,7 @@ def tenant_status(user: User = Depends(get_current_user), db: OrmSession = Depen
                 "account_state": "Connected" if account_token_ok else "Disconnected",
                 "checked_at": checked_at,
                 "last_scan": last_scan,
-                "validation_status": _latest_validation_status(),
+                "validation_status": latest_validation_status(SKILL_DIR),
                 "connection_status": "connected" if snap.get("schwab_linked") else "disconnected",
                 "api_health": snap,
             }
@@ -1840,6 +1940,57 @@ def tenant_cockpit_execution_quality(
     except Exception as exc:
         return _saas_error_response(
             exc, source="cockpit_execution_quality", fallback="Unable to load execution quality."
+        )
+
+
+@router.get("/api/cockpit/shadow-scoreboard", response_model=ApiResponse)
+def tenant_cockpit_shadow_scoreboard(
+    user: User = Depends(get_current_user), db: OrmSession = Depends(_db)
+) -> ApiResponse:
+    """Would-have counters for every shadow-mode plugin (scan + execution)."""
+    try:
+        last_scan = _load_state(
+            db,
+            user.id,
+            "last_scan",
+            default={"at": None, "diagnostics": None},
+        )
+        diagnostics = last_scan.get("diagnostics") if isinstance(last_scan, dict) else None
+        scan_at = last_scan.get("at") if isinstance(last_scan, dict) else None
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            payload = build_shadow_scoreboard_payload(
+                skill_dir=skill_dir,
+                diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
+                scan_at=scan_at,
+            )
+        return _ok(payload)
+    except Exception as exc:
+        return _saas_error_response(
+            exc, source="cockpit_shadow_scoreboard", fallback="Unable to load shadow scoreboard."
+        )
+
+
+@router.get("/api/decision-dashboard", response_model=ApiResponse)
+def tenant_decision_dashboard(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
+    try:
+        last_scan = _load_state(
+            db,
+            user.id,
+            "last_scan",
+            default={
+                "at": None,
+                "signals_found": None,
+                "signals": [],
+                "diagnostics": None,
+                "diagnostics_summary": None,
+                "strategy_summary": None,
+            },
+        )
+        payload = build_decision_dashboard_snapshot(skill_dir=SKILL_DIR, last_scan=last_scan)
+        return _ok(payload)
+    except Exception as exc:
+        return _saas_error_response(
+            exc, source="decision_dashboard", fallback="Unable to load decision dashboard."
         )
 
 
@@ -2314,43 +2465,6 @@ def tenant_chart_data(
         return _saas_error_response(exc, source="chart_data", fallback="Chart data lookup failed.")
 
 
-@router.get("/api/forecast/{ticker}", response_model=ApiResponse)
-def tenant_forecast_data(
-    ticker: str,
-    days: int = 220,
-    pred_len: int = 0,
-    interval: str = "daily",
-    user: User = Depends(get_current_user),
-    db: OrmSession = Depends(_db),
-) -> ApiResponse:
-    """Tenant-scoped Kronos forecast (history + distribution forecast).
-
-    Resolves the caller's per-tenant skill dir and Schwab auth, then delegates
-    to the shared builder. Supports interval = daily | 5m | 15m. Read-only;
-    degrades to a clear payload when the inference service is offline.
-    """
-    if not user_has_account_session(db, user.id):
-        return _err("Link Schwab account before running a forecast.")
-    try:
-        from kronos_forecast_service import build_forecast_payload
-
-        with tenant_skill_dir(db, user.id) as skill_dir:
-            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
-                result = build_forecast_payload(
-                    ticker,
-                    interval=interval,
-                    days=days,
-                    pred_len=pred_len,
-                    skill_dir=skill_dir,
-                    auth=auth,
-                )
-        if result.get("ok"):
-            return _ok(result.get("data"))
-        return ApiResponse(ok=False, error=result.get("error"), data=result.get("data"))
-    except Exception as exc:
-        return _saas_error_response(exc, source="forecast", fallback="Kronos forecast failed.")
-
-
 @router.get("/api/report/{ticker}", response_model=ApiResponse)
 def tenant_report_ticker(
     ticker: str,
@@ -2656,7 +2770,7 @@ def tenant_research_dossier(
         return _err("Link Schwab account before generating a research dossier.")
     try:
         with tenant_skill_dir(db, user.id) as skill_dir:
-            dossier = _compose_research_dossier_sd(ticker, skill_dir=skill_dir)
+            dossier = _cache_tenant_dossier(user.id, _compose_research_dossier_sd(ticker, skill_dir=skill_dir))
             if include_markdown:
                 dossier["markdown_preview"] = _dossier_to_markdown_sd(dossier)
         return _ok(dossier)
@@ -2664,10 +2778,26 @@ def tenant_research_dossier(
         return _saas_error_response(exc, source="research_dossier", fallback="Research dossier generation failed.")
 
 
+@router.get("/api/research/dossier/{ticker}/preflight", response_model=ApiResponse)
+def tenant_research_dossier_preflight(
+    ticker: str,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before generating a research dossier.")
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            return _ok(_build_dossier_preflight_sd(ticker, skill_dir=skill_dir))
+    except Exception as exc:
+        return _saas_error_response(exc, source="research_dossier_preflight", fallback="Dossier preflight failed.")
+
+
 @router.get("/api/research/dossier/{ticker}/export")
 def tenant_research_dossier_export(
     ticker: str,
     format: str = Query(default="json", pattern="^(json|md|pdf|xlsx)$"),
+    compose_id: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> Response:
@@ -2675,8 +2805,10 @@ def tenant_research_dossier_export(
         err = _err("Link Schwab account before downloading a research dossier.")
         return Response(content=json.dumps(err.model_dump(), indent=2), media_type="application/json", status_code=409)
     try:
-        with tenant_skill_dir(db, user.id) as skill_dir:
-            dossier = _compose_research_dossier_sd(ticker, skill_dir=skill_dir)
+        dossier = _cached_tenant_dossier(user.id, ticker, compose_id)
+        if dossier is None:
+            with tenant_skill_dir(db, user.id) as skill_dir:
+                dossier = _cache_tenant_dossier(user.id, _compose_research_dossier_sd(ticker, skill_dir=skill_dir))
         symbol = str(dossier.get("ticker") or ticker.upper().strip())
         safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
         if format == "json":
@@ -2705,6 +2837,7 @@ def tenant_research_dossier_export(
 @router.get("/api/research/dossier/{ticker}/fundamental-workbook")
 def tenant_research_fundamental_workbook_export(
     ticker: str,
+    compose_id: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(_db),
 ) -> Response:
@@ -2712,8 +2845,10 @@ def tenant_research_fundamental_workbook_export(
         err = _err("Link Schwab account before downloading the fundamental model workbook.")
         return Response(content=json.dumps(err.model_dump(), indent=2), media_type="application/json", status_code=409)
     try:
-        with tenant_skill_dir(db, user.id) as skill_dir:
-            dossier = _compose_research_dossier_sd(ticker, skill_dir=skill_dir)
+        dossier = _cached_tenant_dossier(user.id, ticker, compose_id)
+        if dossier is None:
+            with tenant_skill_dir(db, user.id) as skill_dir:
+                dossier = _cache_tenant_dossier(user.id, _compose_research_dossier_sd(ticker, skill_dir=skill_dir))
         symbol = str(dossier.get("ticker") or ticker.upper().strip())
         safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
         body = _dossier_to_xlsx(dossier)
@@ -2795,7 +2930,7 @@ def tenant_performance(user: User = Depends(get_current_user), db: OrmSession = 
                 "latest_outcomes": latest_outcomes,
             },
             "validation": {
-                "status": _latest_validation_status(),
+                "status": latest_validation_status(SKILL_DIR),
                 "artifacts_present": VALIDATION_ARTIFACT_DIR.exists(),
             },
             "separation_guard": {
