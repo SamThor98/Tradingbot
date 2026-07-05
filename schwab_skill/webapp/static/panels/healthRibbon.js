@@ -14,6 +14,7 @@ import {
   clearUnavailable,
 } from "../modules/freshness.js";
 import { updateActionCenter } from "../modules/logger.js";
+import { setSystemStatusStrip } from "../modules/systemStatus.js";
 
 export function setHealthRibbonUnavailable(reason) {
   const rawReason = safeText(reason || "").trim();
@@ -32,6 +33,12 @@ export function setHealthRibbonUnavailable(reason) {
 
   const ribbon = document.getElementById("healthRibbon");
   if (ribbon) ribbon.setAttribute("data-async-state", "error");
+  setSystemStatusStrip(
+    "healthStatusStrip",
+    "error",
+    "Health check unavailable.",
+    uiReason,
+  );
   ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -121,6 +128,13 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
     }
   }
   const line = `System status: ${broker}, ${market}, ${scan}.`;
+  const state =
+    authState === "connected" && quoteOk
+      ? "success"
+      : authState === "disconnected" || (!deepReachable && !quoteOk)
+        ? "error"
+        : "partial";
+  setSystemStatusStrip("healthStatusStrip", state, "System health summary ready.", line);
   if (el) {
     clearUnavailable(el);
     el.textContent = line;

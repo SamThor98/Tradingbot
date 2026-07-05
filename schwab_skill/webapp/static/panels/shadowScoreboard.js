@@ -1,6 +1,6 @@
 /**
  * Shadow scoreboard panel — would-have counters for every shadow-mode plugin
- * (confluence gate, correlation guard, regime v2, Kronos, exit manager,
+ * (confluence gate, correlation guard, regime v2, exit manager,
  * quality gates) merged from the last scan's diagnostics and the 7-day
  * execution safety metrics. Read-only evidence view for OFF -> SHADOW -> LIVE
  * promotion decisions.
@@ -9,6 +9,7 @@
 import { api } from "../modules/api.js";
 import { escapeHtml, safeNum } from "../modules/format.js";
 import { humanizeRolloutMode } from "../modules/humanize.js";
+import { setSystemStatusStrip } from "../modules/systemStatus.js";
 
 const PRIOR_SNAPSHOT_KEY = "tradingbot.shadow_scoreboard_prior";
 
@@ -167,10 +168,22 @@ export function renderShadowScoreboardPanel(panel, data, error) {
   if (!panel) return;
   if (error) {
     panel.innerHTML = `<div class="report-empty">${escapeHtml(error)}</div>`;
+    setSystemStatusStrip(
+      "shadowScoreboardStatusStrip",
+      "error",
+      "Shadow scoreboard unavailable.",
+      error,
+    );
     return;
   }
   if (!data || !Array.isArray(data.plugins) || data.plugins.length === 0) {
     panel.innerHTML = `<div class="report-empty">No shadow scoreboard data yet — run a scan first.</div>`;
+    setSystemStatusStrip(
+      "shadowScoreboardStatusStrip",
+      "empty",
+      "No shadow scoreboard data.",
+      "Run a scan first to populate would-have counters.",
+    );
     return;
   }
   const prior = readPriorSnapshot();
@@ -185,6 +198,15 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     metaHtml +
     renderHeadline(data, prior) +
     data.plugins.map((p) => renderPlugin(p, priorById[p.id])).join("");
+  const total = totalWouldHave(data.plugins || []);
+  setSystemStatusStrip(
+    "shadowScoreboardStatusStrip",
+    total > 0 ? "partial" : "success",
+    `${total} would-have action${total === 1 ? "" : "s"}.`,
+    total > 0
+      ? "Review shadow counters before promoting any plugin."
+      : "No trial-run actions in this window; continue monitoring.",
+  );
   writePriorSnapshot(data);
 }
 
@@ -193,6 +215,12 @@ export async function refreshShadowScoreboard() {
   const card = document.getElementById("shadowScoreboardSection");
   if (!panel) return;
   if (card) card.setAttribute("data-async-state", "loading");
+  setSystemStatusStrip(
+    "shadowScoreboardStatusStrip",
+    "loading",
+    "Loading shadow scoreboard.",
+    "Fetching last-scan plugin would-have counters.",
+  );
   panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
     <span class="async-spinner" aria-hidden="true"></span>
     <span>Loading shadow scoreboard…</span>
@@ -205,6 +233,12 @@ export async function refreshShadowScoreboard() {
       <span>Shadow scoreboard load failed: ${escapeHtml(String(msg))}</span>
       <button type="button" class="btn small secondary" data-shadow-retry>Retry</button>
     </div>`;
+    setSystemStatusStrip(
+      "shadowScoreboardStatusStrip",
+      "error",
+      "Shadow scoreboard load failed.",
+      String(msg),
+    );
     panel.querySelector("[data-shadow-retry]")?.addEventListener("click", () => void refreshShadowScoreboard());
     return;
   }

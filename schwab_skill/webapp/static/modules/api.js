@@ -361,20 +361,32 @@ export const api = {
     return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}${suffix}`, requestOptions);
   },
 
+  getResearchDossierPreflight(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    return this.get(`/api/research/dossier/${encodeURIComponent(safeTicker)}/preflight`, options);
+  },
+
   downloadResearchDossier(ticker, format = "json", options = {}) {
     const safeTicker = String(ticker || "").trim().toUpperCase();
     const safeFormat = String(format || "json").trim().toLowerCase();
+    const qs = new URLSearchParams({ format: safeFormat });
+    if (options.composeId) qs.set("compose_id", String(options.composeId));
+    const { composeId: _composeId, ...requestOptions } = options;
     return this.download(
-      `/api/research/dossier/${encodeURIComponent(safeTicker)}/export?format=${encodeURIComponent(safeFormat)}`,
-      options,
+      `/api/research/dossier/${encodeURIComponent(safeTicker)}/export?${qs.toString()}`,
+      requestOptions,
     );
   },
 
   downloadResearchFundamentalWorkbook(ticker, options = {}) {
     const safeTicker = String(ticker || "").trim().toUpperCase();
+    const qs = new URLSearchParams();
+    if (options.composeId) qs.set("compose_id", String(options.composeId));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const { composeId: _composeId, ...requestOptions } = options;
     return this.download(
-      `/api/research/dossier/${encodeURIComponent(safeTicker)}/fundamental-workbook`,
-      options,
+      `/api/research/dossier/${encodeURIComponent(safeTicker)}/fundamental-workbook${suffix}`,
+      requestOptions,
     );
   },
 };

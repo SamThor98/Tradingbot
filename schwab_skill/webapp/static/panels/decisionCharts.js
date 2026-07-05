@@ -14,6 +14,67 @@ function gateClass(passed) {
   return "neutral";
 }
 
+function buildGateTileStates(signalEdge = {}, readiness = {}) {
+  const stack = signalEdge.signal_stack_counterfactual || {};
+  const gates = stack.promotion_gates || {};
+  const pfMeanGate = safeNum(gates.pf_mean_min, DEFAULT_PF_MEAN_GATE);
+  const worstEraGate = safeNum(gates.worst_era_pf_min, DEFAULT_WORST_ERA_GATE);
+  const pfMean = safeNum(stack.pf_mean ?? signalEdge.hold_21_40d_pf, NaN);
+  const worstEra = safeNum(stack.worst_era_pf, NaN);
+  const earlyStop = safeNum(signalEdge.early_stopout_pct, NaN);
+  const retention = safeNum(stack.retention_pct, NaN);
+  const pfMeanPass = Number.isFinite(pfMean) ? pfMean >= pfMeanGate : null;
+  const worstEraPass = Number.isFinite(worstEra) ? worstEra >= worstEraGate : null;
+  const promotionPass = readiness.release_gate_ready === true;
+  const stackPass = stack.passes_promotion_gates;
+  return [
+    pfMeanPass ?? stackPass,
+    worstEraPass ?? stackPass,
+    Number.isFinite(earlyStop) ? earlyStop < 35 : null,
+    Number.isFinite(retention) ? retention >= 70 : null,
+    promotionPass,
+  ];
+}
+
+/** One-line gate board summary for W2b signal-edge header. */
+export function summarizeDecisionGates(signalEdge = {}, readiness = {}, opts = {}) {
+  if (opts.state === "loading") {
+    return { state: "loading", text: "Loading PF gates and promotion thresholds…" };
+  }
+  if (opts.state === "error") {
+    return { state: "error", text: "Signal-edge gate evidence unavailable — retry refresh." };
+  }
+  if (opts.state === "empty") {
+    return {
+      state: "empty",
+      text: "Run signal-stack counterfactual or validation to populate PF gates.",
+    };
+  }
+  const states = buildGateTileStates(signalEdge, readiness);
+  const pass = states.filter((s) => s === true).length;
+  const fail = states.filter((s) => s === false).length;
+  const unknown = states.filter((s) => s === null).length;
+  const stack = signalEdge.signal_stack_counterfactual || {};
+  const pfMean = safeNum(stack.pf_mean ?? signalEdge.hold_21_40d_pf, NaN);
+  const worstEra = safeNum(stack.worst_era_pf, NaN);
+  const pfLine = Number.isFinite(pfMean)
+    ? `PF ${pfMean.toFixed(2)}${Number.isFinite(worstEra) ? ` / worst ${worstEra.toFixed(2)}` : ""}`
+    : "PF evidence pending";
+  if (fail > 0) {
+    return {
+      state: "partial",
+      text: `${pass} of 5 gates pass · ${fail} below threshold · ${pfLine}`,
+    };
+  }
+  if (unknown > 0) {
+    return {
+      state: "partial",
+      text: `${pass} gates pass · ${unknown} awaiting evidence · ${pfLine}`,
+    };
+  }
+  return { state: "success", text: `All 5 gates pass · ${pfLine}` };
+}
+
 function fmtPf(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(2) : "—";
@@ -77,42 +138,39 @@ export function renderDecisionGateTiles(container, signalEdge = {}, readiness = 
   const worstEra = safeNum(stack.worst_era_pf, NaN);
   const earlyStop = safeNum(signalEdge.early_stopout_pct, NaN);
   const retention = safeNum(stack.retention_pct, NaN);
-
-  const pfMeanPass = Number.isFinite(pfMean) ? pfMean >= pfMeanGate : null;
-  const worstEraPass = Number.isFinite(worstEra) ? worstEra >= worstEraGate : null;
   const promotionPass = readiness.release_gate_ready === true;
-  const stackPass = stack.passes_promotion_gates;
 
+  const tileStates = buildGateTileStates(signalEdge, readiness);
   const tiles = [
     {
       label: "Mean PF",
       value: fmtPf(pfMean),
       sub: `gate ≥ ${pfMeanGate.toFixed(2)}`,
-      state: pfMeanPass ?? stackPass,
+      state: tileStates[0],
     },
     {
       label: "Worst-era PF",
       value: fmtPf(worstEra),
       sub: `gate ≥ ${worstEraGate.toFixed(2)}`,
-      state: worstEraPass ?? stackPass,
+      state: tileStates[1],
     },
     {
       label: "Early stops",
       value: fmtPct(earlyStop),
       sub: "21–40d cohort",
-      state: Number.isFinite(earlyStop) ? earlyStop < 35 : null,
+      state: tileStates[2],
     },
     {
       label: "Stack retention",
       value: fmtPct(retention),
       sub: "experiment keep rate",
-      state: Number.isFinite(retention) ? retention >= 70 : null,
+      state: tileStates[3],
     },
     {
       label: "Release gate",
       value: promotionPass ? "Ready" : "Blocked",
       sub: "validation + SLO",
-      state: promotionPass,
+      state: tileStates[4],
     },
   ];
 
@@ -258,7 +316,7 @@ export function renderDecisionSummaryStrip(container, payload = {}) {
     const label = opts.state.charAt(0).toUpperCase() + opts.state.slice(1);
     container.innerHTML = `
       <span class="decision-summary-pill ${cls}">${escapeHtml(label)}</span>
-      <span class="decision-summary-pill neutral">${escapeHtml(opts.message || "Decision evidence pending")}</span>
+      <span class="decision-summary-pill neutral">${escapeHtml(opts.message || opts.detail || "Decision evidence pending")}</span>
     `;
     return;
   }

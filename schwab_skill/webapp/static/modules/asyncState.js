@@ -14,6 +14,42 @@
 
 import { safeText } from "./format.js";
 
+/**
+ * Build structured operator-alert markup (headline + detail + optional retry).
+ *
+ * @param {object} opts
+ * @param {string} [opts.headline]
+ * @param {string} [opts.detail]
+ * @param {"bad"|"neutral"} [opts.tone]
+ * @param {boolean} [opts.retry]
+ * @param {string} [opts.retryAttr] data-* attribute on the retry button
+ */
+export function buildOperatorAlertHtml(opts = {}) {
+  const tone = opts.tone === "neutral" ? "neutral" : "bad";
+  const headline = safeText(opts.headline || (tone === "neutral" ? "No results yet" : "Data unavailable"));
+  const detail = safeText(
+    opts.detail ||
+      (tone === "neutral"
+        ? "Run a scan or add a ticker to see results here."
+        : "Unable to reach the server. Try again in a moment."),
+  );
+  const asyncClass = tone === "neutral" ? "async-state--empty" : "async-state--error";
+  const alertClass = tone === "neutral" ? "operator-alert--neutral" : "operator-alert--bad";
+  const role = tone === "neutral" ? "status" : "alert";
+  const live = tone === "neutral" ? "polite" : "assertive";
+  const retryAttr = safeText(opts.retryAttr || "data-async-retry");
+  const retryHtml = opts.retry
+    ? `<button type="button" class="btn small secondary" ${retryAttr}>Retry</button>`
+    : "";
+  return `<div class="async-state ${asyncClass} operator-alert ${alertClass}" role="${role}" aria-live="${live}">
+    <div class="operator-alert__body">
+      <strong class="operator-alert__headline">${headline}</strong>
+      <p class="operator-alert__detail">${detail}</p>
+    </div>
+    ${retryHtml}
+  </div>`;
+}
+
 export const ASYNC_LOADING = "loading";
 export const ASYNC_EMPTY = "empty";
 export const ASYNC_ERROR = "error";
@@ -63,18 +99,20 @@ export function setAsyncState(el, stateName, opts = {}) {
     return;
   }
   if (state === ASYNC_EMPTY) {
-    el.innerHTML = `<div class="async-state async-state--empty muted">${safeText(opts.message || "No data yet.")}</div>`;
+    el.innerHTML = buildOperatorAlertHtml({
+      tone: "neutral",
+      headline: opts.headline,
+      detail: opts.message,
+    });
     return;
   }
   if (state === ASYNC_ERROR) {
-    const reason = safeText(opts.message || "Request failed.");
-    const retryHtml = typeof opts.onRetry === "function"
-      ? `<button type="button" class="btn small secondary" data-async-retry>Retry</button>`
-      : "";
-    el.innerHTML = `<div class="async-state async-state--error" role="alert">
-      <span>${reason}</span>
-      ${retryHtml}
-    </div>`;
+    el.innerHTML = buildOperatorAlertHtml({
+      tone: "bad",
+      headline: opts.headline,
+      detail: opts.message,
+      retry: typeof opts.onRetry === "function",
+    });
     if (typeof opts.onRetry === "function") {
       const retry = el.querySelector("[data-async-retry]");
       if (retry) retry.addEventListener("click", () => opts.onRetry());

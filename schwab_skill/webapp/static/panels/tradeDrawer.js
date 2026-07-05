@@ -29,6 +29,10 @@
 
 import { api } from "../modules/api.js";
 import { safeText, safeNum, formatMoney, prettyJson } from "../modules/format.js";
+import {
+  formatConfidenceBucket,
+  formatDecisionReason,
+} from "../modules/decisionPlainLanguage.js";
 
 const TABS = ["decision", "recovery"];
 let _wired = false;
@@ -83,22 +87,42 @@ function renderDecisionInto(idPrefix, data, error) {
   const blocked = Boolean(d.checklist && d.checklist.blocked);
   const scoreN = Number(conf.signal_score);
   const scoreTxt = Number.isFinite(scoreN) ? scoreN.toFixed(1) : "—";
+  const confLabel = formatConfidenceBucket(conf.bucket);
   const verdict = blocked
-    ? "Blocked by safety checks."
-    : "Passes current safety snapshot.";
+    ? "Not ready — safety checks need attention."
+    : "Looks OK to review — no hard blocks right now.";
   const verdictClass = blocked ? "bad" : "good";
+  const checklistLines = Array.isArray(d.checklist?.checklist_lines) ? d.checklist.checklist_lines : [];
+  const checklistHtml = checklistLines.length
+    ? `<ul class="tool-summary-list tool-summary-list--plain">${checklistLines
+        .map((line) => {
+          if (!line || typeof line !== "object") return "";
+          return `<li><strong>${safeText(line.label)}:</strong> ${safeText(line.value_plain)}</li>`;
+        })
+        .filter(Boolean)
+        .join("")}</ul>`
+    : "";
+  const reasonChips = (d.key_reasons || [])
+    .map((r) => formatDecisionReason(r))
+    .filter(Boolean)
+    .slice(0, 6);
   if (sum) {
     sum.classList.remove("hidden");
     sum.innerHTML = `
-      <h4 class="tool-summary-title">${safeText(d.ticker)}</h4>
-      <ul class="tool-summary-list">
-        <li><strong>Size:</strong> ${safeNum(sz.qty, 0)} shares (~${formatMoney(sz.usd || 0)})</li>
-        <li><strong>Entry zone:</strong> $${safeText(ez.low)} – $${safeText(ez.high)}</li>
-        <li><strong>Stop idea:</strong> $${safeText(d.stop_invalidation)}</li>
-        <li><strong>Confidence:</strong> ${safeText(conf.bucket)} (score ${scoreTxt})</li>
+      <h4 class="tool-summary-title">${safeText(d.ticker)} — trade snapshot</h4>
+      <ul class="tool-summary-list tool-summary-list--plain">
+        <li><strong>Size:</strong> ${safeNum(sz.qty, 0)} shares (about ${formatMoney(sz.usd || 0)})</li>
+        <li><strong>Buy zone:</strong> $${safeText(ez.low)} – $${safeText(ez.high)}</li>
+        <li><strong>Stop level:</strong> $${safeText(d.stop_invalidation)} (idea only — not a live order)</li>
+        <li><strong>Confidence:</strong> ${confLabel} · signal score ${scoreTxt}</li>
         <li><strong>Status:</strong> <span class="pill ${verdictClass} small">${verdict}</span></li>
       </ul>
-      ${(d.key_reasons || []).length ? `<div class="chip-row" style="margin-top: 8px;">${d.key_reasons.map(r => `<span class="chip">${safeText(r)}</span>`).join("")}</div>` : ""}
+      ${checklistHtml}
+      ${
+        reasonChips.length
+          ? `<div class="tool-summary-reasons"><span class="muted small">Why this ranked here:</span><ul class="tool-summary-list tool-summary-list--compact">${reasonChips.map((r) => `<li>${safeText(r)}</li>`).join("")}</ul></div>`
+          : ""
+      }
     `;
   }
   if (det) det.classList.remove("hidden");

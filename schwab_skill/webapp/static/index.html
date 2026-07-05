@@ -30,7 +30,7 @@
 
     <header class="app-topbar" role="banner">
       <a href="#operationsWorkspaceIntro" class="app-topbar-brand" aria-label="Old Logan Capital home">
-        <span class="brand-mark" aria-hidden="true">T</span>
+        <span class="brand-mark" aria-hidden="true">O</span>
         <span class="brand-text">Old Logan Capital</span>
       </a>
 
@@ -261,19 +261,36 @@
         </div>
       </section>
 
-      <section id="workflowPrimary" class="workflow-primary" aria-labelledby="workflowPrimaryHeading">
+      <section id="workflowPrimary" class="workflow-primary" data-state="empty" aria-labelledby="workflowPrimaryHeading">
         <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Operations workflow</h2>
         <div id="workflowStatusStrip" class="operations-status-strip operations-status-strip--workflow" data-state="empty" aria-live="polite">
-          <span class="operations-status-pill">Empty</span>
+          <span class="operations-status-pill">Clear</span>
           <strong>No scan this session.</strong>
           <span class="muted">Run scan, review a setup, then approve staged trades.</span>
         </div>
+        <nav id="workflowProgress" class="workflow-progress" aria-label="Scan to approve steps">
+          <ol class="workflow-progress-list">
+            <li id="workflowStepScan" class="workflow-progress-step" data-step="scan" data-state="active">
+              <span class="workflow-progress-index" aria-hidden="true">1</span>
+              <span class="workflow-progress-label">Scan</span>
+            </li>
+            <li id="workflowStepEvaluate" class="workflow-progress-step" data-step="evaluate" data-state="pending">
+              <span class="workflow-progress-index" aria-hidden="true">2</span>
+              <span class="workflow-progress-label">Evaluate</span>
+            </li>
+            <li id="workflowStepApprove" class="workflow-progress-step" data-step="approve" data-state="pending">
+              <span class="workflow-progress-index" aria-hidden="true">3</span>
+              <span class="workflow-progress-label">Approve</span>
+            </li>
+          </ol>
+        </nav>
         <p class="muted workflow-strapline operations-surface hidden workspace-intro--deprecated">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
-        <article id="scanSection" class="card card--primary-task kanban-lane">
+        <article id="scanSection" class="card card--primary-task kanban-lane" data-state="empty">
           <div class="kanban-lane-head">
             <span class="kanban-lane-step">Lane 1</span>
             <strong>Scan + shortlist</strong>
+            <p id="scanLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 1 — run scan to load the shortlist.</p>
           </div>
           <div class="section-title">
             <h2>Scan results</h2>
@@ -312,10 +329,11 @@
             </div>
           </div>
           <div id="scanStatusStrip" class="operations-status-strip" data-state="empty" aria-live="polite">
-            <span class="operations-status-pill">Empty</span>
+            <span class="operations-status-pill">Clear</span>
             <strong>No scan yet.</strong>
             <span class="muted">Run scan to populate candidates, blockers, and data quality.</span>
           </div>
+          <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
           <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
           <div id="scanFunnelFilterBanner" class="scan-funnel-filter-host hidden" aria-live="polite"></div>
@@ -342,7 +360,7 @@
               </div>
             </div>
             <div class="scan-diagnostics-meta">
-              <div class="scan-diagnostics-label">Pipeline metadata</div>
+              <div class="scan-diagnostics-label">Scan health</div>
               <div id="scanDiagnostics" class="chip-row" aria-label="Pipeline metadata"></div>
             </div>
           </details>
@@ -383,13 +401,13 @@
               </div>
             </div>
             <div class="table-wrap qualified-table-wrap">
-              <table>
+              <table class="scan-candidates-table">
                 <caption class="visually-hidden">Signal candidates table</caption>
                 <thead>
                   <tr>
                     <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status">Status<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source">Source<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source quality">Source<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days Flagged<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
@@ -398,8 +416,8 @@
                     <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-secondary">Reason</th>
-                    <th>Actions</th>
+                    <th class="scan-col-secondary sortable-th" data-sort-key="reason" aria-sort="none" tabindex="0" role="button" title="Sort by filter reason">Reason<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="sortable-th" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                   </tr>
                 </thead>
                 <tbody id="scanTableBody">
@@ -419,23 +437,23 @@
                 Candidates that did not pass current mode thresholds. Top 10 shown with failure reasons.
               </p>
               <div class="table-wrap near-miss-table-wrap">
-                <table>
+                <table class="scan-candidates-table">
                   <caption class="visually-hidden">Near-miss breakout candidates</caption>
                   <thead>
                     <tr>
-                      <th>Ticker</th>
-                      <th>Status</th>
-                      <th class="scan-col-secondary">Source</th>
-                      <th class="scan-col-advanced">Days</th>
-                      <th class="scan-col-advanced">Strategy</th>
-                      <th class="scan-col-secondary">Price</th>
-                      <th>Rank</th>
-                      <th class="scan-col-advanced">P(up 10d)</th>
-                      <th>Confidence</th>
-                      <th class="scan-col-advanced">Conviction</th>
-                      <th class="scan-col-advanced">Sector</th>
-                      <th>Reason</th>
-                      <th>Actions</th>
+                      <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status">Status<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source quality">Source<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="reason" aria-sort="none" tabindex="0" role="button" title="Sort by filter reason">Reason<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                     </tr>
                   </thead>
                   <tbody id="nearMissTableBody">
@@ -447,10 +465,11 @@
           </div>
         </article>
 
-        <aside id="scanDetailPanel" class="scan-detail-panel card kanban-lane" aria-live="polite">
+        <aside id="scanDetailPanel" class="scan-detail-panel card kanban-lane" data-state="empty" aria-live="polite">
           <div class="kanban-lane-head">
             <span class="kanban-lane-step">Lane 2</span>
             <strong>Evaluate setup</strong>
+            <p id="scanDetailLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 2 — select a row for chart + decision brief.</p>
           </div>
           <div class="scan-detail-header">
             <h3 id="scanDetailTicker">Select a ticker</h3>
@@ -458,11 +477,12 @@
             <div id="scanDetailTrust" class="scan-detail-trust"></div>
           </div>
           <div id="scanDetailStatusStrip" class="operations-status-strip" data-state="empty" aria-live="polite">
-            <span class="operations-status-pill">Empty</span>
+            <span class="operations-status-pill">Clear</span>
             <strong>No ticker selected.</strong>
             <span class="muted">Pick a candidate row to review evidence before staging.</span>
           </div>
-          <section id="scanDetailBriefCard" class="scan-brief-card" aria-live="polite">
+          <div id="scanDetailSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
+          <section id="scanDetailBriefCard" class="scan-brief-card" data-state="empty" aria-live="polite">
             <h4>Decision brief</h4>
             <div id="scanDetailBrief" class="scan-brief-content">
               <p class="muted">Select a candidate to load the bullet decision card.</p>
@@ -471,13 +491,6 @@
           <div id="scanDetailChartContainer" class="scan-detail-chart">
             <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
           </div>
-          <div class="scan-detail-forecast-controls">
-            <button id="scanDetailForecastBtn" type="button" class="btn-ghost" disabled
-              title="Overlay a Kronos K-line forecast on the chart (advisory)">
-              Forecast (Kronos)
-            </button>
-          </div>
-          <div id="scanDetailForecast" class="scan-detail-forecast" aria-live="polite"></div>
           <details id="scanDetailAdvancedStats" class="panel-disclosure scan-detail-advanced">
             <summary class="panel-disclosure-summary">Advanced scores <span class="disclosure-hint muted">edge, reliability, execution, EV</span></summary>
           <div class="scan-detail-grid">
@@ -537,16 +550,17 @@
           </div>
           </details>
           <div class="scan-detail-actions">
-            <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Stage selected trade</button>
+            <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Add to approval queue</button>
             <button id="scanDetailResearchBtn" class="btn secondary" type="button" disabled>Open in Research</button>
             <small class="muted">Pick a candidate and review chart context before staging or deep research.</small>
           </div>
         </aside>
 
-        <article id="pendingSection" class="card card--primary-task kanban-lane">
+        <article id="pendingSection" class="card card--primary-task kanban-lane" data-state="empty">
           <div class="kanban-lane-head">
             <span class="kanban-lane-step">Lane 3</span>
             <strong>Queue + approve</strong>
+            <p id="pendingLaneSummary" class="kanban-lane-summary" data-state="loading" aria-live="polite">Step 3 — loading approval queue…</p>
           </div>
           <div class="section-title section-title--with-action">
             <div>
@@ -579,6 +593,7 @@
             <strong>Pending queue status loading.</strong>
             <span class="muted">Counts stay unavailable until /api/pending-trades responds.</span>
           </div>
+          <div id="pendingSnapshot" class="operations-panel-snapshot" data-state="loading" aria-live="polite"></div>
           <div class="inline-form compact">
             <label class="muted">Status
               <select id="pendingFilter">
@@ -608,7 +623,7 @@
               <input id="manualPendingQty" type="number" min="1" step="1" placeholder="Auto" title="Leave blank to size from strategy presets" />
               <label class="field-label" for="manualPendingNote">Note</label>
               <input id="manualPendingNote" type="text" placeholder="Why you are staging this" />
-              <button id="manualPendingBtn" class="btn secondary" type="button">Add to pending</button>
+              <button id="manualPendingBtn" class="btn secondary" type="button">Add to queue</button>
             </div>
           </details>
           <div id="pendingBoard" class="task-board">
@@ -684,7 +699,6 @@
           <p class="muted">Run full report and filing compare before larger risk.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="diligence">Open deep diligence</a>
-            <a class="btn small secondary" href="#kronosForecastSection" data-research-tab-link="diligence">Kronos forecast</a>
           </div>
         </article>
       </section>
@@ -695,7 +709,7 @@
             <small class="muted">Fast symbol health check.</small>
           </div>
           <div id="quickCheckStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>No ticker checked.</strong>
             <span class="muted">Enter a ticker to load chart, score, and raw evidence.</span>
           </div>
@@ -722,7 +736,7 @@
             <span id="sectorSummaryMeta" class="disclosure-hint sector-summary-meta muted hidden" aria-live="polite"></span>
           </summary>
           <div id="sectorsStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>Sector leadership not loaded.</strong>
             <span class="muted">Open this disclosure to load 21-day relative strength.</span>
           </div>
@@ -734,7 +748,7 @@
             <span class="disclosure-hint muted">Top gainers, losers, and most active</span>
           </summary>
           <div id="moversStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>Movers not loaded.</strong>
             <span class="muted">Open this disclosure to load gainers, losers, and active names.</span>
           </div>
@@ -1064,123 +1078,6 @@
         </details>
       </section>
 
-      <section id="kronosWorkspaceIntro" class="card workspace-intro kronos-surface kronos-workspace-intro workspace-intro--deprecated hidden" aria-hidden="true">
-        <div>
-          <p class="workspace-eyebrow">Kronos</p>
-          <h2>Forecast the next moves</h2>
-          <p class="muted">
-            Kronos is an open-source foundation model for financial candlesticks. Enter a ticker to
-            project the next sessions of price action — advisory only, never an order.
-          </p>
-        </div>
-        <div class="inline-form compact">
-          <a class="btn small secondary" href="#kronosForecastSection">Run a forecast</a>
-          <a class="btn small secondary" href="#kronosAboutSection">How it works</a>
-        </div>
-      </section>
-
-      <section
-        id="kronosForecastSection"
-        class="card kronos-surface kronos-forecast-card"
-        aria-labelledby="kronosForecastHeading"
-      >
-        <div class="section-title">
-          <h2 id="kronosForecastHeading">Kronos forecast</h2>
-          <small class="muted">Projected candles, direction, and confidence for a single symbol.</small>
-        </div>
-        <div id="kronosStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-          <span class="research-status-pill">Empty</span>
-          <strong>No forecast run.</strong>
-          <span class="muted">Enter a ticker and horizon to load forecast path and uncertainty.</span>
-        </div>
-
-        <form id="kronosForecastForm" class="kronos-form" aria-describedby="kronosFormHint">
-          <div class="kronos-form-row">
-            <div class="kronos-field">
-              <label class="field-label" for="kronosTickerInput">Ticker</label>
-              <input
-                id="kronosTickerInput"
-                name="ticker"
-                type="text"
-                placeholder="AAPL"
-                autocomplete="off"
-                autocapitalize="characters"
-                spellcheck="false"
-                maxlength="12"
-                aria-describedby="kronosFormHint"
-                required
-              />
-            </div>
-            <div class="kronos-field">
-              <label class="field-label" for="kronosIntervalSelect">Timeframe</label>
-              <select id="kronosIntervalSelect" name="interval" aria-label="Bar timeframe">
-                <option value="daily" selected>Daily</option>
-                <option value="15m">15 min (intraday)</option>
-                <option value="5m">5 min (intraday)</option>
-              </select>
-            </div>
-            <div class="kronos-field">
-              <label class="field-label" for="kronosHorizonSelect">Horizon</label>
-              <select id="kronosHorizonSelect" name="horizon" aria-label="Forecast horizon in bars">
-                <option value="10">10 bars</option>
-                <option value="24" selected>24 bars</option>
-                <option value="40">40 bars</option>
-                <option value="60">60 bars</option>
-              </select>
-            </div>
-            <div class="kronos-field kronos-field-action">
-              <button id="kronosRunBtn" class="btn primary" type="submit">Run forecast</button>
-            </div>
-          </div>
-          <p id="kronosFormHint" class="muted small">
-            Shows the median path, a p10-p90 range cone, and P(up) vs a flat baseline. Intraday (5m/15m)
-            is Schwab-sourced (~10 trading days). Base model on CPU can take up to ~90s.
-          </p>
-        </form>
-
-        <div id="kronosServiceStatus" class="kronos-service-status" role="status" aria-live="polite"></div>
-
-        <div
-          id="kronosChartContainer"
-          class="kronos-chart"
-          role="img"
-          aria-label="Historical and forecast price chart"
-        >
-          <p class="muted">Enter a ticker and run a forecast to see history with the projected path.</p>
-        </div>
-
-        <div id="kronosForecastSummary" class="kronos-summary-host" aria-live="polite"></div>
-      </section>
-
-      <section
-        id="kronosAboutSection"
-        class="card kronos-surface section-advanced"
-        aria-labelledby="kronosAboutHeading"
-      >
-        <div class="section-title">
-          <h2 id="kronosAboutHeading">How Kronos works</h2>
-          <small class="muted">Context for interpreting the forecast responsibly.</small>
-        </div>
-        <ul class="kronos-about-list">
-          <li>
-            <strong>Inputs.</strong> Recent daily OHLCV candles (the same data feeding the scanner) are
-            tokenized and fed to a decoder-only transformer pre-trained on global K-line sequences.
-          </li>
-          <li>
-            <strong>Output.</strong> A projected candle path, a net direction, an expected percentage move
-            over the horizon, and a confidence proxy derived from the predicted path.
-          </li>
-          <li>
-            <strong>Shadow mode.</strong> In the scanner, forecasts attach context without changing
-            ranking or placing orders.
-          </li>
-          <li>
-            <strong>Degrades safely.</strong> If the inference service is offline, the workspace shows a
-            clear status message instead of failing.
-          </li>
-        </ul>
-      </section>
-
       <section id="diagnosticsWorkspaceIntro" class="card workspace-intro section-advanced diagnostics-surface workspace-intro--deprecated hidden" aria-hidden="true">
         <div>
           <p class="workspace-eyebrow">Diagnostics</p>
@@ -1242,6 +1139,11 @@
         aria-label="System health ribbon"
         data-async-state="loading"
       >
+        <div id="healthStatusStrip" class="system-status-strip" data-state="loading" aria-live="polite">
+          <span class="system-status-pill">Loading</span>
+          <strong>Checking system health.</strong>
+          <span class="muted">Auth, quote, API, and validation probes are loading.</span>
+        </div>
         <p
           id="healthRibbonSummary"
           class="health-ribbon-summary muted"
@@ -1297,6 +1199,7 @@
         class="card diagnostics-surface system-decision-nested"
         aria-label="Leadership decision dashboard"
         data-async-state="loading"
+        data-state="loading"
       >
         <div class="section-head">
           <h3 style="margin: 0">Decision Dashboard</h3>
@@ -1322,8 +1225,9 @@
               </div>
             </div>
           </div>
-          <section id="decisionSignalEdgeBoard" class="decision-signal-edge-board" aria-label="Signal edge promotion gates">
+          <section id="decisionSignalEdgeBoard" class="decision-signal-edge-board" data-state="loading" aria-label="Signal edge promotion gates">
             <h4 class="decision-board-title">Signal edge evidence</h4>
+            <p id="decisionSignalEdgeSummary" class="decision-signal-edge-summary" data-state="loading" aria-live="polite">Loading PF gates and promotion thresholds…</p>
             <div id="decisionGateTiles" class="decision-gate-tiles"></div>
             <div id="decisionEraPfChart" class="decision-era-pf-chart"></div>
           </section>
@@ -1396,6 +1300,11 @@
           Detailed system status
           <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
         </summary>
+        <div id="statusDetailsStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
+          <span class="system-status-pill">Clear</span>
+          <strong>Status details not loaded.</strong>
+          <span class="muted">Refresh status to inspect tokens, quotes, validation, and pending trades.</span>
+        </div>
         <section id="statusSection" class="stats stats-in-disclosure">
         <article id="statusMarketToken" class="card stat">
           <span class="stat-label">Market Token</span>
@@ -1448,7 +1357,7 @@
             <small id="portfolioMeta" class="muted">Loads automatically on Research or when you scroll here.</small>
           </div>
           <div id="portfolioStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>Portfolio not loaded.</strong>
             <span class="muted">Open Portfolio to load positions, exposure, and risk analytics.</span>
           </div>
@@ -1524,7 +1433,7 @@
       </section>
 
       <div id="cockpitStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-        <span class="research-status-pill">Empty</span>
+        <span class="research-status-pill">Clear</span>
         <strong>Market context not loaded.</strong>
         <span class="muted">Open Market context to load regime, portfolio, opportunities, and blotter.</span>
       </div>
@@ -1565,7 +1474,7 @@
             <h2>Run a historical backtest</h2>
           </div>
           <div id="backtestStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>No backtest run selected.</strong>
             <span class="muted">Choose a universe and date range before queueing a run.</span>
           </div>
@@ -1838,6 +1747,11 @@
             <h2>Trial-run scoreboard</h2>
             <small class="muted">What each trial rule would have done (last scan + past 7 days of trades)</small>
           </div>
+          <div id="shadowScoreboardStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
+            <span class="system-status-pill">Clear</span>
+            <strong>No shadow scoreboard loaded.</strong>
+            <span class="muted">Run or refresh after a scan to review would-have plugin actions.</span>
+          </div>
           <div class="inline-form">
             <button id="shadowScoreboardRefreshBtn" type="button" class="btn secondary">Refresh scoreboard</button>
           </div>
@@ -1852,6 +1766,11 @@
           <div class="section-title">
             <h2>Trade review loop</h2>
             <small class="muted">Weekly false-positive diagnostics, tuning proposals, and recent decision packets</small>
+          </div>
+          <div id="reviewLoopStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
+            <span class="system-status-pill">Clear</span>
+            <strong>No trade-review report loaded.</strong>
+            <span class="muted">Refresh to load false-positive diagnostics and decision packets.</span>
           </div>
           <div class="inline-form">
             <button id="reviewLoopRefreshBtn" type="button" class="btn secondary">Refresh report</button>
@@ -1871,9 +1790,12 @@
             <small class="muted">Primary output: decision-ready markdown/PDF dossier with evidence trail</small>
           </div>
           <div id="reportStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>No dossier generated.</strong>
             <span class="muted">Enter a ticker to produce narrative, appendix, and exports.</span>
+          </div>
+          <div id="dossierReadinessPanel" class="report-visual">
+            <div class="report-empty">Enter a ticker to check dossier data-source readiness.</div>
           </div>
           <div class="inline-form">
             <label class="field-label" for="reportTickerInput">Ticker</label>
@@ -1939,7 +1861,7 @@
             <small class="muted">Filing-language diff for thesis validation — guidance tone, risk deltas, and evidence snippets</small>
           </div>
           <div id="secCompareStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
-            <span class="research-status-pill">Empty</span>
+            <span class="research-status-pill">Clear</span>
             <strong>No filing compare run.</strong>
             <span class="muted">Choose mode and tickers to inspect language drift.</span>
           </div>
@@ -2175,26 +2097,29 @@
 
     <dialog id="queueScanDialog" class="modal">
       <div class="modal-stack">
-        <h3>Stage trade for approval</h3>
-        <p id="queueScanHeadline" class="muted"></p>
+        <h3>Add to approval queue</h3>
+        <p class="muted queue-scan-lede">
+          Sends this setup to <strong>Pending approvals</strong> on Today. Nothing goes live until you review and approve.
+        </p>
+        <p id="queueScanHeadline" class="queue-scan-headline"></p>
         <div id="queueScanChecklist" class="queue-scan-checklist-host" aria-live="polite"></div>
         <div class="inline-form compact modal-form-grid">
-          <label class="field-label" for="queueScanQty">Quantity</label>
+          <label class="field-label" for="queueScanQty">Share quantity</label>
           <input
             id="queueScanQty"
             type="number"
             min="1"
             step="1"
-            placeholder="Auto from presets"
+            placeholder="Auto from preset"
             title="Leave blank to use position size from your strategy preset"
           />
-          <label class="field-label" for="queueScanNote">Note</label>
-          <input id="queueScanNote" type="text" placeholder="e.g. Trim size, earnings watch" />
+          <label class="field-label" for="queueScanNote">Your note</label>
+          <input id="queueScanNote" type="text" placeholder="Why you're staging this (optional)" />
         </div>
-        <p class="muted form-hint">You can change quantity here before the trade appears in pending approvals.</p>
+        <p class="muted form-hint">You can edit quantity and note here. Approve later from the pending queue.</p>
         <div class="modal-actions">
-          <button id="queueScanCancelBtn" class="btn secondary" type="button">Cancel</button>
-          <button id="queueScanConfirmBtn" class="btn primary" type="button">Add to pending</button>
+          <button id="queueScanCancelBtn" class="btn secondary" type="button">Go back</button>
+          <button id="queueScanConfirmBtn" class="btn primary" type="button">Add to queue</button>
         </div>
       </div>
     </dialog>
@@ -2208,7 +2133,7 @@
         </p>
         <ul class="muted" style="margin: 0.5rem 0 0.75rem 1rem">
           <li><strong>Today:</strong> scan with provenance, review rank/score, stage tradeable setups only.</li>
-          <li><strong>Research:</strong> quick check, backtest, dossier, SEC compare, Kronos forecast.</li>
+          <li><strong>Research:</strong> quick check, backtest, dossier, SEC compare.</li>
           <li><strong>System:</strong> health ribbon, calibration drift, shadow scoreboard.</li>
           <li><strong>Settings:</strong> Schwab connect, strategy presets, live-trading guardrails.</li>
         </ul>

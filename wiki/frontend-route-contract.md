@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-06-26
+updated: 2026-07-04
 tags: [frontend, routing, deep-links, contract]
 ---
 
@@ -36,7 +36,7 @@ Rules:
 5. Keyboard shortcuts Ctrl/Cmd+1..4 map to the screen order below and must not
    be reassigned.
 
-Legacy screen modes (`kronos`, `cockpit`, `system`, `health`) normalize to a
+Legacy screen modes (`cockpit`, `system`, `health`) normalize to a
 top-level tab via `SCREEN_ALIASES` in `app.js` (e.g. `cockpit` → `research`).
 
 ## Screen map (locked 2026-06-26)
@@ -63,7 +63,6 @@ Default landing: `operations` (Today).
 | `research` | `researchWorkspaceIntro` | research |
 | `backtest`, `backtests` | `backtestSection` | research |
 | `cockpit` | `cockpitWorkspaceIntro` | research (via alias) |
-| `kronos`, `forecast` | `kronosForecastSection` | research (via alias) |
 | `sec`, `seccompare` | `secCompareSection` | research |
 | `calibration` | `calibrationSection` | diagnostics |
 | `diagnostics`, `health` | `healthRibbon` | diagnostics |
@@ -91,4 +90,4 @@ compatibility; they are hidden. Prefer canonical section ids in new links.
 
 ---
 
-*Last compiled: 2026-06-26*
+*Last compiled: 2026-07-04*

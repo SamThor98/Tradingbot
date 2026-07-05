@@ -12,6 +12,7 @@ import { safeText, safeNum, formatMoney, pct, verdictFromScore, escapeHtml } fro
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { normalizeReportPayload, runReportNormalizationSmokeChecks } from "../modules/reportNormalization.js";
 import { setResearchStatusStrip } from "../modules/researchStatus.js";
+import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 
 let smokeChecked = false;
 
@@ -1090,10 +1091,11 @@ export async function runReport() {
     if (!out.ok) {
       output.textContent = out.error || "Report failed.";
       visual.setAttribute("data-async-state", "error");
-      visual.innerHTML = `<div class="async-state async-state--error" role="alert">
-        <span>${safeText(out.user_message || out.error || "Report failed.")}</span>
-        <button type="button" class="btn small secondary" data-report-retry>Retry</button>
-      </div>`;
+      visual.innerHTML = buildOperatorAlertHtml({
+        detail: out.user_message || out.error || "Report failed.",
+        retry: true,
+        retryAttr: "data-report-retry",
+      });
       visual.querySelector("[data-report-retry]")?.addEventListener("click", () => void runReport());
       setResearchStatusStrip(
         "reportStatusStrip",

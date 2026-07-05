@@ -35,6 +35,7 @@ import { logEvent } from "../modules/logger.js";
 import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import { scrollStrategyChatToEnd } from "./strategyChat.js";
 import { renderBacktestEquityCharts, clearBacktestEquityCharts } from "./backtestCharts.js";
+import { setAsyncState, ASYNC_ERROR } from "../modules/asyncState.js";
 
 /**
  * The hosted backtest queue (`/api/backtest-runs*`) only exists on the SaaS
@@ -440,7 +441,10 @@ export async function refreshBacktestRuns() {
   );
   const out = await api.get("/api/backtest-runs?limit=15");
   if (!out.ok) {
-    list.innerHTML = `<li class="muted">List failed: ${safeText(out.user_message || out.error)}</li>`;
+    setAsyncState(list, ASYNC_ERROR, {
+      message: safeText(out.user_message || out.error || "Request failed."),
+      onRetry: () => void refreshBacktestRuns(),
+    });
     setResearchStatusStrip(
       "backtestStatusStrip",
       "error",

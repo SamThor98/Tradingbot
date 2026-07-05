@@ -1,9 +1,15 @@
-import { escapeHtml, safeNum, safeText, timeAgo } from "../modules/format.js";
+import { safeNum, safeText, timeAgo } from "../modules/format.js";
 import { healthBadgeClass } from "../modules/logger.js";
+import { paintStatusStrip } from "../modules/statusStripCore.js";
+import {
+  syncDecisionDashboardState,
+  syncDecisionSignalEdgeState,
+} from "../modules/operationsPanelState.js";
 import {
   renderDecisionGateTiles,
   renderDecisionPfChart,
   renderDecisionSummaryStrip,
+  summarizeDecisionGates,
 } from "./decisionCharts.js";
 
 function _setText(id, value) {
@@ -67,13 +73,35 @@ function _hasDecisionEvidence(payload = {}) {
 function _setStateStrip(stateName, title, detail) {
   const strip = document.getElementById("decisionDashboardStateStrip");
   if (!strip) return;
-  strip.dataset.state = stateName;
-  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
-  strip.innerHTML = `
-    <span class="decision-dashboard-state-pill">${escapeHtml(label)}</span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="muted">${escapeHtml(detail)}</span>
-  `;
+  paintStatusStrip(strip, stateName, title, detail, "decision-dashboard-state-pill");
+  syncDecisionDashboardState(stateName);
+  syncDecisionSignalEdgeState(stateName);
+}
+
+function _renderSignalEdgeSummary(signalEdge, readiness, decisionState) {
+  const el = document.getElementById("decisionSignalEdgeSummary");
+  if (!el) return;
+  const summary = summarizeDecisionGates(signalEdge, readiness, decisionState);
+  el.dataset.state = summary.state;
+  el.textContent = summary.text;
+}
+
+function _syncDecisionAsyncState(stateName) {
+  const card = document.getElementById("decisionDashboardCard");
+  if (!card) return;
+  if (stateName === "loading") {
+    card.setAttribute("data-async-state", "loading");
+    return;
+  }
+  if (stateName === "error") {
+    card.setAttribute("data-async-state", "error");
+    return;
+  }
+  if (stateName === "empty") {
+    card.setAttribute("data-async-state", "empty");
+    return;
+  }
+  card.setAttribute("data-async-state", "success");
 }
 
 function _decisionState(payload = {}) {
@@ -129,11 +157,12 @@ export function renderDecisionDashboardLoading() {
     "Loading decision summary.",
     "Fetching signal-edge gates, validation health, and promotion readiness.",
   );
-  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, {
-    state: "loading",
-  });
-  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, { state: "loading" });
-  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, { state: "loading" });
+  _syncDecisionAsyncState("loading");
+  const loadingOpts = { state: "loading" };
+  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, loadingOpts);
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, loadingOpts);
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, loadingOpts);
+  _renderSignalEdgeSummary({}, {}, loadingOpts);
   _setBadge("decisionReliabilityState", "Loading", false);
   _setBadge("decisionPromotionState", "Loading", false);
   EVIDENCE_ROW_IDS.forEach((id) => _setText(id, `${document.getElementById(id)?.textContent?.split(":")[0] || "Status"}: loading…`));
@@ -142,18 +171,12 @@ export function renderDecisionDashboardLoading() {
 export function renderDecisionDashboardUnavailable(message) {
   const msg = safeText(message || "Decision dashboard unavailable.");
   _setStateStrip("error", "Decision data unavailable.", msg);
-  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, {
-    state: "error",
-    message: msg,
-  });
-  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, {
-    state: "error",
-    message: msg,
-  });
-  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, {
-    state: "error",
-    message: msg,
-  });
+  _syncDecisionAsyncState("error");
+  const errorOpts = { state: "error", message: msg };
+  renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, errorOpts);
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, errorOpts);
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, errorOpts);
+  _renderSignalEdgeSummary({}, {}, errorOpts);
 }
 
 function _renderAblationTop(topRows = []) {
@@ -195,13 +218,16 @@ export function renderDecisionDashboard(payload = {}) {
   const decisionState = _decisionState(payload);
 
   _setStateStrip(decisionState.state, decisionState.title, decisionState.detail);
+  _syncDecisionAsyncState(decisionState.state);
 
   _setBadge("decisionReliabilityState", validationPassed && sloPassed ? "Healthy" : "At Risk", validationPassed && sloPassed);
   _setBadge("decisionPromotionState", releaseReady ? "Ready" : "Blocked", releaseReady);
 
   renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), payload, decisionState);
-  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), signalEdge, readiness);
-  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), signalEdge);
+  const edgeOpts = decisionState.state === "empty" ? { state: "empty" } : {};
+  renderDecisionGateTiles(document.getElementById("decisionGateTiles"), signalEdge, readiness, edgeOpts);
+  renderDecisionPfChart(document.getElementById("decisionEraPfChart"), signalEdge, edgeOpts);
+  _renderSignalEdgeSummary(signalEdge, readiness, decisionState);
 
   const runStatus = safeText(reliability.validation_run_status || "unknown");
   const validationLine = `Validation: ${runStatus}${validationPassed ? " (pass)" : ""}`;

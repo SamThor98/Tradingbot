@@ -17,6 +17,7 @@ FILTER_REASONS_JS = STATIC / "modules" / "filterReasons.js"
 SIGNAL_PROVENANCE_JS = STATIC / "modules" / "signalProvenance.js"
 SCAN_DIAG_JS = STATIC / "panels" / "scanDiagnostics.js"
 OPERATIONS_JS = STATIC / "screens" / "operations.js"
+PENDING_BOARD_JS = STATIC / "panels" / "pendingBoard.js"
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +50,11 @@ def operations_js() -> str:
     return OPERATIONS_JS.read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def pending_board_js() -> str:
+    return PENDING_BOARD_JS.read_text(encoding="utf-8")
+
+
 SCAN_TRANSPARENCY_DOM_IDS = (
     "scanIntegrityBanner",
     "scanGateModesChip",
@@ -64,6 +70,14 @@ SCAN_TRANSPARENCY_DOM_IDS = (
     "queueScanDialog",
     "queueScanChecklist",
     "queueScanConfirmBtn",
+    "pendingStatusStrip",
+    "scanLaneSummary",
+    "scanDetailLaneSummary",
+    "pendingLaneSummary",
+    "workflowProgress",
+    "workflowStepScan",
+    "workflowStepEvaluate",
+    "workflowStepApprove",
 )
 
 
@@ -77,11 +91,25 @@ def test_app_js_wires_scan_transparency_modules(app_js: str) -> None:
         'from "./panels/scanDiagnostics.js"',
         'from "./modules/filterReasons.js"',
         'from "./modules/signalProvenance.js"',
+        'from "./modules/operationsStatus.js"',
+        'from "./modules/operationsPanelState.js"',
+        "syncScanSectionState",
+        "syncScanDetailPanelState",
+        'from "./modules/kanbanLaneSummaries.js"',
+        "updateKanbanLaneSummaries",
+        'from "./modules/workflowKanban.js"',
+        "updateWorkflowKanban",
+        'from "./modules/signalTrustRow.js"',
+        "renderSignalTrustRow",
+        'from "./modules/floatTooltip.js"',
+        "wireScanRankWhyTooltips",
         "renderDiagnostics as _renderDiagnosticsPanel",
         "formatFilterReasons",
         "renderSignalProvenanceChip",
         "renderTradeableVerdict",
         "isScanSignalStageable",
+        "wireScanRankWhyTooltips",
+        "data-rank-tip",
         "applyScanResponseSignals",
         "shortlist_signals",
     ):
@@ -133,3 +161,57 @@ def test_staging_guard_in_queue_dialog(app_js: str) -> None:
     assert "function confirmQueueScanDialog" in app_js
     assert "Filtered candidates cannot be staged" in app_js or "Cannot stage" in app_js
     assert "queueScanConfirmBtn" in app_js
+
+
+def test_pending_board_provenance_and_status(pending_board_js: str) -> None:
+    for token in (
+        'from "../modules/operationsStatus.js"',
+        'from "../modules/kanbanLaneSummaries.js"',
+        'from "../modules/signalTrustRow.js"',
+        "renderSignalTrustRow",
+        "isScanSignalStageable",
+        '"pendingStatusStrip"',
+        "setOperationsStatusStrip",
+        'board.dataset.state',
+    ):
+        assert token in pending_board_js, f"pendingBoard.js missing: {token}"
+
+
+def test_scan_diagnostics_uses_operations_status(scan_diag_js: str) -> None:
+    for token in (
+        'from "../modules/operationsStatus.js"',
+        'from "../modules/operationsPanelState.js"',
+        "syncScanSectionState",
+        "setOperationsStatusStrip",
+    ):
+        assert token in scan_diag_js, f"scanDiagnostics.js missing: {token}"
+
+
+WORKFLOW_KANBAN_JS = STATIC / "modules" / "workflowKanban.js"
+
+
+@pytest.fixture(scope="module")
+def workflow_kanban_js() -> str:
+    return WORKFLOW_KANBAN_JS.read_text(encoding="utf-8")
+
+
+def test_index_html_workflow_primary_dom(index_html: str) -> None:
+    assert 'id="workflowPrimary"' in index_html
+    assert 'id="workflowPrimary" class="workflow-primary" data-state="empty"' in index_html
+    assert 'id="workflowStatusStrip"' in index_html
+
+
+def test_workflow_kanban_exports(workflow_kanban_js: str) -> None:
+    for token in (
+        "export function updateWorkflowKanban",
+        "workflowStepScan",
+        "workflowStepEvaluate",
+        "workflowStepApprove",
+        "scanSection",
+        "scanDetailPanel",
+        "pendingSection",
+        "setPanelState",
+        "workflowPrimary",
+        "workflowFocus",
+    ):
+        assert token in workflow_kanban_js, f"workflowKanban.js missing: {token}"

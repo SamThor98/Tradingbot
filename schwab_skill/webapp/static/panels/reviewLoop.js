@@ -3,12 +3,13 @@
  * previously had no UI: `GET /api/cockpit/review` (weekly diagnostics +
  * advisory tuning proposals), `POST /api/cockpit/review/backfill` (resolve
  * matured decision packets), and `GET /api/cockpit/decision-packets`
- * (recent packets with entry-time context, incl. Kronos snapshots).
+ * (recent packets with entry-time context).
  */
 
 import { api } from "../modules/api.js";
 import { escapeHtml, prettyJson } from "../modules/format.js";
 import { updateActionCenter } from "../modules/logger.js";
+import { setSystemStatusStrip } from "../modules/systemStatus.js";
 
 function pct(x, digits = 1) {
   const n = Number(x);
@@ -56,13 +57,12 @@ function renderFeatureLift(lift) {
   const l = lift || {};
   const eras = l.era_splits || {};
   const eraKeys = Object.keys(eras);
-  const coverage = `<small class="muted">Feature coverage: Kronos ${Number(l.kronos_packets) || 0} · Mgmt integrity ${Number(l.management_integrity_packets) || 0} of ${Number(l.total_packets) || 0} packets.</small>`;
+  const coverage = `<small class="muted">Feature coverage: Mgmt integrity ${Number(l.management_integrity_packets) || 0} of ${Number(l.total_packets) || 0} packets.</small>`;
 
   let tables = "";
   for (const era of eraKeys) {
     const block = eras[era] || {};
     const sections = [
-      ["Kronos", block.kronos],
       ["Mgmt integrity", block.management_integrity],
     ]
       .map(([label, feat]) => {
@@ -112,8 +112,6 @@ function renderPackets(packets) {
       const created = String(p.created_at || "").slice(0, 16).replace("T", " ");
       const outcome = p.outcome || {};
       const realized = outcome.realized_return_pct != null ? pct(outcome.realized_return_pct, 2) : "open";
-      const kr = p.kronos || null;
-      const krText = kr ? `${escapeHtml(String(kr.direction || "?"))} (${escapeHtml(String(kr.confidence_bucket || "?"))})` : "—";
       const mi = p.management_integrity || null;
       const miText = mi ? `${escapeHtml(String(mi.score_bucket || "?"))}${mi.score != null ? ` (${Number(mi.score)})` : ""}` : "—";
       return `<tr>
@@ -121,22 +119,24 @@ function renderPackets(packets) {
         <td>${escapeHtml(created)}</td>
         <td>${escapeHtml(String(p.setup_type || "—"))}</td>
         <td>${escapeHtml(String(p.regime || "—"))}</td>
-        <td>${krText}</td>
         <td>${miText}</td>
         <td>${realized}</td>
       </tr>`;
     })
     .join("");
-  return `<div class="table-wrap"><table><thead><tr><th>Ticker</th><th>Created</th><th>Setup</th><th>Regime</th><th>Kronos</th><th>Mgmt</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Ticker</th><th>Created</th><th>Setup</th><th>Regime</th><th>Mgmt</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function renderReviewLoopPanel(panel, review, packets, error) {
   if (!panel) return;
   if (error) {
     panel.innerHTML = `<div class="report-empty">${escapeHtml(error)}</div>`;
+    setSystemStatusStrip("reviewLoopStatusStrip", "error", "Trade-review report unavailable.", error);
     return;
   }
   const rep = review || {};
+  const total = Number(rep.total_packets) || 0;
+  const resolved = Number(rep.resolved_packets) || 0;
   const head = `<div class="perf-metric"><span class="label">Total packets</span><span class="value">${Number(rep.total_packets) || 0}</span></div>
     <div class="perf-metric"><span class="label">Resolved</span><span class="value">${Number(rep.resolved_packets) || 0}</span></div>
     <div class="perf-metric"><span class="label">Coverage</span><span class="value">${pct(rep.coverage_pct)}</span></div>`;
@@ -144,10 +144,18 @@ export function renderReviewLoopPanel(panel, review, packets, error) {
     <div class="preset-subsection">${head}</div>
     <div class="preset-subsection"><h3>False positives by regime</h3>${renderRegimeTable(rep.false_positives_by_regime)}</div>
     <div class="preset-subsection"><h3>Edge decay by setup</h3>${renderSetupTable(rep.edge_decay_by_setup)}</div>
-    <div class="preset-subsection"><h3>Shadow feature lift (Kronos · Mgmt integrity)</h3>${renderFeatureLift(rep.feature_lift)}</div>
+    <div class="preset-subsection"><h3>Shadow feature lift (Mgmt integrity)</h3>${renderFeatureLift(rep.feature_lift)}</div>
     <div class="preset-subsection"><h3>Tuning proposals</h3>${renderProposals(rep.tuning_proposals)}</div>
     <div class="preset-subsection"><h3>Recent decision packets</h3>${renderPackets(packets)}</div>
     <details class="tool-json-details" style="margin-top: 8px;"><summary>Raw report</summary><pre class="code-block code-block--tight">${escapeHtml(prettyJson(rep))}</pre></details>`;
+  setSystemStatusStrip(
+    "reviewLoopStatusStrip",
+    total > 0 ? (resolved > 0 ? "success" : "partial") : "empty",
+    total > 0 ? `${total} decision packet${total === 1 ? "" : "s"} tracked.` : "No decision packets yet.",
+    resolved > 0
+      ? `${resolved} resolved packet${resolved === 1 ? "" : "s"} feeding false-positive diagnostics.`
+      : "Execute trades and run backfill to resolve outcomes.",
+  );
 }
 
 export async function refreshReviewLoop() {
@@ -155,6 +163,12 @@ export async function refreshReviewLoop() {
   const card = document.getElementById("reviewLoopSection");
   if (!panel) return;
   if (card) card.setAttribute("data-async-state", "loading");
+  setSystemStatusStrip(
+    "reviewLoopStatusStrip",
+    "loading",
+    "Loading trade-review report.",
+    "Fetching diagnostics, proposals, and recent decision packets.",
+  );
   panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
     <span class="async-spinner" aria-hidden="true"></span>
     <span>Loading trade-review report…</span>
@@ -170,6 +184,12 @@ export async function refreshReviewLoop() {
       <span>Trade-review load failed: ${escapeHtml(String(msg))}</span>
       <button type="button" class="btn small secondary" data-review-retry>Retry</button>
     </div>`;
+    setSystemStatusStrip(
+      "reviewLoopStatusStrip",
+      "error",
+      "Trade-review load failed.",
+      String(msg),
+    );
     panel.querySelector("[data-review-retry]")?.addEventListener("click", () => void refreshReviewLoop());
     return;
   }
@@ -181,11 +201,18 @@ export async function refreshReviewLoop() {
 export async function runReviewBackfill() {
   const btn = document.getElementById("reviewBackfillBtn");
   if (btn) btn.disabled = true;
+  setSystemStatusStrip(
+    "reviewLoopStatusStrip",
+    "loading",
+    "Running outcome backfill.",
+    "Resolving matured decision packets for the review loop.",
+  );
   try {
     // Mutation — one-shot, never auto-retry.
     const out = await api.post("/api/cockpit/review/backfill", {});
     if (!out.ok) {
       const msg = out.user_message || out.error || "Request failed";
+      setSystemStatusStrip("reviewLoopStatusStrip", "error", "Outcome backfill failed.", String(msg));
       updateActionCenter({ title: "Outcome backfill", message: String(msg), severity: "error" });
       return;
     }

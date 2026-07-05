@@ -1,16 +1,8 @@
-import { escapeHtml } from "./format.js";
+import { paintStatusStrip } from "./statusStripCore.js";
 
-const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error"]);
-
+/** Shared 5-state strip for Research screen panels. */
 export function setResearchStatusStrip(id, stateName, title, detail = "") {
   const strip = document.getElementById(id);
   if (!strip) return;
-  const state = VALID_STATES.has(stateName) ? stateName : "empty";
-  const label = state.charAt(0).toUpperCase() + state.slice(1);
-  strip.dataset.state = state;
-  strip.innerHTML = `
-    <span class="research-status-pill">${escapeHtml(label)}</span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="muted">${escapeHtml(detail)}</span>
-  `;
+  paintStatusStrip(strip, stateName, title, detail, "research-status-pill");
 }

@@ -5,7 +5,7 @@
 const TAB_SECTIONS = Object.freeze({
   check: ["quickCheckSection", "sectorsSection", "moversSection", "researchAdvancedTools"],
   backtest: ["backtestSection"],
-  diligence: ["reportSectionCard", "secCompareSection", "kronosForecastSection", "kronosAboutSection"],
+  diligence: ["reportSectionCard", "secCompareSection"],
   portfolio: ["portfolioSection", "performanceSection", "cockpitMergedPanel", "cockpitSection"],
 });
 

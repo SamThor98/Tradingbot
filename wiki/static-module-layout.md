@@ -58,7 +58,6 @@ webapp/static/
 ├─ screens/                       per-screen controllers (init() wiring + prime() loading)
 │  ├─ operations.js               scan workflow, pending queue, approve dialog
 │  ├─ research.js                 quick check, backtest hub, dossiers, SEC compare, learning
-│  ├─ kronos.js                   thin adapter over panels/kronosWorkspace.js
 │  ├─ diagnostics.js              calibration, shadow scoreboard, review loop, decision card
 │  └─ settings.js                 profiles, feature guide, live trading, billing
 └─ panels/

@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/index.html, frontend redesign roadmap
 created: 2026-06-10
-updated: 2026-06-26
+updated: 2026-07-04
 tags: [frontend, ux, migration, rollout, feature-flags, locked]
 ---
 
@@ -51,11 +51,10 @@ Validation at lock: `pytest tests/test_static_router.py tests/test_scan_transpar
 | `researchSummaryLanding` | — | research | summary landing with shortcuts | — |
 | `quickCheckSection`, `sectorsSection`, `moversSection` | research | research | **Quick check sub-tab** (market context collapsed) | — |
 | `backtestSection` | research (Validate tab) | research | **Backtest sub-tab** (split from Validate) | — |
-| `reportSectionCard`, `secCompareSection`, `kronosForecastSection`, `kronosAboutSection` | research (Validate tab) | research | **Diligence sub-tab** | — |
+| `reportSectionCard`, `secCompareSection` | research (Validate tab) | research | **Diligence sub-tab** | — |
 | `portfolioSection`, `performanceSection`, `cockpitMergedPanel`, `cockpitSection` | research | research | **Portfolio sub-tab** — order: positions → performance → cockpit | — |
 | `recoverySection`, `learningSection` | research (Advanced tab) | research | **Quick check sub-tab** — collapsed `#researchAdvancedTools` disclosure | — |
 | `toolsSection` | research | removed | replaced by `researchSummaryLanding` shortcuts | — |
-| `kronosWorkspaceIntro`, `kronosForecastSection`, `kronosAboutSection` | kronos | kronos | advisory copy deduplicated (one line per screen) | — |
 | `healthRibbon`, `decisionDashboardCard`, `statusDetailsPanel`, `calibrationSection`, `shadowScoreboardSection`, `reviewLoopSection` | diagnostics | diagnostics | nested under summary + disclosures; priority feed stays on Today | — |
 | `onboardingSection` | settings | settings | Connect Schwab wizard; auto-scroll when link incomplete | — |
 | `settingsSummaryLanding` | — | settings | overview with live-order controls in `#settingsSummaryGuardrails` | — |
@@ -97,4 +96,4 @@ The same health/token state was shown in >= 4 places. Target model:
 
 ---
 
-*Last compiled: 2026-06-26*
+*Last compiled: 2026-07-04*

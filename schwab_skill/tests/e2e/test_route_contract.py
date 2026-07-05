@@ -38,7 +38,6 @@ SCREEN_MODES = ["operations", "research", "diagnostics", "settings"]
 
 # Legacy ?screen= aliases normalize to a topbar tab (see SCREEN_ALIASES in app.js).
 SCREEN_MODE_ALIASES = [
-    ("kronos", "research"),
     ("cockpit", "research"),
 ]
 
@@ -49,7 +48,6 @@ ALIAS_CASES = [
     ("backtest", "backtestSection"),
     ("queue", "pendingSection"),
     ("scan", "scanSection"),
-    ("forecast", "kronosForecastSection"),
     ("health", "healthRibbon"),
     ("calibration", "calibrationSection"),
 ]

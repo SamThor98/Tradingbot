@@ -30,6 +30,7 @@ export function createResearchController(ctx) {
     runResearchDossier,
     downloadResearchDossier,
     downloadResearchFundamentalWorkbook,
+    loadResearchDossierPreflight,
     runSecCompare,
     applySecCompareMode,
     resetSecCompareProfileOverride,
@@ -80,6 +81,7 @@ export function createResearchController(ctx) {
     bindEvent("checkBtn", "click", quickCheck);
     bindEvent("reportBtn", "click", runReport);
     bindEvent("dossierBtn", "click", runResearchDossier);
+    bindEvent("reportTickerInput", "change", loadResearchDossierPreflight);
     bindEvent("dossierDownloadJsonBtn", "click", () => downloadResearchDossier("json"));
     bindEvent("dossierDownloadMdBtn", "click", () => downloadResearchDossier("md"));
     bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
@@ -192,7 +194,6 @@ export function createResearchController(ctx) {
     void runLazyApi("portfolio");
     void runLazyApi("performance");
     void ctx.primeCockpitPanel?.();
-    void ctx.primeKronosWorkspace?.();
     void runLazyApi("sectors");
     void runLazyApi("movers");
     void refreshBacktestRuns().then(() => ctx.updateResearchSummaryLanding?.());

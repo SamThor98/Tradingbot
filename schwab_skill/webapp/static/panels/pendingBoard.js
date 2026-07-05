@@ -33,6 +33,17 @@ import {
   removePriorityItem,
 } from "../modules/priorityFeed.js";
 import { openTradeDrawerForTrade } from "./tradeDrawer.js";
+import { setOperationsStatusStrip } from "../modules/operationsStatus.js";
+import { updateKanbanLaneSummaries } from "../modules/kanbanLaneSummaries.js";
+import { renderSignalTrustRow } from "../modules/signalTrustRow.js";
+import {
+  averageSignalMetric,
+  renderOperationsPanelSnapshot,
+} from "../modules/operationsPanelSnapshot.js";
+import { syncPendingSectionState } from "../modules/operationsPanelState.js";
+import {
+  isScanSignalStageable,
+} from "../modules/signalProvenance.js";
 import {
   getCompositeScore,
   getReliabilityScore,
@@ -78,16 +89,67 @@ function renderPendingContext(row) {
     conviction: ${conviction !== null ? safeText(conviction) : "—"}`;
 }
 
-function setPendingStatusStrip(stateName, title, detail) {
-  const strip = document.getElementById("pendingStatusStrip");
-  if (!strip) return;
-  strip.dataset.state = stateName;
-  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
-  strip.innerHTML = `
-    <span class="operations-status-pill">${escapeHtml(label)}</span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="muted">${escapeHtml(detail)}</span>
-  `;
+function summarizePendingQueueHealth(rows = []) {
+  const pendingRows = rows.filter((row) => (row.status || "").toLowerCase() === "pending");
+  let filteredStaged = 0;
+  let degradedStaged = 0;
+  pendingRows.forEach((row) => {
+    const sig = row?.signal || {};
+    if (Object.keys(sig).length && !isScanSignalStageable(sig)) filteredStaged += 1;
+    const dq = safeText(sig._data_quality || sig.data_quality || "").toLowerCase();
+    if (dq && dq !== "ok") degradedStaged += 1;
+  });
+  return { filteredStaged, degradedStaged };
+}
+
+function pendingDataTone(degradedStaged, statusState) {
+  if (statusState === "error") return "bad";
+  if (degradedStaged > 0) return "warn";
+  return "success";
+}
+
+function paintPendingSnapshot(statusState, opts = {}) {
+  const {
+    pendingN = 0,
+    blockers = 0,
+    degradedStaged = 0,
+    dataLabel = "ok",
+    rows = [],
+    title = "",
+    detail = "",
+    hint = "Queue path: scan stage → approval → execution",
+  } = opts;
+  syncPendingSectionState(statusState);
+  const avgReliability = averageSignalMetric(rows, (sig) => getReliabilityScore(sig));
+  const avgExecution = averageSignalMetric(rows, (sig) => getExecutionScore(sig));
+  renderOperationsPanelSnapshot("pendingSnapshot", "pendingSection", statusState, {
+    hint,
+    kpis: [
+      {
+        label: "QUEUE",
+        sub: "pending approvals",
+        value: pendingN,
+        tone: statusState === "empty" ? "neutral" : statusState === "partial" ? "warn" : "success",
+      },
+      {
+        label: "BLOCKERS",
+        sub: "filtered or high-risk",
+        value: blockers,
+        tone: blockers > 0 ? "warn" : "success",
+      },
+      {
+        label: "DATA",
+        sub: "quality state",
+        value: dataLabel,
+        tone: pendingDataTone(degradedStaged, statusState),
+      },
+    ],
+    meters: {
+      reliability: avgReliability,
+      execution: avgExecution,
+    },
+    lines: [title, detail].filter(Boolean),
+  });
 }
 
 function getPendingRiskProfile(row) {
@@ -167,13 +229,20 @@ export async function refreshPendingBoard(deps = {}) {
   state.pendingSort = sort;
   const board = document.getElementById("pendingBoard");
   if (board) {
+    board.dataset.state = "loading";
     board.innerHTML = `<div class="task-empty muted">Loading pending trades...</div>`;
   }
-  setPendingStatusStrip(
+  updateKanbanLaneSummaries({ pendingState: "loading" });
+  setOperationsStatusStrip(
+    "pendingStatusStrip",
     "loading",
     "Pending queue loading.",
     "Counts remain unavailable until /api/pending-trades answers.",
   );
+  paintPendingSnapshot("loading", {
+    title: "Pending queue loading.",
+    detail: "Counts remain unavailable until /api/pending-trades answers.",
+  });
   const query = new URLSearchParams({ status: filter, sort });
   const pendingOnlyQuery = new URLSearchParams({ status: "pending", sort });
   const [out, pendingOnlyOut] = await Promise.all([
@@ -193,11 +262,18 @@ export async function refreshPendingBoard(deps = {}) {
     const pcEl = document.getElementById("pendingCount");
     if (pcEl) markUnavailable(pcEl, msg || "fetch failed");
     state.lastPendingCount = null;
-    setPendingStatusStrip(
+    setOperationsStatusStrip(
+      "pendingStatusStrip",
       "error",
       "Pending queue unavailable.",
       safeText(msg || "Fetch failed. Retry keeps the same filter and sort."),
     );
+    paintPendingSnapshot("error", {
+      dataLabel: "Unavailable",
+      title: "Pending queue unavailable.",
+      detail: safeText(msg || "Fetch failed. Retry keeps the same filter and sort."),
+    });
+    updateKanbanLaneSummaries({ pendingState: "error", pendingError: safeText(msg || "Queue unavailable.") });
     if (typeof updateHeroInfographic === "function") updateHeroInfographic();
     updateActionCenter({ title: "Pending queue unavailable", message: msg, severity: "error" });
     return;
@@ -226,14 +302,28 @@ export async function refreshPendingBoard(deps = {}) {
 
   board.innerHTML = "";
   if (!rows.length) {
+    board.dataset.state = "empty";
     board.innerHTML = `<div class="task-empty muted">No trades match current filter.</div>`;
-    setPendingStatusStrip(
+    setOperationsStatusStrip(
+      "pendingStatusStrip",
       "empty",
       pendingN === 0 ? "No staged trades." : "No trades match this filter.",
       pendingN === 0
         ? "Stage from Scan results or add a manual trade when needed."
         : `${pendingN} pending trade(s) exist outside the current filter.`,
     );
+    paintPendingSnapshot("empty", {
+      pendingN,
+      blockers: 0,
+      degradedStaged: 0,
+      dataLabel: pendingN === 0 ? "Clear" : "Filtered",
+      title: pendingN === 0 ? "No staged trades." : "No trades match this filter.",
+      detail:
+        pendingN === 0
+          ? "Stage from Scan results or add a manual trade when needed."
+          : `${pendingN} pending trade(s) exist outside the current filter.`,
+    });
+    updateKanbanLaneSummaries({ pendingState: "empty" });
     return;
   }
 
@@ -247,14 +337,39 @@ export async function refreshPendingBoard(deps = {}) {
   );
   const highRisk = safeNum(riskCounts.high, 0);
   const mediumRisk = safeNum(riskCounts.medium, 0);
-  const statusState = highRisk > 0 ? "partial" : "success";
-  setPendingStatusStrip(
+  const { filteredStaged, degradedStaged } = summarizePendingQueueHealth(rows);
+  const needsReview = highRisk > 0 || filteredStaged > 0 || degradedStaged > 0;
+  const statusState = needsReview ? "partial" : "success";
+  const detailParts = [];
+  if (highRisk > 0) detailParts.push(`${highRisk} require extra review`);
+  if (mediumRisk > 0) detailParts.push(`${mediumRisk} moderate-confidence setup(s)`);
+  if (filteredStaged > 0) {
+    detailParts.push(
+      `${filteredStaged} filtered at scan time (approve blocked until re-staged)`,
+    );
+  }
+  if (degradedStaged > 0) detailParts.push(`${degradedStaged} with degraded data quality`);
+  setOperationsStatusStrip(
+    "pendingStatusStrip",
     statusState,
     `${pendingN} pending approval${pendingN === 1 ? "" : "s"}.`,
-    highRisk > 0
-      ? `${highRisk} require extra review; ${mediumRisk} moderate-confidence setup(s).`
-      : "Approve/reject actions are visible on each staged trade.",
+    detailParts.length ? detailParts.join("; ") + "." : "Provenance and data quality visible on each card.",
   );
+  const blockerCount = filteredStaged + highRisk;
+  const dataLabel =
+    degradedStaged > 0 ? `${degradedStaged} degraded` : rows.length ? "ok" : "Clear";
+  paintPendingSnapshot(statusState, {
+    pendingN,
+    blockers: blockerCount,
+    degradedStaged,
+    dataLabel,
+    rows: rows.map((row) => row.signal || {}),
+    title: `${pendingN} pending approval${pendingN === 1 ? "" : "s"}.`,
+    detail: detailParts.length
+      ? detailParts.join("; ") + "."
+      : "Provenance and data quality visible on each card.",
+  });
+  board.dataset.state = statusState;
 
   const groups = rows.reduce((acc, row) => {
     const key = getSectorKeyFromTrade(row);
@@ -274,12 +389,16 @@ export async function refreshPendingBoard(deps = {}) {
       const score = meterFromScore(composite);
       const reliabilityMeter = meterFromReliability(reliabilityValue);
       const conviction = meterFromConviction(convictionValue);
+      const sig = row?.signal || {};
       const liveBlocked =
         state.publicConfig.saas_mode &&
         (!state.accountMe || !state.accountMe.live_execution_enabled);
+      const stageable = !Object.keys(sig).length || isScanSignalStageable(sig);
       const approveTitle = liveBlocked
         ? "Live trading is off — enable in Strategy Presets after reviewing risk."
-        : "";
+        : !stageable
+          ? "Filtered at scan time — re-stage from a tradeable scan row before approving."
+          : "";
       const card = document.createElement("article");
       const risk = getPendingRiskProfile(row);
       const sector = safeText(row?.signal?.sector_etf || "").trim();
@@ -300,6 +419,7 @@ export async function refreshPendingBoard(deps = {}) {
           </div>
         </div>
         <p class="pending-thesis-line">${renderPendingThesis(row)}</p>
+        ${renderSignalTrustRow(sig)}
         <div class="task-meters">
           <div>
             <span class="meter-label">Score ${safeNum(composite, 0).toFixed(0)}</span>
@@ -318,7 +438,7 @@ export async function refreshPendingBoard(deps = {}) {
         <div class="context-mini">${renderTimeline(row)}<br/>${renderPendingContext(row)}</div>
         <div class="task-actions">
           <button class="btn small secondary" data-quick="${row.id}">Quick View</button>
-          <button class="btn small approve-btn" data-approve="${row.id}" title="${escapeHtml(approveTitle)}" ${row.status !== "pending" || liveBlocked ? "disabled" : ""}>Approve</button>
+          <button class="btn small approve-btn" data-approve="${row.id}" title="${escapeHtml(approveTitle)}" ${row.status !== "pending" || liveBlocked || !stageable ? "disabled" : ""}>Approve</button>
           <button class="btn small reject-btn" data-reject="${row.id}" ${row.status !== "pending" ? "disabled" : ""}>Reject</button>
           <button class="btn small bad" data-delete="${row.id}" title="Permanently delete this trade">Delete</button>
         </div>
@@ -408,4 +528,5 @@ export async function refreshPendingBoard(deps = {}) {
   if (typeof deps.updateTodaySummaryLanding === "function") {
     deps.updateTodaySummaryLanding();
   }
+  updateKanbanLaneSummaries({ pendingState: "success" });
 }

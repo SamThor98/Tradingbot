@@ -142,10 +142,13 @@ import {
   renderReportVisual,
   applyReportViewMode,
   runReport,
+} from "./panels/report.js";
+import {
   runResearchDossier,
   downloadResearchDossier,
   downloadResearchFundamentalWorkbook,
-} from "./panels/report.js";
+  loadResearchDossierPreflight,
+} from "./panels/dossier.js";
 import {
   PRESET_SETTING_LABELS,
   presetSettingLabel,
@@ -188,6 +191,18 @@ import {
   sendStrategyChat as _sendStrategyChatPanel,
 } from "./panels/strategyChat.js";
 import { renderValidationRecentSteps } from "./modules/validationView.js";
+import { setSystemStatusStrip } from "./modules/systemStatus.js";
+import { setOperationsStatusStrip } from "./modules/operationsStatus.js";
+import { wireScanRankWhyTooltips } from "./modules/floatTooltip.js";
+import { renderSignalTrustRow } from "./modules/signalTrustRow.js";
+import { updateKanbanLaneSummaries } from "./modules/kanbanLaneSummaries.js";
+import { updateWorkflowKanban } from "./modules/workflowKanban.js";
+import {
+  syncScanDetailBriefState,
+  syncScanDetailPanelState,
+  syncScanSectionState,
+} from "./modules/operationsPanelState.js";
+import { renderOperationsPanelSnapshot } from "./modules/operationsPanelSnapshot.js";
 import {
   setHealthRibbonUnavailable,
   setHealthRibbonTiles,
@@ -239,12 +254,9 @@ import {
   renderDecisionDashboardLoading,
   renderDecisionDashboardUnavailable,
 } from "./panels/decisionDashboard.js";
-import { buildForecastSummary, buildForecastUnavailable } from "./panels/forecast.js";
-import { initKronosWorkspace, primeKronosWorkspace } from "./panels/kronosWorkspace.js";
 import { initCockpitPanel, primeCockpitPanel } from "./panels/cockpit.js";
 import { createOperationsController } from "./screens/operations.js";
 import { createResearchController } from "./screens/research.js";
-import { createKronosController } from "./screens/kronos.js";
 import { createCockpitController } from "./screens/cockpit.js";
 import { createDiagnosticsController } from "./screens/diagnostics.js";
 import { createSettingsController } from "./screens/settings.js";
@@ -291,6 +303,7 @@ function handleFunnelStageClick(stageKey) {
       getDisplayMode,
       onFunnelStageClick: handleFunnelStageClick,
       activeFunnelStage: state.scanFunnelFilter,
+      updateKanbanLaneSummaries,
     });
   }
   const nearMissPanel = document.getElementById("nearMissPanel");
@@ -304,6 +317,7 @@ const renderDiagnostics = (diag) => {
     getDisplayMode,
     onFunnelStageClick: handleFunnelStageClick,
     activeFunnelStage: state.scanFunnelFilter,
+    updateKanbanLaneSummaries,
   });
   void refreshScanDeltas();
 };
@@ -334,7 +348,6 @@ let _lastAblationRunStatus = "idle";
 
 const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
 const SCREEN_ALIASES = Object.freeze({
-  kronos: "research",
   cockpit: "research",
   today: "operations",
   system: "diagnostics",
@@ -355,14 +368,6 @@ const SCREEN_CONTEXT = Object.freeze({
     ctaHref: "#quickCheckSection",
     altCtaLabel: "Open backtest",
     altCtaHref: "#backtestSection",
-  },
-  kronos: {
-    title: "Forecast with foundation models.",
-    text: "Project likely price paths for a symbol — for research and thesis checks only, never an order trigger.",
-    ctaLabel: "Run a forecast",
-    ctaHref: "#kronosForecastSection",
-    altCtaLabel: "How it works",
-    altCtaHref: "#kronosAboutSection",
   },
   diagnostics: {
     title: "System",
@@ -409,8 +414,6 @@ const SCREEN_SECTIONS = Object.freeze({
     "backtestSection",
     "reportSectionCard",
     "secCompareSection",
-    "kronosForecastSection",
-    "kronosAboutSection",
     "portfolioSection",
     "performanceSection",
     "cockpitMergedPanel",
@@ -418,7 +421,6 @@ const SCREEN_SECTIONS = Object.freeze({
     "recoverySection",
     "learningSection",
   ],
-  kronos: ["kronosForecastSection", "kronosAboutSection"],
   diagnostics: [
     "systemAlertBanner",
     "systemSummaryLanding",
@@ -639,7 +641,6 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   document.body.classList.remove(
     "ui-screen-operations",
     "ui-screen-research",
-    "ui-screen-kronos",
     "ui-screen-diagnostics",
     "ui-screen-settings",
     "ui-screen-cockpit",
@@ -1061,7 +1062,8 @@ function buildRankWhyText(row = {}) {
   const rank = optionalNum(getRankScore(row));
   const basis = safeText(row.rank_basis || "composite_score");
   const comps = row.score_components || {};
-  const ptsVol = optionalNum(comps.pts_volume ?? row.pts_volume);
+  const ptsVol = optionalNum(row.pts_volume_rank ?? comps.pts_volume ?? row.pts_volume);
+  const volumeRatio = optionalNum(row.volume_ratio);
   const ptsMiro = optionalNum(comps.pts_mirofish ?? row.pts_mirofish);
   const legacyRank = optionalNum(row.rank_score_v1 ?? row.rank_score);
   const rankV2 = optionalNum(row.rank_score_v2);
@@ -1086,7 +1088,10 @@ function buildRankWhyText(row = {}) {
   if (edge !== null) segments.push(`edge ${edge.toFixed(1)}`);
   if (reliability !== null) segments.push(`reliability ${reliability.toFixed(1)}`);
   if (execution !== null) segments.push(`execution ${execution.toFixed(1)}`);
-  if (ptsVol !== null) segments.push(`vol pts ${ptsVol.toFixed(1)}`);
+  if (ptsVol !== null) {
+    const ratioText = volumeRatio !== null ? ` (${volumeRatio.toFixed(2)}x)` : "";
+    segments.push(`vol pts ${ptsVol.toFixed(1)}${ratioText}`);
+  }
   if (ptsMiro !== null && ptsMiro > 0) segments.push(`miro pts ${ptsMiro.toFixed(1)}`);
   if (legacyRank !== null && legacyRank !== rank) segments.push(`v1 ${legacyRank.toFixed(1)}`);
   if (rankV2 !== null) segments.push(`v2 diag ${rankV2.toFixed(1)}`);
@@ -1130,7 +1135,7 @@ function renderRankScoreCell(row = {}) {
   const why = buildRankWhyText(row);
   const title = why ? `${why}${compositeHint}` : `Rank ${shown}${compositeHint}`;
   if (!why && !compositeHint) return shown;
-  return `<span class="scan-rank-cell"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span><span class="scan-rank-why" data-tooltip="${escapeHtml(title)}" aria-label="Why this rank">?</span></span>`;
+  return `<span class="scan-rank-cell"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span><span class="scan-rank-why" data-rank-tip="${escapeHtml(title)}" tabindex="0" role="button" aria-label="Why this rank">?</span></span>`;
 }
 
 function asObject(value) {
@@ -1248,68 +1253,19 @@ function updateTodaySummaryLanding() {
       if (scanHint) scanHint.textContent = "run scan to begin";
     }
   }
-  updateWorkflowStatusStrip();
-}
-
-function setOperationsStatusStrip(id, stateName, title, detail) {
-  const strip = document.getElementById(id);
-  if (!strip) return;
-  strip.dataset.state = stateName;
-  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
-  strip.innerHTML = `
-    <span class="operations-status-pill">${escapeHtml(label)}</span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="muted">${escapeHtml(detail)}</span>
-  `;
-}
-
-function updateWorkflowStatusStrip() {
-  const scanCount = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
-  const pendingCount = Number(state.lastPendingCount);
-  const hasScan = Boolean(state.lastScanAt);
-  const pendingKnown = Number.isFinite(pendingCount);
-  const diag = state.lastScanDiagnostics || {};
-  const dq = safeText(diag.data_quality || (hasScan ? "ok" : "")).toLowerCase();
-  const blocked = safeNum(diag.scan_blocked, 0) > 0;
-  if (blocked || ["failed", "stale", "conflict", "blocked"].includes(dq)) {
-    setOperationsStatusStrip(
-      "workflowStatusStrip",
-      "error",
-      "Workflow blocked.",
-      `Data ${dq || "unavailable"}; resolve scan or market-data issue before approving.`,
-    );
-  } else if (!hasScan) {
-    setOperationsStatusStrip(
-      "workflowStatusStrip",
-      "empty",
-      "No scan this session.",
-      "Run scan, review a setup, then approve staged trades.",
-    );
-  } else if (!pendingKnown || ["degraded", "partial", "unknown", "warning", "warn"].includes(dq)) {
-    setOperationsStatusStrip(
-      "workflowStatusStrip",
-      "partial",
-      "Workflow needs review.",
-      `Data ${dq || "unknown"} · ${scanCount} candidate(s) · pending queue ${pendingKnown ? pendingCount : "unavailable"}.`,
-    );
-  } else {
-    setOperationsStatusStrip(
-      "workflowStatusStrip",
-      scanCount > 0 || pendingCount > 0 ? "success" : "empty",
-      pendingCount > 0 ? `${pendingCount} trade(s) awaiting decision.` : `${scanCount} candidate(s) from last scan.`,
-      pendingCount > 0 ? "Review pending approvals before placing live orders." : "Select a scan row to inspect evidence and stage a trade.",
-    );
-  }
+  updateWorkflowKanban();
 }
 
 function setScanStatusLoading(title, detail) {
   setOperationsStatusStrip("scanStatusStrip", "loading", title, detail);
-  updateWorkflowStatusStrip();
+  syncScanSectionState("loading");
+  updateWorkflowKanban({ forceState: "loading", title: "Scan running.", detail });
 }
 
 function setScanStatusError(title, detail) {
   setOperationsStatusStrip("scanStatusStrip", "error", title, detail);
-  updateWorkflowStatusStrip();
+  syncScanSectionState("error");
+  updateWorkflowKanban();
 }
 
 function updateHeroInfographic() {
@@ -1376,17 +1332,24 @@ function updateHeroInfographic() {
   updateTodaySummaryLanding();
 }
 
-function prefillResearchTicker(ticker) {
+function prefillResearchTicker(ticker, { overwrite = false } = {}) {
   const sym = safeText(ticker || "").trim().toUpperCase();
   if (!sym) return;
+  const setTickerValue = (id) => {
+    const el = document.getElementById(id);
+    if (el && (overwrite || !el.value.trim())) el.value = sym;
+  };
   const ti = document.getElementById("tickerInput");
   if (ti) ti.value = sym;
-  const reportInput = document.getElementById("reportTickerInput");
-  if (reportInput) reportInput.value = sym;
-  const secA = document.getElementById("secCompareTickerA");
-  if (secA && !secA.value.trim()) secA.value = sym;
-  const kronosInput = document.getElementById("kronosTickerInput");
-  if (kronosInput && !kronosInput.value.trim()) kronosInput.value = sym;
+  setTickerValue("reportTickerInput");
+  setTickerValue("secCompareTickerA");
+  const btUniverse = document.getElementById("btUniverse");
+  const btTickers = document.getElementById("btTickers");
+  if (btUniverse && (overwrite || !btTickers?.value.trim())) {
+    btUniverse.value = "tickers";
+    syncBtUniverseRow();
+  }
+  if (btTickers && (overwrite || !btTickers.value.trim())) btTickers.value = sym;
   updateResearchSummaryLanding();
 }
 
@@ -1671,9 +1634,7 @@ let _scanDetailChart = null;
 let _scanDetailResizeObserver = null;
 let _scanDetailSignal = null;
 let _scanDetailChartTicker = null;
-let _scanDetailForecastSeries = null;
 let _scanDetailOverlayDispose = null;
-let _scanDetailForecastBtnBound = false;
 
 function syncScanDetailStageButton(signal) {
   const btn = document.getElementById("scanDetailStageBtn");
@@ -1683,7 +1644,7 @@ function syncScanDetailStageButton(signal) {
   if (!ticker) {
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Stage selected trade";
+      btn.textContent = "Add to approval queue";
       btn.title = "Select a candidate first.";
     }
     if (researchBtn) {
@@ -1700,10 +1661,10 @@ function syncScanDetailStageButton(signal) {
   if (!btn) return;
   const stageable = isScanSignalStageable(sig);
   btn.disabled = !stageable;
-  btn.textContent = stageable ? `Stage ${ticker}` : `${ticker} filtered`;
+  btn.textContent = stageable ? `Add ${ticker} to queue` : `${ticker} can't queue yet`;
   btn.title = stageable
-    ? `Stage ${ticker} into pending approvals.`
-    : "Filtered candidates cannot be staged. Adjust gates or scan options to include this setup.";
+    ? "Send to Pending approvals for review — not a live order yet."
+    : "This setup did not pass scan filters. Pick a tradeable row or adjust gates.";
 }
 
 function renderScanDetailChartMessage(message) {
@@ -1901,15 +1862,20 @@ function renderScanDetailBrief(row, brief) {
 async function loadScanDetailBrief(row) {
   if (!row || !row.ticker) {
     renderScanDetailBrief(null, null);
+    syncScanDetailBriefState("empty");
     return;
   }
+  syncScanDetailBriefState("loading");
   renderScanDetailBrief(row, { setup_summary: "Loading decision brief..." });
   const out = await api.get(`/api/decision-card/${encodeURIComponent(row.ticker)}`);
   if (!out.ok) {
     renderScanDetailBrief(row, null);
+    syncScanDetailBriefState("error");
     return;
   }
   renderScanDetailBrief(row, out.data?.brief || null);
+  const stageable = isScanSignalStageable(row);
+  syncScanDetailBriefState(stageable ? "success" : "partial");
 }
 
 function getScanDetailChartWidth(container) {
@@ -1948,9 +1914,7 @@ async function renderScanDetailChart(ticker) {
     }
     _scanDetailChart = null;
   }
-  _scanDetailForecastSeries = null;
   _scanDetailChartTicker = null;
-  resetScanDetailForecastUi(null);
   if (!ticker) {
     renderScanDetailChartMessage("Select a ticker to load chart data.");
     return;
@@ -1984,7 +1948,6 @@ async function renderScanDetailChart(ticker) {
   candleSeries.setData(candles);
   chart.timeScale().fitContent();
   _scanDetailChart = chart;
-  _scanDetailForecastSeries = null;
   _scanDetailChartTicker = ticker;
   const signal = _scanDetailSignal && safeText(_scanDetailSignal.ticker || _scanDetailSignal.symbol).toUpperCase() === safeText(ticker).toUpperCase()
     ? _scanDetailSignal
@@ -2000,77 +1963,6 @@ async function renderScanDetailChart(ticker) {
     if (_scanDetailChart) _scanDetailChart.applyOptions({ width: getScanDetailChartWidth(container) });
   });
   _scanDetailResizeObserver.observe(container);
-  resetScanDetailForecastUi(ticker);
-}
-
-function resetScanDetailForecastUi(ticker) {
-  const summary = document.getElementById("scanDetailForecast");
-  if (summary) summary.innerHTML = "";
-  const btn = document.getElementById("scanDetailForecastBtn");
-  if (!btn) return;
-  btn.disabled = !ticker;
-  btn.textContent = "Run forecast";
-  if (!_scanDetailForecastBtnBound) {
-    btn.addEventListener("click", () => loadScanDetailForecast());
-    _scanDetailForecastBtnBound = true;
-  }
-}
-
-async function loadScanDetailForecast() {
-  const ticker = _scanDetailChartTicker;
-  const summary = document.getElementById("scanDetailForecast");
-  const btn = document.getElementById("scanDetailForecastBtn");
-  if (!ticker) return;
-  if (summary) summary.innerHTML = '<p class="muted">Loading forecast…</p>';
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Forecasting…";
-  }
-  try {
-    const out = await api.get(`/api/forecast/${encodeURIComponent(ticker)}`);
-    if (!out.ok || !out.data) {
-      if (summary) summary.innerHTML = buildForecastUnavailable(out.error || "Forecast unavailable.");
-      return;
-    }
-    const data = out.data;
-    if (summary) summary.innerHTML = buildForecastSummary(data);
-    // Overlay predicted candles onto the existing chart, if any.
-    const candles = Array.isArray(data.forecast_candles) ? data.forecast_candles : [];
-    if (_scanDetailChart && typeof LightweightCharts !== "undefined" && candles.length) {
-      try {
-        if (_scanDetailForecastSeries) {
-          _scanDetailChart.removeSeries(_scanDetailForecastSeries);
-          _scanDetailForecastSeries = null;
-        }
-        const series = _scanDetailChart.addCandlestickSeries({
-          upColor: "rgba(46,110,170,0.55)",
-          downColor: "rgba(150,90,170,0.55)",
-          borderUpColor: "#2e6eaa",
-          borderDownColor: "#965aaa",
-          wickUpColor: "#2e6eaa",
-          wickDownColor: "#965aaa",
-        });
-        series.setData(candles.map((c) => ({
-          time: c.time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        })));
-        _scanDetailForecastSeries = series;
-        _scanDetailChart.timeScale().fitContent();
-      } catch {
-        // overlay is best-effort; summary still renders
-      }
-    }
-  } catch (err) {
-    if (summary) summary.innerHTML = buildForecastUnavailable(`Forecast error: ${err}`);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "Run forecast";
-    }
-  }
 }
 
 async function renderScanDetail(sig) {
@@ -2122,6 +2014,17 @@ async function renderScanDetail(sig) {
       "No ticker selected.",
       "Pick a candidate row to review evidence before staging.",
     );
+    syncScanDetailPanelState("empty");
+    syncScanDetailBriefState("empty");
+    renderOperationsPanelSnapshot("scanDetailSnapshot", "scanDetailPanel", "empty", {
+      hint: "Detail path: select a scan row → review brief → stage",
+      kpis: [
+        { label: "SCORE", sub: "composite rank", value: "—", tone: "neutral" },
+        { label: "RELIABILITY", sub: "evidence quality", value: "—", tone: "neutral" },
+        { label: "DATA", sub: "stageable", value: "Clear", tone: "neutral" },
+      ],
+      lines: ["No ticker selected.", "Pick a candidate row to review evidence before staging."],
+    });
   } else {
     const stageable = isScanSignalStageable(row);
     const missingEvidence = [
@@ -2129,22 +2032,58 @@ async function renderScanDetail(sig) {
       reliability === null ? "reliability" : "",
       row.price == null && row.current_price == null ? "price" : "",
     ].filter(Boolean);
+    const detailState =
+      stageable && missingEvidence.length === 0 ? "success" : "partial";
     setOperationsStatusStrip(
       "scanDetailStatusStrip",
-      stageable && missingEvidence.length === 0 ? "success" : "partial",
+      detailState,
       stageable ? `${ticker} ready for evidence review.` : `${ticker} is filtered or guarded.`,
       missingEvidence.length
         ? `Missing ${missingEvidence.join(", ")}; keep guardrails visible before staging.`
         : `Score ${score === null ? "—" : formatDecimal(score, 1)} · Reliability ${reliabilityLabel} · Execution ${execution === null ? "—" : formatDecimal(execution, 1)}.`,
     );
+    syncScanDetailPanelState(detailState);
+    syncScanDetailBriefState("loading");
+    renderOperationsPanelSnapshot("scanDetailSnapshot", "scanDetailPanel", detailState, {
+      hint: `Reviewing ${ticker} — chart, brief, and staging controls`,
+      kpis: [
+        {
+          label: "SCORE",
+          sub: "composite rank",
+          value: score === null ? "—" : formatDecimal(score, 1),
+          tone: score === null ? "warn" : "success",
+        },
+        {
+          label: "RELIABILITY",
+          sub: "evidence quality",
+          value: reliability === null ? "—" : formatDecimal(reliability, 1),
+          tone: reliability === null ? "warn" : "success",
+        },
+        {
+          label: "DATA",
+          sub: "stageable",
+          value: stageable ? "Ready" : "Filtered",
+          tone: stageable ? "success" : "warn",
+        },
+      ],
+      meters: {
+        reliability: reliability,
+        execution: execution,
+      },
+      lines: [
+        stageable ? `${ticker} ready for evidence review.` : `${ticker} is filtered or guarded.`,
+        missingEvidence.length
+          ? `Missing ${missingEvidence.join(", ")}; keep guardrails visible before staging.`
+          : `Score ${score === null ? "—" : formatDecimal(score, 1)} · Reliability ${reliabilityLabel} · Execution ${execution === null ? "—" : formatDecimal(execution, 1)}.`,
+      ],
+    });
   }
   const trustEl = document.getElementById("scanDetailTrust");
   if (trustEl) {
-    trustEl.innerHTML = ticker
-      ? `${renderTradeableVerdict(row)} ${renderSignalProvenanceChip(row)}`
-      : "";
+    trustEl.innerHTML = ticker ? renderSignalTrustRow(row) : "";
   }
   syncScanDetailStageButton(_scanDetailSignal);
+  updateWorkflowKanban({ selectedTicker: ticker });
   await loadScanDetailBrief(row);
   await renderScanDetailChart(ticker);
 }
@@ -2299,16 +2238,19 @@ function updateRankExplainModeHelperText() {
 // different one.
 
 const SCAN_SORT_DEFAULT_DIRECTION = {
-  ticker: "asc",
-  status: "asc",
+  ticker: "desc",
+  status: "desc",
+  source: "desc",
   flagged_days: "desc",
-  strategy: "asc",
+  strategy: "desc",
   price: "desc",
   score: "desc",
   p_up_10d: "desc",
   confidence: "desc",
   conviction: "desc",
-  sector: "asc",
+  sector: "desc",
+  reason: "desc",
+  actions: "desc",
 };
 
 // Confidence is a label, not a number — give each bucket a numeric rank so
@@ -2324,14 +2266,29 @@ const CONFIDENCE_RANK = {
 // Status pill order: keep the actionable "kept" rows on top by default, with
 // trimmed/filtered rows beneath in a stable order.
 const SCAN_STATUS_RANK = {
-  kept: 0,
-  trimmed_top_n: 1,
-  filtered_meta_policy: 2,
-  filtered_ensemble: 3,
-  filtered_self_study: 4,
-  filtered_event_risk: 5,
-  filtered_quality_gates: 6,
+  kept: 7,
+  trimmed_top_n: 6,
+  filtered_meta_policy: 5,
+  filtered_ensemble: 4,
+  filtered_self_study: 3,
+  filtered_event_risk: 2,
+  filtered_quality_gates: 1,
 };
+
+function getScanSourceRank(row = {}) {
+  if (row.data_provider_primary === true) return 4;
+  const provider = safeText(row.data_provider || row.provider || row.source || "").toLowerCase();
+  if (provider === "schwab") return 3;
+  if (row.used_fallback_data === true || provider) return 2;
+  return 0;
+}
+
+function getScanReasonText(rawSig = {}) {
+  const reasons = Array.isArray(rawSig?._filter_reasons) ? rawSig._filter_reasons : [];
+  if (reasons.length) return formatFilterReasons(reasons).join("; ");
+  const status = safeText(rawSig?._filter_status || "kept");
+  return status === "kept" ? "" : formatNearMissSummary(status, reasons);
+}
 
 function getScanSortValue(rawSig, field) {
   // Returns either a finite Number (for numeric sort) or a lowercase string
@@ -2347,8 +2304,10 @@ function getScanSortValue(rawSig, field) {
     case "status": {
       const status = safeText(rawSig._filter_status || "kept").toLowerCase();
       const rank = SCAN_STATUS_RANK[status];
-      return Number.isFinite(rank) ? rank : 99;
+      return Number.isFinite(rank) ? rank : 0;
     }
+    case "source":
+      return getScanSourceRank(row);
     case "flagged_days":
       return optionalNum(row.flagged_days ?? row.days_flagged);
     case "strategy":
@@ -2373,6 +2332,10 @@ function getScanSortValue(rawSig, field) {
       return getConvictionScore(row);
     case "sector":
       return safeText(row.sector_etf || "").toUpperCase() || null;
+    case "reason":
+      return safeText(getScanReasonText(rawSig)).toLowerCase() || null;
+    case "actions":
+      return isScanSignalStageable(row) ? 1 : 0;
     default:
       return null;
   }
@@ -2462,18 +2425,7 @@ function setScanSortField(field) {
   const current = state.scanSort || { field: null, dir: "desc" };
   let nextDir;
   if (current.field === field) {
-    // Toggle direction; allow a third click to clear back to backend order
-    // so power users can recover the natural ranking without reloading.
-    if (current.dir === "asc") {
-      nextDir = "desc";
-    } else if (current.dir === "desc") {
-      state.scanSort = { field: null, dir: "desc" };
-      const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
-      renderScanRows(Array.isArray(rows) ? rows : []);
-      return;
-    } else {
-      nextDir = SCAN_SORT_DEFAULT_DIRECTION[field] || "desc";
-    }
+    nextDir = current.dir === "desc" ? "asc" : "desc";
   } else {
     nextDir = SCAN_SORT_DEFAULT_DIRECTION[field] || "desc";
   }
@@ -2624,13 +2576,6 @@ function renderScanRows(signalsInput = []) {
             <button type="button" class="btn small secondary" data-near-miss-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
             <button type="button" class="btn small secondary" disabled title="Near-miss candidates cannot be staged in this mode.">Stage</button>
             <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
-            <details class="scan-actions-menu">
-              <summary class="btn small secondary">More</summary>
-              <div class="scan-actions-menu-items">
-                <button type="button" class="btn small secondary" data-near-miss-view="${idx}">Chart</button>
-                <button type="button" class="btn small secondary" data-scan-brief="${idx}">Brief</button>
-              </div>
-            </details>
           </td>
         `;
         nearMissBody.appendChild(tr);
@@ -2719,14 +2664,6 @@ function renderScanRows(signalsInput = []) {
         <button type="button" class="btn small secondary" data-scan-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
         ${stageBtn}
         <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
-        <details class="scan-actions-menu">
-          <summary class="btn small secondary">More</summary>
-          <div class="scan-actions-menu-items">
-            <button type="button" class="btn small secondary" data-scan-view="${idx}">Chart</button>
-            ${isKept ? `<button type="button" class="btn small secondary" data-idx="${idx}">Stage</button>` : ""}
-            <button type="button" class="btn small secondary" data-scan-brief="${idx}">Brief</button>
-          </div>
-        </details>
       </td>
     `;
     body.appendChild(tr);
@@ -2874,6 +2811,7 @@ function renderScanRows(signalsInput = []) {
       }
     });
   });
+  wireScanRankWhyTooltips(body);
   updateHeroInfographic();
 }
 
@@ -3511,6 +3449,12 @@ async function refreshStatus() {
     ].forEach((id) => markUnavailable(document.getElementById(id), statusUiError));
     // Reset ribbon to honest unknown.
     setHealthRibbonUnavailable(statusUiError);
+    setSystemStatusStrip(
+      "statusDetailsStatusStrip",
+      "error",
+      "Detailed status unavailable.",
+      statusUiError,
+    );
     updateActionCenter({ title: "Status unavailable", message: statusUiError, severity: "error" });
     return;
   }
@@ -3753,6 +3697,18 @@ async function refreshStatus() {
   });
   setHealthRibbonTiles(authState, quoteOk, errRate, validation);
   renderHealthRibbonSummary({ authState, quoteOk, deepReachable: deepRes.ok, lastScan: status?.last_scan });
+  const statusState =
+    authState === "connected" && quoteOk && errRate < 2.0
+      ? "success"
+      : authState === "disconnected" || !deepRes.ok
+        ? "error"
+        : "partial";
+  setSystemStatusStrip(
+    "statusDetailsStatusStrip",
+    statusState,
+    "Detailed system status loaded.",
+    `Auth ${authState} · quotes ${quoteOk ? "healthy" : "degraded"} · API errors ${errRate.toFixed(1)}%.`,
+  );
   updateSystemSummaryLanding();
   refreshSystemAlertBanner({ authState, quoteOk, errRate });
   // Mark the ribbon container as success now that it has rendered real data.
@@ -3830,13 +3786,10 @@ function applyEntryTimingExperimentPreflight(preflight) {
 }
 
 async function refreshDecisionDashboard() {
-  const card = document.getElementById("decisionDashboardCard");
   const freshEl = document.getElementById("decisionDashboardFresh");
-  if (card) card.setAttribute("data-async-state", "loading");
   renderDecisionDashboardLoading();
   const out = await api.get("/api/decision-dashboard");
   if (!out.ok) {
-    if (card) card.setAttribute("data-async-state", "error");
     const msg = safeText(out.user_message || out.error || "Decision dashboard unavailable.");
     renderDecisionDashboardUnavailable(msg);
     [
@@ -3877,8 +3830,7 @@ async function refreshDecisionDashboard() {
     });
     return;
   }
-  if (card) card.setAttribute("data-async-state", "success");
-  // Clear any prior unavailable styling before the panel paints.
+  state.lastDecisionDashboardAt = new Date().toISOString();
   [
     "decisionReliabilityState",
     "decisionPromotionState",
@@ -3897,7 +3849,6 @@ async function refreshDecisionDashboard() {
     "decisionAblationLift",
     "decisionAblationSummary",
   ].forEach((id) => clearUnavailable(document.getElementById(id)));
-  state.lastDecisionDashboardAt = new Date().toISOString();
   renderDecisionDashboard(out.data || {});
   applyEntryTimingExperimentPreflight(out.data?.scan_preflight || null);
   applyFreshness(freshEl, {
@@ -4692,7 +4643,7 @@ function openQueueScanDialog(sig) {
   const t = sig.ticker || sig.symbol || "?";
   if (headline) {
     const px = sig.price ?? sig.current_price;
-    headline.innerHTML = `${escapeHtml(t)} · last ${px != null ? escapeHtml(formatMoney(px)) : "—"}`;
+    headline.textContent = `${t} · last price ${px != null ? formatMoney(px) : "—"}`;
   }
   if (qty) qty.value = "";
   if (note) note.value = "Queued from scan table";
@@ -4724,18 +4675,18 @@ async function loadQueueScanChecklist(sig) {
   const prov = renderSignalProvenanceChip(sig);
   const stageable = isScanSignalStageable(sig);
   const items = [
-    { ok: !sig.used_fallback_data, label: "Primary data provider" },
-    { ok: stageable, label: "Signal passed all gates" },
-    { ok: !blocked, label: "Pre-trade checklist clear" },
+    { ok: !sig.used_fallback_data, label: "Using primary market data (not a fallback feed)" },
+    { ok: stageable, label: "Passed current scan filters" },
+    { ok: !blocked, label: "Pre-trade safety checklist is clear" },
     {
       ok: safeText((sig.advisory || {}).confidence_bucket || "").toLowerCase() !== "low",
-      label: "Advisory confidence acceptable",
+      label: "Advisory confidence is not low",
     },
-    { ok: true, label: `Data lineage: ${prov.replace(/<[^>]+>/g, "")}` },
+    { ok: true, label: `Data source: ${prov.replace(/<[^>]+>/g, "")}` },
   ];
   host.innerHTML = `
     <div class="queue-scan-checklist ${blocked ? "queue-scan-checklist--blocked" : ""}">
-      <strong>Pre-stage checklist</strong>
+      <strong>Before you queue</strong>
       <ul>${items
         .map(
           (it) =>
@@ -4744,7 +4695,7 @@ async function loadQueueScanChecklist(sig) {
         .join("")}</ul>
       ${
         reasons.length
-          ? `<p class="muted small">Blockers: ${escapeHtml(reasons.slice(0, 3).join("; "))}</p>`
+          ? `<p class="muted small">Issues to fix first: ${escapeHtml(reasons.slice(0, 3).join("; "))}</p>`
           : ""
       }
     </div>
@@ -4753,12 +4704,13 @@ async function loadQueueScanChecklist(sig) {
   if (confirmBtn) {
     const canStage = stageable && !blocked;
     confirmBtn.disabled = !canStage;
+    confirmBtn.textContent = canStage ? "Add to queue" : "Can't queue yet";
     if (!stageable) {
-      confirmBtn.title = "Filtered candidates cannot be staged in this scan mode.";
+      confirmBtn.title = "This candidate did not pass scan filters.";
     } else if (blocked) {
-      confirmBtn.title = "Resolve checklist blockers before staging";
+      confirmBtn.title = "Fix the checklist issues above before queuing.";
     } else {
-      confirmBtn.title = "";
+      confirmBtn.title = "Add to Pending approvals for review.";
     }
   }
 }
@@ -4815,6 +4767,7 @@ async function confirmQueueScanDialog() {
       source: "queue_scan_dialog",
       ticker: safeText(payload.ticker),
     });
+    prefillResearchTicker(payload.ticker, { overwrite: true });
     updateActionCenter({ title: "Staged for approval", message: `${payload.ticker} added to pending queue.`, severity: "success" });
     await refreshPending();
     closeQueueScanDialog();
@@ -4857,6 +4810,7 @@ async function submitManualPendingTrade() {
       source: "manual_pending_trade",
       ticker: safeText(ticker),
     });
+    prefillResearchTicker(ticker, { overwrite: true });
     updateActionCenter({ title: "Staged for approval", message: `${ticker} added to pending.`, severity: "success" });
     if (tEl) tEl.value = "";
     if (qEl) qEl.value = "";
@@ -5051,6 +5005,7 @@ function buildScreenControllers() {
     runResearchDossier,
     downloadResearchDossier,
     downloadResearchFundamentalWorkbook,
+    loadResearchDossierPreflight,
     runSecCompare,
     applySecCompareMode,
     resetSecCompareProfileOverride,
@@ -5082,9 +5037,6 @@ function buildScreenControllers() {
     loadProfiles,
     setRankExplainMode,
     renderPresetApplyPreview,
-    // Kronos
-    initKronosWorkspace,
-    primeKronosWorkspace,
     // Cockpit
     initCockpitPanel,
     primeCockpitPanel,
@@ -5097,7 +5049,6 @@ function buildScreenControllers() {
     operations: createOperationsController(ctx),
     settings: createSettingsController(ctx),
     diagnostics: createDiagnosticsController(ctx),
-    kronos: createKronosController(ctx),
     cockpit: createCockpitController(ctx),
   };
 }

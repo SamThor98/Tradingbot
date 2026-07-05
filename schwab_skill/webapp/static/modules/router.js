@@ -54,8 +54,6 @@ export const SECTION_ALIASES = Object.freeze({
   sectors: "sectorsSection",
   movers: "moversSection",
   research: "researchWorkspaceIntro",
-  kronos: "kronosWorkspaceIntro",
-  forecast: "kronosForecastSection",
   cockpit: "cockpitWorkspaceIntro",
   sec: "secCompareSection",
   seccompare: "secCompareSection",

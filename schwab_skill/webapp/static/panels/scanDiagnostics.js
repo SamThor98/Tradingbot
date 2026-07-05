@@ -12,6 +12,13 @@ import { state } from "../modules/state.js";
 import { safeText, safeNum, escapeHtml } from "../modules/format.js";
 import { statusClass, DIAG_LABELS } from "../modules/logger.js";
 import { formatGateModeLabel } from "../modules/filterReasons.js";
+import { setOperationsStatusStrip } from "../modules/operationsStatus.js";
+import { syncScanSectionState } from "../modules/operationsPanelState.js";
+import {
+  averageSignalMetric,
+  renderOperationsPanelSnapshot,
+} from "../modules/operationsPanelSnapshot.js";
+import { getExecutionScore, getReliabilityScore } from "../modules/signalScores.js";
 
 export function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
@@ -234,15 +241,8 @@ function dataQualityChipClass(value) {
 }
 
 function setScanStatusStrip(stateName, title, detail) {
-  const strip = document.getElementById("scanStatusStrip");
-  if (!strip) return;
-  strip.dataset.state = stateName;
-  const label = stateName.charAt(0).toUpperCase() + stateName.slice(1);
-  strip.innerHTML = `
-    <span class="operations-status-pill">${escapeHtml(label)}</span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="muted">${escapeHtml(detail)}</span>
-  `;
+  setOperationsStatusStrip("scanStatusStrip", stateName, title, detail);
+  syncScanSectionState(stateName);
 }
 
 function formatDiagnosticValue(value) {
@@ -502,6 +502,21 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
  * `deps`: { updateHeroInfographic, getDisplayMode } injected by app.js
  * (same DI pattern as the other panels/*.js modules).
  */
+function humanizeDataQualityReason(code) {
+  const raw = safeText(code).trim();
+  const upper = raw.toUpperCase();
+  if (upper.includes("QUOTE_STALE")) return "Market quotes are stale";
+  if (upper.includes("PROVIDER_FALLBACK")) return "Using fallback market data";
+  return raw.replace(/_/g, " ").toLowerCase();
+}
+
+function formatDataQualityChipValue(dq, reasons) {
+  const rs = Array.isArray(reasons) ? reasons : [];
+  if (!rs.length) return dq;
+  const hint = humanizeDataQualityReason(rs[0]);
+  return hint && hint !== dq.toLowerCase() ? `${dq} · ${hint}` : dq;
+}
+
 export function renderDiagnostics(diag = {}, deps = {}) {
   const { updateHeroInfographic, getDisplayMode, onFunnelStageClick, activeFunnelStage } = deps;
   state.lastScanDiagnostics = diag && typeof diag === "object" ? diag : null;
@@ -518,9 +533,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     appendDiagnosticChip(
       chipWrap,
       "Data quality",
-      rs.length > 0
-        ? `${dq} (${rs.slice(0, 2).map((x) => safeText(x)).join("; ")})`
-        : dq,
+      formatDataQualityChipValue(dq, rs),
       dataQualityChipClass(dq),
     );
   }
@@ -621,6 +634,45 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     blockerCount > 0 ? `${blockerCount} blocker group${blockerCount === 1 ? "" : "s"}` : "no major blockers",
   ];
   setScanStatusStrip(stateName, title, detailParts.join(" · "));
+  const signals = Array.isArray(state.latestSignals) ? state.latestSignals : [];
+  const avgReliability = averageSignalMetric(signals, (sig) => getReliabilityScore(sig));
+  const avgExecution = averageSignalMetric(signals, (sig) => getExecutionScore(sig));
+  const dqTone =
+    dqState === "bad" || scanBlocked
+      ? "bad"
+      : dqState === "warn" || blockerCount > 0
+        ? "warn"
+        : finalCount > 0
+          ? "success"
+          : "neutral";
+  renderOperationsPanelSnapshot("scanSnapshot", "scanSection", stateName, {
+    hint: buildScanIntegrityLine(diag, signals, state.latestShortlistSignals || []),
+    kpis: [
+      {
+        label: "CANDIDATES",
+        sub: "kept signals",
+        value: finalCount,
+        tone: finalCount > 0 ? "success" : stateName === "empty" ? "neutral" : dqTone,
+      },
+      {
+        label: "BLOCKERS",
+        sub: "filter groups",
+        value: blockerCount,
+        tone: blockerCount > 0 ? "warn" : "success",
+      },
+      {
+        label: "DATA",
+        sub: "pipeline quality",
+        value: dq || "ok",
+        tone: dqTone,
+      },
+    ],
+    meters: {
+      reliability: avgReliability,
+      execution: avgExecution,
+    },
+    lines: [title, detailParts.join(" · ")],
+  });
   const headerChip = document.getElementById("scanBlockersChip");
   const headerChipCount = document.getElementById("scanBlockersChipCount");
   if (headerChip && !headerChip.dataset.wired) {
@@ -710,23 +762,15 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     funnelEl.appendChild(node);
   });
 
-  Object.entries(diag)
-    .filter(([key]) => !DIAGNOSTIC_DETAIL_SKIP_KEYS.has(key))
-    .slice(0, 8)
-    .forEach(([key, value]) => {
-      appendDiagnosticChip(
-        chipWrap,
-        DIAG_LABELS[key] || key.replaceAll("_", " "),
-        value,
-        diagnosticChipClass(key, value),
-      );
-    });
   state.lastWatchlistSize = summary.funnel.watchlist;
   state.lastScanAt = new Date().toISOString();
   renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);
   renderScanGateModesToolbar(diag);
   assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
   if (typeof updateHeroInfographic === "function") updateHeroInfographic();
+  if (typeof deps.updateKanbanLaneSummaries === "function") {
+    deps.updateKanbanLaneSummaries();
+  }
   const diagPanel = document.getElementById("scanDiagnosticsPanel");
   const displayMode = typeof getDisplayMode === "function" ? getDisplayMode() : "";
   if (diagPanel && displayMode === "pro") diagPanel.open = true;

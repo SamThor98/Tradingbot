@@ -149,10 +149,7 @@ async function loadLane(bodyId, fetchFn, renderFn, provKey) {
   const out = await fetchFn();
   if (!out.ok) {
     setAsyncState(body, ASYNC_ERROR, {
-      html: `<div class="async-state async-state--error" role="alert">
-        <div>${safeText(out.user_message || out.error || "Unavailable")}</div>
-        <button class="btn small secondary" type="button" data-async-retry>Retry</button>
-      </div>`,
+      message: out.user_message || out.error || "Unavailable",
       onRetry: () => void loadLane(bodyId, fetchFn, renderFn, provKey),
     });
     setProv(provKey, null);
@@ -169,10 +166,7 @@ async function loadMarket() {
   const mkt = await api.get("/api/cockpit/market");
   if (!mkt.ok) {
     setAsyncState(body, ASYNC_ERROR, {
-      html: `<div class="async-state async-state--error" role="alert">
-        <div>${safeText(mkt.user_message || mkt.error || "Unavailable")}</div>
-        <button class="btn small secondary" type="button" data-async-retry>Retry</button>
-      </div>`,
+      message: mkt.user_message || mkt.error || "Unavailable",
       onRetry: () => void loadMarket(),
     });
     setProv("market", null);
