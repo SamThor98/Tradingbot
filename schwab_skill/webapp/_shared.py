@@ -14,6 +14,20 @@ from typing import Any
 # imported without depending on the ORM models (avoids circular imports).
 
 
+def _decode_signal_payload(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
 def trade_to_dict(row: Any) -> dict[str, Any]:
     """Serialise a `PendingTrade` ORM row to a JSON-safe dict.
 
@@ -27,7 +41,7 @@ def trade_to_dict(row: Any) -> dict[str, Any]:
         "price": getattr(row, "price", None),
         "status": getattr(row, "status", None),
         "note": getattr(row, "note", None),
-        "signal": json.loads(getattr(row, "signal_json", None) or "{}"),
+        "signal": _decode_signal_payload(getattr(row, "signal_json", None)),
         "created_at": (
             row.created_at.isoformat()
             if getattr(row, "created_at", None) is not None

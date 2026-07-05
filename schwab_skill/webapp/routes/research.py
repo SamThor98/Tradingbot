@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -16,6 +17,7 @@ from fastapi.responses import Response
 
 from execution import get_account_status
 from finnhub_data import get_finnhub_research_snapshot
+from forensic_accounting import compute_forensic_snapshot
 from full_report import REPORT_SECTION_MAP, generate_full_report, quick_check, report_to_json
 from schwab_auth import DualSchwabAuth
 from sec_filing_compare import (
@@ -26,6 +28,7 @@ from sec_filing_compare import (
 from sector_strength import get_sector_heatmap
 
 from .._shared import build_portfolio_risk_analytics, build_portfolio_summary
+from ..dossier_sources import merge_research_snapshot
 from ..dossier_style import polish_dossier_markdown
 from ..management_dashboard import PROFILE_WEIGHTS, build_management_dashboard
 from ..pdf_export import dossier_to_pdf
@@ -39,6 +42,8 @@ router = APIRouter(tags=["research"], dependencies=[Depends(_require_api_key_if_
 SKILL_DIR = Path(__file__).resolve().parent.parent.parent
 _LOCAL_SEC_MGMT_PROFILE_OVERRIDE: str | None = None
 _LOCAL_SEC_MGMT_OVERRIDE_HISTORY: list[dict[str, Any]] = []
+_DOSSIER_COMPOSE_CACHE: dict[str, dict[str, Any]] = {}
+_DOSSIER_COMPOSE_TTL_SEC = 600.0
 
 
 def _ok(data: Any = None) -> ApiResponse:
@@ -56,6 +61,125 @@ def _err_response(endpoint: str, exc: Exception) -> ApiResponse:
     if raw and raw.lower() not in summary.lower():
         err_out = f"{headline} — {raw[:220]}"
     return ApiResponse(ok=False, error=err_out, data={"recovery": mapped})
+
+
+def _dossier_cache_key(ticker: str, compose_id: str) -> str:
+    symbol = str(ticker or "").strip().upper()
+    return f"{symbol}:{compose_id}"
+
+
+def _cache_dossier(dossier: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(dossier.get("ticker") or "").strip().upper()
+    if not symbol:
+        return dossier
+    compose_id = str(dossier.get("compose_id") or f"{symbol}-{int(time.time() * 1000)}")
+    dossier["compose_id"] = compose_id
+    _DOSSIER_COMPOSE_CACHE[_dossier_cache_key(symbol, compose_id)] = {
+        "stored_at": time.time(),
+        "payload": dict(dossier),
+    }
+    cutoff = time.time() - _DOSSIER_COMPOSE_TTL_SEC
+    stale = [key for key, entry in _DOSSIER_COMPOSE_CACHE.items() if float(entry.get("stored_at", 0.0) or 0.0) < cutoff]
+    for key in stale:
+        _DOSSIER_COMPOSE_CACHE.pop(key, None)
+    return dossier
+
+
+def _cached_dossier(ticker: str, compose_id: str | None) -> dict[str, Any] | None:
+    if not compose_id:
+        return None
+    entry = _DOSSIER_COMPOSE_CACHE.get(_dossier_cache_key(ticker, compose_id))
+    if not entry:
+        return None
+    if (time.time() - float(entry.get("stored_at", 0.0) or 0.0)) > _DOSSIER_COMPOSE_TTL_SEC:
+        return None
+    payload = entry.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _build_dossier_preflight(ticker: str) -> dict[str, Any]:
+    from config import (
+        get_finnhub_api_key,
+        get_finnhub_cache_enabled,
+        get_finnhub_cache_hours,
+        get_finnhub_rate_limit_per_min,
+        is_real_edgar_user_agent,
+    )
+
+    symbol = ticker.upper().strip()
+    sec_cfg = _sec_analysis_settings()
+    finnhub_key = get_finnhub_api_key(SKILL_DIR)
+    edgar_real = is_real_edgar_user_agent(sec_cfg["user_agent"])
+    items: list[dict[str, Any]] = [
+        {
+            "id": "report_stack",
+            "label": "Integrated report stack",
+            "status": "ok",
+            "detail": "Technical, DCF, comps, health, and EDGAR fallbacks are available.",
+        },
+        {
+            "id": "finnhub",
+            "label": "Finnhub research data",
+            "status": "ok" if finnhub_key else "warn",
+            "detail": (
+                f"Configured; cache={'on' if get_finnhub_cache_enabled(SKILL_DIR) else 'off'}, "
+                f"ttl={get_finnhub_cache_hours(SKILL_DIR):.1f}h, rate={get_finnhub_rate_limit_per_min(SKILL_DIR)}/min."
+                if finnhub_key
+                else "FINNHUB_API_KEY is missing; dossier will use report-stack fallbacks and omit analyst/news extras."
+            ),
+        },
+        {
+            "id": "edgar_user_agent",
+            "label": "SEC EDGAR contact",
+            "status": "ok" if edgar_real else "warn",
+            "detail": (
+                "EDGAR_USER_AGENT looks valid."
+                if edgar_real
+                else "EDGAR_USER_AGENT is missing or still a placeholder; SEC filing sections may degrade."
+            ),
+        },
+        {
+            "id": "sec_analysis",
+            "label": "SEC analysis and compare",
+            "status": "ok" if sec_cfg["analysis_enabled"] and sec_cfg["compare_enabled"] else "warn",
+            "detail": (
+                "SEC filing analysis and over-time compare are enabled."
+                if sec_cfg["analysis_enabled"] and sec_cfg["compare_enabled"]
+                else "SEC filing analysis or compare is disabled by config."
+            ),
+        },
+    ]
+    try:
+        auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+        account_status = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+        portfolio_ok = isinstance(account_status, dict)
+        items.append(
+            {
+                "id": "portfolio",
+                "label": "Schwab portfolio context",
+                "status": "ok" if portfolio_ok else "warn",
+                "detail": "Account status returned." if portfolio_ok else "Account status unavailable; portfolio fit will be partial.",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        items.append(
+            {
+                "id": "portfolio",
+                "label": "Schwab portfolio context",
+                "status": "warn",
+                "detail": f"Portfolio check failed: {str(exc)[:160]}",
+            }
+        )
+
+    blocked = [item for item in items if item["status"] == "blocked"]
+    warnings = [item for item in items if item["status"] == "warn"]
+    return {
+        "ticker": symbol,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "status": "blocked" if blocked else ("warn" if warnings else "ok"),
+        "can_generate": True,
+        "items": items,
+    }
 
 
 def _sec_analysis_settings() -> dict[str, Any]:
@@ -512,6 +636,23 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         sector_context = {"ok": False, "error": str(exc)}
         source_metadata.append(_source_entry("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True))
 
+    forensic_snapshot: dict[str, Any]
+    try:
+        forensic_snapshot = compute_forensic_snapshot(symbol, skill_dir=SKILL_DIR)
+        source_metadata.append(
+            _source_entry(
+                "forensic",
+                status="ok" if forensic_snapshot.get("ok") else "degraded",
+                detail="Sloan, Beneish, Altman forensic accounting snapshot"
+                if forensic_snapshot.get("ok")
+                else str(forensic_snapshot.get("data_lineage") or "forensic snapshot unavailable"),
+                fallback_used=not bool(forensic_snapshot.get("ok")),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        forensic_snapshot = {"ok": False, "error": str(exc), "forensic_flags": []}
+        source_metadata.append(_source_entry("forensic", status="degraded", detail=str(exc)[:180], fallback_used=True))
+
     finnhub = get_finnhub_research_snapshot(symbol, skill_dir=SKILL_DIR)
     finnhub_errors = list(finnhub.get("errors") or []) if isinstance(finnhub, dict) else []
     finnhub_status = "ok" if finnhub.get("ok") else ("disabled" if not finnhub.get("enabled") else "degraded")
@@ -532,6 +673,23 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
     if raw_confidence is None:
         raw_confidence = (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))
     confidence_score = max(0.0, min(100.0, raw_confidence))
+    if isinstance(finnhub, dict):
+        finnhub = merge_research_snapshot(finnhub, report_data)
+        merged_sources = finnhub.get("merged_sources") or {}
+        fallback_fields = [
+            key
+            for key, source in (merged_sources.get("metrics") or {}).items()
+            if str(source).startswith("report.")
+        ]
+        if fallback_fields:
+            source_metadata.append(
+                _source_entry(
+                    "report_stack_fallbacks",
+                    status="ok",
+                    detail=f"Filled {len(fallback_fields)} Finnhub metric gaps from report stack.",
+                    fallback_used=False,
+                )
+            )
     catalyst_risk = _pick_catalysts_and_risks(finnhub if isinstance(finnhub, dict) else {})
 
     # Backfill quote/52-week range from the integrated report stack so the
@@ -558,6 +716,31 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         finnhub = dict(finnhub)
         finnhub["quote"] = finnhub_quote
         finnhub["metrics"] = finnhub_metrics
+
+    management_dashboard: dict[str, Any] = {}
+    if sec_compare_data.get("ok"):
+        try:
+            bundled = _attach_management_dashboard(
+                sec_compare_data,
+                mode="ticker_over_time",
+                ticker=symbol,
+                ticker_b="",
+                form_type="10-K",
+                ruthless_mode=False,
+                profile_override="",
+            )
+            management_dashboard = bundled.get("management_dashboard") or {}
+            source_metadata.append(_source_entry("management_integrity", status="ok", detail="SEC compare scorecard"))
+        except Exception as exc:  # noqa: BLE001
+            management_dashboard = {"ok": False, "error": str(exc)}
+            source_metadata.append(
+                _source_entry("management_integrity", status="degraded", detail=str(exc)[:180], fallback_used=True)
+            )
+    else:
+        management_dashboard = {"ok": False, "error": sec_compare_data.get("error") or "SEC compare unavailable"}
+        source_metadata.append(
+            _source_entry("management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True)
+        )
 
     raw_recommendation = (report_v2.get("ic_snapshot") or {}).get("recommendation")
     horizon = (
@@ -605,12 +788,14 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
                 "catalysts": catalyst_risk["catalysts"],
                 "risks": catalyst_risk["risks"],
             },
+            "management_integrity": management_dashboard,
+            "forensic": forensic_snapshot,
         },
         "source_metadata": source_metadata,
         "fallback_notes": [entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")],
         "report_trust": report_trust,
     }
-    return dossier
+    return _cache_dossier(dossier)
 
 
 def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
@@ -666,6 +851,10 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     upcoming = list(snapshot.get("earnings_calendar") or [])
     news_sent = snapshot.get("news_sentiment") or {}
     sec_filings = list(snapshot.get("sec_filings") or [])
+    merged_sources = snapshot.get("merged_sources") or {}
+    metric_sources = merged_sources.get("metrics") or {}
+    management = sections.get("management_integrity") or {}
+    forensic = sections.get("forensic") or {}
 
     sec_summary = str(sec_analyze.get("narrative_summary") or sec_analyze.get("error") or "SEC analysis unavailable.")
     compare_summary = str(sec_compare.get("narrative_summary") or (sec_narr.get("compare") or {}).get("error") or "SEC compare unavailable.")
@@ -735,6 +924,12 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         if not ids:
             return ""
         return " " + "".join(f"[{idx}]" for idx in sorted(set(ids)))
+
+    def _metric_source(key: str) -> str:
+        source = str(metric_sources.get(key) or "finnhub").strip()
+        if source.startswith("report."):
+            return f"{source} fallback"
+        return "Finnhub metrics"
 
     industry_text = profile.get("finnhub_industry") or "Equity Research"
     region_text = profile.get("country") or "Global"
@@ -901,23 +1096,23 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             f"{_cite('finnhub')}"
         ),
         "",
-        "| Fundamental Metric | Value | Commentary |",
-        "|---|---:|---|",
-        f"| Revenue Growth (TTM YoY) | {_pct_finnhub(metrics.get('revenue_growth_ttm_yoy'))} | Top-line momentum, TTM vs prior TTM |",
-        f"| Revenue Growth (5Y CAGR) | {_pct_finnhub(metrics.get('revenue_growth_5y'))} | Long-cycle compounding |",
-        f"| EPS Growth (TTM YoY) | {_pct_finnhub(metrics.get('eps_growth_ttm_yoy'))} | Earnings trajectory check |",
-        f"| EPS Growth (5Y CAGR) | {_pct_finnhub(metrics.get('eps_growth_5y'))} | Earnings power durability |",
-        f"| Gross Margin (TTM) | {_pct_finnhub(metrics.get('gross_margin_ttm'))} | Pricing power and unit economics |",
-        f"| Operating Margin (TTM) | {_pct_finnhub(metrics.get('operating_margin_ttm'))} | Operating efficiency trend |",
-        f"| Net Margin (TTM) | {_pct_finnhub(metrics.get('net_margin_ttm'))} | Bottom-line profitability quality |",
-        f"| Free Cash Flow Margin (TTM) | {_pct_finnhub(metrics.get('fcf_margin_ttm'))} | Cash conversion quality |",
-        f"| ROE / ROA (TTM) | {_pct_finnhub(metrics.get('roe_ttm'))} / {_pct_finnhub(metrics.get('roa_ttm'))} | Capital efficiency read-through |",
-        f"| ROIC (TTM) | {_pct_finnhub(metrics.get('roic_ttm'))} | Return vs cost of capital |",
-        f"| Current Ratio / Quick Ratio | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('quick_ratio_quarterly'))} | Liquidity posture |",
-        f"| Debt / Equity (Q) | {_num(metrics.get('debt_to_equity_quarterly'))} | Leverage profile |",
-        f"| Interest Coverage (TTM) | {_num(metrics.get('interest_coverage_ttm'))} | Solvency cushion |",
-        f"| Dividend Yield (TTM) | {_pct_finnhub(metrics.get('dividend_yield_ttm'))} | Total-return income contribution |",
-        f"| Payout Ratio (TTM) | {_pct_finnhub(metrics.get('payout_ratio_ttm'))} | Dividend coverage |",
+        "| Fundamental Metric | Value | Source | Commentary |",
+        "|---|---:|---|---|",
+        f"| Revenue Growth (TTM YoY) | {_pct_finnhub(metrics.get('revenue_growth_ttm_yoy'))} | {_metric_source('revenue_growth_ttm_yoy')} | Top-line momentum, TTM vs prior TTM |",
+        f"| Revenue Growth (5Y CAGR) | {_pct_finnhub(metrics.get('revenue_growth_5y'))} | {_metric_source('revenue_growth_5y')} | Long-cycle compounding |",
+        f"| EPS Growth (TTM YoY) | {_pct_finnhub(metrics.get('eps_growth_ttm_yoy'))} | {_metric_source('eps_growth_ttm_yoy')} | Earnings trajectory check |",
+        f"| EPS Growth (5Y CAGR) | {_pct_finnhub(metrics.get('eps_growth_5y'))} | {_metric_source('eps_growth_5y')} | Earnings power durability |",
+        f"| Gross Margin (TTM) | {_pct_finnhub(metrics.get('gross_margin_ttm'))} | {_metric_source('gross_margin_ttm')} | Pricing power and unit economics |",
+        f"| Operating Margin (TTM) | {_pct_finnhub(metrics.get('operating_margin_ttm'))} | {_metric_source('operating_margin_ttm')} | Operating efficiency trend |",
+        f"| Net Margin (TTM) | {_pct_finnhub(metrics.get('net_margin_ttm'))} | {_metric_source('net_margin_ttm')} | Bottom-line profitability quality |",
+        f"| Free Cash Flow Margin (TTM) | {_pct_finnhub(metrics.get('fcf_margin_ttm'))} | {_metric_source('fcf_margin_ttm')} | Cash conversion quality |",
+        f"| ROE / ROA (TTM) | {_pct_finnhub(metrics.get('roe_ttm'))} / {_pct_finnhub(metrics.get('roa_ttm'))} | {_metric_source('roe_ttm')} / {_metric_source('roa_ttm')} | Capital efficiency read-through |",
+        f"| ROIC (TTM) | {_pct_finnhub(metrics.get('roic_ttm'))} | {_metric_source('roic_ttm')} | Return vs cost of capital |",
+        f"| Current Ratio / Quick Ratio | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('quick_ratio_quarterly'))} | {_metric_source('current_ratio_quarterly')} / {_metric_source('quick_ratio_quarterly')} | Liquidity posture |",
+        f"| Debt / Equity (Q) | {_num(metrics.get('debt_to_equity_quarterly'))} | {_metric_source('debt_to_equity_quarterly')} | Leverage profile |",
+        f"| Interest Coverage (TTM) | {_num(metrics.get('interest_coverage_ttm'))} | {_metric_source('interest_coverage_ttm')} | Solvency cushion |",
+        f"| Dividend Yield (TTM) | {_pct_finnhub(metrics.get('dividend_yield_ttm'))} | {_metric_source('dividend_yield_ttm')} | Total-return income contribution |",
+        f"| Payout Ratio (TTM) | {_pct_finnhub(metrics.get('payout_ratio_ttm'))} | {_metric_source('payout_ratio_ttm')} | Dividend coverage |",
         "",
         "### Earnings Quality (Recent Prints)",
         "",
@@ -1070,6 +1265,47 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             lines.append(
                 f"| {row.get('form') or 'n/a'} | {row.get('filed_date') or 'n/a'} | {row.get('accepted_date') or 'n/a'} | {link} |"
             )
+
+    scorecard = management.get("integrity_scorecard") or {}
+    pillars = list(scorecard.get("pillars") or [])
+    red_flags = list(management.get("red_flags") or [])
+    forensic_flags = list(forensic.get("forensic_flags") or [])
+    lines.extend([
+        "",
+        "### Management Integrity Scorecard",
+        "",
+    ])
+    if scorecard:
+        lines.extend([
+            f"- Score: {scorecard.get('score', 'n/a')}/100{_cite('management_integrity')}",
+            f"- Profile: {(management.get('profile') or {}).get('active_profile') or 'default'}",
+        ])
+        if pillars:
+            lines.extend(["", "| Pillar | Score | Takeaway |", "|---|---:|---|"])
+            for row in pillars[:8]:
+                lines.append(
+                    f"| {row.get('label') or row.get('id') or 'Pillar'} | {row.get('score', 'n/a')} | {row.get('takeaway') or row.get('detail') or 'n/a'} |"
+                )
+        if red_flags:
+            lines.extend(["", "**Management red flags**"])
+            lines.extend([f"- {flag}" for flag in red_flags[:8]])
+    else:
+        lines.append(f"- Management integrity unavailable: {management.get('error') or 'SEC compare did not produce a scorecard.'}")
+
+    lines.extend([
+        "",
+        "### Forensic Accounting Flags",
+        "",
+        f"- Snapshot status: {'available' if forensic.get('ok') else 'degraded'}{_cite('forensic')}",
+        f"- Sloan: {forensic.get('sloan') or 'n/a'}",
+        f"- Beneish: {forensic.get('beneish') or 'n/a'}",
+        f"- Altman: {forensic.get('altman') or 'n/a'}",
+    ])
+    if forensic_flags:
+        lines.extend(["", "**Forensic flags**"])
+        lines.extend([f"- {flag}" for flag in forensic_flags[:8]])
+    else:
+        lines.append("- No forensic flags returned.")
 
     lines.extend([
         "",
@@ -1770,32 +2006,6 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
         return _err_response("chart_data", e)
 
 
-@router.get("/api/forecast/{ticker}", response_model=ApiResponse)
-def forecast_data(ticker: str, days: int = 220, pred_len: int = 0, interval: str = "daily") -> ApiResponse:
-    """Kronos K-line forecast for ``ticker`` (history + distribution forecast).
-
-    On-demand and read-only: works regardless of the scanner KRONOS_MODE. Supports
-    ``interval`` = daily | 5m | 15m. Intraday is Schwab-sourced (no yfinance).
-    Returns a clear degraded response when the inference service is unavailable.
-    """
-    try:
-        from kronos_forecast_service import build_forecast_payload
-
-        result = build_forecast_payload(
-            ticker,
-            interval=interval,
-            days=days,
-            pred_len=pred_len,
-            skill_dir=SKILL_DIR,
-            auth=DualSchwabAuth(skill_dir=SKILL_DIR),
-        )
-        if result.get("ok"):
-            return _ok(result.get("data"))
-        return ApiResponse(ok=False, error=result.get("error"), data=result.get("data"))
-    except Exception as e:
-        return _err_response("forecast", e)
-
-
 @router.get("/api/check/{ticker}", response_model=ApiResponse)
 def check_ticker(ticker: str) -> ApiResponse:
     try:
@@ -2096,13 +2306,22 @@ def research_dossier(
         return _err_response("research_dossier", e)
 
 
+@router.get("/api/research/dossier/{ticker}/preflight", response_model=ApiResponse)
+def research_dossier_preflight(ticker: str) -> ApiResponse:
+    try:
+        return _ok(_build_dossier_preflight(ticker))
+    except Exception as exc:
+        return _err_response("research_dossier_preflight", exc)
+
+
 @router.get("/api/research/dossier/{ticker}/export")
 def research_dossier_export(
     ticker: str,
     format: str = Query(default="json", pattern="^(json|md|pdf|xlsx)$"),
+    compose_id: str = Query(default=""),
 ) -> Response:
     try:
-        dossier = _compose_research_dossier(ticker)
+        dossier = _cached_dossier(ticker, compose_id) or _compose_research_dossier(ticker)
         symbol = str(dossier.get("ticker") or ticker.upper().strip())
         safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
         if format == "json":
@@ -2134,9 +2353,9 @@ def research_dossier_export(
 
 
 @router.get("/api/research/dossier/{ticker}/fundamental-workbook")
-def research_fundamental_workbook_export(ticker: str) -> Response:
+def research_fundamental_workbook_export(ticker: str, compose_id: str = Query(default="")) -> Response:
     try:
-        dossier = _compose_research_dossier(ticker)
+        dossier = _cached_dossier(ticker, compose_id) or _compose_research_dossier(ticker)
         symbol = str(dossier.get("ticker") or ticker.upper().strip())
         safe_symbol = "".join(ch for ch in symbol if ch.isalnum() or ch in ("-", "_")) or "TICKER"
         body = _dossier_to_xlsx(dossier)

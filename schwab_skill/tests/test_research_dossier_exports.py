@@ -16,8 +16,16 @@ def _stub_report_payload() -> dict:
             "vcp": True,
             "sector_etf": "XLK",
         },
-        "dcf": {"margin_of_safety": 12.0},
-        "health": {"flags": []},
+        "dcf": {"margin_of_safety": 12.0, "growth_rate": 0.08},
+        "health": {
+            "flags": [],
+            "current_ratio": 1.9,
+            "debt_to_equity": 0.42,
+            "interest_coverage": 18.0,
+            "roe": 22.0,
+            "operating_margin": 27.0,
+        },
+        "comps": {"peers": [{"ticker": "MSFT"}, {"ticker": "GOOG"}], "median_pe": 25.0, "median_ps": 7.0},
         "mirofish": {"conviction_score": 35.0, "summary": "Strong institutional accumulation."},
     }
 
@@ -86,6 +94,20 @@ def _patch_shared_dependencies(monkeypatch, *, finnhub_ok: bool) -> None:
         lambda summary, skill_dir: {"concentration": {"hhi_label": "Moderate"}, "position_count": 2},
     )
     monkeypatch.setattr(research, "get_sector_heatmap", lambda **kwargs: {"rows": [{"sector": "Technology", "rel_strength": 1.2}]})
+    monkeypatch.setattr(
+        research,
+        "compute_forensic_snapshot",
+        lambda *args, **kwargs: {"ok": True, "ticker": "AAPL", "sloan": {"sloan_ratio": 0.02}, "beneish": None, "altman": None, "forensic_flags": []},
+    )
+    monkeypatch.setattr(
+        research,
+        "build_management_dashboard",
+        lambda **kwargs: {
+            "integrity_scorecard": {"score": 82, "pillars": [{"label": "Consistency", "score": 85, "takeaway": "Stable"}]},
+            "profile": {"active_profile": "balanced"},
+            "red_flags": [],
+        },
+    )
     monkeypatch.setattr(
         research,
         "get_finnhub_research_snapshot",
@@ -188,6 +210,67 @@ def test_compose_dossier_records_finnhub_fallback_notes(monkeypatch) -> None:
     assert any("company_news:rate_limited" in note for note in dossier["fallback_notes"])
 
 
+def test_dossier_fundamentals_fallback_when_finnhub_disabled(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=False)
+    monkeypatch.setattr(
+        research,
+        "get_finnhub_research_snapshot",
+        lambda *args, **kwargs: {
+            "enabled": False,
+            "ok": False,
+            "as_of": "2026-05-07T10:00:00+00:00",
+            "errors": ["finnhub_api_key_missing"],
+            "quality": {"ok": False, "core_checks_passed": 0, "core_checks_total": 0, "core_checks": {}},
+            "profile": {},
+            "quote": {},
+            "metrics": {},
+            "peers": [],
+            "recommendation_trends": {"history": []},
+            "news": [],
+            "earnings": [],
+        },
+    )
+
+    dossier = research._compose_research_dossier("AAPL")
+    snapshot = dossier["sections"]["finnhub_catalysts_risks"]["snapshot"]
+    metrics = snapshot["metrics"]
+    assert metrics["operating_margin_ttm"] == 27.0
+    assert metrics["current_ratio_quarterly"] == 1.9
+    assert snapshot["merged_sources"]["metrics"]["operating_margin_ttm"] == "report.health"
+    md = research._dossier_to_markdown(dossier)
+    assert "report.health fallback" in md
+
+
+def test_research_dossier_preflight_contract(monkeypatch) -> None:
+    monkeypatch.setattr(research, "get_account_status", lambda **kwargs: {"accounts": []})
+    monkeypatch.setattr("config.get_finnhub_api_key", lambda skill_dir=None: "")
+    monkeypatch.setattr("config.is_real_edgar_user_agent", lambda user_agent: False)
+
+    resp = research.research_dossier_preflight("AAPL")
+    assert resp.ok is True
+    payload = resp.data or {}
+    assert payload["ticker"] == "AAPL"
+    assert payload["can_generate"] is True
+    ids = {item["id"]: item for item in payload["items"]}
+    assert ids["report_stack"]["status"] == "ok"
+    assert ids["finnhub"]["status"] == "warn"
+
+
+def test_dossier_export_reuses_compose_id_cache(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    dossier = research._compose_research_dossier("AAPL")
+    compose_id = dossier["compose_id"]
+
+    def fail_recompose(ticker):
+        raise AssertionError("export should use cached compose_id")
+
+    monkeypatch.setattr(research, "_compose_research_dossier", fail_recompose)
+    resp = research.research_dossier_export("AAPL", format="json", compose_id=compose_id)
+    assert resp.status_code == 200
+    payload = json.loads(bytes(resp.body).decode("utf-8"))
+    assert payload["compose_id"] == compose_id
+
+
 def test_research_dossier_include_markdown_attaches_preview(monkeypatch) -> None:
     _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
     resp = research.research_dossier("AAPL", include_markdown=True)
@@ -268,7 +351,7 @@ def test_dossier_markdown_includes_institutional_sections(monkeypatch) -> None:
         last_idx = idx
 
     # The Markdown must use real pipe-tables, not pre-formatted code blocks.
-    assert "| Fundamental Metric | Value | Commentary |" in md
+    assert "| Fundamental Metric | Value | Source | Commentary |" in md
     assert "| Period | Actual EPS | Estimate EPS | Surprise % |" in md
     assert "| Valuation / Technical | Value |" in md
 
