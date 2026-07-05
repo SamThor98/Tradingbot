@@ -1,6 +1,0 @@
-# Vendored Kronos model package (cloned at build / via fetch_model_code.py)
-model/
-# Downloaded Hugging Face weights / caches
-models/
-*.safetensors
-__pycache__/

@@ -100,12 +100,6 @@ services:
         sync: false
       - key: OPENAI_KEY
         sync: false
-      # Kronos forecast plugin. On-demand /api/forecast works at any mode;
-      # SHADOW attaches forecasts to scans without changing ranking.
-      - key: KRONOS_MODE
-        value: shadow
-      - key: KRONOS_INFERENCE_URL
-        value: http://tradingbot-kronos:8100
 
   - type: worker
     name: tradingbot-worker
@@ -167,30 +161,4 @@ services:
         sync: false
       - key: OPENAI_KEY
         sync: false
-      # Kronos forecast plugin (scanner runs in the worker for SaaS).
-      - key: KRONOS_MODE
-        value: shadow
-      - key: KRONOS_INFERENCE_URL
-        value: http://tradingbot-kronos:8100
-
-  # Kronos inference microservice (private). Heavy torch/HF footprint isolated
-  # here. Reachable internally at http://tradingbot-kronos:8100. Needs more RAM
-  # than the free plan (torch + model weights) — adjust `plan` to your account.
-  - type: pserv
-    name: tradingbot-kronos
-    runtime: docker
-    rootDir: kronos_service
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: standard
-    healthCheckPath: /health
-    envVars:
-      - key: KRONOS_MODEL_ID
-        value: NeoQuasar/Kronos-small
-      - key: KRONOS_TOKENIZER_ID
-        value: NeoQuasar/Kronos-Tokenizer-base
-      - key: KRONOS_DEVICE
-        value: cpu
-      - key: KRONOS_MAX_CONTEXT
-        value: "512"
 

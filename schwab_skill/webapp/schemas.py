@@ -29,22 +29,6 @@ class AdvisoryPrediction(BaseModel):
     reasoning: str | None = None
 
 
-class KronosForecast(BaseModel):
-    """Kronos candlestick forecast (advisory). Mirrors kronos_client.KronosForecast."""
-
-    direction: str | None = None
-    expected_return_pct: float | None = None
-    confidence: float | None = None
-    confidence_bucket: str | None = None
-    model_version: str | None = None
-    pred_len: int | None = None
-    last_close: float | None = None
-    final_close: float | None = None
-    forecast_candles: list[dict[str, Any]] = Field(default_factory=list)
-    degraded: bool = False
-    source: str = "kronos"
-
-
 class SchwabCredentialUpsert(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
