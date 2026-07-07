@@ -4,9 +4,11 @@ import pandas as pd
 
 from core.scoring_composite import (
     CompositeQualityWeights,
+    breakout_volume_points,
     compute_composite_quality,
     compute_composite_quality_series,
     compute_predictive_core,
+    resolve_rank_volume_points,
 )
 
 
@@ -54,6 +56,12 @@ def test_predictive_core_weights_volume() -> None:
         weights=weights,
     )
     assert high > low
+
+
+def test_resolve_rank_volume_points_uses_breakout_confirmation() -> None:
+    assert breakout_volume_points(1_500_000, 1_000_000) == 10.0
+    assert resolve_rank_volume_points(0.0, latest_volume=1_500_000, avg_vol_50=1_000_000) == 10.0
+    assert resolve_rank_volume_points(14.0, latest_volume=1_100_000, avg_vol_50=1_000_000) == 14.0
 
 
 def test_composite_quality_series_matches_row_logic() -> None:

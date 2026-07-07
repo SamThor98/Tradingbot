@@ -10,10 +10,50 @@ import { api } from "../modules/api.js";
 import { escapeHtml, prettyJson } from "../modules/format.js";
 import { updateActionCenter } from "../modules/logger.js";
 import { setSystemStatusStrip } from "../modules/systemStatus.js";
+import {
+  paintSystemPanelAlert,
+  paintSystemPanelSnapshot,
+  paintSystemPanelSuccess,
+  syncSystemSectionState,
+} from "../modules/systemPanelContract.js";
 
 function pct(x, digits = 1) {
   const n = Number(x);
   return Number.isFinite(n) ? `${n.toFixed(digits)}%` : "—";
+}
+
+function paintReviewSnapshot(stateName, opts = {}) {
+  const {
+    total = "—",
+    resolved = "—",
+    coverage = "—",
+    title = "",
+    detail = "",
+  } = opts;
+  paintSystemPanelSnapshot("reviewLoopSnapshot", "reviewLoopSection", stateName, {
+    hint: "Closed loop: packets → resolve → false-positive diagnostics",
+    kpis: [
+      {
+        label: "PACKETS",
+        sub: "tracked",
+        value: total,
+        tone: stateName === "error" ? "bad" : stateName === "empty" ? "neutral" : "success",
+      },
+      {
+        label: "RESOLVED",
+        sub: "outcomes",
+        value: resolved,
+        tone: stateName === "partial" ? "warn" : stateName === "success" ? "success" : "neutral",
+      },
+      {
+        label: "COVERAGE",
+        sub: "resolved %",
+        value: coverage,
+        tone: stateName === "error" ? "bad" : "neutral",
+      },
+    ],
+    lines: [title, detail].filter(Boolean),
+  });
 }
 
 function renderRegimeTable(byRegime) {
@@ -62,9 +102,7 @@ function renderFeatureLift(lift) {
   let tables = "";
   for (const era of eraKeys) {
     const block = eras[era] || {};
-    const sections = [
-      ["Mgmt integrity", block.management_integrity],
-    ]
+    const sections = [["Mgmt integrity", block.management_integrity]]
       .map(([label, feat]) => {
         const rows = renderCohortRows(feat);
         if (!rows) return "";
@@ -130,17 +168,27 @@ function renderPackets(packets) {
 export function renderReviewLoopPanel(panel, review, packets, error) {
   if (!panel) return;
   if (error) {
-    panel.innerHTML = `<div class="report-empty">${escapeHtml(error)}</div>`;
+    paintSystemPanelAlert(panel, "error", {
+      headline: "Data unavailable",
+      message: error,
+      onRetry: () => void refreshReviewLoop(),
+    });
     setSystemStatusStrip("reviewLoopStatusStrip", "error", "Trade-review report unavailable.", error);
+    paintReviewSnapshot("error", {
+      title: "Trade-review report unavailable.",
+      detail: error,
+    });
     return;
   }
   const rep = review || {};
   const total = Number(rep.total_packets) || 0;
   const resolved = Number(rep.resolved_packets) || 0;
-  const head = `<div class="perf-metric"><span class="label">Total packets</span><span class="value">${Number(rep.total_packets) || 0}</span></div>
-    <div class="perf-metric"><span class="label">Resolved</span><span class="value">${Number(rep.resolved_packets) || 0}</span></div>
-    <div class="perf-metric"><span class="label">Coverage</span><span class="value">${pct(rep.coverage_pct)}</span></div>`;
-  panel.innerHTML = `
+  const coverageLabel = pct(rep.coverage_pct);
+  const statusState = total > 0 ? (resolved > 0 ? "success" : "partial") : "empty";
+  const head = `<div class="perf-metric"><span class="label">Total packets</span><span class="value">${total}</span></div>
+    <div class="perf-metric"><span class="label">Resolved</span><span class="value">${resolved}</span></div>
+    <div class="perf-metric"><span class="label">Coverage</span><span class="value">${coverageLabel}</span></div>`;
+  const html = `
     <div class="preset-subsection">${head}</div>
     <div class="preset-subsection"><h3>False positives by regime</h3>${renderRegimeTable(rep.false_positives_by_regime)}</div>
     <div class="preset-subsection"><h3>Edge decay by setup</h3>${renderSetupTable(rep.edge_decay_by_setup)}</div>
@@ -148,27 +196,48 @@ export function renderReviewLoopPanel(panel, review, packets, error) {
     <div class="preset-subsection"><h3>Tuning proposals</h3>${renderProposals(rep.tuning_proposals)}</div>
     <div class="preset-subsection"><h3>Recent decision packets</h3>${renderPackets(packets)}</div>
     <details class="tool-json-details" style="margin-top: 8px;"><summary>Raw report</summary><pre class="code-block code-block--tight">${escapeHtml(prettyJson(rep))}</pre></details>`;
+  if (statusState === "empty") {
+    paintSystemPanelAlert(panel, "empty", {
+      headline: "No results yet",
+      message: "Execute trades and run backfill to resolve outcomes.",
+    });
+  } else {
+    paintSystemPanelSuccess(panel, html);
+  }
   setSystemStatusStrip(
     "reviewLoopStatusStrip",
-    total > 0 ? (resolved > 0 ? "success" : "partial") : "empty",
+    statusState,
     total > 0 ? `${total} decision packet${total === 1 ? "" : "s"} tracked.` : "No decision packets yet.",
     resolved > 0
       ? `${resolved} resolved packet${resolved === 1 ? "" : "s"} feeding false-positive diagnostics.`
       : "Execute trades and run backfill to resolve outcomes.",
   );
+  paintReviewSnapshot(statusState, {
+    total: String(total),
+    resolved: String(resolved),
+    coverage: coverageLabel,
+    title: total > 0 ? `${total} decision packet${total === 1 ? "" : "s"} tracked.` : "No decision packets yet.",
+    detail:
+      resolved > 0
+        ? `${resolved} resolved packet${resolved === 1 ? "" : "s"} feeding false-positive diagnostics.`
+        : "Execute trades and run backfill to resolve outcomes.",
+  });
 }
 
 export async function refreshReviewLoop() {
   const panel = document.getElementById("reviewLoopPanel");
-  const card = document.getElementById("reviewLoopSection");
   if (!panel) return;
-  if (card) card.setAttribute("data-async-state", "loading");
+  syncSystemSectionState("reviewLoopSection", "loading");
   setSystemStatusStrip(
     "reviewLoopStatusStrip",
     "loading",
     "Loading trade-review report.",
     "Fetching diagnostics, proposals, and recent decision packets.",
   );
+  paintReviewSnapshot("loading", {
+    title: "Loading trade-review report.",
+    detail: "Fetching diagnostics, proposals, and recent decision packets.",
+  });
   panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
     <span class="async-spinner" aria-hidden="true"></span>
     <span>Loading trade-review report…</span>
@@ -178,24 +247,33 @@ export async function refreshReviewLoop() {
     api.get("/api/cockpit/decision-packets?limit=15"),
   ]);
   if (!reviewOut.ok) {
-    if (card) card.setAttribute("data-async-state", "error");
     const msg = reviewOut.user_message || reviewOut.error || "Request failed";
-    panel.innerHTML = `<div class="async-state async-state--error" role="alert">
-      <span>Trade-review load failed: ${escapeHtml(String(msg))}</span>
-      <button type="button" class="btn small secondary" data-review-retry>Retry</button>
-    </div>`;
+    paintSystemPanelAlert(panel, "error", {
+      headline: "Data unavailable",
+      message: String(msg),
+      onRetry: () => void refreshReviewLoop(),
+    });
     setSystemStatusStrip(
       "reviewLoopStatusStrip",
       "error",
       "Trade-review load failed.",
       String(msg),
     );
-    panel.querySelector("[data-review-retry]")?.addEventListener("click", () => void refreshReviewLoop());
+    paintReviewSnapshot("error", { title: "Trade-review load failed.", detail: String(msg) });
     return;
   }
   const packets = packetsOut.ok ? (packetsOut.data || {}).packets || [] : [];
-  if (card) card.setAttribute("data-async-state", "success");
+  const partialPackets = !packetsOut.ok;
   renderReviewLoopPanel(panel, reviewOut.data, packets, null);
+  if (partialPackets) {
+    syncSystemSectionState("reviewLoopSection", "partial");
+    setSystemStatusStrip(
+      "reviewLoopStatusStrip",
+      "partial",
+      "Review loaded with partial packet list.",
+      packetsOut.user_message || packetsOut.error || "Decision packets request failed.",
+    );
+  }
 }
 
 export async function runReviewBackfill() {

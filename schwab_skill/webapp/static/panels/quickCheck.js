@@ -11,7 +11,9 @@ import { humanizeFieldLabel } from "../modules/humanize.js";
 import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, prettyJson } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
-import { setResearchStatusStrip } from "../modules/researchStatus.js";
+import { setResearchPanelStatus } from "../modules/researchStatus.js";
+import { buildOperatorAlertHtml } from "../modules/asyncState.js";
+import { decorateGlossary } from "../modules/glossary.js";
 
 export function renderQuickCheckCard(data, error) {
   const ph = document.getElementById("checkPlaceholder");
@@ -37,7 +39,7 @@ export function renderQuickCheckCard(data, error) {
   if (fields.length) {
     fieldsHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 10px;">';
     for (const f of fields) {
-      const val = (f.value || "").replace(/\*\*/g, "").replace(/\n/g, "<br>");
+      const val = decorateGlossary((f.value || "").replace(/\*\*/g, "").replace(/\n/g, "<br>"));
       fieldsHtml += `<div class="preset-subsection" style="padding: 10px;">
         <h3 style="margin: 0 0 6px; font-size: 0.82rem;">${safeText(f.name)}</h3>
         <div style="font-size: 0.84rem; color: ${YourThemeConfig.palette.text}; line-height: 1.5;">${val}</div>
@@ -127,24 +129,50 @@ export async function renderTickerChart(ticker) {
   ro.observe(container);
 }
 
+function paintQuickCheckSurface(stateName, title, detail, extras = {}) {
+  return setResearchPanelStatus({
+    stripId: "quickCheckStatusStrip",
+    snapshotId: "quickCheckSnapshot",
+    sectionId: "quickCheckSection",
+    stateName,
+    title,
+    detail,
+    hint: extras.hint || "chart · score · evidence",
+    output: extras.output,
+    data: extras.data,
+    action: extras.action,
+    confidence: extras.confidence,
+  });
+}
+
 export async function quickCheck() {
   const ticker = document.getElementById("tickerInput").value.trim().toUpperCase();
   if (!ticker) {
-    setResearchStatusStrip(
-      "quickCheckStatusStrip",
+    paintQuickCheckSurface(
       "empty",
       "No ticker entered.",
       "Enter a ticker to load chart, score, and raw evidence.",
+      {
+        output: { value: "None", sub: "check" },
+        data: { value: "—", sub: "ticker" },
+        action: { value: "Wait", sub: "enter symbol" },
+        confidence: 0,
+      },
     );
     return;
   }
   const ph = document.getElementById("checkPlaceholder");
   renderQuickCheckCard(null, "");
-  setResearchStatusStrip(
-    "quickCheckStatusStrip",
+  paintQuickCheckSurface(
     "loading",
     `Checking ${ticker}.`,
     "Loading quick score, chart context, and raw evidence.",
+    {
+      output: { value: "…", sub: "check" },
+      data: { value: "…", sub: "market" },
+      action: { value: "Wait", sub: "hold" },
+      confidence: 28,
+    },
   );
   if (ph) {
     ph.setAttribute("data-async-state", "loading");
@@ -159,29 +187,66 @@ export async function quickCheck() {
     renderQuickCheckCard(null, "");
     if (ph) {
       ph.setAttribute("data-async-state", "error");
-      ph.innerHTML = `<span class="async-state async-state--error" role="alert">
-        <span>Check failed: ${safeText(String(msg))}</span>
-        <button type="button" class="btn small secondary" data-check-retry>Retry</button>
-      </span>`;
+      ph.innerHTML = buildOperatorAlertHtml({
+        tone: "bad",
+        headline: "Data unavailable",
+        detail: `Check failed: ${safeText(String(msg))}`,
+        retry: true,
+        retryAttr: "data-check-retry",
+      });
       ph.querySelector("[data-check-retry]")?.addEventListener("click", () => void quickCheck());
     }
-    setResearchStatusStrip(
-      "quickCheckStatusStrip",
+    paintQuickCheckSurface(
       "error",
       `Check failed for ${ticker}.`,
       safeText(String(msg)),
+      {
+        output: { value: "—", sub: "check" },
+        data: { value: "—", sub: "market" },
+        action: { value: "Retry", sub: "reload", tone: "bad" },
+        confidence: 0,
+      },
     );
     logEvent({ kind: "system", severity: "error", message: `Check ${ticker} failed: ${out.error}` });
     return;
   }
-  if (ph) ph.setAttribute("data-async-state", "success");
   renderQuickCheckCard(out.data, null);
-  setResearchStatusStrip(
-    "quickCheckStatusStrip",
-    "success",
-    `${ticker} quick check ready.`,
-    "Review chart, score, and raw evidence before deeper research.",
-  );
+  // Surface data_quality verbatim: a payload with no real market data must
+  // never be presented as a fresh, high-confidence result.
+  const dataQuality = out.data?.data_quality || "";
+  if (dataQuality) {
+    if (ph) ph.setAttribute("data-async-state", "success");
+    paintQuickCheckSurface(
+      "partial",
+      `${ticker}: no market data found.`,
+      `Symbol may be invalid or unsupported. Data quality: ${safeText(String(dataQuality))}`,
+      {
+        output: { value: "Degraded", sub: "check" },
+        data: { value: "Missing", sub: safeText(String(dataQuality)), tone: "bad" },
+        action: { value: "Verify", sub: "symbol" },
+        confidence: 10,
+      },
+    );
+    logEvent({
+      kind: "system",
+      severity: "warn",
+      message: `Check ${ticker}: data_quality=${dataQuality}`,
+    });
+  } else {
+    if (ph) ph.setAttribute("data-async-state", "success");
+    const checkedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    paintQuickCheckSurface(
+      "success",
+      `${ticker} quick check ready.`,
+      `Checked ${checkedAt} — review chart, score, and raw evidence before deeper research.`,
+      {
+        output: { value: "Ready", sub: "check" },
+        data: { value: "Fresh", sub: `as of ${checkedAt}` },
+        action: { value: "Pass", sub: "review" },
+        confidence: 80,
+      },
+    );
+  }
   const reportInput = document.getElementById("reportTickerInput");
   if (reportInput && !reportInput.value.trim()) reportInput.value = ticker;
   const secInput = document.getElementById("secCompareTickerA");

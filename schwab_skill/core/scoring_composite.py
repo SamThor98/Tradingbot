@@ -13,6 +13,7 @@ PTS_VOLUME_CAP = 20.0
 PTS_MIROFISH_CAP = 15.0
 # 40d IC on full-history audit: close_vs_sma200_pct ~ +0.07 vs pts_volume ~ +0.02.
 TREND_PCT_CAP = 0.20
+BREAKOUT_VOLUME_RATIO_CAP = 2.0
 SKILL_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -107,6 +108,35 @@ def trend_norm_from_price(*, price: float, sma_200: float) -> float:
     if sma_200 <= 0:
         return 0.0
     return trend_norm_from_pct((float(price) / float(sma_200)) - 1.0)
+
+
+def breakout_volume_points(latest_volume: Any, avg_vol_50: Any) -> float:
+    """Map breakout volume confirmation to the same 0-20 component scale."""
+
+    try:
+        latest = float(latest_volume or 0.0)
+        avg = float(avg_vol_50 or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if latest <= 0.0 or avg <= 0.0:
+        return 0.0
+    ratio = latest / avg
+    return _clamp(((ratio - 1.0) / (BREAKOUT_VOLUME_RATIO_CAP - 1.0)) * PTS_VOLUME_CAP, 0.0, PTS_VOLUME_CAP)
+
+
+def resolve_rank_volume_points(
+    pts_volume: Any,
+    *,
+    latest_volume: Any = None,
+    avg_vol_50: Any = None,
+) -> float:
+    """Use VCP dry-up points or breakout confirmation, whichever is stronger."""
+
+    try:
+        dry_up_pts = float(pts_volume or 0.0)
+    except (TypeError, ValueError):
+        dry_up_pts = 0.0
+    return max(_clamp(dry_up_pts, 0.0, PTS_VOLUME_CAP), breakout_volume_points(latest_volume, avg_vol_50))
 
 
 def normalized_component_scores(

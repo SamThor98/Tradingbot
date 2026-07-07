@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import func
@@ -2155,13 +2155,25 @@ def scan_lifecycle(db: Session = Depends(get_db)) -> ApiResponse:
 
 
 @app.get("/api/portfolio", response_model=ApiResponse)
-def portfolio() -> ApiResponse:
+def portfolio(db: Session = Depends(get_db)) -> ApiResponse:
     try:
         auth = get_shared_auth()
         status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
         if isinstance(status_data, str):
             _record_endpoint_error("portfolio")
             return ApiResponse(ok=False, error=status_data)
+        try:
+            from core.portfolio_equity_snapshot import record_equity_snapshot
+            from core.providers import PortfolioProvider
+            from sector_strength import get_ticker_sector_etf
+
+            state = PortfolioProvider.normalize_account(
+                status_data,
+                sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR),
+            )
+            record_equity_snapshot(db, state, user_id=LOCAL_DASHBOARD_USER_ID)
+        except Exception as snap_exc:
+            LOG.debug("Portfolio snapshot skipped: %s", snap_exc)
         return _ok(_build_portfolio_summary(status_data))
     except Exception as e:
         return _err("portfolio", e)
@@ -2180,6 +2192,112 @@ def portfolio_risk() -> ApiResponse:
         return _ok(_build_portfolio_risk_analytics(summary, skill_dir=SKILL_DIR))
     except Exception as e:
         return _err("portfolio_risk", e)
+
+
+@app.get("/api/portfolio/analytics", response_model=ApiResponse)
+def portfolio_analytics(
+    lookback_days: int | None = Query(default=None, ge=20, le=756),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    """PM-grade portfolio metrics: volatility, Sharpe, beta, correlation, and closed-trade stats."""
+    try:
+        from config import get_portfolio_equity_snapshot_enabled
+        from core.portfolio_analytics_service import build_portfolio_analytics
+        from core.portfolio_equity_snapshot import load_equity_curve, record_equity_snapshot
+        from core.providers import PortfolioProvider
+        from sector_strength import get_ticker_sector_etf
+
+        auth = get_shared_auth()
+        status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+        if isinstance(status_data, str):
+            _record_endpoint_error("portfolio_analytics")
+            return ApiResponse(ok=False, error=status_data)
+        state = PortfolioProvider.normalize_account(
+            status_data,
+            sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR),
+        )
+        snapshots: list[dict[str, Any]] = []
+        if get_portfolio_equity_snapshot_enabled(SKILL_DIR):
+            record_equity_snapshot(db, state, user_id=LOCAL_DASHBOARD_USER_ID)
+            snapshots = load_equity_curve(db, user_id=LOCAL_DASHBOARD_USER_ID, limit=252)
+        pack = build_portfolio_analytics(
+            state,
+            skill_dir=SKILL_DIR,
+            auth=auth,
+            lookback_days=lookback_days,
+            equity_curve=snapshots,
+        )
+        return _ok(pack.model_dump(mode="json"))
+    except Exception as e:
+        return _err("portfolio_analytics", e)
+
+
+# Risk-dashboard pack cache: the build fetches a year of history per ticker
+# (~40-70s cold), so tab re-entry within the TTL serves the cached pack.
+_RISK_DASHBOARD_CACHE_TTL_SEC = 300.0
+_risk_dashboard_cache: dict[str, Any] = {"key": None, "at": 0.0, "payload": None}
+_risk_dashboard_cache_lock = threading.Lock()
+
+
+@app.get("/api/portfolio/risk-dashboard", response_model=ApiResponse)
+def portfolio_risk_dashboard(
+    lookback_days: int | None = Query(default=None, ge=20, le=756),
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    """Unified risk dashboard: metrics, correlation, risk contribution, concentration limits, and stress tests."""
+    try:
+        from config import get_portfolio_equity_snapshot_enabled
+        from core.portfolio_analytics_service import build_portfolio_risk_dashboard
+        from core.portfolio_equity_snapshot import load_equity_curve, record_equity_snapshot
+        from core.providers import PortfolioProvider
+        from sector_strength import get_ticker_sector_etf
+
+        cache_key = f"lookback={lookback_days or 'default'}"
+        if not force:
+            with _risk_dashboard_cache_lock:
+                cached = _risk_dashboard_cache
+                if (
+                    cached["key"] == cache_key
+                    and cached["payload"] is not None
+                    and (time.time() - cached["at"]) < _RISK_DASHBOARD_CACHE_TTL_SEC
+                ):
+                    payload = dict(cached["payload"])
+                    payload["cache_hit"] = True
+                    return _ok(payload)
+
+        auth = get_shared_auth()
+        status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+        if isinstance(status_data, str):
+            _record_endpoint_error("portfolio_risk_dashboard")
+            return ApiResponse(ok=False, error=status_data)
+        state = PortfolioProvider.normalize_account(
+            status_data,
+            sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR),
+        )
+        summary = _build_portfolio_summary(status_data)
+        static_risk = _build_portfolio_risk_analytics(summary, skill_dir=SKILL_DIR)
+        snapshots: list[dict[str, Any]] = []
+        if get_portfolio_equity_snapshot_enabled(SKILL_DIR):
+            record_equity_snapshot(db, state, user_id=LOCAL_DASHBOARD_USER_ID)
+            snapshots = load_equity_curve(db, user_id=LOCAL_DASHBOARD_USER_ID, limit=252)
+        pack = build_portfolio_risk_dashboard(
+            state,
+            summary,
+            static_risk=static_risk,
+            skill_dir=SKILL_DIR,
+            auth=auth,
+            lookback_days=lookback_days,
+            equity_curve=snapshots,
+        )
+        payload = pack.model_dump(mode="json")
+        payload["cached_at"] = datetime.now(timezone.utc).isoformat()
+        payload["cache_hit"] = False
+        with _risk_dashboard_cache_lock:
+            _risk_dashboard_cache.update({"key": cache_key, "at": time.time(), "payload": payload})
+        return _ok(payload)
+    except Exception as e:
+        return _err("portfolio_risk_dashboard", e)
 
 
 @app.get("/api/sectors", response_model=ApiResponse)

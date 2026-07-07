@@ -29,11 +29,12 @@ body[data-theme="editorial"] {
   --ol-on-accent: #f5f1e8;
   --ol-accent-border: rgba(26, 58, 46, 0.35);
   --ol-topbar-border: rgba(26, 58, 46, 0.18);
-  --ol-gold: #c9a962; /* secondary accent */
+  --ol-gold: #c9a962; /* secondary accent — borders/fills only; 2.0:1 on cream, never body text */
   --ol-accent-soft: rgba(26, 58, 46, 0.12);
   --ol-ok: #2d5a4a;
   --ol-warn: #8a5c1f;
-  --ol-bad: #c94949;
+  --ol-bad: #c94949; /* fills/borders/large text */
+  --ol-bad-text: #a83636; /* AA-safe red for small text on cream/tinted chips */
   /* Spacing scale (Figma 4/8/12/16/20/24) */
   --ol-space-1: 4px;
   --ol-space-2: 8px;
@@ -47,7 +48,7 @@ body[data-theme="editorial"] {
   --ol-text-title: 1.125rem;
   --ol-text-body: 1rem;
   --ol-text-caption: 0.8125rem;
-  --ol-text-micro: 0.75rem;
+  --ol-text-micro: 0.8125rem; /* 13px readability floor for supporting text */
   background: var(--ol-bg) !important;
   color: var(--ol-text) !important;
   font-family: "DM Sans", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif !important;
@@ -393,7 +394,7 @@ body[data-theme="editorial"] .workflow-progress-step:not(:last-child)::after {
   border: 1px solid var(--ol-border-strong);
   border-radius: 999px;
   background: var(--ol-surface);
-  color: var(--ol-gold);
+  color: var(--ol-warn); /* gold failed contrast on surface */
   font-family: "IBM Plex Serif", Georgia, serif;
   font-style: italic;
   font-size: 0.95rem;
@@ -488,7 +489,7 @@ body[data-theme="editorial"] .operate-kanban {
 }
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane {
-  min-height: clamp(320px, 42vh, 560px);
+  min-height: clamp(240px, 34vh, 520px);
   padding: 14px 14px 16px !important;
 }
 
@@ -683,14 +684,32 @@ body[data-theme="editorial"] .operations-panel-snapshot[data-state="loading"] {
 
 body[data-theme="editorial"] #pendingSection[data-state="error"],
 body[data-theme="editorial"] #scanSection[data-state="error"],
-body[data-theme="editorial"] #scanDetailPanel[data-state="error"] {
+body[data-theme="editorial"] #scanDetailPanel[data-state="error"],
+body[data-theme="editorial"] #workflowPrimary[data-state="error"],
+body[data-theme="editorial"] #healthRibbon[data-state="error"],
+body[data-theme="editorial"] #healthRibbon[data-async-state="error"],
+body[data-theme="editorial"] #shadowScoreboardSection[data-state="error"],
+body[data-theme="editorial"] #shadowScoreboardSection[data-async-state="error"],
+body[data-theme="editorial"] #reviewLoopSection[data-state="error"],
+body[data-theme="editorial"] #reviewLoopSection[data-async-state="error"],
+body[data-theme="editorial"] #statusDetailsPanel[data-state="error"],
+body[data-theme="editorial"] #statusDetailsPanel[data-async-state="error"] {
   position: relative;
   overflow: hidden;
 }
 
 body[data-theme="editorial"] #pendingSection[data-state="error"]::before,
 body[data-theme="editorial"] #scanSection[data-state="error"]::before,
-body[data-theme="editorial"] #scanDetailPanel[data-state="error"]::before {
+body[data-theme="editorial"] #scanDetailPanel[data-state="error"]::before,
+body[data-theme="editorial"] #workflowPrimary[data-state="error"]::before,
+body[data-theme="editorial"] #healthRibbon[data-state="error"]::before,
+body[data-theme="editorial"] #healthRibbon[data-async-state="error"]::before,
+body[data-theme="editorial"] #shadowScoreboardSection[data-state="error"]::before,
+body[data-theme="editorial"] #shadowScoreboardSection[data-async-state="error"]::before,
+body[data-theme="editorial"] #reviewLoopSection[data-state="error"]::before,
+body[data-theme="editorial"] #reviewLoopSection[data-async-state="error"]::before,
+body[data-theme="editorial"] #statusDetailsPanel[data-state="error"]::before,
+body[data-theme="editorial"] #statusDetailsPanel[data-async-state="error"]::before {
   background: var(--ol-bad);
   border-radius: 10px 10px 0 0;
   content: "";
@@ -801,6 +820,206 @@ body[data-theme="editorial"] .research-status-strip[data-state="empty"] .researc
   border-color: var(--ol-border);
   background: var(--ol-surface);
   color: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot {
+  display: grid;
+  gap: var(--ol-space-3, 12px);
+  margin: 0 14px 14px;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 10px;
+  background: var(--ol-surface-soft);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot:empty {
+  display: none;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__hint {
+  margin: 0;
+  font-size: var(--ol-text-micro, 0.78rem);
+  line-height: 1.4;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi {
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 8px;
+  background: var(--ol-surface);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi[data-tone="success"] {
+  border-color: rgba(45, 90, 74, 0.42);
+  border-left: 3px solid var(--ol-ok);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi[data-tone="warn"],
+body[data-theme="editorial"] .research-panel-snapshot__kpi[data-tone="loading"] {
+  border-color: rgba(176, 133, 42, 0.5);
+  border-left: 3px solid var(--ol-gold);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi[data-tone="bad"] {
+  border-color: rgba(201, 73, 73, 0.44);
+  border-left: 3px solid var(--ol-bad);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi-label {
+  display: block;
+  color: var(--ol-muted);
+  font-size: var(--ol-text-micro, 0.72rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi-value {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--ol-text);
+  font-family: var(--ol-font-display, "Fraunces", Georgia, serif);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__kpi-sub {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: var(--ol-text-micro, 0.72rem);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__meters {
+  display: grid;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__meter-label {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--ol-text-soft);
+  font-size: var(--ol-text-micro, 0.78rem);
+  font-weight: 700;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot__lines {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--ol-text-soft);
+  font-size: var(--ol-text-small, 0.84rem);
+  line-height: 1.45;
+}
+
+body[data-theme="editorial"] .research-panel-snapshot[data-state="success"] {
+  border-color: rgba(45, 90, 74, 0.35);
+}
+
+body[data-theme="editorial"] .research-panel-snapshot[data-state="partial"],
+body[data-theme="editorial"] .research-panel-snapshot[data-state="loading"] {
+  border-color: color-mix(in srgb, var(--ol-warn) 35%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .research-panel-snapshot[data-state="error"] {
+  border-color: rgba(201, 73, 73, 0.35);
+}
+
+body[data-theme="editorial"] #portfolioSection[data-state="error"],
+body[data-theme="editorial"] #portfolioSection[data-async-state="error"],
+body[data-theme="editorial"] #quickCheckSection[data-state="error"],
+body[data-theme="editorial"] #quickCheckSection[data-async-state="error"],
+body[data-theme="editorial"] #secCompareSection[data-state="error"],
+body[data-theme="editorial"] #secCompareSection[data-async-state="error"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="error"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-async-state="error"] {
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] #portfolioSection[data-state="error"]::before,
+body[data-theme="editorial"] #portfolioSection[data-async-state="error"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-state="error"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-async-state="error"]::before,
+body[data-theme="editorial"] #secCompareSection[data-state="error"]::before,
+body[data-theme="editorial"] #secCompareSection[data-async-state="error"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="error"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-async-state="error"]::before {
+  background: var(--ol-bad);
+  border-radius: 10px 10px 0 0;
+  content: "";
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+body[data-theme="editorial"] #portfolioSection[data-state="success"]::before,
+body[data-theme="editorial"] #portfolioSection[data-async-state="success"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-state="success"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-async-state="success"]::before,
+body[data-theme="editorial"] #secCompareSection[data-state="success"]::before,
+body[data-theme="editorial"] #secCompareSection[data-async-state="success"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="success"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-async-state="success"]::before {
+  background: var(--ol-ok);
+  border-radius: 10px 10px 0 0;
+  content: "";
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+body[data-theme="editorial"] #portfolioSection[data-state="success"],
+body[data-theme="editorial"] #portfolioSection[data-async-state="success"],
+body[data-theme="editorial"] #quickCheckSection[data-state="success"],
+body[data-theme="editorial"] #quickCheckSection[data-async-state="success"],
+body[data-theme="editorial"] #secCompareSection[data-state="success"],
+body[data-theme="editorial"] #secCompareSection[data-async-state="success"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="success"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-async-state="success"],
+body[data-theme="editorial"] #portfolioSection[data-state="partial"],
+body[data-theme="editorial"] #quickCheckSection[data-state="partial"],
+body[data-theme="editorial"] #secCompareSection[data-state="partial"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="partial"],
+body[data-theme="editorial"] #portfolioSection[data-state="loading"],
+body[data-theme="editorial"] #quickCheckSection[data-state="loading"],
+body[data-theme="editorial"] #secCompareSection[data-state="loading"],
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="loading"] {
+  position: relative;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] #portfolioSection[data-state="partial"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-state="partial"]::before,
+body[data-theme="editorial"] #secCompareSection[data-state="partial"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="partial"]::before,
+body[data-theme="editorial"] #portfolioSection[data-state="loading"]::before,
+body[data-theme="editorial"] #quickCheckSection[data-state="loading"]::before,
+body[data-theme="editorial"] #secCompareSection[data-state="loading"]::before,
+body[data-theme="editorial"] #cockpitMergedPanel[data-state="loading"]::before {
+  background: var(--ol-gold);
+  border-radius: 10px 10px 0 0;
+  content: "";
+  height: 5px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+@media (max-width: 720px) {
+  body[data-theme="editorial"] .research-panel-snapshot__kpis {
+    grid-template-columns: 1fr;
+  }
 }
 
 body[data-theme="editorial"] .system-status-strip {
@@ -930,7 +1149,7 @@ body[data-theme="editorial"] table thead th {
   background: var(--ol-surface-soft) !important;
   color: #3f3428 !important;
   border-bottom: 1px solid var(--ol-border) !important;
-  font-size: 0.74rem !important;
+  font-size: 0.82rem !important; /* 13px+ floor; hierarchy via uppercase + tracking */
   letter-spacing: 0.07em !important;
   text-transform: uppercase;
 }
@@ -1328,6 +1547,24 @@ body[data-theme="editorial"] :focus-visible {
   outline-offset: 2px;
 }
 
+/* overhaul.css sets `outline: none !important` on input/select/textarea
+ * :focus, which silently removed keyboard focus visibility on every form
+ * field. Re-assert the outline here (readability.css loads last, so equal
+ * specificity + !important wins) for keyboard focus only. */
+body[data-theme="editorial"] input:focus-visible,
+body[data-theme="editorial"] select:focus-visible,
+body[data-theme="editorial"] textarea:focus-visible {
+  outline: 2px solid var(--ol-accent) !important;
+  outline-offset: 2px;
+}
+
+/* styles.css removes the outline on the scan-blockers chip; keep it visible
+ * for keyboard users (background tint alone is not a focus indicator). */
+body[data-theme="editorial"] .scan-blockers-chip:focus-visible {
+  outline: 2px solid var(--ol-accent) !important;
+  outline-offset: 2px;
+}
+
 @media (max-width: 1080px) {
   body[data-theme="editorial"] .mode-header {
     grid-template-columns: 1fr;
@@ -1412,8 +1649,8 @@ body[data-theme="editorial"] .hero-kpi-label,
 body[data-theme="editorial"] .stat-label {
   font-family: "IBM Plex Mono", ui-monospace, monospace !important;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 0.68rem !important;
+  letter-spacing: 0.14em;
+  font-size: 0.8125rem !important; /* 13px floor for supporting labels */
   font-weight: 600 !important;
 }
 
@@ -1578,7 +1815,8 @@ body[data-theme="editorial"] .app-topbar {
 }
 
 body[data-theme="editorial"] .app-topbar-tabs {
-  min-width: min(100%, 420px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 body[data-theme="editorial"] .app-topbar-actions {
@@ -2225,19 +2463,20 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
   box-shadow: none !important;
 }
 
-/* Chrome fit pass: keep the editorial theme wide enough for dense data screens. */
+/* Chrome fit pass: fluid container + responsive grids on wide screens. */
 @media (min-width: 1280px) {
   body[data-theme="editorial"] main.container {
-    width: min(1400px, calc(100vw - 48px)) !important;
-    max-width: 1400px !important;
+    width: 100% !important;
+    max-width: min(1760px, 100%) !important;
     margin: 16px auto 48px !important;
+    padding-inline: clamp(16px, 2.4vw, 32px) !important;
+    box-sizing: border-box !important;
     gap: 14px !important;
     padding-bottom: 120px !important;
   }
 
   body[data-theme="editorial"].ui-screen-operations main.container {
-    width: min(1416px, calc(100vw - 32px)) !important;
-    max-width: 1416px !important;
+    max-width: min(1760px, 100%) !important;
   }
 
   body[data-theme="editorial"] .mode-header {
@@ -2298,16 +2537,37 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
     margin-bottom: 8px !important;
   }
 
+  /* Scan table + evaluate panel need ~1040px (wide table / chart). Stack lanes
+   * full-width so nothing is squeezed into a side column on laptop Chrome. */
   body[data-theme="editorial"].ui-screen-operations .operate-kanban {
+    display: grid !important;
     grid-template-columns: minmax(0, 1fr) !important;
-    gap: 14px !important;
+    gap: clamp(10px, 1.2vw, 16px) !important;
     padding: 10px !important;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanSection,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #pendingSection {
+    grid-column: 1 / -1;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child)::after {
+    display: none !important;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child) {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
   }
 
   body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane {
-    min-height: 0 !important;
+    min-height: clamp(280px, 36vh, 520px) !important;
     padding: 12px 12px 14px !important;
-    width: 100% !important;
+    width: auto !important;
+    min-width: 0;
   }
 
   body[data-theme="editorial"] .kanban-lane-head {
@@ -2342,17 +2602,21 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
     padding-top: 0.75rem !important;
   }
 
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+  }
+
   body[data-theme="editorial"] .stats {
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important;
   }
 
   body[data-theme="editorial"] .layout-quick-tools.research-check-panel {
-    grid-template-columns: minmax(420px, 0.95fr) minmax(0, 1.05fr) !important;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr) !important;
     gap: 1rem !important;
   }
 
   body[data-theme="editorial"].ui-screen-research .layout-2 {
-    grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr) !important;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr) !important;
   }
 
   body[data-theme="editorial"].ui-screen-research .layout-2:has(> :only-child) {
@@ -2365,7 +2629,7 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
 
   body[data-theme="editorial"] .settings-workspace,
   body[data-theme="editorial"] .layout-onboarding-presets {
-    grid-template-columns: minmax(420px, 0.9fr) minmax(0, 1.1fr) !important;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) !important;
     align-items: start !important;
   }
 }
@@ -2642,6 +2906,34 @@ body[data-theme="editorial"] .decision-dashboard-state-strip[data-state="empty"]
 .decision-summary-pill.warn {
   border-color: color-mix(in srgb, var(--warn) 45%, var(--panel-border));
   color: var(--warn);
+}
+
+/* Editorial: the pills above inherit dark-theme vars (--bg-elevated is a
+ * near-black), which rendered as illegible dark chips on the cream summary
+ * row. Repaint them with Old Logan tokens. */
+body[data-theme="editorial"] .decision-summary-pill {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .decision-summary-pill.neutral {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .decision-summary-pill.good {
+  border-color: color-mix(in srgb, var(--ol-ok) 55%, var(--ol-border-strong)) !important;
+  color: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] .decision-summary-pill.bad {
+  border-color: color-mix(in srgb, var(--ol-bad) 55%, var(--ol-border-strong)) !important;
+  color: var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] .decision-summary-pill.warn {
+  border-color: color-mix(in srgb, var(--ol-warn) 55%, var(--ol-border-strong)) !important;
+  color: var(--ol-warn) !important;
 }
 
 .decision-signal-edge-board {
@@ -3039,7 +3331,8 @@ body[data-theme="editorial"] .decision-evidence-row--wide {
 /* —— Calibration panel (Figma node 5:2, variables ol/*) —— */
 /* Token map: ol/bg→--ol-bg, ol/accent→--ol-accent, ol/gold→--ol-gold, ol/ok→--ol-ok, ol/bad→--ol-bad */
 #calibrationSummaryStrip.calibration-summary-strip {
-  color: var(--ol-gold);
+  /* was --ol-gold: 2.2:1 on the cream summary row — AA fail */
+  color: var(--ol-warn);
   font-size: 0.82rem;
 }
 
@@ -3271,5 +3564,516 @@ body[data-theme="editorial"] .table-wrap td[data-col="num"],
 body[data-theme="editorial"] .table-wrap th[data-col="num"] {
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
   font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   Chrome layout containment — prevent horizontal bleed / clipping
+============================================================ */
+
+html {
+  overflow-x: clip;
+}
+
+body[data-theme="editorial"] {
+  overflow-x: clip;
+}
+
+body[data-theme="editorial"] main.container {
+  width: 100%;
+  max-width: min(1760px, 100%);
+  margin-inline: auto;
+  padding-inline: clamp(12px, 2.4vw, 32px);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+body[data-theme="editorial"] main.container > *,
+body[data-theme="editorial"] .layout-2 > *,
+body[data-theme="editorial"] .layout-quick-tools > *,
+body[data-theme="editorial"] .card,
+body[data-theme="editorial"] .panel-disclosure,
+body[data-theme="editorial"] .mode-header,
+body[data-theme="editorial"] #workflowPrimary,
+body[data-theme="editorial"] .operate-kanban,
+body[data-theme="editorial"] .layout-2,
+body[data-theme="editorial"] .layout-quick-tools,
+body[data-theme="editorial"] .layout-onboarding-presets,
+body[data-theme="editorial"] .settings-workspace {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body[data-theme="editorial"] .section-title {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .section-title h2,
+body[data-theme="editorial"] .section-title h3,
+body[data-theme="editorial"] .scan-title-meta {
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .operate-kanban {
+  overflow: hidden !important;
+}
+
+@media (min-width: 1121px) and (max-width: 1279px) {
+  /* Same stacked full-width pattern as the >=1280 block. */
+  body[data-theme="editorial"] .operate-kanban,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanSection,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #pendingSection {
+    grid-column: 1 / -1;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child)::after {
+    display: none !important;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child) {
+    border-right: none !important;
+    border-bottom: 1px solid var(--ink-line) !important;
+  }
+}
+
+@media (max-width: 1120px) {
+  body[data-theme="editorial"] .operate-kanban,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body[data-theme="editorial"] .operate-kanban .kanban-lane,
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane {
+    min-height: 0 !important;
+  }
+}
+
+@media (min-width: 1121px) {
+  body[data-theme="editorial"] .kanban-lane:not(:last-child)::after {
+    right: 6px;
+  }
+}
+
+@media (max-width: 1280px) {
+  body[data-theme="editorial"] .app-topbar {
+    display: grid !important;
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs" !important;
+    align-items: stretch !important;
+    row-gap: 8px !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-brand {
+    grid-area: brand;
+    min-width: 0;
+  }
+
+  body[data-theme="editorial"] .app-topbar-actions {
+    grid-area: actions;
+    justify-self: end;
+    flex-wrap: wrap;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs {
+    grid-area: tabs;
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 8px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body[data-theme="editorial"] .operations-status-strip,
+  body[data-theme="editorial"] .operations-panel-snapshot,
+  body[data-theme="editorial"] .system-status-strip,
+  body[data-theme="editorial"] .research-status-strip,
+  body[data-theme="editorial"] .decision-dashboard-state-strip {
+    margin-inline: 8px;
+  }
+
+  body[data-theme="editorial"] .operations-panel-snapshot__kpis {
+    grid-template-columns: 1fr;
+  }
+
+  body[data-theme="editorial"] .workflow-progress-step {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  body[data-theme="editorial"] .mode-header {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* ============================================================
+   Portfolio Risk Dashboard — editorial theme
+   Figma: Old Logan DS "Portfolio Risk — Success/Partial/Empty/
+   Loading/Error" (nodes 70-40 … 70-60).
+   Mount: #portfolioRiskMount · alias ?screen=research&section=risk
+============================================================ */
+
+body[data-theme="editorial"] .portfolio-subtabs {
+  gap: 8px;
+  border: 0;
+  margin: 12px 0;
+}
+body[data-theme="editorial"] .portfolio-subtabs .tab-btn,
+body[data-theme="editorial"] .risk-stress-tabs .tab-btn {
+  border: 1px solid rgba(201, 169, 98, 0.6);
+  border-radius: 999px;
+  background: var(--ol-bg);
+  color: var(--ol-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+}
+body[data-theme="editorial"] .portfolio-subtabs .tab-btn-active,
+body[data-theme="editorial"] .risk-stress-tabs .tab-btn-active {
+  background: var(--ol-accent);
+  border-color: var(--ol-accent);
+  color: var(--ol-gold);
+}
+
+/* Toolbar: lookback + freshness + refresh */
+body[data-theme="editorial"] .risk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+body[data-theme="editorial"] .risk-toolbar select {
+  background: var(--ol-bg);
+  border: 1px solid var(--ol-border);
+  border-radius: 6px;
+  color: var(--ol-text);
+  font-size: 0.8125rem;
+  padding: 5px 8px;
+}
+body[data-theme="editorial"] .risk-toolbar .risk-freshness {
+  font-size: 0.8125rem;
+  color: var(--ol-muted);
+}
+
+/* Sticky anchor chips */
+body[data-theme="editorial"] .risk-anchor-chips {
+  position: sticky;
+  top: var(--sticky-offset, 0px);
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+  background: var(--ol-surface);
+}
+body[data-theme="editorial"] .risk-anchor-chip {
+  border: 1px solid rgba(201, 169, 98, 0.6);
+  border-radius: 999px;
+  background: var(--ol-bg);
+  color: var(--ol-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+body[data-theme="editorial"] .risk-anchor-chip:hover {
+  color: var(--ol-accent);
+  border-color: var(--ol-accent);
+}
+
+/* Section titles: gold small-caps with hairline rule */
+body[data-theme="editorial"] .risk-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ol-warn);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 20px 0 10px;
+}
+body[data-theme="editorial"] .risk-section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(201, 169, 98, 0.45);
+}
+
+/* KPI tiles — match DS Components 7-24 */
+body[data-theme="editorial"] .risk-kpi {
+  background: var(--ol-bg);
+  border: 1px solid var(--ol-border);
+  border-radius: 8px;
+  text-align: left;
+}
+body[data-theme="editorial"] .risk-kpi-value {
+  color: var(--ol-accent);
+  font-size: 1.35rem;
+}
+body[data-theme="editorial"] .risk-kpi-label {
+  color: var(--ol-warn);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Metrics table */
+body[data-theme="editorial"] .risk-metrics-table {
+  font-size: 0.9rem;
+}
+body[data-theme="editorial"] .risk-metrics-table th {
+  color: var(--ol-warn);
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(201, 169, 98, 0.45);
+}
+body[data-theme="editorial"] .risk-metrics-table td {
+  border-bottom: 1px solid var(--ol-border);
+}
+body[data-theme="editorial"] .risk-metrics-table th[data-risk-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+body[data-theme="editorial"] .risk-metrics-table th[data-risk-sort]:hover {
+  color: var(--ol-accent);
+}
+
+/* Correlation heatmap — colors owned here via data-corr-bucket.
+   Positive corr = bad red tints, negative = forest ok tints. */
+body[data-theme="editorial"] .risk-corr-cell {
+  min-width: 34px;
+  padding: 4px 2px;
+  font-size: 0.8rem;
+  border-radius: 3px;
+  color: var(--ol-text);
+  cursor: pointer;
+}
+body[data-theme="editorial"] .risk-corr-label {
+  font-size: 0.8rem;
+  color: var(--ol-muted);
+}
+.risk-corr-cell[data-corr-bucket="5"]  { background: rgba(201, 73, 73, 0.85); color: #fffefb; }
+.risk-corr-cell[data-corr-bucket="4"]  { background: rgba(201, 73, 73, 0.62); }
+.risk-corr-cell[data-corr-bucket="3"]  { background: rgba(201, 73, 73, 0.44); }
+.risk-corr-cell[data-corr-bucket="2"]  { background: rgba(201, 73, 73, 0.28); }
+.risk-corr-cell[data-corr-bucket="1"]  { background: rgba(201, 73, 73, 0.14); }
+.risk-corr-cell[data-corr-bucket="0"]  { background: rgba(90, 90, 90, 0.08); }
+.risk-corr-cell[data-corr-bucket="-1"] { background: rgba(45, 90, 74, 0.14); }
+.risk-corr-cell[data-corr-bucket="-2"] { background: rgba(45, 90, 74, 0.28); }
+.risk-corr-cell[data-corr-bucket="-3"] { background: rgba(45, 90, 74, 0.44); }
+.risk-corr-cell[data-corr-bucket="-4"] { background: rgba(45, 90, 74, 0.62); }
+.risk-corr-cell[data-corr-bucket="-5"] { background: rgba(45, 90, 74, 0.85); color: #fffefb; }
+body[data-theme="editorial"] .risk-corr-cell.corr-dim { opacity: 0.25; }
+body[data-theme="editorial"] .risk-corr-cell.corr-hilite {
+  outline: 2px solid var(--ol-gold);
+  outline-offset: -2px;
+}
+body[data-theme="editorial"] .risk-corr-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--ol-muted);
+  margin-top: 6px;
+}
+body[data-theme="editorial"] .risk-corr-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+body[data-theme="editorial"] .risk-corr-swatch--pos { background: rgba(201, 73, 73, 0.7); }
+body[data-theme="editorial"] .risk-corr-swatch--neg { background: rgba(45, 90, 74, 0.7); }
+
+/* Weight vs risk chart */
+body[data-theme="editorial"] .risk-wr-bar-weight { background: var(--ol-accent); }
+body[data-theme="editorial"] .risk-wr-bar-risk { background: var(--ol-bad); }
+body[data-theme="editorial"] .risk-wr-tick {
+  font-size: 0.72rem;
+  color: var(--ol-muted);
+}
+body[data-theme="editorial"] .risk-share-fill {
+  background: linear-gradient(90deg, var(--ol-warn), var(--ol-bad));
+}
+
+/* Breach / flag box */
+body[data-theme="editorial"] .risk-breach-list {
+  background: rgba(201, 73, 73, 0.07);
+  border: 1px solid rgba(201, 73, 73, 0.55);
+  border-radius: 8px;
+}
+body[data-theme="editorial"] .risk-breach-title { color: var(--ol-bad); }
+body[data-theme="editorial"] .risk-breach-row { font-size: 0.875rem; }
+
+/* Recommendation-style callout reuse */
+body[data-theme="editorial"] .risk-recommendation-card {
+  background: var(--ol-bg);
+  border: 1px solid var(--ol-border);
+  border-left: 3px solid var(--ol-gold);
+  border-radius: 8px;
+}
+
+/* Stress testing */
+body[data-theme="editorial"] .risk-stress-bar-down { background: var(--ol-warn); }
+body[data-theme="editorial"] .risk-stress-bar-severe { background: var(--ol-bad); }
+body[data-theme="editorial"] .risk-stress-bar-up { background: var(--ol-ok); }
+body[data-theme="editorial"] .risk-stress-bar-na { background: rgba(90, 90, 90, 0.2); }
+body[data-theme="editorial"] .risk-stress-tick {
+  font-size: 0.74rem;
+  color: var(--ol-muted);
+}
+body[data-theme="editorial"] .risk-tag-hypothetical {
+  color: var(--ol-warn);
+  border-color: var(--ol-warn);
+  font-size: 0.66rem;
+}
+
+/* Footer disclosures + sparkline */
+body[data-theme="editorial"] #portfolioRiskMount .panel-disclosure {
+  background: var(--ol-bg);
+  border: 1px solid var(--ol-border);
+  border-radius: 8px;
+  padding: 4px 12px;
+  margin-top: 8px;
+}
+body[data-theme="editorial"] .portfolio-analytics-sparkline { color: var(--ol-accent); }
+
+/* Loading skeleton + staged progress */
+body[data-theme="editorial"] .risk-progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.875rem;
+  margin-bottom: 10px;
+}
+body[data-theme="editorial"] .risk-progress-step--done { color: var(--ol-ok); }
+body[data-theme="editorial"] .risk-progress-step--active { color: var(--ol-accent); font-weight: 600; }
+body[data-theme="editorial"] .risk-progress-step--pending { color: var(--ol-muted); }
+body[data-theme="editorial"] .risk-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(90, 90, 90, 0.15);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+body[data-theme="editorial"] .risk-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ol-gold);
+  transition: width 1.2s ease;
+}
+body[data-theme="editorial"] .risk-skeleton-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+body[data-theme="editorial"] .risk-skeleton-row {
+  display: flex;
+  gap: 12px;
+}
+body[data-theme="editorial"] .risk-skeleton-block {
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg,
+    rgba(90, 90, 90, 0.12) 40%,
+    rgba(90, 90, 90, 0.05) 50%,
+    rgba(90, 90, 90, 0.12) 60%
+  );
+  background-size: 200% 100%;
+  animation: riskSkeletonShimmer 1.6s linear infinite;
+}
+@keyframes riskSkeletonShimmer {
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-theme="editorial"] .risk-skeleton-block { animation: none; }
+}
+
+/* —— AA contrast pass: small red text uses the darker --ol-bad-text ——
+ * #c94949 measures 3.4–4.1:1 on cream / tinted chips, below the 4.5:1
+ * minimum for small text. Fills, borders, and large text keep --ol-bad. */
+body[data-theme="editorial"] .operations-status-strip[data-state="error"] .operations-status-pill,
+body[data-theme="editorial"] .research-status-strip[data-state="error"] .research-status-pill,
+body[data-theme="editorial"] .system-status-strip[data-state="error"] .system-status-pill,
+body[data-theme="editorial"] .decision-dashboard-state-strip[data-state="error"] .decision-dashboard-state-pill,
+body[data-theme="editorial"] .decision-signal-edge-summary[data-state="error"],
+body[data-theme="editorial"] .kanban-lane-summary[data-state="error"],
+body[data-theme="editorial"] .workflow-progress-step[data-state="blocked"],
+body[data-theme="editorial"] .workflow-progress-step[data-state="blocked"] .workflow-progress-index,
+body[data-theme="editorial"] .health-badge.bg-red-900,
+body[data-theme="editorial"] .risk-breach-title,
+body[data-theme="editorial"] .decision-summary-pill.bad {
+  color: var(--ol-bad-text) !important;
+}
+
+/* —— Generic skeleton blocks (reused beyond Portfolio Risk) —— */
+body[data-theme="editorial"] .ol-skeleton {
+  display: block;
+  border-radius: 6px;
+  min-height: 0.9rem;
+  background: linear-gradient(
+    100deg,
+    rgba(90, 90, 90, 0.12) 40%,
+    rgba(90, 90, 90, 0.05) 50%,
+    rgba(90, 90, 90, 0.12) 60%
+  );
+  background-size: 200% 100%;
+  animation: riskSkeletonShimmer 1.6s linear infinite;
+}
+body[data-theme="editorial"] .ol-skeleton + .ol-skeleton {
+  margin-top: 0.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-theme="editorial"] .ol-skeleton { animation: none; }
+}
+
+/* —— Glossary tooltips (plain-language companions for jargon) —— */
+body[data-theme="editorial"] .glossary-term {
+  text-decoration: underline dotted rgba(26, 58, 46, 0.55);
+  text-underline-offset: 2px;
+  cursor: help;
+  font-style: normal;
+}
+
+/* —— Onboarding step cards (moved out of inline JS colors) —— */
+body[data-theme="editorial"] .onboarding-callback-hint {
+  border-color: rgba(138, 92, 31, 0.45) !important;
+}
+
+body[data-theme="editorial"] .onboarding-step-card {
+  border-radius: 8px;
+  border: 1px solid var(--ol-border);
+  background: var(--ol-surface-soft);
+}
+
+body[data-theme="editorial"] .onboarding-step-card[data-state="ok"] {
+  border-color: rgba(45, 90, 74, 0.45);
+  background: rgba(45, 90, 74, 0.08);
+}
+
+body[data-theme="editorial"] .onboarding-step-card[data-state="fail"] {
+  border-color: rgba(201, 73, 73, 0.44);
+  background: rgba(201, 73, 73, 0.08);
 }
 

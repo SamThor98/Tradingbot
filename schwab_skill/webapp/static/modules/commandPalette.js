@@ -42,6 +42,11 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     { id: "refresh", label: "Refresh All", shortcut: "R", icon: "refresh", action: () => document.getElementById("refreshBtn")?.click() },
     { id: "ticker", label: "Quick Ticker Check", shortcut: "T", icon: "chart", action: () => { document.getElementById("tickerInput")?.focus(); document.getElementById("quickCheckSection")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "pending", label: "Go to Pending Trades", icon: "list", action: () => document.getElementById("pendingSection")?.scrollIntoView({ behavior: "smooth" }) },
+    { id: "workflow", label: "Go to Workflow Kanban", icon: "list", action: () => { setScreenMode("operations")(); document.getElementById("workflowPrimary")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "health", label: "Go to Health Ribbon", icon: "pulse", action: () => { setScreenMode("diagnostics")(); document.getElementById("healthRibbon")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "shadow", label: "Go to Shadow Scoreboard", icon: "pulse", action: lazyJump("shadowScoreboard", "shadowScoreboardSection", "diagnostics") },
+    { id: "review", label: "Go to Review Loop", icon: "pulse", action: lazyJump("reviewLoop", "reviewLoopSection", "diagnostics") },
+    { id: "status-details", label: "Go to Status Details", icon: "pulse", action: () => { setScreenMode("diagnostics")(); document.getElementById("statusDetailsPanel")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "portfolio", label: "Go to Portfolio", icon: "wallet", action: lazyJump("portfolio", "portfolioSection", "research") },
     { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection", "research") },
     { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection", "research") },
@@ -65,9 +70,14 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
   ];
 }
 
+/** Element that had focus before the palette opened; restored on close. */
+let _returnFocusEl = null;
+
 export function openCommandPalette() {
   const dialog = document.getElementById("cmdPaletteDialog");
   if (!dialog) return;
+  _returnFocusEl =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
   dialog.classList.add("open");
   const input = document.getElementById("cmdPaletteInput");
   if (input) { input.value = ""; input.focus(); }
@@ -77,6 +87,20 @@ export function openCommandPalette() {
 export function closeCommandPalette() {
   const dialog = document.getElementById("cmdPaletteDialog");
   if (dialog) dialog.classList.remove("open");
+  // Return focus to whatever opened the palette (WCAG 2.4.3).
+  if (_returnFocusEl?.isConnected) _returnFocusEl.focus();
+  _returnFocusEl = null;
+}
+
+/** Sync .selected class, aria-selected, and the input's active descendant. */
+function setSelectedItem(items, idx) {
+  items.forEach((b, i) => {
+    const active = i === idx;
+    b.classList.toggle("selected", active);
+    b.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  const input = document.getElementById("cmdPaletteInput");
+  if (input && items[idx]) input.setAttribute("aria-activedescendant", items[idx].id);
 }
 
 export function renderCommandResults(query) {
@@ -89,21 +113,21 @@ export function renderCommandResults(query) {
   list.innerHTML = filtered
     .map(
       (a, i) =>
-        `<button class="cmd-palette-item${i === 0 ? " selected" : ""}" data-idx="${i}" type="button">
+        `<button class="cmd-palette-item${i === 0 ? " selected" : ""}" id="cmdPaletteOpt${i}" role="option" aria-selected="${i === 0 ? "true" : "false"}" data-idx="${i}" type="button" tabindex="-1">
           <span class="cmd-palette-label">${safeText(a.label)}</span>
           ${a.shortcut ? `<kbd class="cmd-palette-kbd">${safeText(a.shortcut)}</kbd>` : ""}
         </button>`
     )
     .join("");
-  list.querySelectorAll(".cmd-palette-item").forEach((btn, idx) => {
+  const items = Array.from(list.querySelectorAll(".cmd-palette-item"));
+  const input = document.getElementById("cmdPaletteInput");
+  if (input) input.setAttribute("aria-activedescendant", items.length ? "cmdPaletteOpt0" : "");
+  items.forEach((btn, idx) => {
     btn.addEventListener("click", () => {
       closeCommandPalette();
       filtered[idx]?.action();
     });
-    btn.addEventListener("mouseenter", () => {
-      list.querySelectorAll(".cmd-palette-item").forEach((b) => b.classList.remove("selected"));
-      btn.classList.add("selected");
-    });
+    btn.addEventListener("mouseenter", () => setSelectedItem(items, idx));
   });
 }
 
@@ -119,14 +143,12 @@ export function setupCommandPalette(deps = {}) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       const next = Math.min(cur + 1, items.length - 1);
-      items.forEach((b) => b.classList.remove("selected"));
-      items[next]?.classList.add("selected");
+      setSelectedItem(items, next);
       items[next]?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       const prev = Math.max(cur - 1, 0);
-      items.forEach((b) => b.classList.remove("selected"));
-      items[prev]?.classList.add("selected");
+      setSelectedItem(items, prev);
       items[prev]?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -135,6 +157,10 @@ export function setupCommandPalette(deps = {}) {
     } else if (e.key === "Escape") {
       e.preventDefault();
       closeCommandPalette();
+    } else if (e.key === "Tab") {
+      // Focus trap: the input is the palette's only tab stop; results are
+      // driven by arrow keys per the combobox pattern.
+      e.preventDefault();
     }
   });
   document.getElementById("cmdPaletteDialog")?.addEventListener("click", (e) => {

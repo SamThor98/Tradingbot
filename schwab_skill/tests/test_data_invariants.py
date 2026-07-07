@@ -55,6 +55,8 @@ def test_apply_score_stack_emits_rank_score_metadata() -> None:
     assert isinstance(out.get("rank_score"), (int, float))
     assert 0.0 <= float(out["rank_score"]) <= 100.0
     assert out.get("rank_basis") == "composite_quality_v3"
+    assert out.get("pts_volume_rank") == 6.0
+    assert out.get("volume_ratio") == 1.3
 
 
 def test_apply_score_stack_edge_excludes_52w_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:

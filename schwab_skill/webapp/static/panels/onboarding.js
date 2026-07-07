@@ -123,7 +123,7 @@ function renderAuthBootstrapSection(portalConfig) {
 
   const localConnectHint =
     !cfg.saas_mode && portal.account_callback_url
-      ? `<div class="card" style="margin-top:10px; border-color: rgba(251, 191, 36, 0.45);">
+      ? `<div class="card onboarding-callback-hint" style="margin-top:10px;">
           <p style="margin:0 0 6px;"><strong>Local Schwab setup</strong></p>
           <p class="muted" style="margin:0 0 8px;">
             Open this dashboard at <strong>${esc(window?.location?.origin || "https://127.0.0.1:8182")}</strong>
@@ -380,13 +380,12 @@ export function renderOnboardingCards(data, { portalConfig = null } = {}) {
   for (const [key, label] of Object.entries(STEP_NAMES)) {
     const step = steps[key] || {};
     const ok = Boolean(step.ok);
-    const borderColor = ok ? "rgba(52, 211, 153, 0.45)" : step.at ? "rgba(251, 113, 133, 0.45)" : "rgba(100, 116, 139, 0.35)";
-    const bgColor = ok ? "rgba(6, 78, 59, 0.2)" : step.at ? "rgba(127, 29, 29, 0.15)" : "rgba(10, 16, 34, 0.6)";
+    const stepState = ok ? "ok" : step.at ? "fail" : "idle";
     const statusPill = ok
       ? '<span class="pill good small">Pass</span>'
       : step.at ? '<span class="pill bad small">Fail</span>' : '<span class="pill neutral small">Not run</span>';
     const fixPath = step.fix_path ? `<p class="muted" style="font-size: 0.78rem; margin: 6px 0 0;">${safeText(step.fix_path)}</p>` : "";
-    html += `<div style="border-radius: 12px; border: 1px solid ${borderColor}; background: ${bgColor}; padding: 12px;">
+    html += `<div class="onboarding-step-card" data-state="${stepState}" style="padding: 12px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
         <strong style="font-size: 0.88rem;">${label}</strong>
         ${statusPill}
@@ -641,8 +640,19 @@ export async function refreshOnboarding({ runLazyApi = async () => {} } = {}) {
       triggerMarketConnect: triggerSchwabMarketOAuth,
     });
     meta.textContent = `Onboarding status failed: ${out.user_message || out.error}`;
+    if (!meta.parentElement?.querySelector("[data-onboarding-retry]")) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "btn small secondary";
+      retryBtn.setAttribute("data-onboarding-retry", "");
+      retryBtn.style.marginLeft = "0.5rem";
+      retryBtn.textContent = "Retry";
+      retryBtn.addEventListener("click", () => void refreshOnboarding({ runLazyApi }));
+      meta.insertAdjacentElement("afterend", retryBtn);
+    }
     return;
   }
+  document.querySelector("[data-onboarding-retry]")?.remove();
   state.onboarding = out.data;
   if (section) section.style.display = "block";
   const conn = out.data?.connection_status || (out.data?.schwab_linked ? "connected" : "disconnected");

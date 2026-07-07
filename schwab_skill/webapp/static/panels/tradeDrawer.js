@@ -33,12 +33,39 @@ import {
   formatConfidenceBucket,
   formatDecisionReason,
 } from "../modules/decisionPlainLanguage.js";
+import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 
 const TABS = ["decision", "recovery"];
 let _wired = false;
+/** Element that had focus before the drawer opened; restored on close. */
+let _returnFocusEl = null;
 
 function $(id) {
   return document.getElementById(id);
+}
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function drawerFocusables(drawer) {
+  return Array.from(drawer.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+    (el) => el.offsetParent !== null || el === document.activeElement,
+  );
+}
+
+/**
+ * Move focus into the drawer once the slide-in has rendered. Double-rAF so
+ * the element is focusable even while the open transition is still running.
+ */
+function focusDrawerField(id) {
+  const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 0));
+  raf(() =>
+    raf(() => {
+      const el = $(id);
+      if (el) el.focus();
+      else $("tradeDrawerCloseBtn")?.focus();
+    }),
+  );
 }
 
 function setActiveTab(tab) {
@@ -61,14 +88,20 @@ function setActiveTab(tab) {
  * tab or the legacy in-page #decisionSection. Pass an `idPrefix` of
  * `"tradeDrawerDecision"` for the drawer or `"decision"` for legacy.
  */
-function renderDecisionInto(idPrefix, data, error) {
+function renderDecisionInto(idPrefix, data, error, opts = {}) {
   const ph = $(`${idPrefix}Placeholder`);
   const sum = $(`${idPrefix}Summary`);
   const det = $(`${idPrefix}JsonDetails`);
   const pre = $(`${idPrefix}Output`);
   if (error) {
     if (ph) {
-      ph.textContent = error;
+      ph.innerHTML = buildOperatorAlertHtml({
+        tone: "bad",
+        headline: "Data unavailable",
+        detail: error,
+        retry: Boolean(opts.retryAttr),
+        retryAttr: opts.retryAttr,
+      });
       ph.classList.remove("hidden");
     }
     if (sum) {
@@ -129,14 +162,20 @@ function renderDecisionInto(idPrefix, data, error) {
   if (pre) pre.textContent = prettyJson(data);
 }
 
-function renderRecoveryInto(idPrefix, data, error) {
+function renderRecoveryInto(idPrefix, data, error, opts = {}) {
   const ph = $(`${idPrefix}Placeholder`);
   const sum = $(`${idPrefix}Summary`);
   const det = $(`${idPrefix}JsonDetails`);
   const pre = $(`${idPrefix}Output`);
   if (error) {
     if (ph) {
-      ph.textContent = error;
+      ph.innerHTML = buildOperatorAlertHtml({
+        tone: "bad",
+        headline: "Data unavailable",
+        detail: error,
+        retry: Boolean(opts.retryAttr),
+        retryAttr: opts.retryAttr,
+      });
       ph.classList.remove("hidden");
     }
     if (sum) {
@@ -174,14 +213,37 @@ async function fetchRecovery(source, message) {
   );
 }
 
+/** Show a plain loading line in the placeholder (not the error alert). */
+function renderDrawerLoading(idPrefix, text) {
+  const ph = $(`${idPrefix}Placeholder`);
+  if (ph) {
+    ph.innerHTML = `<span class="async-state async-state--loading muted" role="status">
+      <span class="async-spinner" aria-hidden="true"></span>
+      <span>${safeText(text)}</span>
+    </span>`;
+    ph.classList.remove("hidden");
+  }
+  const sum = $(`${idPrefix}Summary`);
+  if (sum) sum.classList.add("hidden");
+}
+
+function wireDrawerRetry(idPrefix, attr, retry) {
+  $(`${idPrefix}Placeholder`)
+    ?.querySelector(`[${attr}]`)
+    ?.addEventListener("click", () => void retry());
+}
+
 /** Run the Decision lookup driven by the drawer's own ticker input. */
 export async function loadDecisionInDrawer() {
   const inputEl = $("tradeDrawerDecisionTicker");
   const ticker = inputEl ? inputEl.value : "";
-  renderDecisionInto("tradeDrawerDecision", null, "Loading decision card…");
+  renderDrawerLoading("tradeDrawerDecision", "Loading decision card…");
   const out = await fetchDecision(ticker);
   if (!out.ok) {
-    renderDecisionInto("tradeDrawerDecision", null, `Decision card failed: ${out.error}`);
+    renderDecisionInto("tradeDrawerDecision", null, `Decision card failed: ${out.error}`, {
+      retryAttr: "data-drawer-decision-retry",
+    });
+    wireDrawerRetry("tradeDrawerDecision", "data-drawer-decision-retry", loadDecisionInDrawer);
     return;
   }
   renderDecisionInto("tradeDrawerDecision", out.data, null);
@@ -193,10 +255,13 @@ export async function loadRecoveryInDrawer() {
   const messageEl = $("tradeDrawerRecoveryMessage");
   const source = sourceEl ? sourceEl.value : "schwab_auth";
   const message = messageEl ? messageEl.value : "";
-  renderRecoveryInto("tradeDrawerRecovery", null, "Mapping recovery…");
+  renderDrawerLoading("tradeDrawerRecovery", "Mapping recovery…");
   const out = await fetchRecovery(source, message);
   if (!out.ok) {
-    renderRecoveryInto("tradeDrawerRecovery", null, `Recovery mapping failed: ${out.error}`);
+    renderRecoveryInto("tradeDrawerRecovery", null, `Recovery mapping failed: ${out.error}`, {
+      retryAttr: "data-drawer-recovery-retry",
+    });
+    wireDrawerRetry("tradeDrawerRecovery", "data-drawer-recovery-retry", loadRecoveryInDrawer);
     return;
   }
   renderRecoveryInto("tradeDrawerRecovery", out.data, null);
@@ -216,6 +281,8 @@ export function openTradeDrawer(opts = {}) {
   if (!drawer) return;
   const backdrop = $("tradeDrawerBackdrop");
   ensureWired();
+  _returnFocusEl =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const tab = opts.tab && TABS.includes(opts.tab) ? opts.tab : "decision";
   setActiveTab(tab);
   drawer.classList.add("open");
@@ -228,7 +295,7 @@ export function openTradeDrawer(opts = {}) {
       if (inputEl) inputEl.value = String(opts.ticker).toUpperCase();
       void loadDecisionInDrawer();
     }
-    queueMicrotask(() => $("tradeDrawerDecisionTicker")?.focus());
+    focusDrawerField("tradeDrawerDecisionTicker");
   } else {
     if (opts.recoverySource) {
       const sel = $("tradeDrawerRecoverySource");
@@ -239,7 +306,7 @@ export function openTradeDrawer(opts = {}) {
       if (msg) msg.value = opts.recoveryMessage;
       void loadRecoveryInDrawer();
     }
-    queueMicrotask(() => $("tradeDrawerRecoveryMessage")?.focus());
+    focusDrawerField("tradeDrawerRecoveryMessage");
   }
 }
 
@@ -260,6 +327,9 @@ export function closeTradeDrawer() {
     if (!drawer.classList.contains("open")) drawer.setAttribute("hidden", "");
   }, 220);
   document.body.classList.remove("trade-drawer-open");
+  // Return focus to whatever opened the drawer (WCAG 2.4.3).
+  if (_returnFocusEl?.isConnected) _returnFocusEl.focus();
+  _returnFocusEl = null;
 }
 
 /**
@@ -300,6 +370,14 @@ function ensureWired() {
   for (const t of TABS) {
     const btn = $(`tradeDrawerTab${t === "decision" ? "Decision" : "Recovery"}`);
     btn?.addEventListener("click", () => setActiveTab(t));
+    // Standard tablist arrow-key pattern between the two tabs.
+    btn?.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const other = t === "decision" ? "recovery" : "decision";
+      setActiveTab(other);
+      $(`tradeDrawerTab${other === "decision" ? "Decision" : "Recovery"}`)?.focus();
+    });
   }
 
   // Esc closes when the drawer is open.
@@ -309,6 +387,24 @@ function ensureWired() {
     if (drawer?.classList.contains("open")) {
       e.preventDefault();
       closeTradeDrawer();
+    }
+  });
+
+  // Trap Tab inside the open drawer so keyboard focus can't wander into
+  // the page behind it (WCAG 2.4.3 / dialog pattern).
+  const drawerEl = $("tradeDrawer");
+  drawerEl?.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab" || !drawerEl.classList.contains("open")) return;
+    const focusables = drawerFocusables(drawerEl);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
     }
   });
 }

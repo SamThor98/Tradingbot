@@ -88,15 +88,16 @@ export async function refreshSectors() {
   const maxAbsVs = Math.max(1, ...rows.map((r) => Math.abs(safeNum(r.vs_spy, 0))));
   const sortedRows = [...rows].sort((a, b) => safeNum(b.vs_spy, 0) - safeNum(a.vs_spy, 0));
   const winningCount = sortedRows.filter((row) => Boolean(row.winning)).length;
+  const updatedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   if (summaryMeta) {
-    summaryMeta.textContent = `${winningCount} winning / ${sortedRows.length - winningCount} lagging`;
+    summaryMeta.textContent = `${winningCount} winning / ${sortedRows.length - winningCount} lagging · updated ${updatedAt}`;
     summaryMeta.classList.remove("hidden");
   }
   setResearchStatusStrip(
     "sectorsStatusStrip",
     "success",
     `${winningCount} winning sector${winningCount === 1 ? "" : "s"}.`,
-    `${sortedRows.length - winningCount} lagging vs SPY across ${sortedRows.length} tracked sectors.`,
+    `${sortedRows.length - winningCount} lagging vs SPY across ${sortedRows.length} tracked sectors · updated ${updatedAt}.`,
   );
   sortedRows.forEach((row) => {
     const card = document.createElement("div");

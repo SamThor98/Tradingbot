@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cohort attribution for Kronos + management integrity on decision packets.
+"""Cohort attribution for management integrity on decision packets.
 
 Loads historical/live packets from ``decision_packets.json`` (or a custom path),
 runs era-split lift analysis (≤20d vs 21–40d), and prints a pilot recommendation.
@@ -31,7 +31,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 
 def _print_cohorts(title: str, block: dict) -> None:
     print(f"\n=== {title} ===")
-    for feature in ("kronos", "management_integrity"):
+    for feature in ("management_integrity",):
         feat = block.get(feature) or {}
         cohorts = feat.get("cohorts") or {}
         if not cohorts:
@@ -91,8 +91,7 @@ def main() -> int:
         f"({report.get('coverage_pct')}%)"
     )
     print(
-        f"Feature coverage: kronos={report.get('kronos_packets')} "
-        f"management_integrity={report.get('management_integrity_packets')}"
+        f"Feature coverage: management_integrity={report.get('management_integrity_packets')}"
     )
 
     for era, block in (report.get("era_splits") or {}).items():

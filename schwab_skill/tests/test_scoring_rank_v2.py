@@ -25,6 +25,19 @@ def test_rank_v2_from_signal_row_uses_components() -> None:
     assert score > 50.0
 
 
+def test_rank_v2_from_signal_row_uses_breakout_volume_when_dryup_zero() -> None:
+    row = {
+        "signal_score": 60.0,
+        "score_components": {"pts_volume": 0.0, "pts_mirofish": 0.0, "pts_52w": 20.0},
+        "latest_volume": 1_500_000.0,
+        "avg_vol_50": 1_000_000.0,
+        "reliability_score": 80.0,
+        "execution_score": 75.0,
+    }
+    no_volume = {**row, "latest_volume": 1_000_000.0}
+    assert rank_v2_from_signal_row(row) > rank_v2_from_signal_row(no_volume)
+
+
 def test_exclude_52w_lowers_rank_when_52w_inflates_signal() -> None:
     with_52w = compute_rank_score_v2(
         signal_score=80.0, pts_52w=30.0, pts_volume=10.0, pts_mirofish=0.0, exclude_52w=False

@@ -72,10 +72,37 @@ hard-coded colors/fonts.
   it matches the same classes and includes a retry affordance for idempotent
   GETs.
 - 2026-06-10 adoption sweep: `profile.js`, `quickCheck.js`, `report.js`
-  retrofitted. Remaining intentional exceptions: `sec.js` (status line +
-  metadata fallback flow), `tradeDrawer.js` (inline text states),
-  `backtest.js` / `onboarding.js` / `kronosWorkspace.js` / `twoFa.js`
-  (wizard- or run-status-driven flows with their own messaging).
+  retrofitted. Remaining intentional exceptions: `backtest.js` /
+  `onboarding.js` (wizard- or run-status-driven flows with their own
+  messaging — both now include retry buttons on failed status GETs).
+- 2026-07-07 audit sweep (Waves A–E): retry affordances added to
+  `decisionDashboard.js`, `performance.js`, `sec.js` (headline card),
+  `report.js` dossier, `tradeDrawer.js` (plus real loading states), and
+  `onboarding.js`. `twoFa.js` now renders an explicit error state (security
+  surface must fail visibly). `quickCheck.js` renders a degraded/partial
+  state whenever the payload carries `data_quality` (e.g. `NO_PRICE_DATA`).
+  Skeleton loading (`.ol-skeleton`) used by pending board + backtest run
+  list; reuse it for new panels instead of text-only loading.
+
+## JS Unit Tests
+
+- In-process unit tests for pure modules (`format.js`, `humanize.js`,
+  `signalScores.js`, `asyncState.js`, `router.js`, `glossary.js`, `api.js`
+  dedup) live in `tests/js/*.test.mjs` and run on Node's built-in runner — no
+  bundler or npm install (`webapp/static/package.json` only marks the tree as
+  ESM).
+- Run directly with `node --test "tests/js/*.test.mjs"` from `schwab_skill/`,
+  or via pytest (`tests/test_js_unit.py` wraps the suite and skips without Node).
+- New pure modules should ship with a `tests/js/<module>.test.mjs` file.
+
+## Refresh Contract
+
+- `refreshAll()` (Refresh button / `R`) is scoped: it always re-fetches the
+  cheap global segments (status, account, pending), then only the visible
+  screen's panels plus lazy panels the user has already loaded. Never-opened
+  panels stay deferred to `setupLazySectionLoading`.
+- Concurrent identical GETs are deduplicated inside `modules/api.js`
+  (in-flight promise sharing, not a response cache).
 
 ## Module Decomposition Policy
 
@@ -102,9 +129,21 @@ hard-coded colors/fonts.
     used by both the scan table and the pending board.
 - Existing panel modules (`panels/*.js`) remain the preferred target for new UI
   functionality.
+- 2026-07-07: completed the two planned splits —
+  - `panels/scanTable.js`: `renderScanRows`, sortable-header machinery
+    (`sortScanSignalsForRender`, `compareScanSignals`, `bindScanSortHandlers`),
+    the funnel-filter banner, rank "why" cells, and the rank-explain mode
+    control. Cross-panel callbacks are injected once at boot via
+    `configureScanTable(deps)`.
+  - `panels/approveDialog.js`: `openApproveDialog`, preflight checklist
+    rendering, `syncApproveDialogGuardrails`, `approveTradeById`. Deps via
+    `configureApproveDialog(deps)`; button wiring stays in
+    `screens/operations.js`.
+  - `modules/scanSignals.js`: shared `normalizeScanSignal` /
+    `signalFromScanResultRow` payload-shape helpers.
 
 ## Next Planned Splits
 
-1. Move the scan results table rendering (sort/compare/row builders) into
-   `panels/scanTable.js`.
-2. Move the approve dialog + preflight checklist into `panels/approveDialog.js`.
+1. Move the scan detail panel (chart + decision brief) into
+   `panels/scanDetail.js`.
+2. Move the SSE / scan-status polling loop into `modules/scanLifecycle.js`.

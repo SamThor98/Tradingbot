@@ -19,6 +19,7 @@ import {
   renderOperationsPanelSnapshot,
 } from "../modules/operationsPanelSnapshot.js";
 import { getExecutionScore, getReliabilityScore } from "../modules/signalScores.js";
+import { applyFreshness } from "../modules/freshness.js";
 
 export function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
@@ -764,6 +765,11 @@ export function renderDiagnostics(diag = {}, deps = {}) {
 
   state.lastWatchlistSize = summary.funnel.watchlist;
   state.lastScanAt = new Date().toISOString();
+  applyFreshness(document.getElementById("scanFresh"), {
+    asOf: state.lastScanAt,
+    source: "/api/scan",
+    surface: "scan_results",
+  });
   renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);
   renderScanGateModesToolbar(diag);
   assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);

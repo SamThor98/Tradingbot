@@ -20,6 +20,7 @@ populated and use the included ``errors`` list to render degraded badges.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -33,6 +34,8 @@ import requests
 
 from config import (
     get_finnhub_api_key,
+    get_finnhub_cache_enabled,
+    get_finnhub_cache_hours,
     get_finnhub_max_news_items,
     get_finnhub_max_retries,
     get_finnhub_news_days,
@@ -44,11 +47,13 @@ from config import (
 LOG = logging.getLogger(__name__)
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 SKILL_DIR = Path(__file__).resolve().parent
+FINNHUB_CACHE_FILE = ".finnhub_cache.json"
 
 # Finnhub free tier publishes 60 requests/minute. We pace at 55 to leave headroom
 # for parallel snapshot calls from concurrent dossiers.
 DEFAULT_RATE_LIMIT_PER_MIN = 55
 DEFAULT_RATE_WINDOW_SEC = 60.0
+FAILED_PAYLOAD_TTL_HOURS = 0.25
 
 # Endpoints that frequently 403 on the free plan. We still attempt them but
 # downgrade to ``info`` logging so the dossier doesn't spam ERRORs.
@@ -119,6 +124,62 @@ def _to_iso_utc(ts: int | float | None) -> str | None:
 
 def _fmt_date(dt: datetime) -> str:
     return dt.date().isoformat()
+
+
+def _cache_path(skill_dir: Path) -> Path:
+    return skill_dir / FINNHUB_CACHE_FILE
+
+
+def _load_cache(skill_dir: Path) -> dict[str, Any]:
+    path = _cache_path(skill_dir)
+    try:
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("Finnhub cache read failed: %s", exc)
+        return {}
+
+
+def _save_cache(skill_dir: Path, cache: dict[str, Any]) -> None:
+    path = _cache_path(skill_dir)
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(cache, fh, indent=2, sort_keys=True)
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("Finnhub cache write failed: %s", exc)
+
+
+def _cache_key(ticker: str) -> str:
+    return str(ticker or "").strip().upper()
+
+
+def _cached_payload(skill_dir: Path, ticker: str, *, success_ttl_hours: float) -> dict[str, Any] | None:
+    cache = _load_cache(skill_dir)
+    entry = cache.get(_cache_key(ticker))
+    if not isinstance(entry, dict):
+        return None
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    stored_at = _safe_float(entry.get("stored_at"))
+    if stored_at is None:
+        return None
+    ttl_hours = success_ttl_hours if payload.get("ok") else FAILED_PAYLOAD_TTL_HOURS
+    age_hours = (time.time() - stored_at) / 3600.0
+    if age_hours > ttl_hours:
+        return None
+    cached = dict(payload)
+    cached["from_cache"] = True
+    return cached
+
+
+def _remember_payload(skill_dir: Path, ticker: str, payload: dict[str, Any]) -> None:
+    cache = _load_cache(skill_dir)
+    cache[_cache_key(ticker)] = {"stored_at": time.time(), "payload": payload}
+    _save_cache(skill_dir, cache)
 
 
 @dataclass(frozen=True)
@@ -793,6 +854,13 @@ def get_finnhub_research_snapshot(
     if not api_key:
         return _empty_payload(ticker, errors=["finnhub_api_key_missing"], enabled=False)
 
+    cache_enabled = get_finnhub_cache_enabled(sd)
+    cache_hours = get_finnhub_cache_hours(sd)
+    if cache_enabled:
+        cached = _cached_payload(sd, ticker, success_ttl_hours=cache_hours)
+        if cached is not None:
+            return cached
+
     client = FinnhubClient(
         api_key=api_key,
         timeout_sec=get_finnhub_timeout_sec(sd),
@@ -801,11 +869,17 @@ def get_finnhub_research_snapshot(
         rate_limit_per_min=get_finnhub_rate_limit_per_min(sd),
     )
     try:
-        return client.get_snapshot(
+        payload = client.get_snapshot(
             ticker=ticker,
             news_days=get_finnhub_news_days(sd),
             max_news_items=get_finnhub_max_news_items(sd),
         )
+        if cache_enabled:
+            _remember_payload(sd, ticker, payload)
+        return payload
     except Exception as exc:  # noqa: BLE001 — never raise from snapshot.
         LOG.warning("Finnhub snapshot raised unexpectedly: %s", exc)
-        return _empty_payload(ticker, errors=[f"snapshot:{type(exc).__name__}"], enabled=True)
+        payload = _empty_payload(ticker, errors=[f"snapshot:{type(exc).__name__}"], enabled=True)
+        if cache_enabled:
+            _remember_payload(sd, ticker, payload)
+        return payload

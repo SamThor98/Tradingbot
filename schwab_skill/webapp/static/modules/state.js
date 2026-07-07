@@ -69,6 +69,7 @@ export const state = {
   performance: null,
   lastPortfolioData: null,
   lastPortfolioRiskData: null,
+  lastPortfolioRiskDashboard: null,
   calibration: null,
   strategyChatMessages: [],
   strategyChatBusy: false,

@@ -432,7 +432,11 @@ export async function refreshBacktestRuns() {
     );
     return;
   }
-  list.innerHTML = `<li class="muted">Loading backtest runs...</li>`;
+  list.innerHTML = `<li role="status" aria-label="Loading backtest runs">
+    <span class="ol-skeleton"></span>
+    <span class="ol-skeleton" style="width:88%"></span>
+    <span class="ol-skeleton" style="width:76%"></span>
+  </li>`;
   setResearchStatusStrip(
     "backtestStatusStrip",
     "loading",

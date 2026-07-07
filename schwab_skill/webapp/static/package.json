@@ -1,0 +1,6 @@
+{
+  "name": "tradingbot-dashboard-static",
+  "private": true,
+  "type": "module",
+  "description": "Marks the dashboard's raw ES modules as ESM so Node's built-in test runner (schwab_skill/tests/js/) can import them directly. Not a build manifest - there is no bundler."
+}

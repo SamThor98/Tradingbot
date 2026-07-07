@@ -120,7 +120,10 @@ export async function getApiAccessToken() {
     const sessionToken = normalizeUserJwt(data?.session?.access_token ?? "");
     if (sessionToken && AuthJwt.isProbablyAccessJwt(sessionToken)) return sessionToken;
   }
-  if (await ensureCookieAuthSession()) return "";
+  // Cookie-session auth needs no Authorization header — the session cookie
+  // rides along via `credentials: "same-origin"` on the actual request, so
+  // there is nothing to pre-check here (a previous version issued a wasted
+  // GET /api/auth/session on every API call and discarded the result).
   return "";
 }
 

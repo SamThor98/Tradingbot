@@ -71,7 +71,7 @@ export function setupKeyboardShortcuts({
         break;
       case "?":
         e.preventDefault();
-        showToast?.("Shortcuts: Ctrl+K palette, Ctrl/Cmd+1..6 screens, R refresh, S scan, T ticker, 1-3 detail", "info", 5500);
+        showToast?.("Shortcuts: Ctrl+K palette, Ctrl/Cmd+1..4 screens, R refresh, S scan, T ticker, 1-3 detail", "info", 5500);
         break;
       case "1":
         e.preventDefault();

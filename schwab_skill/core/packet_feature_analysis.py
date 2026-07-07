@@ -1,6 +1,6 @@
 """Cohort lift analysis for shadow features captured on decision packets.
 
-Supports Kronos and management-integrity snapshots already stored on packets.
+Supports management-integrity snapshots already stored on packets.
 Used by the review loop and ``scripts/analyze_packet_cohorts.py`` to decide
 whether a feature earns a single-era pilot before composite-weight tuning.
 """
@@ -81,15 +81,6 @@ def _cohort_metrics(packets: list[dict[str, Any]], bucket_key: Callable[[dict[st
     }
 
 
-def kronos_bucket(packet: dict[str, Any]) -> str | None:
-    k = packet.get("kronos")
-    if not isinstance(k, dict) or not k:
-        return None
-    direction = str(k.get("direction") or "flat").lower()
-    bucket = str(k.get("confidence_bucket") or "unknown").lower()
-    return f"{direction}_{bucket}"
-
-
 def management_integrity_bucket(packet: dict[str, Any]) -> str | None:
     mi = packet.get("management_integrity")
     if not isinstance(mi, dict) or not mi:
@@ -134,10 +125,9 @@ def feature_lift_report(
     long_min_days: int = 21,
     long_max_days: int = 40,
 ) -> dict[str, Any]:
-    """Full lift report for Kronos + management integrity with era splits."""
+    """Full lift report for management integrity with era splits."""
     rows = [p for p in (packets or []) if isinstance(p, dict)]
     resolved = sum(1 for p in rows if _outcome_label(p) not in {"pending", "unknown"})
-    with_kronos = sum(1 for p in rows if kronos_bucket(p) is not None)
     with_mgmt = sum(1 for p in rows if management_integrity_bucket(p) is not None)
 
     era_splits = split_by_horizon_era(
@@ -149,7 +139,6 @@ def feature_lift_report(
 
     def _era_analysis(subset: list[dict[str, Any]]) -> dict[str, Any]:
         return {
-            "kronos": _cohort_metrics(subset, kronos_bucket),
             "management_integrity": _cohort_metrics(subset, management_integrity_bucket),
         }
 
@@ -157,7 +146,6 @@ def feature_lift_report(
         "total_packets": len(rows),
         "resolved_packets": resolved,
         "coverage_pct": round(resolved / len(rows) * 100, 1) if rows else 0.0,
-        "kronos_packets": with_kronos,
         "management_integrity_packets": with_mgmt,
         "era_splits": {
             era: _era_analysis(subset) for era, subset in era_splits.items() if subset
@@ -207,47 +195,27 @@ def _pilot_recommendation(
     short_rows = era_splits.get(short_key or "", [])
     long_rows = era_splits.get(long_key or "", [])
 
-    candidates: list[dict[str, Any]] = []
-    for feature, bucket_fn in (
-        ("kronos", kronos_bucket),
-        ("management_integrity", management_integrity_bucket),
-    ):
-        short_bucket, short_lift = _best_cohort_lift(short_rows, bucket_fn)
-        long_bucket, long_lift = _best_cohort_lift(long_rows, bucket_fn)
-        candidates.append(
-            {
-                "feature": feature,
-                "short_era_best_bucket": short_bucket,
-                "short_era_lift_pct": short_lift,
-                "long_era_best_bucket": long_bucket,
-                "long_era_lift_pct": long_lift,
-            }
-        )
+    short_bucket, short_lift = _best_cohort_lift(short_rows, management_integrity_bucket)
+    long_bucket, long_lift = _best_cohort_lift(long_rows, management_integrity_bucket)
+    candidate = {
+        "feature": "management_integrity",
+        "short_era_best_bucket": short_bucket,
+        "short_era_lift_pct": short_lift,
+        "long_era_best_bucket": long_bucket,
+        "long_era_lift_pct": long_lift,
+    }
 
-    # Prefer feature with positive lift in short era and non-negative in long era.
-    ranked = sorted(
-        candidates,
-        key=lambda c: (
-            float(c.get("short_era_lift_pct") or -999),
-            float(c.get("long_era_lift_pct") or -999),
-        ),
-        reverse=True,
-    )
-    winner = ranked[0] if ranked else None
     ready = False
-    if winner:
-        short_lift = winner.get("short_era_lift_pct")
-        long_lift = winner.get("long_era_lift_pct")
+    if short_lift is not None:
         ready = (
-            short_lift is not None
-            and short_lift > 0
+            short_lift > 0
             and (long_lift is None or long_lift >= 0)
             and len(short_rows) >= 5
         )
     return {
         "ready_for_single_era_pilot": ready,
-        "recommended_feature": winner.get("feature") if ready and winner else None,
-        "candidates": candidates,
+        "recommended_feature": candidate["feature"] if ready else None,
+        "candidates": [candidate],
         "note": (
             "Composite SCORE_COMPOSITE_*_WEIGHT tuning is deferred until a single-era "
             "pilot confirms lift on the ≤20d vs 21–40d split."

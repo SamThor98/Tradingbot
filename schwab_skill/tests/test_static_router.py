@@ -1,7 +1,8 @@
 """Static-asset checks for ``webapp/static/modules/router.js``.
 
-We don't have a JS test runner wired into the project, so these are
-lightweight contract checks against the source file itself:
+In-process JS unit tests live in ``tests/js/`` (Node's built-in runner, see
+``tests/test_js_unit.py``); the checks here are complementary source-level
+contract checks against the file itself:
 
 * The exported alias map matches the friendly-name -> DOM-id contract
   used by docs / marketing emails (``?section=backtest`` etc.). If
@@ -85,6 +86,9 @@ EXPECTED_ALIASES = {
     "sec": "secCompareSection",
     "seccompare": "secCompareSection",
     "calibration": "calibrationSection",
+    "portfolio": "portfolioSection",
+    "risk": "portfolioPanelRisk",
+    "portfoliorisk": "portfolioPanelRisk",
 }
 
 

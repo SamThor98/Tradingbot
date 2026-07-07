@@ -268,6 +268,7 @@
           <strong>No scan this session.</strong>
           <span class="muted">Run scan, review a setup, then approve staged trades.</span>
         </div>
+        <div id="workflowSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
         <nav id="workflowProgress" class="workflow-progress" aria-label="Scan to approve steps">
           <ol class="workflow-progress-list">
             <li id="workflowStepScan" class="workflow-progress-step" data-step="scan" data-state="active">
@@ -296,6 +297,7 @@
             <h2>Scan results</h2>
             <div class="scan-title-meta">
               <small id="scanMeta" class="muted">No scan run yet.</small>
+              <small id="scanFresh" class="muted" data-freshness="unknown"></small>
               <div class="scan-mode-wrap">
                 <label class="muted scan-mode-label" for="scanModeSelect">
                   Breakout mode
@@ -566,6 +568,7 @@
             <div>
               <h2>Pending approvals</h2>
               <small class="muted">Review and decide queued orders.</small>
+              <small id="pendingFresh" class="muted" data-freshness="unknown"></small>
             </div>
             <button
               type="button"
@@ -633,11 +636,11 @@
         </div>
       </section>
 
-      <nav id="researchTabNav" class="research-tab-nav" aria-label="Research sections">
-        <button type="button" class="research-tab-btn active" data-research-tab-btn="check" aria-selected="true">Quick check</button>
-        <button type="button" class="research-tab-btn" data-research-tab-btn="backtest" aria-selected="false">Backtest</button>
-        <button type="button" class="research-tab-btn" data-research-tab-btn="diligence" aria-selected="false">Diligence</button>
-        <button type="button" class="research-tab-btn" data-research-tab-btn="portfolio" aria-selected="false">Portfolio</button>
+      <nav id="researchTabNav" class="research-tab-nav" role="tablist" aria-label="Research sections">
+        <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="check" aria-selected="true">Quick check</button>
+        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">Backtest</button>
+        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="diligence" aria-selected="false" tabindex="-1">Diligence</button>
+        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="portfolio" aria-selected="false" tabindex="-1">Portfolio</button>
       </nav>
 
       <section id="researchSummaryLanding" class="card research-summary-landing section-advanced" aria-label="Research at a glance">
@@ -713,6 +716,7 @@
             <strong>No ticker checked.</strong>
             <span class="muted">Enter a ticker to load chart, score, and raw evidence.</span>
           </div>
+          <div id="quickCheckSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div class="inline-form">
             <label class="field-label" for="tickerInput">Ticker</label>
             <input id="tickerInput" placeholder="AAPL" />
@@ -1144,6 +1148,7 @@
           <strong>Checking system health.</strong>
           <span class="muted">Auth, quote, API, and validation probes are loading.</span>
         </div>
+        <div id="healthSnapshot" class="operations-panel-snapshot" data-state="loading" aria-live="polite"></div>
         <p
           id="healthRibbonSummary"
           class="health-ribbon-summary muted"
@@ -1300,12 +1305,13 @@
           Detailed system status
           <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
         </summary>
-        <div id="statusDetailsStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
-          <span class="system-status-pill">Clear</span>
-          <strong>Status details not loaded.</strong>
-          <span class="muted">Refresh status to inspect tokens, quotes, validation, and pending trades.</span>
-        </div>
-        <section id="statusSection" class="stats stats-in-disclosure">
+          <div id="statusDetailsStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
+            <span class="system-status-pill">Clear</span>
+            <strong>Status details not loaded.</strong>
+            <span class="muted">Refresh status to inspect tokens, quotes, validation, and pending trades.</span>
+          </div>
+          <div id="statusDetailsSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
+          <section id="statusSection" class="stats stats-in-disclosure">
         <article id="statusMarketToken" class="card stat">
           <span class="stat-label">Market Token</span>
           <strong id="marketToken" class="pill neutral" data-unavailable="true">—</strong>
@@ -1361,33 +1367,44 @@
             <strong>Portfolio not loaded.</strong>
             <span class="muted">Open Portfolio to load positions, exposure, and risk analytics.</span>
           </div>
-          <div class="table-wrap">
-            <table>
-              <caption class="visually-hidden">Portfolio positions table</caption>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Qty</th>
-                  <th>Last</th>
-                  <th>Market Value</th>
-                  <th>P/L %</th>
-                </tr>
-              </thead>
-              <tbody id="portfolioBody">
-                <tr><td colspan="5" class="muted">Open Portfolio screen or click Refresh.</td></tr>
-              </tbody>
-            </table>
+          <div id="portfolioSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite"></div>
+
+          <div class="tab-bar portfolio-subtabs" role="tablist" aria-label="Portfolio views">
+            <button type="button" id="portfolioTabPositions" class="tab-btn tab-btn-active" role="tab" aria-selected="true" aria-controls="portfolioPanelPositions">
+              Positions
+            </button>
+            <button type="button" id="portfolioTabRisk" class="tab-btn" role="tab" aria-selected="false" aria-controls="portfolioPanelRisk">
+              Risk
+            </button>
           </div>
 
-          <details id="portfolioRiskPanel" class="panel-disclosure">
-            <summary class="panel-disclosure-summary">
-              Risk Analysis
-              <span class="disclosure-hint muted">sector allocation, concentration, day P/L</span>
-            </summary>
-            <div id="portfolioRiskContent" class="risk-panel-content">
-              <div class="muted">Click to load risk analytics...</div>
+          <div id="portfolioPanelPositions" role="tabpanel">
+            <div class="table-wrap">
+              <table>
+                <caption class="visually-hidden">Portfolio positions table</caption>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Qty</th>
+                    <th>Last</th>
+                    <th>Market Value</th>
+                    <th>Weight %</th>
+                    <th>Day P/L</th>
+                    <th>P/L %</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioBody">
+                  <tr><td colspan="7" class="muted">Open Portfolio screen or click Refresh.</td></tr>
+                </tbody>
+              </table>
             </div>
-          </details>
+          </div>
+
+          <div id="portfolioPanelRisk" class="risk-panel-content hidden" role="tabpanel">
+            <div id="portfolioRiskMount">
+              <div class="muted">Open the Risk tab to load the risk dashboard.</div>
+            </div>
+          </div>
         </article>
 
       </section>
@@ -1437,6 +1454,7 @@
         <strong>Market context not loaded.</strong>
         <span class="muted">Open Market context to load regime, portfolio, opportunities, and blotter.</span>
       </div>
+      <div id="cockpitSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite"></div>
       <section id="cockpitSection" class="cockpit-surface cockpit-grid section-advanced" aria-label="Market context lanes">
         <section class="lane" id="laneMarket">
           <h2>Market Regime <span class="lane-prov" data-prov="market"></span></h2>
@@ -1530,7 +1548,7 @@
               <summary>Advanced — costs &amp; rule overrides</summary>
               <div class="backtest-form-grid advanced-grid">
                 <div class="form-row">
-                  <label class="field-label" for="btSlippage">Slippage (basis points per side)</label>
+                  <label class="field-label" for="btSlippage" title="Assumed execution cost per fill. 1 basis point = 0.01%; 15 bps means each buy/sell fills 0.15% worse than the quoted price.">Slippage (basis points per side)</label>
                   <input id="btSlippage" type="number" min="0" max="200" step="1" value="15" />
                 </div>
                 <div class="form-row">
@@ -1752,6 +1770,7 @@
             <strong>No shadow scoreboard loaded.</strong>
             <span class="muted">Run or refresh after a scan to review would-have plugin actions.</span>
           </div>
+          <div id="shadowScoreboardSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div class="inline-form">
             <button id="shadowScoreboardRefreshBtn" type="button" class="btn secondary">Refresh scoreboard</button>
           </div>
@@ -1772,6 +1791,7 @@
             <strong>No trade-review report loaded.</strong>
             <span class="muted">Refresh to load false-positive diagnostics and decision packets.</span>
           </div>
+          <div id="reviewLoopSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div class="inline-form">
             <button id="reviewLoopRefreshBtn" type="button" class="btn secondary">Refresh report</button>
             <button id="reviewBackfillBtn" type="button" class="btn secondary">Run outcome backfill</button>
@@ -1865,6 +1885,7 @@
             <strong>No filing compare run.</strong>
             <span class="muted">Choose mode and tickers to inspect language drift.</span>
           </div>
+          <div id="secCompareSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div class="sec-compare-controls">
             <div class="sec-compare-grid">
               <label class="field-label" for="secCompareMode">Mode</label>
@@ -1896,7 +1917,7 @@
                 <input id="secCompareChangesOnly" type="checkbox" />
                 Highlight changes only
               </label>
-              <label class="muted">
+              <label class="muted" title="Stricter language analysis: flags hedged wording, dropped commitments, and dilution signals more aggressively.">
                 <input id="secCompareRuthlessMode" type="checkbox" />
                 Ruthless mode
               </label>
@@ -2006,7 +2027,7 @@
     </main>
 
     <div id="tradeDrawerBackdrop" class="trade-drawer-backdrop" hidden></div>
-    <aside id="tradeDrawer" class="trade-drawer" aria-label="Trade decision drawer" hidden>
+    <aside id="tradeDrawer" class="trade-drawer" role="dialog" aria-modal="true" aria-label="Trade decision drawer" hidden>
       <div class="trade-drawer-header">
         <h3 id="tradeDrawerTitle">Trade Drawer</h3>
         <button id="tradeDrawerCloseBtn" class="btn small secondary" type="button" aria-label="Close trade drawer">Close</button>
@@ -2151,11 +2172,11 @@
     </button>
     <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-    <div id="cmdPaletteDialog" class="cmd-palette-overlay" role="dialog" aria-label="Command palette">
+    <div id="cmdPaletteDialog" class="cmd-palette-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
       <div class="cmd-palette">
         <div class="cmd-palette-header">
           <svg class="cmd-palette-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input id="cmdPaletteInput" type="text" class="cmd-palette-input" placeholder="Type a command or section name..." autocomplete="off" spellcheck="false" />
+          <input id="cmdPaletteInput" type="text" class="cmd-palette-input" role="combobox" aria-expanded="true" aria-controls="cmdPaletteList" aria-autocomplete="list" placeholder="Type a command or section name..." autocomplete="off" spellcheck="false" />
           <span class="cmd-palette-hints" aria-hidden="true">
             <kbd class="cmd-palette-hint">Ctrl/Cmd+1..4</kbd>
             <kbd class="cmd-palette-hint">Ctrl/Cmd+K</kbd>

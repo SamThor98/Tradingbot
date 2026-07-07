@@ -222,3 +222,17 @@ export function formatSignedDelta(value, formatter) {
 export function unknown() {
   return "—";
 }
+
+/**
+ * Title-case a strategy id ("stage2_vcp" → "Stage2 Vcp"; "—" and empty pass
+ * through as the em-dash). Shared by the scan table and scan detail views.
+ */
+export function formatStrategyLabel(value) {
+  const raw = safeText(value || "").trim();
+  if (!raw || raw === "—") return "—";
+  return raw
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+}

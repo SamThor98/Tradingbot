@@ -120,7 +120,7 @@ def test_saas_shadow_scoreboard_returns_payload(saas_client: TestClient) -> None
     def _fake_skill_dir(db, user_id):  # noqa: ANN001
         yield Path(".")
 
-    fake_payload = {"plugins": [], "scan_at": None, "modes": {}}
+    fake_payload: dict[str, object] = {"plugins": [], "scan_at": None, "modes": {}}
     with (
         patch("webapp.tenant_dashboard.tenant_skill_dir", _fake_skill_dir),
         patch(

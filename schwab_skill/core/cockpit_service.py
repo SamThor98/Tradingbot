@@ -98,6 +98,15 @@ def build_portfolio(
     out = state.model_dump(mode="json")
     # Phase 3 post-fill risk controls (stop integrity, exposure/concentration drift).
     out["risk_flags"] = post_fill_risk.assess(out, stop_lookup=stop_lookup, skill_dir=skill_dir)
+    try:
+        from config import get_portfolio_analytics_enabled
+
+        if get_portfolio_analytics_enabled(skill_dir):
+            from core.portfolio_analytics_service import build_portfolio_analytics
+
+            out["analytics"] = build_portfolio_analytics(state, skill_dir=skill_dir).model_dump(mode="json")
+    except Exception as exc:
+        out["analytics_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
     return out
 
 
@@ -300,8 +309,6 @@ def build_shadow_scoreboard(
         except (TypeError, ValueError):
             return 0
 
-    kronos = diag.get("kronos") if isinstance(diag.get("kronos"), dict) else {}
-
     plugins: list[dict[str, Any]] = [
         {
             "id": "confluence_gate",
@@ -337,21 +344,6 @@ def build_shadow_scoreboard(
             "context": {
                 "score": diag.get("regime_v2_score"),
                 "bucket": diag.get("regime_v2_bucket"),
-            },
-        },
-        {
-            "id": "kronos",
-            "label": "Kronos forecaster",
-            "mode": str((kronos or {}).get("mode") or modes.get("kronos") or "off"),
-            "scope": "scan",
-            "counters": {
-                "scored": _i(kronos or {}, "scored"),
-                "high_confidence": _i(kronos or {}, "high_confidence"),
-                "medium_confidence": _i(kronos or {}, "medium_confidence"),
-                "low_confidence": _i(kronos or {}, "low_confidence"),
-                "live_adjustments": _i(kronos or {}, "live_adjustments"),
-                "errors": _i(kronos or {}, "errors"),
-                "skipped_budget": _i(kronos or {}, "skipped_budget"),
             },
         },
         {

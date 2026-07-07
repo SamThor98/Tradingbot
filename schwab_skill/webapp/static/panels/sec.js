@@ -16,7 +16,8 @@ import { YourThemeConfig } from "../modules/YourThemeConfig.js";
 import { safeText, safeNum } from "../modules/format.js";
 import { humanizeAnalysisMode, humanizeKey } from "../modules/humanize.js";
 import { logEvent, updateActionCenter, statusClass, sentimentTagClass } from "../modules/logger.js";
-import { setResearchStatusStrip } from "../modules/researchStatus.js";
+import { setResearchPanelStatus } from "../modules/researchStatus.js";
+import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 
 export function applySecCompareMode() {
   const modeEl = document.getElementById("secCompareMode");
@@ -794,14 +795,41 @@ export function renderSecCompareEmpty(message) {
   const redFlagsRoot = document.getElementById("secRedFlagsPanel");
   const fidelityTop = document.getElementById("secCompareFidelityBanner");
   const msg = safeText(message || "No SEC compare data available.");
-  if (headlineRoot) headlineRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (narrativeRoot) narrativeRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (changesRoot) changesRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (evidenceRoot) evidenceRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (timelineRoot) timelineRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (scorecardRoot) scorecardRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (heatmapRoot) heatmapRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
-  if (redFlagsRoot) redFlagsRoot.innerHTML = `<div class="report-empty">${msg}</div>`;
+  const lower = msg.toLowerCase();
+  const isLoading = lower.includes("running");
+  const isError =
+    lower.includes("fail") || lower.includes("error") || lower.includes("unavailable");
+  const alertHtml = isLoading
+    ? `<div class="async-state async-state--loading muted" role="status">
+        <span class="async-spinner" aria-hidden="true"></span>
+        <span>${msg}</span>
+      </div>`
+    : buildOperatorAlertHtml({
+        tone: isError ? "bad" : "neutral",
+        headline: isError ? "Data unavailable" : "No results yet",
+        detail: msg,
+      });
+  if (headlineRoot) {
+    headlineRoot.innerHTML = alertHtml;
+    // Retry lives on the headline card only (the other panes mirror the alert).
+    if (isError) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "btn small secondary";
+      retryBtn.setAttribute("data-sec-compare-retry", "");
+      retryBtn.textContent = "Retry compare";
+      retryBtn.addEventListener("click", () => void runSecCompare());
+      headlineRoot.querySelector(".operator-alert, .async-state")?.appendChild(retryBtn) ||
+        headlineRoot.appendChild(retryBtn);
+    }
+  }
+  if (narrativeRoot) narrativeRoot.innerHTML = alertHtml;
+  if (changesRoot) changesRoot.innerHTML = alertHtml;
+  if (evidenceRoot) evidenceRoot.innerHTML = alertHtml;
+  if (timelineRoot) timelineRoot.innerHTML = alertHtml;
+  if (scorecardRoot) scorecardRoot.innerHTML = alertHtml;
+  if (heatmapRoot) heatmapRoot.innerHTML = alertHtml;
+  if (redFlagsRoot) redFlagsRoot.innerHTML = alertHtml;
   if (fidelityTop) {
     fidelityTop.hidden = true;
     fidelityTop.innerHTML = "";
@@ -1099,6 +1127,22 @@ export async function buildFallbackSecCompare(mode, tickerA, tickerB, formType) 
   );
 }
 
+function paintSecSurface(stateName, title, detail, extras = {}) {
+  return setResearchPanelStatus({
+    stripId: "secCompareStatusStrip",
+    snapshotId: "secCompareSnapshot",
+    sectionId: "secCompareSection",
+    stateName,
+    title,
+    detail,
+    hint: extras.hint || "filings · profile · red flags",
+    output: extras.output,
+    data: extras.data,
+    action: extras.action,
+    confidence: extras.confidence,
+  });
+}
+
 export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) {
   const mode = document.getElementById("secCompareMode").value.trim();
   const tickerA = document.getElementById("secCompareTickerA").value.trim().toUpperCase();
@@ -1116,31 +1160,46 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
   const meta = document.getElementById("secCompareMeta");
 
   if (!tickerA) {
-    setResearchStatusStrip(
-      "secCompareStatusStrip",
+    paintSecSurface(
       "empty",
       "Ticker A required.",
       "Choose a company before running filing compare.",
+      {
+        output: { value: "None", sub: "compare" },
+        data: { value: "—", sub: "ticker A" },
+        action: { value: "Wait", sub: "enter ticker" },
+        confidence: 0,
+      },
     );
     return;
   }
   if (mode === "ticker_vs_ticker" && !tickerB) {
-    setResearchStatusStrip(
-      "secCompareStatusStrip",
+    paintSecSurface(
       "empty",
       "Ticker B required.",
       "Two-company compare needs a second ticker.",
+      {
+        output: { value: "None", sub: "compare" },
+        data: { value: "—", sub: "ticker B" },
+        action: { value: "Wait", sub: "enter pair" },
+        confidence: 0,
+      },
     );
     return;
   }
 
   btn.disabled = true;
   meta.textContent = "Status: queued";
-  setResearchStatusStrip(
-    "secCompareStatusStrip",
+  paintSecSurface(
     "loading",
     `Running SEC compare for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
     "Fetching filing evidence, profile, red flags, and narrative changes.",
+    {
+      output: { value: "…", sub: "compare" },
+      data: { value: "…", sub: "filings" },
+      action: { value: "Wait", sub: "hold" },
+      confidence: 28,
+    },
   );
   renderSecCompareEmpty("Running SEC compare...");
   updateActionCenter({ title: "SEC Compare Running", message: "Comparing filing evidence. This can take a moment.", severity: "info" });
@@ -1183,11 +1242,16 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
       if (!fallback.ok) {
         meta.textContent = "Status: partial failure (fetching failed)";
         renderSecCompareEmpty(safeText(fallback.error || "Compare failed."));
-        setResearchStatusStrip(
-          "secCompareStatusStrip",
+        paintSecSurface(
           "error",
           "SEC compare failed.",
           safeText(fallback.error || "Compare failed."),
+          {
+            output: { value: "—", sub: "compare" },
+            data: { value: "—", sub: "filings" },
+            action: { value: "Retry", sub: "reload", tone: "bad" },
+            confidence: 0,
+          },
         );
         logEvent({ kind: "report", severity: "error", message: `SEC compare fallback failed: ${fallback.error}` });
         return;
@@ -1196,11 +1260,16 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     } else {
       meta.textContent = "Status: partial failure (fetching failed)";
       renderSecCompareEmpty(safeText(compareOut.error || "Compare failed."));
-      setResearchStatusStrip(
-        "secCompareStatusStrip",
+      paintSecSurface(
         "error",
         "SEC compare failed.",
         safeText(compareOut.user_message || compareOut.error || "Compare failed."),
+        {
+          output: { value: "—", sub: "compare" },
+          data: { value: "—", sub: "filings" },
+          action: { value: "Retry", sub: "reload", tone: "bad" },
+          confidence: 0,
+        },
       );
       logEvent({ kind: "report", severity: "error", message: `SEC compare failed: ${compareOut.error}` });
       return;
@@ -1232,13 +1301,30 @@ export async function runSecCompare({ getDisplayMode = () => "balanced" } = {}) 
     }
     renderProfileStatusFromDashboard(payload.management_dashboard);
     renderSecCompareVisual(payload, { getDisplayMode });
-    setResearchStatusStrip(
-      "secCompareStatusStrip",
+    paintSecSurface(
       partialFailure ? "partial" : "success",
       `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.`,
       partialFailure
         ? `Completed with fallback source: ${safeText(dashboardOut.source)}.`
         : `Profile ${activeProfile}; filing evidence and red flags ready.`,
+      {
+        output: {
+          value: partialFailure ? "Partial" : "Ready",
+          sub: "compare",
+          tone: partialFailure ? "warn" : "success",
+        },
+        data: {
+          value: partialFailure ? "Limited" : "Fresh",
+          sub: safeText(dashboardOut.source || "filings"),
+          tone: partialFailure ? "warn" : "success",
+        },
+        action: {
+          value: partialFailure ? "Review" : "Pass",
+          sub: "red flags",
+          tone: partialFailure ? "warn" : "success",
+        },
+        confidence: partialFailure ? 58 : 86,
+      },
     );
     logEvent({ kind: "report", severity: "info", message: `SEC compare complete for ${tickerA}${tickerB ? ` vs ${tickerB}` : ""}.` });
     updateActionCenter({

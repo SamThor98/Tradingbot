@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-07-04
+updated: 2026-07-07
 tags: [frontend, routing, deep-links, contract]
 ---
 
@@ -64,6 +64,8 @@ Default landing: `operations` (Today).
 | `backtest`, `backtests` | `backtestSection` | research |
 | `cockpit` | `cockpitWorkspaceIntro` | research (via alias) |
 | `sec`, `seccompare` | `secCompareSection` | research |
+| `portfolio` | `portfolioSection` | research |
+| `risk`, `portfoliorisk` | `portfolioPanelRisk` | research (opens Portfolio → Risk sub-tab) |
 | `calibration` | `calibrationSection` | diagnostics |
 | `diagnostics`, `health` | `healthRibbon` | diagnostics |
 | `connect`, `onboarding`, `setup` | `onboardingSection` | settings |
@@ -90,4 +92,4 @@ compatibility; they are hidden. Prefer canonical section ids in new links.
 
 ---
 
-*Last compiled: 2026-07-04*
+*Last compiled: 2026-07-07*

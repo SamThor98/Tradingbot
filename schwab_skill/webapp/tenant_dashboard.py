@@ -1737,10 +1737,26 @@ def tenant_portfolio(user: User = Depends(get_current_user), db: OrmSession = De
     if not user_has_account_session(db, user.id):
         return _err("Link Schwab account before loading portfolio.")
     try:
+        state = None
         with tenant_skill_dir(db, user.id) as skill_dir:
             status_data = get_account_status(skill_dir=skill_dir)
+            if not isinstance(status_data, str):
+                try:
+                    from core.providers import PortfolioProvider
+                    from sector_strength import get_ticker_sector_etf
+
+                    state = PortfolioProvider.normalize_account(
+                        status_data,
+                        sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=skill_dir),
+                    )
+                except Exception as snap_exc:
+                    LOG.debug("Tenant portfolio normalization skipped: %s", snap_exc)
         if isinstance(status_data, str):
             return _err(status_data)
+        if state is not None:
+            from core.portfolio_equity_snapshot import record_equity_snapshot
+
+            record_equity_snapshot(db, state, user_id=user.id)
         return _ok(_build_portfolio_summary(status_data))
     except Exception as exc:
         return _saas_error_response(exc, source="portfolio", fallback="Unable to load portfolio right now.")
@@ -1759,6 +1775,98 @@ def tenant_portfolio_risk(user: User = Depends(get_current_user), db: OrmSession
             return _ok(_build_portfolio_risk_analytics(summary, skill_dir=skill_dir))
     except Exception as exc:
         return _saas_error_response(exc, source="portfolio_risk", fallback="Unable to load portfolio risk right now.")
+
+
+@router.get("/api/portfolio/analytics", response_model=ApiResponse)
+def tenant_portfolio_analytics(
+    lookback_days: int | None = Query(default=None, ge=20, le=756),
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading portfolio analytics.")
+    try:
+        from config import get_portfolio_equity_snapshot_enabled
+        from core.portfolio_analytics_service import build_portfolio_analytics
+        from core.portfolio_equity_snapshot import load_equity_curve, record_equity_snapshot
+        from core.providers import PortfolioProvider
+        from sector_strength import get_ticker_sector_etf
+
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            status_data = get_account_status(skill_dir=skill_dir)
+            if isinstance(status_data, str):
+                return _err(status_data)
+            state = PortfolioProvider.normalize_account(
+                status_data,
+                sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=skill_dir),
+            )
+            snapshots: list[dict[str, Any]] = []
+            if get_portfolio_equity_snapshot_enabled(skill_dir):
+                record_equity_snapshot(db, state, user_id=user.id)
+                snapshots = load_equity_curve(db, user_id=user.id, limit=252)
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                pack = build_portfolio_analytics(
+                    state,
+                    skill_dir=skill_dir,
+                    auth=auth,
+                    lookback_days=lookback_days,
+                    equity_curve=snapshots,
+                )
+            return _ok(pack.model_dump(mode="json"))
+    except Exception as exc:
+        return _saas_error_response(
+            exc,
+            source="portfolio_analytics",
+            fallback="Unable to load portfolio analytics right now.",
+        )
+
+
+@router.get("/api/portfolio/risk-dashboard", response_model=ApiResponse)
+def tenant_portfolio_risk_dashboard(
+    lookback_days: int | None = Query(default=None, ge=20, le=756),
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before loading the risk dashboard.")
+    try:
+        from config import get_portfolio_equity_snapshot_enabled
+        from core.portfolio_analytics_service import build_portfolio_risk_dashboard
+        from core.portfolio_equity_snapshot import load_equity_curve, record_equity_snapshot
+        from core.providers import PortfolioProvider
+        from sector_strength import get_ticker_sector_etf
+
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            status_data = get_account_status(skill_dir=skill_dir)
+            if isinstance(status_data, str):
+                return _err(status_data)
+            state = PortfolioProvider.normalize_account(
+                status_data,
+                sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=skill_dir),
+            )
+            summary = _build_portfolio_summary(status_data)
+            static_risk = _build_portfolio_risk_analytics(summary, skill_dir=skill_dir)
+            snapshots: list[dict[str, Any]] = []
+            if get_portfolio_equity_snapshot_enabled(skill_dir):
+                record_equity_snapshot(db, state, user_id=user.id)
+                snapshots = load_equity_curve(db, user_id=user.id, limit=252)
+            with DualSchwabAuth(skill_dir=skill_dir, auto_refresh=False) as auth:
+                pack = build_portfolio_risk_dashboard(
+                    state,
+                    summary,
+                    static_risk=static_risk,
+                    skill_dir=skill_dir,
+                    auth=auth,
+                    lookback_days=lookback_days,
+                    equity_curve=snapshots,
+                )
+            return _ok(pack.model_dump(mode="json"))
+    except Exception as exc:
+        return _saas_error_response(
+            exc,
+            source="portfolio_risk_dashboard",
+            fallback="Unable to load the portfolio risk dashboard right now.",
+        )
 
 
 @router.get("/api/sectors", response_model=ApiResponse)

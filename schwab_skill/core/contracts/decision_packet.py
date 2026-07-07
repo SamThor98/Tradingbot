@@ -49,9 +49,8 @@ class DecisionPacket(BaseModel):
     expected_slippage_bps: float | None = None
     entry_price: float | None = None  # decision-time price, anchors realized-return backfill
 
-    # Entry-time Kronos forecast snapshot (shadow evidence). Compact subset of
-    # the forecast — direction/confidence/expected move — so outcome attribution
-    # can ask "do bearish high-confidence forecasts predict early stop-outs?".
+    # Legacy field: historical packets may still carry a Kronos snapshot from
+    # the removed forecast plugin (2026-07). New packets no longer populate it.
     kronos: dict[str, Any] | None = None
 
     # Entry-time management integrity scorecard (shadow evidence).

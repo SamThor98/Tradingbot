@@ -759,24 +759,6 @@ def reapply_composite_scores(df: pd.DataFrame, skill_dir: Path | None = None) ->
     return out
 
 
-@dataclass
-class CompositeWeightPack:
-    """Deprecated alias — use ``CompositeQualityWeights`` from ``scoring_composite``."""
-
-    edge_signal_weight: float = 0.90
-    edge_pup_weight: float = 0.10
-    composite_edge_weight: float = 0.0
-    composite_reliability_weight: float = 0.0
-    composite_execution_weight: float = 0.0
-    exclude_52w: bool = True
-    direct_volume_weight: float = 0.50
-    direct_signal_weight: float = 0.35
-    direct_mirofish_weight: float = 0.15
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
 def _edge_signal_series(df: pd.DataFrame, *, exclude_52w: bool) -> pd.Series:
     sig = pd.to_numeric(df["signal_score"], errors="coerce").fillna(0.0)
     if exclude_52w and "pts_52w" in df.columns:

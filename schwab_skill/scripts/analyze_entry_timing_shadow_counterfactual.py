@@ -341,6 +341,93 @@ def _sweep_shadow_thresholds(replay_df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows[:25]
 
 
+def _sweep_max_breakout_buffer(replay_df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Sweep max breakout buffer — drop entries already extended above pivot."""
+    if replay_df.empty or len(replay_df) < 30:
+        return []
+    baseline = _cohort_stats(replay_df)
+    baseline_overlap, _, _ = _era_pf_from_df(replay_df, OVERLAP_ERAS)
+    rows: list[dict[str, Any]] = []
+    for max_buf in (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12, 0.15, None):
+        if max_buf is None:
+            drop = pd.Series(False, index=replay_df.index)
+            label = "no_cap"
+        else:
+            drop = replay_df["breakout_buffer_pct"].apply(
+                lambda v: pd.notna(v) and float(v) > max_buf
+            )
+            label = f"breakout_buffer_lte_{max_buf:.3f}"
+        kept = replay_df[~drop.fillna(False)]
+        if len(kept) < 30:
+            continue
+        cohort = _cohort_stats(kept)
+        overlap_mean, _, _ = _era_pf_from_df(kept, OVERLAP_ERAS)
+        rows.append(
+            {
+                "scenario": label,
+                "max_breakout_buffer_pct": max_buf,
+                "retention_pct": round(100 * len(kept) / len(replay_df), 1),
+                "would_drop": int(drop.sum()) if max_buf is not None else 0,
+                "pf_all": cohort["pf"],
+                "overlap_pf_mean": overlap_mean,
+                "delta_overlap_pf_mean": round(overlap_mean - baseline_overlap, 4),
+                "delta_early_stopout_pp": round(
+                    cohort["early_stopout_pct"] - baseline["early_stopout_pct"], 2
+                ),
+            }
+        )
+    rows.sort(
+        key=lambda r: (
+            -float(r.get("delta_overlap_pf_mean") or -999),
+            float(r.get("delta_early_stopout_pp") or 999),
+        ),
+    )
+    return rows
+
+
+def _extension_distribution(replay_df: pd.DataFrame) -> dict[str, Any]:
+    """Summarize breakout_buffer_pct distribution and PF by extension bucket."""
+    if replay_df.empty:
+        return {}
+    buf = replay_df["breakout_buffer_pct"].dropna()
+    if buf.empty:
+        return {"n_with_buffer": 0}
+    buckets = [
+        ("flat_lt_0.5pct", lambda v: v < 0.005),
+        ("0.5_1pct", lambda v: 0.005 <= v < 0.01),
+        ("1_3pct", lambda v: 0.01 <= v < 0.03),
+        ("3_5pct", lambda v: 0.03 <= v < 0.05),
+        ("5_8pct", lambda v: 0.05 <= v < 0.08),
+        ("8pct_plus", lambda v: v >= 0.08),
+    ]
+    bucket_rows: list[dict[str, Any]] = []
+    for name, pred in buckets:
+        mask = buf.apply(pred)
+        subset = replay_df.loc[buf.index[mask]]
+        if len(subset) < 5:
+            continue
+        cohort = _cohort_stats(subset)
+        overlap_mean, _, _ = _era_pf_from_df(subset, OVERLAP_ERAS)
+        bucket_rows.append(
+            {
+                "bucket": name,
+                "n": len(subset),
+                "pct_of_sample": round(100 * len(subset) / len(replay_df), 1),
+                "pf_all": cohort.get("pf"),
+                "overlap_pf_mean": overlap_mean,
+                "early_stopout_pct": cohort.get("early_stopout_pct"),
+                "median_buffer_pct": round(float(buf[mask].median()) * 100, 2),
+            }
+        )
+    return {
+        "n_with_buffer": int(len(buf)),
+        "median_buffer_pct": round(float(buf.median()) * 100, 2),
+        "p75_buffer_pct": round(float(buf.quantile(0.75)) * 100, 2),
+        "p90_buffer_pct": round(float(buf.quantile(0.90)) * 100, 2),
+        "buckets": bucket_rows,
+    }
+
+
 def _sweep_breakout_buffer_only(replay_df: pd.DataFrame) -> list[dict[str, Any]]:
     """Sweep breakout buffer alone (no SMA50 cushion/extension filters)."""
     if replay_df.empty or len(replay_df) < 30:
@@ -546,6 +633,8 @@ def main() -> int:
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
         sweep_rows = _sweep_shadow_thresholds(replay_df)
         buffer_only_rows = _sweep_breakout_buffer_only(replay_df)
+        max_buffer_rows = _sweep_max_breakout_buffer(replay_df)
+        extension_dist = _extension_distribution(replay_df)
         threshold_rec = _pick_threshold_recommendation(sweep_rows)
         live_rows = _scenario_from_replay(replay_df)
         recommendation = _pick_recommendation([], live_rows, threshold_rec, buffer_only_rows)
@@ -558,9 +647,11 @@ def main() -> int:
                 "would_filter_any": int(replay_df["entry_shadow_would_filter"].sum()),
                 "reason_counts": reason_counts,
             },
+            "extension_distribution": extension_dist,
             "live_shadow_scenarios": live_rows,
             "threshold_sweep_top": sweep_rows[:10],
             "breakout_buffer_only_sweep": buffer_only_rows[:8],
+            "max_breakout_buffer_sweep": max_buffer_rows,
             "threshold_recommendation": threshold_rec,
             "recommendation": recommendation,
         }
@@ -614,6 +705,8 @@ def main() -> int:
 
     sweep_rows = _sweep_shadow_thresholds(replay_df)
     buffer_only_rows = _sweep_breakout_buffer_only(replay_df)
+    max_buffer_rows = _sweep_max_breakout_buffer(replay_df)
+    extension_dist = _extension_distribution(replay_df)
     threshold_rec = _pick_threshold_recommendation(sweep_rows)
     live_rows = _scenario_from_replay(replay_df) if not replay_df.empty else []
     recommendation = _pick_recommendation(oracle_rows, live_rows, threshold_rec, buffer_only_rows)
@@ -624,9 +717,11 @@ def main() -> int:
         "baseline": baseline,
         "oracle_scenarios": oracle_rows,
         "live_shadow_replay": replay_meta,
+        "extension_distribution": extension_dist,
         "live_shadow_scenarios": live_rows,
         "threshold_sweep_top": sweep_rows[:10],
         "breakout_buffer_only_sweep": buffer_only_rows[:8],
+        "max_breakout_buffer_sweep": max_buffer_rows,
         "threshold_recommendation": threshold_rec,
         "recommendation": recommendation,
     }
@@ -652,6 +747,26 @@ def main() -> int:
         lines.append(
             f"- buf>={row['min_breakout_buffer_pct']} sma50 [{row['min_pct_above_sma50']},{row['max_pct_above_sma50']}] "
             f"retain={row['retention_pct']}% d_early={row.get('delta_early_stopout_pp')} d_pf={row.get('delta_overlap_pf_mean')}"
+        )
+    lines.extend(["", "## Extension from breakout (distribution)"])
+    if extension_dist.get("buckets"):
+        lines.append(
+            f"- Median buffer: {extension_dist.get('median_buffer_pct')}% | "
+            f"P75: {extension_dist.get('p75_buffer_pct')}% | P90: {extension_dist.get('p90_buffer_pct')}%"
+        )
+        for bucket in extension_dist.get("buckets") or []:
+            lines.append(
+                f"- {bucket['bucket']}: n={bucket['n']} ({bucket['pct_of_sample']}%) "
+                f"pf={bucket.get('pf_all')} overlap_pf={bucket.get('overlap_pf_mean')} "
+                f"early_stop={bucket.get('early_stopout_pct')}%"
+            )
+    lines.extend(["", "## Max breakout buffer sweep (drop extended entries)"])
+    for row in max_buffer_rows[:6]:
+        cap = row.get("max_breakout_buffer_pct")
+        cap_label = "none" if cap is None else f"{float(cap) * 100:.1f}%"
+        lines.append(
+            f"- cap<={cap_label}: retain={row['retention_pct']}% "
+            f"d_pf={row.get('delta_overlap_pf_mean')} d_early={row.get('delta_early_stopout_pp')}"
         )
     lines.extend(
         [

@@ -87,7 +87,7 @@ export async function refreshMovers() {
     "moversStatusStrip",
     "success",
     `${total} mover names loaded.`,
-    "Review gainers, losers, and most-active names as market context only.",
+    `Market context only · updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`,
   );
   grid.innerHTML = `
     <div class="mover-grid">

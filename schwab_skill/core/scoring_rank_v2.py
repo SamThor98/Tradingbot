@@ -92,6 +92,7 @@ def rank_v2_from_signal_row(signal_row: dict[str, Any], skill_dir: Path | None =
         get_rank_v2_signal_weight,
         get_rank_v2_volume_weight,
     )
+    from core.scoring_composite import resolve_rank_volume_points
 
     sd = skill_dir or SKILL_DIR
     comps = signal_row.get("score_components") if isinstance(signal_row.get("score_components"), dict) else {}
@@ -119,7 +120,11 @@ def rank_v2_from_signal_row(signal_row: dict[str, Any], skill_dir: Path | None =
 
     return compute_rank_score_v2(
         signal_score=float(signal_row.get("signal_score") or 0.0),
-        pts_volume=float(comps.get("pts_volume") or signal_row.get("pts_volume") or 0.0),
+        pts_volume=resolve_rank_volume_points(
+            comps.get("pts_volume") or signal_row.get("pts_volume"),
+            latest_volume=signal_row.get("latest_volume"),
+            avg_vol_50=signal_row.get("avg_vol_50"),
+        ),
         pts_mirofish=float(comps.get("pts_mirofish") or signal_row.get("pts_mirofish") or 0.0),
         pts_52w=float(comps.get("pts_52w") or signal_row.get("pts_52w") or 0.0),
         exclude_52w=bool(get_rank_v2_exclude_52w(sd)),

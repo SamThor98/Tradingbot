@@ -1,7 +1,7 @@
 ---
 source: n/a (repository governance policy)
 created: 2026-04-30
-updated: 2026-06-25
+updated: 2026-07-04
 tags: [governance, docs, rules, skills]
 ---
 
@@ -46,7 +46,6 @@ tags: [governance, docs, rules, skills]
 | `signal-edge-priority.mdc` | Editing scanner, backtest, scoring, or exit logic (P0) |
 | `validation-release.mdc` | Validators, promotion scripts, pre-PR / pre-promotion gate |
 | `agent_mode_prompt.md` | Live research, DCF/comps, SEC review, manual scan/order workflows |
-| `docs/KRONOS_FEATURE_PROMPT.md` | Kronos forecast tab or shadow scanner integration |
 | `openclaw_operator_prompt.txt` | OpenClaw tool-only operator (analyze / account / execute) |
 
 ## Related Pages
@@ -58,4 +57,4 @@ tags: [governance, docs, rules, skills]
 
 ---
 
-*Last compiled: 2026-06-25*
+*Last compiled: 2026-07-04*

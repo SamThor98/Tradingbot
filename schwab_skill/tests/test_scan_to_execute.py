@@ -223,6 +223,9 @@ class TestPendingTradeFlow:
         assert trade["status"] == "pending"
         assert trade["qty"] > 0
         assert trade["price"] == 186.0
+        assert trade["signal"]["ticker"] == "AAPL"
+        assert trade["signal"]["sector_etf"] == "XLK"
+        assert trade["signal"]["advisory"]["confidence_bucket"] == "high"
 
     def test_create_trade_requires_api_key(self, client: TestClient):
         resp = client.post(
@@ -246,6 +249,8 @@ class TestPendingTradeFlow:
         assert data["ok"] is True
         assert len(data["data"]) >= 1
         assert data["data"][0]["ticker"] == "AAPL"
+        assert data["data"][0]["signal"]["signal_score"] == 72.0
+        assert data["data"][0]["signal"]["strategy_attribution"]["top_live"] == "breakout"
 
     @patch("webapp.main.get_current_quote", return_value=FAKE_QUOTE)
     @patch("webapp.main.extract_schwab_last_price", return_value=186.0)

@@ -20,6 +20,21 @@ import { logEvent, updateActionCenter } from "../modules/logger.js";
 export function renderTwoFaPanel() {
   const wrap = document.getElementById("twoFaPanel");
   if (!wrap) return;
+  // Security surface: a failed status fetch must be visible, not silent.
+  if (state.twoFaStatusError) {
+    wrap.setAttribute("data-async-state", "error");
+    wrap.innerHTML = `
+      <div class="async-state async-state--error operator-alert operator-alert--bad" role="alert" aria-live="assertive">
+        <div class="operator-alert__body">
+          <strong class="operator-alert__headline">2FA status unavailable</strong>
+          <p class="operator-alert__detail">${safeText(state.twoFaStatusError)} High-value approval protection cannot be confirmed.</p>
+        </div>
+        <button type="button" class="btn small secondary" data-twofa-retry>Retry</button>
+      </div>`;
+    wrap.querySelector("[data-twofa-retry]")?.addEventListener("click", () => void refreshTwoFaStatus());
+    return;
+  }
+  wrap.setAttribute("data-async-state", "success");
   const st = state.twoFaStatus || {};
   const enabled = Boolean(st.enabled);
   const threshold = Number(st.high_value_threshold_usd || 0);
@@ -73,11 +88,13 @@ export function renderTwoFaPanel() {
 export async function refreshTwoFaStatus() {
   if (!state.publicConfig?.saas_mode) {
     state.twoFaStatus = null;
+    state.twoFaStatusError = "";
     renderTwoFaPanel();
     return;
   }
   const out = await api.get("/api/security/2fa/status");
   state.twoFaStatus = out.ok ? out.data || null : null;
+  state.twoFaStatusError = out.ok ? "" : safeText(out.user_message || out.error || "Request failed.");
   renderTwoFaPanel();
 }
 

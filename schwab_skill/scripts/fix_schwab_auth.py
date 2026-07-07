@@ -88,6 +88,22 @@ def _print_preflight(env: dict[str, str]) -> list[str]:
     return missing
 
 
+def _callback_port() -> int:
+    raw = _load_env_file(ENV_PATH).get("LOCAL_WEB_PORT", "8182")
+    try:
+        return int(str(raw).strip() or "8182")
+    except ValueError:
+        return 8182
+
+
+def _port_listening(port: int) -> bool:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Repair local Schwab OAuth setup and validate endpoints."
@@ -118,8 +134,19 @@ def main() -> int:
         return 1
 
     if args.dry_run:
+        port = _callback_port()
+        if _port_listening(port):
+            print(f"\nWARN: port {port} is in use (likely the local dashboard).")
+            print("Stop uvicorn on that port before OAuth, or callback capture will fail.")
         print("\nDry run complete. No files were changed.")
         return 0
+
+    port = _callback_port()
+    if not args.skip_oauth and _port_listening(port):
+        print(f"\nFAIL: port {port} is already in use.")
+        print("Stop the local dashboard first, then rerun:")
+        print("  python scripts/fix_schwab_auth.py")
+        return 2
 
     print("Removing old token files (if present)...")
     for token_name in ("tokens_market.enc", "tokens_account.enc"):

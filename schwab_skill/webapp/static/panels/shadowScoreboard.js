@@ -10,6 +10,12 @@ import { api } from "../modules/api.js";
 import { escapeHtml, safeNum } from "../modules/format.js";
 import { humanizeRolloutMode } from "../modules/humanize.js";
 import { setSystemStatusStrip } from "../modules/systemStatus.js";
+import {
+  paintSystemPanelAlert,
+  paintSystemPanelSnapshot,
+  paintSystemPanelSuccess,
+  syncSystemSectionState,
+} from "../modules/systemPanelContract.js";
 
 const PRIOR_SNAPSHOT_KEY = "tradingbot.shadow_scoreboard_prior";
 
@@ -164,26 +170,50 @@ function renderPlugin(p, priorPlugin) {
   </div>`;
 }
 
+function paintShadowSnapshot(stateName, opts = {}) {
+  paintSystemPanelSnapshot("shadowScoreboardSnapshot", "shadowScoreboardSection", stateName, {
+    hint: "Plugin path: OFF → SHADOW → LIVE",
+    kpis: [
+      { label: "WOULD-HAVE", sub: "actions", value: opts.would ?? "—", tone: opts.would > 0 ? "warn" : "success" },
+      { label: "PLUGINS", sub: "tracked", value: opts.pluginCount ?? "—", tone: "neutral" },
+      { label: "MODE", sub: "rollout", value: opts.modeLabel || "—", tone: opts.would > 0 ? "warn" : "success" },
+    ],
+    lines: [opts.title, opts.detail].filter(Boolean),
+  });
+}
+
 export function renderShadowScoreboardPanel(panel, data, error) {
   if (!panel) return;
   if (error) {
-    panel.innerHTML = `<div class="report-empty">${escapeHtml(error)}</div>`;
+    paintSystemPanelAlert(panel, "error", {
+      headline: "Data unavailable",
+      message: error,
+      onRetry: () => void refreshShadowScoreboard(),
+    });
     setSystemStatusStrip(
       "shadowScoreboardStatusStrip",
       "error",
       "Shadow scoreboard unavailable.",
       error,
     );
+    paintShadowSnapshot("error", { title: "Shadow scoreboard unavailable.", detail: error });
     return;
   }
   if (!data || !Array.isArray(data.plugins) || data.plugins.length === 0) {
-    panel.innerHTML = `<div class="report-empty">No shadow scoreboard data yet — run a scan first.</div>`;
+    paintSystemPanelAlert(panel, "empty", {
+      headline: "No results yet",
+      message: "Run a scan first to populate would-have counters.",
+    });
     setSystemStatusStrip(
       "shadowScoreboardStatusStrip",
       "empty",
       "No shadow scoreboard data.",
       "Run a scan first to populate would-have counters.",
     );
+    paintShadowSnapshot("empty", {
+      title: "No shadow scoreboard data.",
+      detail: "Run a scan first to populate would-have counters.",
+    });
     return;
   }
   const prior = readPriorSnapshot();
@@ -194,54 +224,68 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     meta.push(`Execution window: ${data.execution_window_days}d (${data.execution_days_present || 0} days with data)`);
   }
   const metaHtml = meta.length ? `<div class="muted" style="margin-bottom: 8px;">${meta.join(" · ")}</div>` : "";
-  panel.innerHTML =
+  const html =
     metaHtml +
     renderHeadline(data, prior) +
     data.plugins.map((p) => renderPlugin(p, priorById[p.id])).join("");
+  paintSystemPanelSuccess(panel, html);
   const total = totalWouldHave(data.plugins || []);
+  const statusState = total > 0 ? "partial" : "success";
   setSystemStatusStrip(
     "shadowScoreboardStatusStrip",
-    total > 0 ? "partial" : "success",
+    statusState,
     `${total} would-have action${total === 1 ? "" : "s"}.`,
     total > 0
       ? "Review shadow counters before promoting any plugin."
       : "No trial-run actions in this window; continue monitoring.",
   );
+  paintShadowSnapshot(statusState, {
+    would: total,
+    pluginCount: data.plugins.length,
+    modeLabel: total > 0 ? "review" : "clear",
+    title: `${total} would-have action${total === 1 ? "" : "s"}.`,
+    detail:
+      total > 0
+        ? "Review shadow counters before promoting any plugin."
+        : "No trial-run actions in this window; continue monitoring.",
+  });
   writePriorSnapshot(data);
 }
 
 export async function refreshShadowScoreboard() {
   const panel = document.getElementById("shadowScoreboardPanel");
-  const card = document.getElementById("shadowScoreboardSection");
   if (!panel) return;
-  if (card) card.setAttribute("data-async-state", "loading");
+  syncSystemSectionState("shadowScoreboardSection", "loading");
   setSystemStatusStrip(
     "shadowScoreboardStatusStrip",
     "loading",
     "Loading shadow scoreboard.",
     "Fetching last-scan plugin would-have counters.",
   );
+  paintShadowSnapshot("loading", {
+    title: "Loading shadow scoreboard.",
+    detail: "Fetching last-scan plugin would-have counters.",
+  });
   panel.innerHTML = `<div class="async-state async-state--loading muted" role="status">
     <span class="async-spinner" aria-hidden="true"></span>
     <span>Loading shadow scoreboard…</span>
   </div>`;
   const out = await api.get("/api/cockpit/shadow-scoreboard");
   if (!out.ok) {
-    if (card) card.setAttribute("data-async-state", "error");
     const msg = out.user_message || out.error || "Request failed";
-    panel.innerHTML = `<div class="async-state async-state--error" role="alert">
-      <span>Shadow scoreboard load failed: ${escapeHtml(String(msg))}</span>
-      <button type="button" class="btn small secondary" data-shadow-retry>Retry</button>
-    </div>`;
+    paintSystemPanelAlert(panel, "error", {
+      headline: "Data unavailable",
+      message: String(msg),
+      onRetry: () => void refreshShadowScoreboard(),
+    });
     setSystemStatusStrip(
       "shadowScoreboardStatusStrip",
       "error",
       "Shadow scoreboard load failed.",
       String(msg),
     );
-    panel.querySelector("[data-shadow-retry]")?.addEventListener("click", () => void refreshShadowScoreboard());
+    paintShadowSnapshot("error", { title: "Shadow scoreboard load failed.", detail: String(msg) });
     return;
   }
-  if (card) card.setAttribute("data-async-state", "success");
   renderShadowScoreboardPanel(panel, out.data, null);
 }

@@ -25,7 +25,7 @@ import {
   formatMoney,
 } from "../modules/format.js";
 import { setAsyncState, busyButton, ASYNC_ERROR } from "../modules/asyncState.js";
-import { markUnavailable, clearUnavailable } from "../modules/freshness.js";
+import { applyFreshness, markUnavailable, clearUnavailable } from "../modules/freshness.js";
 import { logEvent, updateActionCenter, statusClass } from "../modules/logger.js";
 import {
   isPriorityFeedActive,
@@ -230,7 +230,14 @@ export async function refreshPendingBoard(deps = {}) {
   const board = document.getElementById("pendingBoard");
   if (board) {
     board.dataset.state = "loading";
-    board.innerHTML = `<div class="task-empty muted">Loading pending trades...</div>`;
+    // Skeleton cards approximate the task-card silhouette so the board
+    // doesn't jump when real rows land (perceived-perf pass).
+    board.innerHTML = `
+      <div role="status" aria-label="Loading pending trades">
+        <span class="ol-skeleton" style="min-height:3.2rem"></span>
+        <span class="ol-skeleton" style="min-height:3.2rem; width:92%"></span>
+        <span class="ol-skeleton" style="min-height:3.2rem; width:85%"></span>
+      </div>`;
   }
   updateKanbanLaneSummaries({ pendingState: "loading" });
   setOperationsStatusStrip(
@@ -290,6 +297,11 @@ export async function refreshPendingBoard(deps = {}) {
   }
   state.lastPendingCount = pendingN;
   state.lastPendingAt = new Date().toISOString();
+  applyFreshness(document.getElementById("pendingFresh"), {
+    asOf: state.lastPendingAt,
+    source: "/api/pending-trades",
+    surface: "pending_queue",
+  });
   if (pendingN > 0 && typeof trackFunnelMilestoneOnce === "function" && FUNNEL_EVENTS) {
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
       source: "pending_queue_refresh",

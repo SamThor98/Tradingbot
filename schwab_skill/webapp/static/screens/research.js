@@ -36,10 +36,11 @@ export function createResearchController(ctx) {
     resetSecCompareProfileOverride,
     renderSecCompareVisual,
     wireSecCompareActions,
+    openTradeDrawer,
     applyReportViewMode,
     mapRecovery,
     refreshPerformance,
-    loadPortfolioRisk,
+    wirePortfolioSubtabs,
     renderEvolvePanel,
     renderChallengerPanel,
     runLazyApi,
@@ -150,9 +151,8 @@ export function createResearchController(ctx) {
     });
     bindEvent("recoveryBtn", "click", mapRecovery);
     bindEvent("performanceRefreshBtn", "click", refreshPerformance);
-    document.getElementById("portfolioRiskPanel")?.addEventListener("toggle", (e) => {
-      if (e.target.open) void loadPortfolioRisk();
-    });
+    // Positions | Risk sub-tabs; the Risk tab lazy-loads the risk dashboard.
+    wirePortfolioSubtabs();
     document.getElementById("evolveBtn")?.addEventListener("click", async () => {
       const btn = document.getElementById("evolveBtn");
       const panel = document.getElementById("learningPanel");

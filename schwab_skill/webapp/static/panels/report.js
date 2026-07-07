@@ -1163,6 +1163,20 @@ function setDossierMeta(message, severity = "muted") {
   else meta.classList.add("muted");
 }
 
+/** Add a retry button next to the dossier meta line after a failed run. */
+function appendDossierRetryButton() {
+  const meta = document.getElementById("dossierMeta");
+  if (!meta || meta.querySelector("[data-dossier-retry]")) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn small secondary";
+  btn.setAttribute("data-dossier-retry", "");
+  btn.style.marginLeft = "0.5rem";
+  btn.textContent = "Retry";
+  btn.addEventListener("click", () => void runResearchDossier());
+  meta.appendChild(btn);
+}
+
 function isMarkdownTableSeparator(line) {
   // Matches separator rows like "|---|---:|:---:|"
   if (!line.startsWith("|")) return false;
@@ -1533,6 +1547,7 @@ export async function runResearchDossier() {
         `Dossier failed for ${ticker}.`,
         safeText(out.user_message || out.error || "Request failed."),
       );
+      appendDossierRetryButton();
       logEvent({ kind: "report", severity: "error", message: `Dossier ${ticker} failed: ${out.error}` });
       return;
     }

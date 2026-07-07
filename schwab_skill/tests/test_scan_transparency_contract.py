@@ -16,6 +16,8 @@ APP_JS = STATIC / "app.js"
 FILTER_REASONS_JS = STATIC / "modules" / "filterReasons.js"
 SIGNAL_PROVENANCE_JS = STATIC / "modules" / "signalProvenance.js"
 SCAN_DIAG_JS = STATIC / "panels" / "scanDiagnostics.js"
+SCAN_TABLE_JS = STATIC / "panels" / "scanTable.js"
+APPROVE_DIALOG_JS = STATIC / "panels" / "approveDialog.js"
 OPERATIONS_JS = STATIC / "screens" / "operations.js"
 PENDING_BOARD_JS = STATIC / "panels" / "pendingBoard.js"
 
@@ -43,6 +45,16 @@ def signal_provenance_js() -> str:
 @pytest.fixture(scope="module")
 def scan_diag_js() -> str:
     return SCAN_DIAG_JS.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def scan_table_js() -> str:
+    return SCAN_TABLE_JS.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def approve_dialog_js() -> str:
+    return APPROVE_DIALOG_JS.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -89,6 +101,8 @@ def test_index_html_scan_transparency_dom_ids(element_id: str, index_html: str) 
 def test_app_js_wires_scan_transparency_modules(app_js: str) -> None:
     for token in (
         'from "./panels/scanDiagnostics.js"',
+        'from "./panels/scanTable.js"',
+        'from "./modules/scanSignals.js"',
         'from "./modules/filterReasons.js"',
         'from "./modules/signalProvenance.js"',
         'from "./modules/operationsStatus.js"',
@@ -101,19 +115,50 @@ def test_app_js_wires_scan_transparency_modules(app_js: str) -> None:
         "updateWorkflowKanban",
         'from "./modules/signalTrustRow.js"',
         "renderSignalTrustRow",
-        'from "./modules/floatTooltip.js"',
-        "wireScanRankWhyTooltips",
+        'from "./panels/decisionDashboard.js"',
         "renderDiagnostics as _renderDiagnosticsPanel",
+        "configureScanTable",
         "formatFilterReasons",
         "renderSignalProvenanceChip",
-        "renderTradeableVerdict",
         "isScanSignalStageable",
-        "wireScanRankWhyTooltips",
-        "data-rank-tip",
         "applyScanResponseSignals",
         "shortlist_signals",
     ):
         assert token in app_js, f"app.js missing: {token}"
+
+
+def test_scan_table_panel_owns_row_rendering(scan_table_js: str, app_js: str) -> None:
+    """Row/sort rendering lives in panels/scanTable.js after the extraction
+    (docs/FRONTEND_DESIGN_SYSTEM.md "Next Planned Splits"); guard against the
+    helpers drifting back inline into app.js."""
+    for token in (
+        "export function renderScanRows",
+        "export function bindScanSortHandlers",
+        "export function configureScanTable",
+        "export function sortScanSignalsForRender",
+        "export function setRankExplainMode",
+        "export function applyRankExplainModeSelection",
+        'from "../modules/floatTooltip.js"',
+        "wireScanRankWhyTooltips",
+        "renderTradeableVerdict",
+        "renderSignalProvenanceChip",
+        "isScanSignalStageable",
+        "formatFilterReasons",
+        "data-rank-tip",
+        "scanFunnelFilterBanner",
+        "nearMissTableBody",
+    ):
+        assert token in scan_table_js, f"scanTable.js missing: {token}"
+    for forbidden in (
+        "function renderScanRows(",
+        "function bindScanSortHandlers(",
+        "function sortScanSignalsForRender(",
+        "function normalizeScanSignal(",
+    ):
+        assert forbidden not in app_js, (
+            f"{forbidden!r} reappeared inline in app.js — it should live in "
+            "panels/scanTable.js / modules/scanSignals.js instead."
+        )
 
 
 def test_filter_reasons_exports(filter_reasons_js: str) -> None:
@@ -154,6 +199,39 @@ def test_operations_screen_staging_guard(operations_js: str) -> None:
     assert 'from "../modules/signalProvenance.js"' in operations_js
     assert "isScanSignalStageable" in operations_js
     assert "scanDetailStageBtn" in operations_js
+
+
+def test_approve_dialog_panel_guardrails(approve_dialog_js: str, app_js: str) -> None:
+    """The approve dialog (a live-order safety surface) lives in
+    panels/approveDialog.js after the extraction. Its trade-safety guardrails
+    must stay intact: typed-ticker confirmation, risk acknowledgement,
+    server-side preflight, and the filtered-signal block."""
+    for token in (
+        "export async function openApproveDialog",
+        "export function syncApproveDialogGuardrails",
+        "export async function approveTradeById",
+        "export function configureApproveDialog",
+        "/preflight",
+        "confirm_live=true",
+        "typed_ticker",
+        "otp_code",
+        "approveRiskAck",
+        "approveTickerInput",
+        "isScanSignalStageable",
+        "Ticker mismatch",
+        "Risk acknowledgement required",
+    ):
+        assert token in approve_dialog_js, f"approveDialog.js missing: {token}"
+    for forbidden in (
+        "function openApproveDialog(",
+        "function syncApproveDialogGuardrails(",
+        "function approveTradeById(",
+        "function formatPreflightChecklistHtml(",
+    ):
+        assert forbidden not in app_js, (
+            f"{forbidden!r} reappeared inline in app.js — it should live in "
+            "panels/approveDialog.js instead."
+        )
 
 
 def test_staging_guard_in_queue_dialog(app_js: str) -> None:

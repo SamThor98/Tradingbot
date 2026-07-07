@@ -91,9 +91,9 @@ export function renderBacktestEquityCharts(wrap, result) {
     timeScale: { ...theme.timeScale, timeVisible: false },
   });
   const equitySeries = _equityChart.addAreaSeries({
-    lineColor: theme.candlestick?.upColor || "#34d399",
-    topColor: "rgba(52, 211, 153, 0.35)",
-    bottomColor: "rgba(52, 211, 153, 0.02)",
+    lineColor: theme.candlestick.upColor,
+    topColor: theme.volumeColors.up,
+    bottomColor: "transparent",
     lineWidth: 2,
   });
   equitySeries.setData(equityRows);
@@ -109,7 +109,7 @@ export function renderBacktestEquityCharts(wrap, result) {
       timeScale: { ...theme.timeScale, timeVisible: true },
     });
     const ddSeries = _drawdownChart.addLineSeries({
-      color: theme.candlestick?.downColor || "#fb7185",
+      color: theme.candlestick.downColor,
       lineWidth: 2,
     });
     ddSeries.setData(ddRows);

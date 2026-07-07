@@ -427,6 +427,16 @@ export async function refreshPerformance({ getDisplayMode = () => "balanced" } =
       error: `Performance load failed: ${safeText(out.user_message || out.error)}`,
       getDisplayMode,
     });
+    const errBox = panel.querySelector(".panel-error");
+    if (errBox && !errBox.querySelector("[data-performance-retry]")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn small secondary";
+      btn.setAttribute("data-performance-retry", "");
+      btn.textContent = "Retry";
+      btn.addEventListener("click", () => void refreshPerformance({ getDisplayMode }));
+      errBox.appendChild(btn);
+    }
     if (evolveBtn) {
       evolveBtn.disabled = true;
       evolveBtn.title = "Performance data unavailable.";

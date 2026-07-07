@@ -1204,7 +1204,16 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
     dcf = _build_dcf(ticker)
     health = _build_health(ticker)
 
-    if tech.stage_2 and tech.vcp and tech.signal_score >= 60:
+    # Fail closed when no price history exists (unknown/invalid symbol or a
+    # full data outage): the verdict must say NO DATA rather than implying an
+    # analysis ran, and the payload must carry a data_quality marker so the
+    # dashboard renders a degraded state instead of "Fresh".
+    has_price_data = (df is not None and not df.empty) and bool(tech.current_price)
+
+    if not has_price_data:
+        verdict = "NO DATA"
+        color = 0x95A5A6
+    elif tech.stage_2 and tech.vcp and tech.signal_score >= 60:
         verdict = "STRONG SETUP"
         color = 0x2ECC71
     elif tech.stage_2:
@@ -1216,9 +1225,13 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
 
     price_str = f"${tech.current_price:,.2f}" if tech.current_price else ""
 
+    description = f"**{ticker}** -- **{verdict}**"
+    if not has_price_data:
+        description += " (no price history found; symbol may be invalid or unsupported)"
+
     embed: dict[str, Any] = {
         "title": f"Quick Check | {ticker} {price_str}",
-        "description": f"**{ticker}** -- **{verdict}**",
+        "description": description,
         "color": color,
         "fields": [
             {
@@ -1234,6 +1247,8 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "footer": {"text": f"Want more? Use /report {ticker}"},
     }
+    if not has_price_data:
+        embed["data_quality"] = "NO_PRICE_DATA"
 
     fund_parts = []
     if dcf and not dcf.error and dcf.intrinsic_value > 0:

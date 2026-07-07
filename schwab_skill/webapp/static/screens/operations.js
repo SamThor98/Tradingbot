@@ -82,6 +82,10 @@ export function createOperationsController(ctx) {
       }
       btn.disabled = true;
       const out = await api.post("/api/pending-trades/clear-pending", {});
+      // Re-enable immediately: a failed clear (or a failed follow-up refresh)
+      // must never leave the control permanently locked. A successful board
+      // refresh re-syncs disabled state from the pending count anyway.
+      btn.disabled = false;
       if (!out.ok) {
         logEvent({ kind: "trade", severity: "error", message: `Clear pending failed: ${out.error}` });
         updateActionCenter({ title: "Clear pending failed", message: out.error, severity: "error" });

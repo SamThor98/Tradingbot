@@ -2214,15 +2214,29 @@ body[data-theme="editorial"] #workflowPrimary {
 }
 
 body[data-theme="editorial"] .operate-kanban {
-  grid-template-columns: minmax(360px, 1.3fr) minmax(320px, 1fr) minmax(320px, 1.05fr);
-  gap: clamp(14px, 1.5vw, 24px);
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(10px, 1.2vw, 20px);
 }
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane {
-  min-height: clamp(320px, 42vh, 560px);
+  min-height: clamp(280px, 36vh, 520px);
   padding: 14px 14px 16px;
 }
 
+body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanSection,
+body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel,
+body[data-theme="editorial"].ui-screen-operations .operate-kanban #pendingSection {
+  grid-column: 1 / -1;
+}
+
+body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child)::after {
+  display: none;
+}
+
+body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane:not(:last-child) {
+  border-right: none !important;
+  border-bottom: 1px solid var(--ink-line) !important;
+}
 
 body[data-theme="editorial"] .operate-kanban .kanban-lane-head {
   margin-bottom: 14px;
@@ -2241,13 +2255,9 @@ body[data-theme="editorial"] .operate-kanban #pendingSection .task-board {
   max-height: min(66vh, 760px);
 }
 
-@media (max-width: 1500px) {
-  body[data-theme="editorial"] .operate-kanban {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  body[data-theme="editorial"] .operate-kanban .kanban-lane:nth-child(3) {
-    grid-column: 1 / -1;
+@media (min-width: 1121px) {
+  body[data-theme="editorial"].ui-screen-operations #scanDetailPanel .scan-detail-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 

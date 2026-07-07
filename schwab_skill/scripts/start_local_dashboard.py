@@ -11,7 +11,6 @@ Usage (from schwab_skill):
   python scripts/start_local_dashboard.py
   python scripts/start_local_dashboard.py --port 8182 --no-sync-env
   python scripts/start_local_dashboard.py --entry-timing-experiment
-  python scripts/start_local_dashboard.py --with-kronos
   python scripts/start_local_dashboard.py --entry-timing-live
 """
 from __future__ import annotations
@@ -81,6 +80,11 @@ def main() -> int:
         help="Enable auto-reload on webapp/ changes (slower; can loop on OneDrive sync)",
     )
     parser.add_argument(
+        "--signal-stack-shadow",
+        action="store_true",
+        help="Upsert P0 stack SHADOW vars (exit grace + breakout buffer) into .env before starting",
+    )
+    parser.add_argument(
         "--entry-timing-experiment",
         action="store_true",
         help="Upsert P0 entry-timing SHADOW experiment vars into .env before starting",
@@ -89,17 +93,6 @@ def main() -> int:
         "--entry-timing-live",
         action="store_true",
         help="Upsert P0 entry-timing LIVE vars (1%% breakout buffer) into .env before starting",
-    )
-    parser.add_argument(
-        "--with-kronos",
-        action="store_true",
-        help="Start the Kronos inference service on port 8100 before the dashboard",
-    )
-    parser.add_argument(
-        "--kronos-port",
-        type=int,
-        default=int(os.getenv("KRONOS_PORT", "8100")),
-        help="Port for --with-kronos (default 8100)",
     )
     args = parser.parse_args()
 
@@ -112,6 +105,14 @@ def main() -> int:
             print(f"Entry-timing LIVE env updated in {ENV_PATH}: {', '.join(changed)}")
         else:
             print(f"Entry-timing LIVE env already set in {ENV_PATH}")
+    elif args.signal_stack_shadow:
+        from core.env_local import apply_signal_stack_shadow_env
+
+        changed = apply_signal_stack_shadow_env(ENV_PATH)
+        if changed:
+            print(f"Signal stack shadow env updated in {ENV_PATH}: {', '.join(changed)}")
+        else:
+            print(f"Signal stack shadow env already set in {ENV_PATH}")
     elif args.entry_timing_experiment:
         from core.env_local import apply_entry_timing_experiment_env
 
@@ -129,40 +130,6 @@ def main() -> int:
         callback = _sync_callback_env(args.port)
 
     _run_alembic_once()
-
-    kronos_proc: subprocess.Popen[str] | None = None
-    if args.with_kronos:
-        kronos_dir = SKILL_DIR.parent / "kronos_service"
-        kronos_url = f"http://127.0.0.1:{args.kronos_port}"
-        if not ENV_PATH.exists():
-            ENV_PATH.write_text("", encoding="utf-8")
-        env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-        out_lines: list[str] = []
-        saw_url = False
-        for line in env_lines:
-            if line.startswith("KRONOS_INFERENCE_URL="):
-                out_lines.append(f"KRONOS_INFERENCE_URL={kronos_url}")
-                saw_url = True
-                continue
-            out_lines.append(line)
-        if not saw_url:
-            out_lines.append(f"KRONOS_INFERENCE_URL={kronos_url}")
-        ENV_PATH.write_text("\n".join(out_lines).rstrip() + "\n", encoding="utf-8")
-        print(f"Starting Kronos inference service on {kronos_url} …")
-        kronos_proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "app:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(args.kronos_port),
-            ],
-            cwd=kronos_dir,
-        )
-        print("Kronos service booting (first load downloads weights; can take several minutes).")
 
     print(f"Dashboard URL : https://{args.host}:{args.port}/")
     print(f"Schwab callback: {callback}")
@@ -188,15 +155,7 @@ def main() -> int:
         cmd.extend(["--reload", "--reload-dir", "webapp"])
     env = os.environ.copy()
     env["WEBAPP_SKIP_ALEMBIC"] = "1"
-    if args.with_kronos:
-        env["KRONOS_INFERENCE_URL"] = f"http://127.0.0.1:{args.kronos_port}"
     rc = subprocess.call(cmd, cwd=SKILL_DIR, env=env)
-    if kronos_proc is not None:
-        kronos_proc.terminate()
-        try:
-            kronos_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            kronos_proc.kill()
     return rc
 
 

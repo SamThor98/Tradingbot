@@ -14,7 +14,6 @@ Strategic and tactical guidance is split on purpose:
 | `.cursor/rules/signal-edge-priority.mdc` | **P0 signal edge** — backtest/scanner/scoring; auto-applies on those file globs |
 | `.cursor/rules/validation-release.mdc` | **Release gate** — validate_all, promotion ledger, ship/no-ship; auto-applies on `scripts/` |
 | `agent_mode_prompt.md` | **Operator capabilities** — module map and “when user says X, do Y” for live research/trading |
-| `docs/KRONOS_FEATURE_PROMPT.md` | **Feature spec** — Kronos advisory forecast isolation and rollout |
 
 See `wiki/governance-source-of-truth.md` for precedence when docs conflict.
 

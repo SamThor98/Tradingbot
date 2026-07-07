@@ -1,4 +1,5 @@
-import { safeNum, safeText, timeAgo } from "../modules/format.js";
+import { escapeHtml, safeNum, safeText, timeAgo } from "../modules/format.js";
+import { decorateGlossary } from "../modules/glossary.js";
 import { healthBadgeClass } from "../modules/logger.js";
 import { paintStatusStrip } from "../modules/statusStripCore.js";
 import {
@@ -83,7 +84,8 @@ function _renderSignalEdgeSummary(signalEdge, readiness, decisionState) {
   if (!el) return;
   const summary = summarizeDecisionGates(signalEdge, readiness, decisionState);
   el.dataset.state = summary.state;
-  el.textContent = summary.text;
+  // Glossary tooltips on PF/gate jargon (plain-language companion, F17).
+  el.innerHTML = decorateGlossary(escapeHtml(summary.text));
 }
 
 function _syncDecisionAsyncState(stateName) {
@@ -168,7 +170,7 @@ export function renderDecisionDashboardLoading() {
   EVIDENCE_ROW_IDS.forEach((id) => _setText(id, `${document.getElementById(id)?.textContent?.split(":")[0] || "Status"}: loading…`));
 }
 
-export function renderDecisionDashboardUnavailable(message) {
+export function renderDecisionDashboardUnavailable(message, onRetry) {
   const msg = safeText(message || "Decision dashboard unavailable.");
   _setStateStrip("error", "Decision data unavailable.", msg);
   _syncDecisionAsyncState("error");
@@ -177,6 +179,19 @@ export function renderDecisionDashboardUnavailable(message) {
   renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, errorOpts);
   renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, errorOpts);
   _renderSignalEdgeSummary({}, {}, errorOpts);
+  // Retry affordance for the idempotent dashboard GET.
+  if (typeof onRetry === "function") {
+    const strip = document.getElementById("decisionDashboardStateStrip");
+    if (strip && !strip.querySelector("[data-decision-retry]")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn small secondary";
+      btn.setAttribute("data-decision-retry", "");
+      btn.textContent = "Retry";
+      btn.addEventListener("click", () => void onRetry());
+      strip.appendChild(btn);
+    }
+  }
 }
 
 function _renderAblationTop(topRows = []) {

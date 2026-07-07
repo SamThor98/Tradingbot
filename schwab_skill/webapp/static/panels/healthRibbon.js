@@ -15,6 +15,41 @@ import {
 } from "../modules/freshness.js";
 import { updateActionCenter } from "../modules/logger.js";
 import { setSystemStatusStrip } from "../modules/systemStatus.js";
+import { paintSystemPanelSnapshot, syncSystemSectionState } from "../modules/systemPanelContract.js";
+
+function paintHealthSnapshot(stateName, opts = {}) {
+  const {
+    authLabel = "—",
+    quotesLabel = "—",
+    apiLabel = "—",
+    title = "",
+    detail = "",
+  } = opts;
+  paintSystemPanelSnapshot("healthSnapshot", "healthRibbon", stateName, {
+    hint: "Probes: sign-in · quotes · API errors · validation",
+    kpis: [
+      {
+        label: "SIGN-IN",
+        sub: "broker session",
+        value: authLabel,
+        tone: stateName === "error" ? "bad" : stateName === "partial" ? "warn" : "success",
+      },
+      {
+        label: "QUOTES",
+        sub: "market data",
+        value: quotesLabel,
+        tone: quotesLabel === "live" ? "success" : stateName === "loading" ? "loading" : "warn",
+      },
+      {
+        label: "API",
+        sub: "error rate",
+        value: apiLabel,
+        tone: stateName === "error" ? "bad" : "neutral",
+      },
+    ],
+    lines: [title, detail].filter(Boolean),
+  });
+}
 
 export function setHealthRibbonUnavailable(reason) {
   const rawReason = safeText(reason || "").trim();
@@ -33,12 +68,20 @@ export function setHealthRibbonUnavailable(reason) {
 
   const ribbon = document.getElementById("healthRibbon");
   if (ribbon) ribbon.setAttribute("data-async-state", "error");
+  syncSystemSectionState("healthRibbon", "error");
   setSystemStatusStrip(
     "healthStatusStrip",
     "error",
     "Health check unavailable.",
     uiReason,
   );
+  paintHealthSnapshot("error", {
+    authLabel: "—",
+    quotesLabel: "—",
+    apiLabel: "—",
+    title: "Health check unavailable.",
+    detail: uiReason,
+  });
   ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -135,6 +178,15 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
         ? "error"
         : "partial";
   setSystemStatusStrip("healthStatusStrip", state, "System health summary ready.", line);
+  syncSystemSectionState("healthRibbon", state);
+  paintHealthSnapshot(state, {
+    authLabel:
+      authState === "connected" ? "ok" : authState === "unverified" ? "check" : "off",
+    quotesLabel: !deepReachable ? "unknown" : quoteOk ? "live" : "degraded",
+    apiLabel: "—",
+    title: "System health.",
+    detail: line,
+  });
   if (el) {
     clearUnavailable(el);
     el.textContent = line;

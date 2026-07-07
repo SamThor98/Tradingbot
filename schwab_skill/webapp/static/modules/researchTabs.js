@@ -24,6 +24,9 @@ const SECTION_TO_TAB = Object.freeze({
   }, {}),
   recoverySection: "check",
   learningSection: "check",
+  // Portfolio sub-tab panels live inside portfolioSection.
+  portfolioPanelRisk: "portfolio",
+  portfolioPanelPositions: "portfolio",
 });
 
 export function researchTabForSection(sectionId) {
@@ -42,6 +45,8 @@ function setResearchTab(tab) {
     const active = btn.getAttribute("data-research-tab-btn") === key;
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", active ? "true" : "false");
+    // Roving tabindex: only the active tab is a tab stop; arrows move focus.
+    btn.tabIndex = active ? 0 : -1;
   });
   Object.entries(TAB_SECTIONS).forEach(([tabKey, ids]) => {
     ids.forEach((id) => {
@@ -64,13 +69,30 @@ export function initResearchTabs() {
       setResearchTab(btn.getAttribute("data-research-tab-btn") || "check");
     });
   });
+  // Arrow-key navigation between tabs (same pattern as the topbar screen tabs).
+  nav.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const btns = Array.from(nav.querySelectorAll("[data-research-tab-btn]"));
+    const cur = btns.indexOf(document.activeElement);
+    if (cur === -1) return;
+    e.preventDefault();
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    const next = btns[(cur + delta + btns.length) % btns.length];
+    setResearchTab(next.getAttribute("data-research-tab-btn") || "check");
+    next.focus();
+  });
   document.querySelectorAll("[data-research-tab-link]").forEach((link) => {
     link.addEventListener("click", () => {
       const tab = link.getAttribute("data-research-tab-link");
       if (tab) setResearchTab(tab);
     });
   });
-  setResearchTab("check");
+  // Respect a tab already activated by a ?section= deep link during boot —
+  // forcing "check" here used to stomp e.g. ?section=sec → Diligence.
+  const preselected = document
+    .querySelector("[data-research-tab-btn].active")
+    ?.getAttribute("data-research-tab-btn");
+  setResearchTab(preselected || "check");
 }
 
 export function applyResearchTab(tab) {

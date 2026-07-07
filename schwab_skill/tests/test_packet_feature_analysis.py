@@ -1,4 +1,4 @@
-"""Tests for packet feature lift analysis (Kronos + management integrity)."""
+"""Tests for packet feature lift analysis (management integrity)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ from core import decision_packet, packet_feature_analysis
 
 def _pkt(
     *,
-    kronos=None,
     mgmt=None,
     label="win",
     ret=3.0,
     horizon=10,
 ):
     return {
-        "kronos": kronos,
         "management_integrity": mgmt,
         "outcome": {
             "label": label,
@@ -22,17 +20,6 @@ def _pkt(
             "horizon_days": horizon,
         },
     }
-
-
-def test_kronos_cohort_buckets() -> None:
-    packets = [
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, ret=5.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, label="loss", ret=-2.0),
-        _pkt(kronos={"direction": "down", "confidence_bucket": "low"}, ret=1.0),
-    ]
-    metrics = packet_feature_analysis._cohort_metrics(packets, packet_feature_analysis.kronos_bucket)
-    assert metrics["cohorts"]["up_high"]["resolved"] == 2
-    assert metrics["missing_feature"] == 0
 
 
 def test_management_integrity_cohort() -> None:
@@ -49,8 +36,8 @@ def test_management_integrity_cohort() -> None:
 
 def test_era_split_horizons() -> None:
     packets = [
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=15, ret=2.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=30, ret=1.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=15, ret=2.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=30, ret=1.0),
     ]
     eras = packet_feature_analysis.split_by_horizon_era(packets)
     assert len(eras["le_20d"]) == 1
@@ -73,21 +60,21 @@ def test_build_packet_includes_management_integrity() -> None:
     assert pkt.management_integrity["score"] == 72
 
 
-def test_pilot_recommends_kronos_on_short_era_lift() -> None:
+def test_pilot_recommends_management_integrity_on_short_era_lift() -> None:
     short = [
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=10, ret=6.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=12, ret=5.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=8, ret=4.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=15, ret=3.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=18, ret=2.0),
-        _pkt(kronos={"direction": "down", "confidence_bucket": "low"}, horizon=10, ret=-4.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=10, ret=6.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=12, ret=5.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=8, ret=4.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=15, ret=3.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=18, ret=2.0),
+        _pkt(mgmt={"score_bucket": "low", "score": 40}, horizon=10, ret=-4.0),
     ]
     long = [
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=25, ret=1.0),
-        _pkt(kronos={"direction": "up", "confidence_bucket": "high"}, horizon=30, ret=0.5),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=25, ret=1.0),
+        _pkt(mgmt={"score_bucket": "high", "score": 80}, horizon=30, ret=0.5),
     ]
     packets = short + long
     report = packet_feature_analysis.feature_lift_report(packets)
     pilot = report["pilot_recommendation"]
     assert pilot["ready_for_single_era_pilot"] is True
-    assert pilot["recommended_feature"] == "kronos"
+    assert pilot["recommended_feature"] == "management_integrity"

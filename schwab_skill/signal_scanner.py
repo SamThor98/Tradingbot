@@ -8,7 +8,6 @@ from __future__ import annotations
 import concurrent.futures as cf
 import json
 import logging
-import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -335,6 +334,7 @@ def _apply_score_stack(
         compute_composite_quality,
         compute_edge_score,
         normalized_component_scores,
+        resolve_rank_volume_points,
     )
     from core.scoring_reliability import compute_reliability_score
 
@@ -345,11 +345,18 @@ def _apply_score_stack(
     pts_52w = _safe_float(comps.get("pts_52w") if comps else signal_row.get("pts_52w"), 0.0)
     pts_volume = _safe_float(comps.get("pts_volume") if comps else signal_row.get("pts_volume"), 0.0)
     pts_mirofish = _safe_float(comps.get("pts_mirofish") if comps else signal_row.get("pts_mirofish"), 0.0)
+    latest_volume = _safe_float(signal_row.get("latest_volume"), 0.0)
+    avg_vol_50 = _safe_float(signal_row.get("avg_vol_50"), 0.0)
+    rank_pts_volume = resolve_rank_volume_points(
+        pts_volume,
+        latest_volume=latest_volume,
+        avg_vol_50=avg_vol_50,
+    )
     exclude_52w = get_score_edge_exclude_52w(skill_dir)
     edge_signal, _, _, _ = normalized_component_scores(
         signal_score=score,
         pts_52w=pts_52w,
-        pts_volume=pts_volume,
+        pts_volume=rank_pts_volume,
         pts_mirofish=pts_mirofish,
         close_vs_sma200_pct=_trend_pct_from_signal_row(signal_row),
         exclude_52w=exclude_52w,
@@ -374,10 +381,9 @@ def _apply_score_stack(
     used_fallback = bool(signal_row.get("used_fallback_data"))
 
     execution = 100.0
-    latest_volume = _safe_float(signal_row.get("latest_volume"), 0.0)
-    avg_vol_50 = _safe_float(signal_row.get("avg_vol_50"), 0.0)
     if avg_vol_50 > 0 and latest_volume > 0:
         ratio = latest_volume / avg_vol_50
+        signal_row["volume_ratio"] = round(ratio, 4)
         if ratio < 0.7:
             execution -= 20.0
         elif ratio < 0.9:
@@ -402,7 +408,7 @@ def _apply_score_stack(
     composite = compute_composite_quality(
         signal_score=score,
         pts_52w=pts_52w,
-        pts_volume=pts_volume,
+        pts_volume=rank_pts_volume,
         pts_mirofish=pts_mirofish,
         p_up_calibrated=p_up_calibrated,
         reliability_score=reliability,
@@ -432,6 +438,7 @@ def _apply_score_stack(
     signal_row["reliability_score"] = round(reliability, 2)
     signal_row["execution_score"] = round(execution, 2)
     signal_row["composite_score"] = round(composite, 2)
+    signal_row["pts_volume_rank"] = round(rank_pts_volume, 2)
     signal_row["rank_score"] = round(rank_score, 2)
     signal_row["rank_score_v1"] = round(rank_score, 2)
     signal_row["rank_basis"] = "composite_quality_v3"
@@ -1151,7 +1158,6 @@ def _scan_stage_b_enrich(
     prediction_market_mode: str,
     scan_started_at: datetime,
     regime_is_bullish: bool | None,
-    kronos_ctx: dict[str, Any] | None = None,
     mgmt_integrity_mode: str = "off",
     mgmt_integrity_filter_min_score: int = 50,
 ) -> dict[str, Any]:
@@ -1174,13 +1180,6 @@ def _scan_stage_b_enrich(
         "advisory_high_confidence": 0,
         "advisory_medium_confidence": 0,
         "advisory_low_confidence": 0,
-        "kronos_scored": 0,
-        "kronos_high_confidence": 0,
-        "kronos_medium_confidence": 0,
-        "kronos_low_confidence": 0,
-        "kronos_errors": 0,
-        "kronos_skipped_budget": 0,
-        "kronos_live_adjustments": 0,
         "mgmt_integrity_scored": 0,
         "mgmt_integrity_high": 0,
         "mgmt_integrity_medium": 0,
@@ -1474,62 +1473,6 @@ def _scan_stage_b_enrich(
                     diag_delta["advisory_low_confidence"] += 1
         except Exception as e:
             LOG.debug("Advisory scoring skipped for %s: %s", ticker, e)
-
-        # Kronos forecast enrichment (OFF|SHADOW|LIVE). Budget-capped per scan
-        # and fully degrade-safe: any failure leaves the signal untouched.
-        if kronos_ctx is not None:
-            try:
-                proceed = False
-                lock = kronos_ctx.get("lock")
-                budget = kronos_ctx.get("budget")
-                if lock is not None and isinstance(budget, list):
-                    with lock:
-                        if budget[0] > 0:
-                            budget[0] -= 1
-                            proceed = True
-                if not proceed:
-                    diag_delta["kronos_skipped_budget"] += 1
-                else:
-                    from kronos_client import forecast_signal_kronos
-
-                    kf = forecast_signal_kronos(
-                        ticker,
-                        df,
-                        skill_dir=skill_dir,
-                        regime_is_bullish=regime_is_bullish,
-                    )
-                    if kf is not None:
-                        kf_dict = kf.to_dict()
-                        signal_row["kronos_forecast"] = kf_dict
-                        diag_delta["kronos_scored"] += 1
-                        kbucket = str(kf_dict.get("confidence_bucket", "low")).lower()
-                        if kbucket == "high":
-                            diag_delta["kronos_high_confidence"] += 1
-                        elif kbucket == "medium":
-                            diag_delta["kronos_medium_confidence"] += 1
-                        else:
-                            diag_delta["kronos_low_confidence"] += 1
-                        # LIVE: small clamped score nudge, gated by regime + high
-                        # confidence. SHADOW only attaches the forecast.
-                        if (
-                            str(kronos_ctx.get("mode")) == "live"
-                            and kbucket == "high"
-                            and regime_is_bullish is not False
-                        ):
-                            from config import get_kronos_score_delta_clamp
-
-                            clamp = float(get_kronos_score_delta_clamp(skill_dir))
-                            direction = str(kf_dict.get("direction", "flat")).lower()
-                            sign = 1.0 if direction == "up" else (-1.0 if direction == "down" else 0.0)
-                            delta = max(-clamp, min(clamp, sign * clamp))
-                            if delta:
-                                score = max(0.0, min(100.0, score + delta))
-                                signal_row["signal_score"] = score
-                                signal_row["kronos_score_delta"] = round(delta, 3)
-                                diag_delta["kronos_live_adjustments"] += 1
-            except Exception as e:
-                diag_delta["kronos_errors"] += 1
-                LOG.debug("Kronos scoring skipped for %s: %s", ticker, e)
 
         # Management integrity (OFF|SHADOW|LIVE). SHADOW attaches scorecard
         # evidence; LIVE score nudges stay deferred until packet lift is proven.
@@ -2143,16 +2086,15 @@ def _apply_post_stage_b_chain(
         reverse=True,
     )
 
-    # De-correlation guard: prevent the final top-N from being concentrated in
-    # one sector. Real pairwise return correlation needs a return series that
-    # signals do not carry at ranking time, so we use a sector-diversity proxy:
-    # walk the rank-sorted list and demote names whose sector already holds
-    # `max_per_sector` higher-ranked picks. shadow only annotates/counts; live
-    # reorders the overflow below the diversified names (within-group order
-    # preserved) so it falls out of the top-N first. Gated by the existing
-    # CORRELATION_GUARD_MODE plugin flag (default off).
+    # De-correlation guard: keep the final top-N from loading up on one sector
+    # and, when history is available, on names that have moved together.
     try:
-        from config import get_correlation_guard_max_per_sector, get_correlation_guard_mode
+        from config import (
+            get_correlation_guard_max_pair_corr,
+            get_correlation_guard_max_per_sector,
+            get_correlation_guard_mode,
+            get_portfolio_analytics_lookback_days,
+        )
 
         corr_mode = get_correlation_guard_mode(skill_dir)
         diagnostics["correlation_guard_mode"] = corr_mode
@@ -2178,6 +2120,57 @@ def _apply_post_stage_b_chain(
                     for s in demoted:
                         s["correlation_guard_would_demote"] = True
                     diagnostics["correlation_guard_would_demote"] += len(demoted)
+            pair_threshold = float(get_correlation_guard_max_pair_corr(skill_dir))
+            pair_lookback = max(20, int(get_portfolio_analytics_lookback_days(skill_dir)))
+            pair_candidates = signals[: min(len(signals), 25)]
+            tail = signals[len(pair_candidates) :]
+            returns_by_ticker: dict[str, Any] = {}
+            if pair_candidates:
+                from core.portfolio_analytics import daily_returns_from_prices
+                from market_data import get_daily_history
+
+                for s in pair_candidates:
+                    ticker = str(s.get("ticker") or "").upper().strip()
+                    if not ticker or ticker in returns_by_ticker:
+                        continue
+                    hist = get_daily_history(ticker, days=pair_lookback, skill_dir=skill_dir)
+                    returns = daily_returns_from_prices(hist)
+                    if len(returns) >= 20:
+                        returns_by_ticker[ticker] = returns
+            if len(returns_by_ticker) >= 2:
+                pair_kept: list[dict[str, Any]] = []
+                pair_demoted: list[dict[str, Any]] = []
+                for s in pair_candidates:
+                    ticker = str(s.get("ticker") or "").upper().strip()
+                    returns = returns_by_ticker.get(ticker)
+                    breach: tuple[str, float] | None = None
+                    if returns is not None:
+                        for kept_signal in pair_kept:
+                            kept_ticker = str(kept_signal.get("ticker") or "").upper().strip()
+                            kept_returns = returns_by_ticker.get(kept_ticker)
+                            if kept_returns is None:
+                                continue
+                            corr = float(returns.corr(kept_returns))
+                            if corr == corr and abs(corr) >= pair_threshold:
+                                breach = (kept_ticker, corr)
+                                break
+                    if breach is None:
+                        pair_kept.append(s)
+                    else:
+                        s["correlation_guard_pair_ticker"] = breach[0]
+                        s["correlation_guard_pair_corr"] = round(breach[1], 4)
+                        pair_demoted.append(s)
+                if pair_demoted:
+                    if corr_mode == "live":
+                        for s in pair_demoted:
+                            s["correlation_guard_demoted"] = True
+                        signals = pair_kept + pair_demoted + tail
+                        diagnostics["correlation_guard_demoted"] += len(pair_demoted)
+                    else:
+                        for s in pair_demoted:
+                            s["correlation_guard_would_demote"] = True
+                        diagnostics["correlation_guard_would_demote"] += len(pair_demoted)
+                    diagnostics["correlation_guard_pair_demotions"] += len(pair_demoted)
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Correlation guard skipped: %s", e)
 
@@ -2337,13 +2330,6 @@ def scan_for_signals_detailed(
         "advisory_high_confidence": 0,
         "advisory_medium_confidence": 0,
         "advisory_low_confidence": 0,
-        "kronos_scored": 0,
-        "kronos_high_confidence": 0,
-        "kronos_medium_confidence": 0,
-        "kronos_low_confidence": 0,
-        "kronos_errors": 0,
-        "kronos_skipped_budget": 0,
-        "kronos_live_adjustments": 0,
         "mgmt_integrity_scored": 0,
         "mgmt_integrity_high": 0,
         "mgmt_integrity_medium": 0,
@@ -2355,6 +2341,7 @@ def scan_for_signals_detailed(
         "ranked_on_fallback_basis": 0,
         "correlation_guard_demoted": 0,
         "correlation_guard_would_demote": 0,
+        "correlation_guard_pair_demotions": 0,
         "event_risk_flagged": 0,
         "event_risk_blocked": 0,
         "event_risk_downsized": 0,
@@ -2634,8 +2621,6 @@ def scan_for_signals_detailed(
         get_guidance_score_boost,
         get_guidance_score_enabled,
         get_guidance_score_penalty,
-        get_kronos_max_symbols,
-        get_kronos_mode,
         get_management_integrity_filter_min_score,
         get_management_integrity_mode,
         get_meta_policy_mode,
@@ -2702,23 +2687,6 @@ def scan_for_signals_detailed(
     prediction_market_engine = None
     scan_started_at = datetime.now(timezone.utc)
 
-    # Kronos forecast plugin context (shared, thread-safe budget across Stage B).
-    kronos_mode = get_kronos_mode(skill_dir)
-    kronos_ctx: dict[str, Any] | None = None
-    if kronos_mode != "off":
-        kronos_ctx = {
-            "mode": kronos_mode,
-            "lock": threading.Lock(),
-            "budget": [int(get_kronos_max_symbols(skill_dir))],
-        }
-    diagnostics["kronos"] = {
-        "enabled": kronos_mode != "off",
-        "mode": kronos_mode,
-        "scored": 0,
-        "errors": 0,
-        "skipped_budget": 0,
-        "live_adjustments": 0,
-    }
     mgmt_integrity_mode = get_management_integrity_mode(skill_dir)
     mgmt_integrity_filter_min_score = int(get_management_integrity_filter_min_score(skill_dir))
     diagnostics["management_integrity"] = {
@@ -3054,7 +3022,6 @@ def scan_for_signals_detailed(
                 prediction_market_mode,
                 scan_started_at,
                 diagnostics.get("regime_bullish"),
-                kronos_ctx,
                 mgmt_integrity_mode,
                 mgmt_integrity_filter_min_score,
             )
@@ -3112,17 +3079,6 @@ def scan_for_signals_detailed(
         "applied": int(diagnostics.get("prediction_market_applied", 0) or 0),
         "skipped": int(diagnostics.get("prediction_market_skipped", 0) or 0),
         "errors": int(diagnostics.get("prediction_market_errors", 0) or 0),
-    }
-    diagnostics["kronos"] = {
-        "enabled": bool((diagnostics.get("kronos") or {}).get("enabled", False)),
-        "mode": str((diagnostics.get("kronos") or {}).get("mode") or "off"),
-        "scored": int(diagnostics.get("kronos_scored", 0) or 0),
-        "errors": int(diagnostics.get("kronos_errors", 0) or 0),
-        "skipped_budget": int(diagnostics.get("kronos_skipped_budget", 0) or 0),
-        "live_adjustments": int(diagnostics.get("kronos_live_adjustments", 0) or 0),
-        "high_confidence": int(diagnostics.get("kronos_high_confidence", 0) or 0),
-        "medium_confidence": int(diagnostics.get("kronos_medium_confidence", 0) or 0),
-        "low_confidence": int(diagnostics.get("kronos_low_confidence", 0) or 0),
     }
     mgmt = diagnostics.get("management_integrity") if isinstance(diagnostics.get("management_integrity"), dict) else {}
     diagnostics["management_integrity"] = {

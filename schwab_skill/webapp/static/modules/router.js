@@ -58,6 +58,9 @@ export const SECTION_ALIASES = Object.freeze({
   sec: "secCompareSection",
   seccompare: "secCompareSection",
   calibration: "calibrationSection",
+  portfolio: "portfolioSection",
+  risk: "portfolioPanelRisk",
+  portfoliorisk: "portfolioPanelRisk",
 });
 
 /**
@@ -92,6 +95,10 @@ export function handleRouteHash() {
   const el = window.document.getElementById?.(id);
   if (!el) return;
   activateResearchTabForSection(id);
+  // Panels with in-card sub-tabs (e.g. Portfolio → Risk) listen for this to
+  // activate the right sub-tab. `replaceState` never fires `hashchange`, so
+  // an explicit event is the only reliable signal on first load.
+  window.dispatchEvent(new CustomEvent("route_hash_applied", { detail: { id } }));
   // The deep-link target itself may be a collapsed <details> (e.g. the
   // demoted sectors/movers disclosures) — open it before scrolling.
   if (el.tagName === "DETAILS") el.open = true;

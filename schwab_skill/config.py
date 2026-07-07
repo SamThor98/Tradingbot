@@ -466,7 +466,7 @@ def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
     the whole scan; futures still pending at the budget are cancelled and
     counted as timeouts by the existing handling.
     """
-    return _get_float("SCAN_STAGE_WALL_BUDGET_SEC", 600.0, skill_dir)
+    return _get_float("SCAN_STAGE_WALL_BUDGET_SEC", 1800.0, skill_dir)
 
 
 # Signal score-stack weights (see signal_scanner._apply_score_stack).
@@ -721,6 +721,81 @@ def get_backtest_portfolio_starting_equity(skill_dir: Path | None = None) -> flo
 def get_backtest_portfolio_max_positions(skill_dir: Path | None = None) -> int:
     """Hard cap on simultaneous open positions in the portfolio simulator."""
     return max(1, _get_int("BACKTEST_PORTFOLIO_MAX_POSITIONS", 10, skill_dir))
+
+
+def get_portfolio_analytics_lookback_days(skill_dir: Path | None = None) -> int:
+    """Daily-history lookback for live portfolio risk analytics."""
+    return max(20, _get_int("PORTFOLIO_ANALYTICS_LOOKBACK_DAYS", 60, skill_dir))
+
+
+def get_portfolio_analytics_enabled(skill_dir: Path | None = None) -> bool:
+    """Attach portfolio analytics to cockpit payloads when explicitly enabled."""
+    return _get_bool("PORTFOLIO_ANALYTICS_ENABLED", False, skill_dir)
+
+
+def get_portfolio_analytics_benchmark(skill_dir: Path | None = None) -> str:
+    """Benchmark ticker used for portfolio beta and relative risk."""
+    env = _load_env(skill_dir)
+    raw = _env_value("PORTFOLIO_ANALYTICS_BENCHMARK", env).strip().upper()
+    return raw or "SPY"
+
+
+def get_portfolio_analytics_risk_free_rate(skill_dir: Path | None = None) -> float:
+    """Annual risk-free rate as a decimal, used for Sharpe/Sortino."""
+    return max(0.0, _get_float("PORTFOLIO_ANALYTICS_RISK_FREE_RATE", 0.0, skill_dir))
+
+
+def get_portfolio_equity_snapshot_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable daily portfolio equity snapshots for live drawdown curves."""
+    return _get_bool("PORTFOLIO_EQUITY_SNAPSHOT_ENABLED", True, skill_dir)
+
+
+def get_risk_limit_single_name_pct(skill_dir: Path | None = None) -> float:
+    """Single-name weight (% of equity) display limit for dashboard breaches."""
+    val = _get_float("RISK_LIMIT_SINGLE_NAME_PCT", 10.0, skill_dir)
+    return max(1.0, min(100.0, val))
+
+
+def get_risk_limit_sector_pct(skill_dir: Path | None = None) -> float:
+    """Sector weight (% of equity) display limit for dashboard breaches."""
+    val = _get_float("RISK_LIMIT_SECTOR_PCT", 35.0, skill_dir)
+    return max(1.0, min(100.0, val))
+
+
+def get_risk_limit_country_pct(skill_dir: Path | None = None) -> float:
+    """Single-country weight (% of equity) display limit for dashboard breaches."""
+    val = _get_float("RISK_LIMIT_COUNTRY_PCT", 10.0, skill_dir)
+    return max(1.0, min(100.0, val))
+
+
+def get_risk_fx_shock_em_pct(skill_dir: Path | None = None) -> float:
+    """Uniform broad-EM FX shock (%) applied to non-USD exposure in FX stress."""
+    val = _get_float("RISK_FX_SHOCK_EM", -15.0, skill_dir)
+    return max(-90.0, min(0.0, val))
+
+
+def get_risk_fx_shock_by_country(skill_dir: Path | None = None) -> dict[str, float]:
+    """Per-country FX shock map (%), e.g. ``KZ:-20,CN:-10,CA:-5,KR:-10``."""
+    env = _load_env(skill_dir)
+    raw = _env_value("RISK_FX_SHOCK_BY_COUNTRY", env).strip()
+    defaults = {"KZ": -20.0, "CN": -10.0, "CA": -5.0, "KR": -10.0}
+    if not raw:
+        return defaults
+    out: dict[str, float] = {}
+    for pair in raw.split(","):
+        if ":" not in pair:
+            continue
+        code, _, shock = pair.partition(":")
+        try:
+            out[code.strip().upper()] = max(-90.0, min(0.0, float(shock)))
+        except ValueError:
+            continue
+    return out or defaults
+
+
+def get_risk_mc_simulations(skill_dir: Path | None = None) -> int:
+    """Monte Carlo simulation paths for parametric portfolio VaR."""
+    return max(500, min(50_000, _get_int("RISK_MC_SIMULATIONS", 5000, skill_dir)))
 
 
 def get_backtest_position_size_pct(skill_dir: Path | None = None) -> float:
@@ -1379,6 +1454,16 @@ def get_finnhub_quality_priority(skill_dir: Path | None = None) -> bool:
     return _get_bool("FINNHUB_QUALITY_PRIORITY", True, skill_dir)
 
 
+def get_finnhub_cache_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable local Finnhub dossier snapshot caching."""
+    return _get_bool("FINNHUB_CACHE_ENABLED", True, skill_dir)
+
+
+def get_finnhub_cache_hours(skill_dir: Path | None = None) -> float:
+    """TTL for successful Finnhub dossier snapshots."""
+    return max(0.25, min(72.0, _get_float("FINNHUB_CACHE_HOURS", 6.0, skill_dir)))
+
+
 def get_finnhub_rate_limit_per_min(skill_dir: Path | None = None) -> int:
     """Client-side pacing cap. Lower defaults reduce 429 churn on free tier."""
     default = 45 if get_finnhub_quality_priority(skill_dir) else 55
@@ -1457,87 +1542,6 @@ def get_advisory_require_model(skill_dir: Path | None = None) -> bool:
     return _get_bool("ADVISORY_REQUIRE_MODEL", False, skill_dir)
 
 
-# --- Kronos forecast plugin (OFF|SHADOW|LIVE; default off) ---
-
-
-def get_kronos_mode(skill_dir: Path | None = None) -> str:
-    """Kronos forecast rollout mode (OFF|SHADOW|LIVE).
-
-    OFF — no scanner integration. SHADOW — attach forecasts to signals without
-    altering ranking. LIVE — allow a small, clamped rank adjustment.
-    """
-    return _get_mode("KRONOS_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
-
-
-def get_kronos_enabled(skill_dir: Path | None = None) -> bool:
-    """True when the Kronos plugin is active in the scanner (mode != off)."""
-    return get_kronos_mode(skill_dir) != "off"
-
-
-def get_kronos_inference_url(skill_dir: Path | None = None) -> str:
-    """Base URL of the Kronos inference microservice."""
-    env = _load_env(skill_dir)
-    raw = _env_value("KRONOS_INFERENCE_URL", env).strip().rstrip("/")
-    return raw or "http://localhost:8100"
-
-
-def get_kronos_model_id(skill_dir: Path | None = None) -> str:
-    """Hugging Face model id reported alongside forecasts (display only)."""
-    env = _load_env(skill_dir)
-    raw = _env_value("KRONOS_MODEL_ID", env).strip()
-    return raw or "NeoQuasar/Kronos-small"
-
-
-def get_kronos_lookback_bars(skill_dir: Path | None = None) -> int:
-    """Number of historical daily bars fed to the model (clamped 32..512)."""
-    val = _get_int("KRONOS_LOOKBACK_BARS", 256, skill_dir)
-    return max(32, min(512, val))
-
-
-def get_kronos_pred_len(skill_dir: Path | None = None) -> int:
-    """Forecast horizon in trading days (clamped 1..120)."""
-    val = _get_int("KRONOS_PRED_LEN", 24, skill_dir)
-    return max(1, min(120, val))
-
-
-def get_kronos_max_symbols(skill_dir: Path | None = None) -> int:
-    """Per-scan cap on Stage B Kronos calls to bound latency."""
-    return max(1, _get_int("KRONOS_MAX_SYMBOLS", 20, skill_dir))
-
-
-def get_kronos_timeout_s(skill_dir: Path | None = None) -> float:
-    """Per-request timeout (seconds) for the inference service (clamped 1..300).
-
-    Default is generous because Kronos-base + steady sampling on CPU, with a
-    full intraday context, can take ~60-90s per request.
-    """
-    val = _get_float("KRONOS_TIMEOUT_S", 90.0, skill_dir)
-    return max(1.0, min(300.0, val))
-
-
-def get_kronos_intraday_days(skill_dir: Path | None = None) -> int:
-    """Trading days of intraday history to request (Schwab caps minute data ~10)."""
-    return max(1, min(10, _get_int("KRONOS_INTRADAY_DAYS", 10, skill_dir)))
-
-
-def get_kronos_confidence_high(skill_dir: Path | None = None) -> float:
-    """High-confidence threshold for the Kronos confidence proxy (0..1)."""
-    val = _get_float("KRONOS_CONFIDENCE_HIGH", 0.66, skill_dir)
-    return max(0.0, min(1.0, val))
-
-
-def get_kronos_confidence_low(skill_dir: Path | None = None) -> float:
-    """Medium-confidence threshold for the Kronos confidence proxy (0..1)."""
-    val = _get_float("KRONOS_CONFIDENCE_LOW", 0.4, skill_dir)
-    return max(0.0, min(1.0, val))
-
-
-def get_kronos_score_delta_clamp(skill_dir: Path | None = None) -> float:
-    """Absolute clamp on the LIVE-mode score nudge from a Kronos forecast."""
-    val = _get_float("KRONOS_SCORE_DELTA_CLAMP", 1.5, skill_dir)
-    return max(0.0, min(10.0, val))
-
-
 # --- Management integrity plugin (OFF|SHADOW|LIVE; default off) ---
 
 
@@ -1553,32 +1557,6 @@ def get_management_integrity_mode(skill_dir: Path | None = None) -> str:
 def get_management_integrity_filter_min_score(skill_dir: Path | None = None) -> int:
     """Integrity score below this triggers a shadow would-filter counter."""
     return max(0, min(100, _get_int("MANAGEMENT_INTEGRITY_FILTER_MIN_SCORE", 50, skill_dir)))
-
-
-def get_kronos_sample_count(skill_dir: Path | None = None) -> int:
-    """Number of forecast paths to sample and average.
-
-    >1 averages multiple autoregressive draws into a smoother central forecast,
-    removing the wild single-draw swings that make a lone sample look extreme.
-    Higher is steadier but slower on CPU (clamped 1..64). Default is tuned so
-    Kronos-base finishes within the request budget on a single-CPU box; raise it
-    if you move to a multi-CPU instance.
-    """
-    val = _get_int("KRONOS_SAMPLE_COUNT", 10, skill_dir)
-    return max(1, min(64, val))
-
-
-def get_kronos_temperature(skill_dir: Path | None = None) -> float:
-    """Sampling temperature. Lower = less erratic/extreme paths (clamped 0.1..2.0)."""
-    val = _get_float("KRONOS_TEMPERATURE", 0.7, skill_dir)
-    return max(0.1, min(2.0, val))
-
-
-def get_kronos_top_p(skill_dir: Path | None = None) -> float:
-    """Nucleus-sampling top-p for Kronos (clamped 0.1..1.0)."""
-    val = _get_float("KRONOS_TOP_P", 0.9, skill_dir)
-    return max(0.1, min(1.0, val))
-
 
 # --- Data quality & degraded execution (default off: no behavior change) ---
 

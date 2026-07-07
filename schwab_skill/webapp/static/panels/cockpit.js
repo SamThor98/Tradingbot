@@ -15,7 +15,7 @@
 import { api } from "../modules/api.js";
 import { safeText, safeNum, formatDecimal } from "../modules/format.js";
 import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
-import { setResearchStatusStrip } from "../modules/researchStatus.js";
+import { setResearchPanelStatus } from "../modules/researchStatus.js";
 import {
   setAsyncState,
   ASYNC_LOADING,
@@ -102,7 +102,7 @@ async function renderCockpitSpyMiniChart(host, data) {
     timeScale: { ...theme.timeScale, timeVisible: false },
   });
   const series = chart.addLineSeries({
-    color: theme.candlestick?.upColor || "#34d399",
+    color: theme.candlestick.upColor,
     lineWidth: 2,
   });
   series.setData(
@@ -114,7 +114,7 @@ async function renderCockpitSpyMiniChart(host, data) {
   if (Number.isFinite(Number(data.spy_sma_200))) {
     series.createPriceLine({
       price: Number(data.spy_sma_200),
-      color: theme.candlestick?.downColor || "#fb7185",
+      color: theme.candlestick.downColor,
       lineWidth: 1,
       lineStyle: 2,
       axisLabelVisible: true,
@@ -224,6 +224,9 @@ function renderPortfolio(body, data) {
   const ex = data.exposure || {};
   const conc = data.concentration || {};
   const positions = data.positions || [];
+  const analytics = data.analytics || {};
+  const live = analytics.live || {};
+  const maxPair = analytics.correlation?.max_pair || null;
   body.setAttribute("data-async-state", ASYNC_SUCCESS);
   const posRows = positions
     .slice(0, 8)
@@ -237,7 +240,9 @@ function renderPortfolio(body, data) {
     <div class="kv"><span>Cash / Buying power</span><span>$${formatDecimal(data.cash, 0, "—")} / $${formatDecimal(data.buying_power, 0, "—")}</span></div>
     <div class="kv"><span>Gross / Net exposure</span><span>${formatDecimal(ex.gross_pct, 1, "—")}% / ${formatDecimal(ex.net_pct, 1, "—")}%</span></div>
     <div class="kv"><span>Top1 / Top5 concentration</span><span>${formatDecimal(conc.top1_pct, 1, "—")}% / ${formatDecimal(conc.top5_pct, 1, "—")}%</span></div>
-    ${(data.risk_flags || []).length ? `<div class="kv"><span>Risk flags</span><span>${(data.risk_flags || []).map((f) => `<span class="pill warn">${safeText(f)}</span>`).join(" ")}</span></div>` : ""}
+    ${data.analytics ? `<div class="kv"><span>PM metrics</span><span><span class="pill muted">Sharpe ${formatDecimal(live.sharpe, 2, "—")}</span> <span class="pill muted">β ${formatDecimal(live.beta_vs_benchmark, 2, "—")}</span> <span class="pill muted">Corr ${maxPair ? formatDecimal(maxPair[2], 2, "—") : "—"}</span></span></div>` : ""}
+    ${data.analytics_error ? `<div class="kv"><span>Analytics</span><span class="pill warn">${safeText(data.analytics_error)}</span></div>` : ""}
+    ${(data.risk_flags || []).length ? `<div class="kv"><span>Risk flags</span><span>${(data.risk_flags || []).map((f) => `<span class="pill warn">${safeText(f)}</span>`).join(" ")}</span></div><div class="muted small">Open Portfolio → Risk for the full risk dashboard (correlation, stress tests, limit breaches).</div>` : ""}
     <div class="cockpit-lane-subhead">Positions</div>
     ${posRows || '<div class="muted small">No open positions.</div>'}
   `;
@@ -512,29 +517,60 @@ let _wired = false;
 let _refreshTimer = null;
 let _refreshing = false;
 
+function paintCockpitSurface(stateName, title, detail, extras = {}) {
+  return setResearchPanelStatus({
+    stripId: "cockpitStatusStrip",
+    snapshotId: "cockpitSnapshot",
+    sectionId: "cockpitMergedPanel",
+    stateName,
+    title,
+    detail,
+    hint: extras.hint || "regime · risk · opportunities · blotter",
+    output: extras.output,
+    data: extras.data,
+    action: extras.action,
+    confidence: extras.confidence,
+  });
+}
+
 async function guardedRefreshAll() {
   if (_refreshing) return;
   _refreshing = true;
-  setResearchStatusStrip(
-    "cockpitStatusStrip",
+  paintCockpitSurface(
     "loading",
     "Loading market context.",
     "Refreshing regime, portfolio risk, opportunities, and blotter provenance.",
+    {
+      output: { value: "…", sub: "lanes" },
+      data: { value: "…", sub: "cockpit APIs" },
+      action: { value: "Wait", sub: "hold" },
+      confidence: 28,
+    },
   );
   try {
     await refreshAll();
-    setResearchStatusStrip(
-      "cockpitStatusStrip",
+    paintCockpitSurface(
       "success",
       "Market context refreshed.",
       "Regime, risk, opportunities, and blotter lanes are visible with provenance.",
+      {
+        output: { value: "Ready", sub: "4 lanes" },
+        data: { value: "Fresh", sub: "provenance" },
+        action: { value: "Pass", sub: "review ok" },
+        confidence: 84,
+      },
     );
   } catch (err) {
-    setResearchStatusStrip(
-      "cockpitStatusStrip",
+    paintCockpitSurface(
       "error",
       "Market context refresh failed.",
       safeText(err?.message || err || "Request failed."),
+      {
+        output: { value: "—", sub: "lanes" },
+        data: { value: "—", sub: "cockpit APIs" },
+        action: { value: "Retry", sub: "reload", tone: "bad" },
+        confidence: 0,
+      },
     );
   } finally {
     _refreshing = false;

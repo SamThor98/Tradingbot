@@ -81,7 +81,7 @@ Annotate each frame: DOM `#id`, `?section=` alias, API endpoint, key data fields
 | W1a | pendingSection | pendingBoard.js | pending, queue, approvals | Approve/reject in <10s; blockers + data_quality visible |
 | W1b | scanSection | scanDiagnostics.js | scan, candidates | Scan funnel + blockers scannable at a glance |
 | W1c | scanDetailPanel | (inline app.js) | — | Ticker detail + decision brief without losing scan context |
-| W1d | workflowPrimary | — | workflow | Kanban lane hierarchy for scan → review → approve |
+| W1d | workflowPrimary | workflowKanban.js | workflow | Kanban lane hierarchy for scan → review → approve |
 
 ### Wave 2 — System / Diagnostics (P1)
 
@@ -89,39 +89,38 @@ Annotate each frame: DOM `#id`, `?section=` alias, API endpoint, key data fields
 |----------|------------|--------------|----------------|--------|
 | W2a | calibrationSection | calibration.js | calibration | **Figma done** (5-2…) — code synced |
 | W2b | decisionDashboardCard | decisionDashboard.js | — (in disclosure) | Signal edge gates + PF chart |
-| W2c | healthRibbon | healthRibbon.js | health | Auth, quotes, errors, validation tiles |
-| W2d | shadowScoreboardSection | shadowScoreboard.js | — | Plugin shadow counters |
-| W2e | reviewLoopSection | reviewLoop.js | — | False-positive diagnostics |
-| W2f | statusDetailsPanel | — | — | Token/session detail |
+| W2c | healthRibbon | healthRibbon.js | health | **Code + Figma** — healthSnapshot + 5-state |
+| W2d | shadowScoreboardSection | shadowScoreboard.js | — | **Code + Figma** — system panel contract |
+| W2e | reviewLoopSection | reviewLoop.js | — | **Code + Figma** — reviewLoopSnapshot |
+| W2f | statusDetailsPanel | (app.js) | — | **Code + Figma** — statusDetailsSnapshot |
 
 ### Wave 3 — Research (P2)
 
-| Section id | Panel module | ?section alias |
-|------------|--------------|----------------|
-| quickCheckSection | quickCheck.js | — |
-| backtestSection | backtest.js, backtestCharts.js | backtest |
-| reportSectionCard | report.js | — |
-| secCompareSection | sec.js | sec, seccompare |
-| kronosForecastSection | kronosWorkspace.js, forecast.js | kronos, forecast |
-| portfolioSection | portfolio.js | — |
-| sectorsSection | sectors.js | sectors |
-| moversSection | movers.js | movers |
-| cockpitMergedPanel | cockpit.js | cockpit |
+| Section id | Panel module | ?section alias | Status |
+|------------|--------------|----------------|--------|
+| quickCheckSection | quickCheck.js | — | Operator alert on error |
+| backtestSection | backtest.js, backtestCharts.js | backtest | setAsyncState |
+| reportSectionCard | report.js | — | Operator alert |
+| secCompareSection | sec.js | sec, seccompare | Operator alert empty/error |
+| portfolioSection | portfolio.js | — | Operator alert on error |
+| sectorsSection | sectors.js | sectors | setAsyncState |
+| moversSection | movers.js | movers | setAsyncState |
+| cockpitMergedPanel | cockpit.js | cockpit | setAsyncState |
 
 ### Wave 4 — Settings (P2)
 
-| Section id | Panel module | ?section alias |
-|------------|--------------|----------------|
-| onboardingSection | onboarding.js | connect, onboarding, setup |
-| settingsSection | profile.js, twoFa.js | settings |
+| Section id | Panel module | ?section alias | Status |
+|------------|--------------|----------------|--------|
+| onboardingSection | onboarding.js | connect, onboarding, setup | Figma overlay present |
+| settingsSection | profile.js, twoFa.js | settings | setAsyncState |
 
 ### Wave 5 — Global chrome (P3)
 
 | Surface | Module | Notes |
 |---------|--------|-------|
-| tradeDrawer | tradeDrawer.js | Slide-over; Decision + Recovery tabs |
+| tradeDrawer | tradeDrawer.js | Operator alert on decision/recovery errors |
 | App topbar | app.js | Screen tabs, refresh, scan CTA |
-| Command palette | commandPalette.js | Ctrl+K jumps |
+| Command palette | commandPalette.js | Jumps: workflow, health, shadow, review, status |
 
 ## Figma MCP workflow (strict order)
 

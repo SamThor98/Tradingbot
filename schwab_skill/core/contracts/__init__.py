@@ -26,10 +26,25 @@ from core.contracts.execution import (
 )
 from core.contracts.market import MarketSnapshot, RegimeState, SectorStrength, VolatilityState
 from core.contracts.portfolio import (
+    ClosedTradeMetrics,
+    ConcentrationBlock,
     ConcentrationStats,
+    CorrelationSummary,
     ExposureBreakdown,
+    FxStressSummary,
+    HistoricalStressRow,
+    LimitBreach,
+    MonteCarloSummary,
+    PortfolioAnalyticsPack,
+    PortfolioRiskDashboardPack,
     PortfolioRiskState,
     Position,
+    RiskAdjustedMetrics,
+    RiskContributionBlock,
+    RiskContributionRow,
+    RiskMetricsTable,
+    SingleNameStressRow,
+    StressBlock,
 )
 from core.contracts.provenance import ConfidenceLevel, DataSource, Provenance, utc_now
 from core.contracts.symbol import (
@@ -78,6 +93,21 @@ __all__ = [
     "OutcomeLabel",
     # portfolio
     "PortfolioRiskState",
+    "PortfolioAnalyticsPack",
+    "PortfolioRiskDashboardPack",
+    "RiskAdjustedMetrics",
+    "RiskMetricsTable",
+    "RiskContributionBlock",
+    "RiskContributionRow",
+    "CorrelationSummary",
+    "ClosedTradeMetrics",
+    "ConcentrationBlock",
+    "LimitBreach",
+    "HistoricalStressRow",
+    "SingleNameStressRow",
+    "FxStressSummary",
+    "MonteCarloSummary",
+    "StressBlock",
     "Position",
     "ExposureBreakdown",
     "ConcentrationStats",

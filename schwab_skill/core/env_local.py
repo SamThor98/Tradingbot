@@ -16,6 +16,24 @@ ENTRY_TIMING_LIVE_ENV: dict[str, str] = {
     "ENTRY_TIMING_SHADOW_MODE": "live",
 }
 
+# Offline-validated stack: exit grace (15d defer) + 1% breakout buffer in shadow only.
+SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
+    **ENTRY_TIMING_EXPERIMENT_ENV,
+    "EXIT_MANAGER_MODE": "shadow",
+    "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+    "EXIT_MAX_HOLD_DAYS": "40",
+    "HOLD_DAYS": "40",
+    "BACKTEST_HOLD_DAYS": "40",
+    "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+    "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "true",
+    "COUNTERFACTUAL_LOGGING_ENABLED": "true",
+    "META_POLICY_MODE": "shadow",
+    "UNCERTAINTY_MODE": "shadow",
+    "CONFLUENCE_GATE_MODE": "shadow",
+    "EVENT_RISK_MODE": "off",
+    "EXEC_QUALITY_MODE": "off",
+}
+
 
 def apply_entry_timing_live_env(env_path: Path) -> list[str]:
     """Upsert breakout-buffer-only live enforcement vars."""
@@ -127,6 +145,44 @@ def entry_timing_experiment_file_readiness(env_path: Path) -> dict[str, Any]:
 def apply_entry_timing_experiment_env(env_path: Path) -> list[str]:
     """Enable P0 breakout-buffer-only shadow experiment vars in a local .env file."""
     return upsert_env_file(env_path, ENTRY_TIMING_EXPERIMENT_ENV)
+
+
+def signal_stack_shadow_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
+    """Evaluate offline-validated stack shadow rollout readiness from env map."""
+    entry = entry_timing_experiment_readiness_from_values(values)
+    exit_mode = str(values.get("EXIT_MANAGER_MODE", "off")).strip().lower()
+    min_hold = max(0, int(_env_float(values.get("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL"), 15)))
+    max_hold = max(1, int(_env_float(values.get("EXIT_MAX_HOLD_DAYS"), 40)))
+    missing: list[str] = []
+    if exit_mode != "shadow":
+        missing.append("EXIT_MANAGER_MODE=shadow")
+    if min_hold != 15:
+        missing.append("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL=15")
+    if max_hold != 40:
+        missing.append("EXIT_MAX_HOLD_DAYS=40")
+    if entry.get("mode") == "live":
+        missing.append("ENTRY_TIMING_SHADOW_MODE must not be live for stack shadow rollout")
+    if not entry.get("ready"):
+        missing.extend(entry.get("missing_env") or [])
+    ready = not missing and bool(entry.get("ready"))
+    return {
+        "ready": ready,
+        "exit_manager_mode": exit_mode,
+        "exit_min_hold_days_before_trail": min_hold,
+        "exit_max_hold_days": max_hold,
+        "entry_timing": entry,
+        "missing_env": missing,
+        "recommended_env": dict(SIGNAL_STACK_SHADOW_ENV),
+    }
+
+
+def signal_stack_shadow_file_readiness(env_path: Path) -> dict[str, Any]:
+    return signal_stack_shadow_readiness_from_values(parse_env_file(env_path))
+
+
+def apply_signal_stack_shadow_env(env_path: Path) -> list[str]:
+    """Enable P0 stack shadow vars (exit grace + breakout buffer) in a local .env file."""
+    return upsert_env_file(env_path, SIGNAL_STACK_SHADOW_ENV)
 
 
 def reload_env_file_into_process(env_path: Path, keys: list[str] | None = None) -> dict[str, str | None]:

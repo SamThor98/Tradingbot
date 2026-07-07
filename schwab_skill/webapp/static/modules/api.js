@@ -8,6 +8,7 @@
  *  - `X-API-Key` from localStorage when the public-config requires it
  *  - same-origin credentials so cookie sessions work
  *  - normalized `{ ok, data, error, status? }` return shape
+ *  - in-flight GET deduplication (identical concurrent GETs share one request)
  *
  * Always returns a resolved object (no throws) so callers can do
  * `if (!out.ok) showError(out.error)` without try/catch boilerplate.
@@ -118,6 +119,20 @@ export function ensureApiKeyOnLoad() {
   const existing = (localStorage.getItem("tradingbot.api_key") || "").trim();
   if (existing) return true;
   return promptForApiKeyRefresh();
+}
+
+// In-flight GET deduplication: concurrent GETs to the same path (Refresh
+// double-clicks, overlapping screen primes) share one network request instead
+// of firing duplicates. Entries are removed as soon as the request settles,
+// so this is not a response cache — the next call always refetches.
+const inflightGets = new Map();
+
+function inflightGetKey(path, options) {
+  try {
+    return `${path}::${JSON.stringify(options)}`;
+  } catch {
+    return "";
+  }
 }
 
 async function parseJsonResponse(res) {
@@ -247,7 +262,19 @@ export const api = {
   },
 
   get(path, options = {}) {
-    return this.request(path, { method: "GET", ...options });
+    const key = inflightGetKey(path, options);
+    if (key) {
+      const existing = inflightGets.get(key);
+      if (existing) return existing;
+    }
+    const promise = this.request(path, { method: "GET", ...options });
+    if (key) {
+      inflightGets.set(key, promise);
+      promise.finally(() => {
+        inflightGets.delete(key);
+      });
+    }
+    return promise;
   },
 
   post(path, body = {}, options = {}) {
