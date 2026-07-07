@@ -5,6 +5,7 @@
 tokens_*.enc
 localhost.pem
 localhost-key.pem
+localhost*.pem
 
 # Logs
 *.log
@@ -35,6 +36,9 @@ strategy_state.json
 strategy_chat_log.jsonl
 execution_safety_metrics.json
 .exit_manager_state.json
+.portfolio_country_cache.json
+cockpit_observability_metrics.json
+risk_payload*.json
 schwab_skill/.env
 
 # Per-tenant SaaS runtime sandboxes (created on demand).
