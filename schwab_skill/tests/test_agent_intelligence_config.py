@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from config import (
     get_counterfactual_logging_enabled,
     get_meta_policy_mode,
@@ -8,6 +10,21 @@ from config import (
     get_mirofish_weighting_mode,
     get_uncertainty_mode,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # webapp.main_saas promotes the repo .env into os.environ at import time
+    # (bootstrap_dotenv_into_environ), and pytest imports it during collection
+    # via the SaaS test modules. Process env wins over the tmp_path .env these
+    # tests write, so clear the keys under test first.
+    for key in (
+        "MIROFISH_WEIGHTING_MODE",
+        "META_POLICY_MODE",
+        "UNCERTAINTY_MODE",
+        "COUNTERFACTUAL_LOGGING_ENABLED",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_agent_intelligence_config_defaults(tmp_path) -> None:
