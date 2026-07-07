@@ -23,6 +23,23 @@ _SEQUENTIAL_TAIL = {"validate_observability_gates"}
 # Steps that must run before parallel work because downstream scripts depend
 # on artifacts they emit (e.g. healthcheck token refresh).
 _SEQUENTIAL_HEAD = {"healthcheck"}
+# Offline Schwab replay / live-scan evidence — requires validation_artifacts on disk
+# and/or a populated dashboard DB. Run under local/server profiles, not CI checkout.
+_CI_OFFLINE_EVIDENCE_STEPS = frozenset(
+    {
+        "validate_entry_timing_shadow_evidence",
+        "compare_live_entry_shadow_to_offline",
+        "entry_timing_experiment_status",
+        "validate_entry_timing_stage2b_evidence",
+        "validate_signal_stack_promotion",
+        "validate_entry_timing_live_promotion_readiness",
+        "validate_entry_timing_live_active",
+        "validate_signal_gate_stack",
+        "validate_signal_gate_phase2_readiness",
+        "validate_hold_duration_guardrail",
+        "validate_replay_exit_guardrail",
+    }
+)
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_DIR / "scripts"
@@ -253,6 +270,8 @@ def _steps_for_profile(
     if web_base_url:
         obs_cmd += ["--web-base-url", web_base_url]
     steps.append(("validate_observability_gates", obs_cmd, None))
+    if profile == "ci":
+        steps = [(name, cmd, env) for name, cmd, env in steps if name not in _CI_OFFLINE_EVIDENCE_STEPS]
     return steps
 
 

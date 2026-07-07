@@ -773,6 +773,12 @@ def _scan_lifecycle_payload(
             out["scan_id"] = diag.get("scan_id")
     if status == "failed":
         out["error"] = snapshot.get("error")
+    if status in {"completed", "failed"}:
+        out["diagnostics"] = snapshot.get("diagnostics")
+        out["diagnostics_summary"] = snapshot.get("diagnostics_summary")
+        out["strategy_summary"] = snapshot.get("strategy_summary")
+        out["signals"] = snapshot.get("signals") or []
+        out["shortlist_signals"] = snapshot.get("shortlist_signals") or []
     out["signal_edge_preflight"] = _signal_edge_scan_preflight(SKILL_DIR)
     return out
 
