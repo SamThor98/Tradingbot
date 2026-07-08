@@ -59,6 +59,24 @@ class SweepConfig:
     env: dict[str, str] = field(default_factory=dict)
 
 
+# Neutral baseline pins mirroring control_legacy_aug.json. Sweep configs used
+# to inherit these from the live .env, which drifted under them: by 2026-06-26
+# the .env had entry-timing LIVE enforcement plus the hard breakout-volume
+# quality gate, and a control_legacy re-run recorded 0 trades in all five eras
+# with a normal exclusion profile. Pin them so sweep results are reproducible
+# regardless of local .env state.
+_NEUTRAL_BASELINE_PINS: dict[str, str] = {
+    "ENTRY_TIMING_SHADOW_MODE": "off",
+    "QUALITY_GATES_MODE": "shadow",
+    "QUALITY_REQUIRE_BREAKOUT_VOLUME": "false",
+    "SCAN_VCP_GATE_MODE": "shadow",
+    "SCAN_SECTOR_GATE_MODE": "shadow",
+    "SCAN_VCP_PENALTY_POINTS": "0",
+    "SCAN_SECTOR_PENALTY_POINTS": "0",
+    "SCAN_SECTOR_UNRESOLVED_PENALTY_POINTS": "0",
+}
+
+
 def _build_configs() -> list[SweepConfig]:
     configs: list[SweepConfig] = []
     # Two controls so the sweep can be reported vs the legacy "everything off"
@@ -74,6 +92,7 @@ def _build_configs() -> list[SweepConfig]:
             "EVENT_RISK_MODE": "off",
             "EXIT_MANAGER_MODE": "off",
             "EXEC_QUALITY_MODE": "off",
+            **_NEUTRAL_BASELINE_PINS,
         },
     ))
     configs.append(SweepConfig(
@@ -211,12 +230,16 @@ def _build_configs() -> list[SweepConfig]:
     # Phase 2 verdict: base signal PF mean 1.005, killed by <20-day false
     # breakouts. These configs attack entry quality directly. All overlays off
     # (control_legacy baseline) so the gate effect is isolated.
+    # Neutral pins keep the live .env (entry-timing live enforcement, hard
+    # breakout-volume gate) from leaking into treatments; gate configs below
+    # override individual keys on top of this base.
     _signal_gate_base = {
         "META_POLICY_MODE": "off",
         "UNCERTAINTY_MODE": "off",
         "EVENT_RISK_MODE": "off",
         "EXIT_MANAGER_MODE": "off",
         "EXEC_QUALITY_MODE": "off",
+        **_NEUTRAL_BASELINE_PINS,
     }
     # Confluence gate: Stage2+VCP must be confirmed by PEAD-positive or
     # advisory-high (require_count=1) / by both (require_count=2).
@@ -258,6 +281,10 @@ def _build_configs() -> list[SweepConfig]:
     # Requires VCP_EXCLUDE_BREAKOUT_BARS >= 1: with the legacy VCP window the
     # entry bar is below-average volume by construction and no signal can pass
     # a ratio >= 1.0 gate.
+    # QUALITY_GATES_MODE=soft with soft-min 99 isolates the hard volume gate:
+    # the backtest's quality filter is a no-op in shadow mode, and soft-min 99
+    # keeps unrelated soft reasons (low_signal_score etc.) from contaminating
+    # the treatment.
     for ratio in ("1.00", "1.20", "1.50"):
         configs.append(SweepConfig(
             config_id=f"breakout_vol_{ratio.replace('.', '')}",
@@ -265,6 +292,8 @@ def _build_configs() -> list[SweepConfig]:
             env={
                 **_signal_gate_base,
                 "VCP_EXCLUDE_BREAKOUT_BARS": "1",
+                "QUALITY_GATES_MODE": "soft",
+                "QUALITY_SOFT_MIN_REASONS": "99",
                 "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
                 "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": ratio,
             },
@@ -279,6 +308,8 @@ def _build_configs() -> list[SweepConfig]:
             "CONFLUENCE_REQUIRE_COUNT": "1",
             "BREAKOUT_CONFIRM_BARS": "2",
             "VCP_EXCLUDE_BREAKOUT_BARS": "2",
+            "QUALITY_GATES_MODE": "soft",
+            "QUALITY_SOFT_MIN_REASONS": "99",
             "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
             "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": "1.20",
         },
@@ -522,6 +553,16 @@ def main() -> int:
         help="Ignore existing multi-era progress/chunks for each config (required for ticker-limit smoke).",
     )
     args = parser.parse_args()
+
+    # Fail fast on broken Schwab auth before launching multi-hour configs.
+    # (June 2026: five signal-gate configs ran to completion with expired
+    # tokens and recorded PF 0.0 / all-eras-thin as if they were results.)
+    try:
+        from run_multi_era_backtest_schwab_only import _auth_preflight_ok
+    except ImportError:
+        from scripts.run_multi_era_backtest_schwab_only import _auth_preflight_ok
+    if not _auth_preflight_ok():
+        return 5
 
     no_resume = bool(args.no_resume or (args.ticker_limit and args.ticker_limit > 0))
 
