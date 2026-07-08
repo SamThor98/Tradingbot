@@ -298,6 +298,29 @@ def _build_configs() -> list[SweepConfig]:
                 "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": ratio,
             },
         ))
+    # Stack test: 1.2x breakout-volume gate on top of the offline-validated 1%
+    # breakout buffer. The 2026-07-08 re-run showed breakout_vol_120 as the
+    # only substantive winner (+0.018 PF mean, worst era 1.051) but it
+    # regressed crash_recovery by -0.123; both filters attack weak breakouts
+    # from different angles, so the stack may absorb that regression.
+    configs.append(SweepConfig(
+        config_id="breakout_vol_120_buffer_010",
+        description=(
+            "Stack: 1.2x breakout-volume gate + 1% breakout buffer live at Stage A "
+            "(VCP pre-breakout, quality soft-min isolated)."
+        ),
+        env={
+            **_signal_gate_base,
+            "VCP_EXCLUDE_BREAKOUT_BARS": "1",
+            "QUALITY_GATES_MODE": "soft",
+            "QUALITY_SOFT_MIN_REASONS": "99",
+            "QUALITY_REQUIRE_BREAKOUT_VOLUME": "true",
+            "QUALITY_BREAKOUT_VOLUME_MIN_RATIO": "1.20",
+            "ENTRY_TIMING_SHADOW_MODE": "live",
+            "ENTRY_SHADOW_DISABLE_SMA50_FILTERS": "true",
+            "ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT": "0.01",
+        },
+    ))
     # Combined best-guess: confluence (either) + 2-bar follow-through + 1.2x volume.
     configs.append(SweepConfig(
         config_id="signal_gate_combo",
