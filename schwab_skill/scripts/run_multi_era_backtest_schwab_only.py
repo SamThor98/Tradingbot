@@ -57,6 +57,88 @@ def _chunk(items: list[str], size: int) -> list[list[str]]:
     return [items[i : i + size] for i in range(0, len(items), max(1, size))]
 
 
+# Distinct return codes so the orchestrator can tell a data outage apart from
+# a generic crash (rc 1) or env-override failure (rc 3).
+RC_DATA_OUTAGE = 4
+RC_AUTH_PREFLIGHT_FAILED = 5
+
+# Keys copied from run_backtest's data_integrity dict into chunk payloads and
+# summed into per-era artifact rows.
+DATA_INTEGRITY_SUM_KEYS = (
+    "history_fetch_total",
+    "history_fetch_empty",
+    "history_fetch_too_short",
+    "history_provider_schwab",
+    "history_provider_yfinance",
+    "history_provider_unknown",
+    "history_fallback_used",
+)
+
+
+def _max_excluded_ratio() -> float:
+    """Fail-closed exclusion threshold for a single chunk (0.05..1.0).
+
+    Normal delisting/short-history exclusion runs ~8% of the universe; a
+    chunk where >=90% of tickers are excluded means the data source is down
+    (e.g. expired Schwab tokens make every history fetch return empty).
+    Override via BACKTEST_MAX_EXCLUDED_PCT.
+    """
+    raw = (os.getenv("BACKTEST_MAX_EXCLUDED_PCT") or "").strip()
+    try:
+        val = float(raw) if raw else 0.90
+    except ValueError:
+        val = 0.90
+    return min(1.0, max(0.05, val))
+
+
+def _chunk_data_outage(excluded_count: int, chunk_size: int, max_ratio: float) -> bool:
+    """True when a chunk's exclusions look like a data outage, not delistings."""
+    if chunk_size <= 0:
+        return False
+    return (float(excluded_count) / float(chunk_size)) >= max_ratio
+
+
+def _schwab_only_effective() -> bool:
+    """Chunk workers default SCHWAB_ONLY_DATA=true, so unset counts as true."""
+    raw = (os.getenv("SCHWAB_ONLY_DATA") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _auth_preflight_ok() -> bool:
+    """Probe the Schwab market refresh token before launching schwab-only runs.
+
+    The June 2026 signal-gate sweep ran for days with expired tokens: every
+    history fetch returned empty, every ticker was excluded, and five configs
+    recorded PF 0.0 across all eras as if they were valid results. Refuse to
+    start in that state. Skip via MULTI_ERA_SKIP_AUTH_PREFLIGHT=1 (e.g. for
+    yfinance-only smoke runs).
+    """
+    if (os.getenv("MULTI_ERA_SKIP_AUTH_PREFLIGHT") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        print("[multi-era] auth preflight skipped via MULTI_ERA_SKIP_AUTH_PREFLIGHT")
+        return True
+    if not _schwab_only_effective():
+        return True
+    try:
+        try:
+            from resume_signal_edge_after_auth import _schwab_refresh_ok
+        except ImportError:
+            from scripts.resume_signal_edge_after_auth import _schwab_refresh_ok
+        ok, msg = _schwab_refresh_ok()
+    except Exception as exc:
+        # Never block a run on the probe itself failing (offline dev, missing
+        # deps); the per-chunk fail-closed gate still protects the artifacts.
+        print(f"[multi-era] auth preflight inconclusive ({type(exc).__name__}: {exc}); continuing")
+        return True
+    if ok:
+        print(f"[multi-era] Schwab auth preflight OK - {msg}")
+        return True
+    print(f"[multi-era] Schwab auth preflight FAILED - {msg}")
+    print("[multi-era] refusing to launch schwab-only chunks: broken auth records 0-trade eras as results.")
+    return False
+
+
 def _load_universe_tickers() -> list[str]:
     # Avoid network/watchlist refresh stalls by using cached full-universe list first.
     from watchlist_loader import _fallback_watchlist, _load_cached, load_full_watchlist
@@ -91,8 +173,12 @@ def _aggregate_era(
 
     trades: list[dict[str, Any]] = []
     excluded_total = 0
+    integrity_totals: dict[str, int] = {k: 0 for k in DATA_INTEGRITY_SUM_KEYS}
     for p in chunk_payloads:
         excluded_total += int(p.get("excluded_count", 0) or 0)
+        chunk_integrity = p.get("data_integrity") or {}
+        for k in DATA_INTEGRITY_SUM_KEYS:
+            integrity_totals[k] += int(chunk_integrity.get(k, 0) or 0)
         for t in p.get("trades", []) or []:
             trades.append(
                 {
@@ -118,6 +204,7 @@ def _aggregate_era(
             "total_trades": 0,
             "universe_size": universe_size,
             "excluded_count": excluded_total,
+            "data_integrity": integrity_totals,
             "portfolio_summary": None,
         }
     wins_net = sum(1 for r in ret_net if r > 0)
@@ -142,6 +229,7 @@ def _aggregate_era(
         "total_trades": total,
         "universe_size": universe_size,
         "excluded_count": excluded_total,
+        "data_integrity": integrity_totals,
         "portfolio_summary": {
             "capacity_filtered": int(portfolio["capacity_filtered"]),
             "avg_concurrent": float(portfolio["avg_concurrent"]),
@@ -295,12 +383,35 @@ def _run_single_chunk(
     )
     trades_in = list(metrics.get("trades") or [])
     compact_trades = _project_trades(trades_in, _augmented_logging_enabled())
+    excluded_count = int(metrics.get("excluded_count", 0) or 0)
+    raw_integrity = dict(metrics.get("data_integrity") or {})
+    data_integrity = {k: int(raw_integrity.get(k, 0) or 0) for k in DATA_INTEGRITY_SUM_KEYS}
+    if _chunk_data_outage(excluded_count, len(tickers), _max_excluded_ratio()):
+        # Fail closed: an (almost) fully-excluded chunk is a data outage, not
+        # a legitimate 0-trade result. Do NOT write the chunk file, so resume
+        # cannot cache the poisoned payload.
+        print(
+            json.dumps(
+                {
+                    "era": era_name,
+                    "chunk_size": len(tickers),
+                    "excluded_count": excluded_count,
+                    "error": "data_outage_fail_closed",
+                    "max_excluded_ratio": _max_excluded_ratio(),
+                    "data_integrity": data_integrity,
+                },
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+        return RC_DATA_OUTAGE
     payload = {
         "era": era_name,
         "start": start_date,
         "end": end_date,
         "chunk_size": len(tickers),
-        "excluded_count": int(metrics.get("excluded_count", 0) or 0),
+        "excluded_count": excluded_count,
+        "data_integrity": data_integrity,
         "trades": compact_trades,
     }
     out_file.write_text(json.dumps(payload), encoding="utf-8")
@@ -310,7 +421,7 @@ def _run_single_chunk(
                 "era": era_name,
                 "chunk_size": len(tickers),
                 "trades": len(compact_trades),
-                "excluded_count": int(metrics.get("excluded_count", 0) or 0),
+                "excluded_count": excluded_count,
             },
             separators=(",", ":"),
         )
@@ -372,6 +483,18 @@ def _run_chunk_subprocess(
         except subprocess.TimeoutExpired:
             last_error = {"era": era_name, "chunk": idx, "reason": "timeout", "attempts": attempts}
             continue
+        if proc.returncode == RC_DATA_OUTAGE:
+            # Data outage (e.g. expired Schwab tokens) will not heal between
+            # retries; fail the chunk immediately with a diagnosable reason.
+            stderr_tail = (proc.stderr or "").strip()[-500:]
+            last_error = {
+                "era": era_name,
+                "chunk": idx,
+                "reason": "data_outage_fail_closed",
+                "attempts": attempts,
+                "stderr_tail": stderr_tail,
+            }
+            break
         if proc.returncode != 0:
             stderr_tail = (proc.stderr or "").strip()[-500:]
             last_error = {
@@ -521,6 +644,8 @@ def _orchestrate(
     run_tag: str | None = None,
     ticker_limit: int | None = None,
 ) -> int:
+    if not _auth_preflight_ok():
+        return RC_AUTH_PREFLIGHT_FAILED
     if run_tag:
         run_id = str(run_tag)
         # If a per-run-id progress file from a prior interrupted run exists,
