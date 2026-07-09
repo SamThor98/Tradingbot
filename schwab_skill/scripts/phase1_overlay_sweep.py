@@ -254,6 +254,8 @@ def _build_configs() -> list[SweepConfig]:
                 **_signal_gate_base,
                 "CONFLUENCE_GATE_MODE": "live",
                 "CONFLUENCE_REQUIRE_COUNT": str(require_count),
+                "PEAD_DATA_PROVIDER": "finnhub",
+                "PEAD_ENABLED": "true",
             },
         ))
     # Breakout follow-through: require 2 consecutive closes above prior high.
@@ -498,6 +500,7 @@ def _run_one(
     ticker_limit: int,
     *,
     no_resume: bool = False,
+    warm_earnings_cache: bool = False,
 ) -> int:
     env_path = _write_env_overrides_file(cfg)
     cmd = [
@@ -512,6 +515,8 @@ def _run_one(
         cmd += ["--ticker-limit", str(ticker_limit)]
     if no_resume:
         cmd += ["--no-resume"]
+    if warm_earnings_cache or str(cfg.env.get("CONFLUENCE_GATE_MODE", "")).lower() in {"live", "shadow"}:
+        cmd += ["--warm-earnings-cache"]
     print(f"[phase1] launching {cfg.config_id}: {cfg.description}")
     proc = subprocess.run(cmd, cwd=str(SKILL_DIR))
     return int(proc.returncode)
@@ -575,6 +580,11 @@ def main() -> int:
         action="store_true",
         help="Ignore existing multi-era progress/chunks for each config (required for ticker-limit smoke).",
     )
+    parser.add_argument(
+        "--warm-earnings-cache",
+        action="store_true",
+        help="Pass --warm-earnings-cache to multi-era runs (also auto-enabled for confluence configs).",
+    )
     args = parser.parse_args()
 
     # Fail fast on broken Schwab auth before launching multi-hour configs.
@@ -636,6 +646,7 @@ def main() -> int:
             chunk_size=args.chunk_size,
             ticker_limit=args.ticker_limit,
             no_resume=no_resume,
+            warm_earnings_cache=bool(args.warm_earnings_cache),
         )
         if rc != 0 and not _artifact_is_complete(cfg.config_id):
             state["failed"].append({"config_id": cfg.config_id, "rc": rc})

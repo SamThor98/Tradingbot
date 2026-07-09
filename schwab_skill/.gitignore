@@ -36,6 +36,9 @@ trading_bot.log*
 .backtest_results.json
 .forensic_cache.json
 .mirofish_cache.json
+.earnings_cache.json
+.earnings_cache_warm_progress.json
+.finnhub_cache.json
 .positions_tracker.json
 .sector_map_cache.json
 .sec_cache.json

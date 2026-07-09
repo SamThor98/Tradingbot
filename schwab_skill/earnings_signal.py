@@ -1,24 +1,123 @@
 """
 Earnings signal helpers for PEAD-style enrichment.
+
+Price bars remain Schwab-only when ``SCHWAB_ONLY_DATA=true``; earnings are
+fetched from ``PEAD_DATA_PROVIDER`` (Finnhub by default when configured).
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from config import get_schwab_only_data
+from config import (
+    get_pead_cache_enabled,
+    get_pead_cache_hours,
+    get_pead_data_provider,
+    get_pead_warm_history_years,
+    get_schwab_only_data,
+)
 
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
+EARNINGS_CACHE_FILE = ".earnings_cache.json"
+EARNINGS_WARM_PROGRESS_FILE = ".earnings_cache_warm_progress.json"
 
 
 def _normalize_ticker(ticker: str) -> str:
     return str(ticker or "").strip().upper()
+
+
+def _resolve_pead_provider(skill_dir: Path | None = None) -> str:
+    provider = get_pead_data_provider(skill_dir)
+    if provider == "off":
+        return "off"
+    if provider == "yfinance" and get_schwab_only_data(skill_dir):
+        LOG.debug("PEAD yfinance blocked under SCHWAB_ONLY_DATA; set PEAD_DATA_PROVIDER=finnhub")
+        return "off"
+    if provider == "finnhub":
+        from config import get_finnhub_api_key
+
+        if not get_finnhub_api_key(skill_dir):
+            LOG.debug("PEAD finnhub provider selected but FINNHUB_API_KEY is missing")
+            return "off"
+    return provider
+
+
+def _cache_path(skill_dir: Path) -> Path:
+    return skill_dir / EARNINGS_CACHE_FILE
+
+
+def _load_earnings_cache(skill_dir: Path) -> dict[str, Any]:
+    path = _cache_path(skill_dir)
+    try:
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        LOG.debug("PEAD earnings cache read failed: %s", exc)
+        return {}
+
+
+def _save_earnings_cache(skill_dir: Path, cache: dict[str, Any]) -> None:
+    path = _cache_path(skill_dir)
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(cache, fh, indent=2, sort_keys=True)
+    except Exception as exc:
+        LOG.debug("PEAD earnings cache write failed: %s", exc)
+
+
+def _cached_earnings_rows(
+    skill_dir: Path,
+    ticker: str,
+    *,
+    provider: str,
+) -> list[dict[str, Any]] | None:
+    if not get_pead_cache_enabled(skill_dir):
+        return None
+    entry = _load_earnings_cache(skill_dir).get(_normalize_ticker(ticker))
+    if not isinstance(entry, dict):
+        return None
+    if str(entry.get("provider") or "").lower() != provider:
+        return None
+    stored_at = entry.get("stored_at")
+    try:
+        age_hours = (time.time() - float(stored_at)) / 3600.0
+    except (TypeError, ValueError):
+        return None
+    if age_hours > get_pead_cache_hours(skill_dir):
+        return None
+    rows = entry.get("rows")
+    if not isinstance(rows, list):
+        return None
+    return [dict(r) for r in rows if isinstance(r, dict)]
+
+
+def _remember_earnings_rows(
+    skill_dir: Path,
+    ticker: str,
+    *,
+    provider: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    if not get_pead_cache_enabled(skill_dir):
+        return
+    cache = _load_earnings_cache(skill_dir)
+    cache[_normalize_ticker(ticker)] = {
+        "stored_at": time.time(),
+        "provider": provider,
+        "rows": rows,
+    }
+    _save_earnings_cache(skill_dir, cache)
 
 
 def _normalize_earnings_df(df: Any) -> pd.DataFrame:
@@ -43,15 +142,52 @@ def _normalize_earnings_df(df: Any) -> pd.DataFrame:
     return out
 
 
+def _rows_to_earnings_df(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        date_raw = row.get("date")
+        if not date_raw:
+            continue
+        try:
+            dt = pd.Timestamp(date_raw).tz_localize(None)
+        except (TypeError, ValueError):
+            continue
+        actual_eps = row.get("actual_eps")
+        estimate_eps = row.get("estimate_eps")
+        try:
+            actual_f = float(actual_eps) if actual_eps is not None else None
+        except (TypeError, ValueError):
+            actual_f = None
+        try:
+            estimate_f = float(estimate_eps) if estimate_eps is not None else None
+        except (TypeError, ValueError):
+            estimate_f = None
+        records.append(
+            {
+                "date": dt,
+                "actual_eps": actual_f,
+                "estimate_eps": estimate_f,
+            }
+        )
+    if not records:
+        return pd.DataFrame()
+    frame = pd.DataFrame(records).set_index("date").sort_index(ascending=False)
+    return frame
+
+
 def _extract_eps_cols(df: pd.DataFrame) -> tuple[str | None, str | None]:
     cols_lower = {str(c).lower(): c for c in df.columns}
     rep = None
     est = None
     for key, col in cols_lower.items():
-        if "reported eps" in key:
+        if key in {"actual_eps", "reported eps"} or "reported eps" in key:
             rep = col
-        if "eps estimate" in key:
+        if key in {"estimate_eps", "eps estimate"} or "eps estimate" in key:
             est = col
+    if rep is None and "actual_eps" in df.columns:
+        rep = "actual_eps"
+    if est is None and "estimate_eps" in df.columns:
+        est = "estimate_eps"
     return rep, est
 
 
@@ -83,13 +219,256 @@ def _calc_surprise(actual_eps: float | None, estimate_eps: float | None) -> floa
     return max(-_SURPRISE_CLAMP, min(_SURPRISE_CLAMP, raw))
 
 
-def check_recent_earnings(ticker: str, lookback_days: int = 10) -> dict[str, Any] | None:
-    """
-    Check if ticker had earnings within lookback window from now.
-    Returns EPS surprise details when available.
-    """
-    if get_schwab_only_data():
+def _evaluate_earnings_window(
+    earnings_df: pd.DataFrame,
+    anchor: pd.Timestamp,
+    lookback_days: int,
+    *,
+    earnings_provider: str,
+) -> dict[str, Any] | None:
+    if earnings_df.empty:
         return None
+    window_start = anchor - pd.Timedelta(days=max(1, int(lookback_days)))
+    recent = earnings_df[(earnings_df.index <= anchor) & (earnings_df.index >= window_start)]
+    if recent.empty:
+        return {
+            "had_recent_earnings": False,
+            "earnings_date": None,
+            "actual_eps": None,
+            "estimate_eps": None,
+            "surprise_pct": None,
+            "beat": None,
+            "earnings_provider": earnings_provider,
+        }
+
+    row = recent.iloc[0]
+    rep_col, est_col = _extract_eps_cols(recent)
+    actual_eps = float(row[rep_col]) if rep_col and pd.notna(row[rep_col]) else None
+    estimate_eps = float(row[est_col]) if est_col and pd.notna(row[est_col]) else None
+    surprise = _calc_surprise(actual_eps, estimate_eps)
+    beat = None if surprise is None else bool(surprise > 0)
+    return {
+        "had_recent_earnings": True,
+        "earnings_date": str(recent.index[0].date()),
+        "actual_eps": actual_eps,
+        "estimate_eps": estimate_eps,
+        "surprise_pct": surprise,
+        "beat": beat,
+        "earnings_provider": earnings_provider,
+    }
+
+
+def _fetch_earnings_df_finnhub(ticker: str, skill_dir: Path) -> pd.DataFrame:
+    provider = "finnhub"
+    cached_rows = _cached_earnings_rows(skill_dir, ticker, provider=provider)
+    if cached_rows is not None:
+        return _rows_to_earnings_df(cached_rows)
+
+    warm = warm_earnings_for_ticker(ticker, skill_dir=skill_dir, force=False)
+    rows = warm.get("rows") if isinstance(warm, dict) else []
+    rows = [dict(r) for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    return _rows_to_earnings_df(rows)
+
+
+def _refresh_finnhub_earnings_rows(ticker: str, skill_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    from finnhub_data import get_finnhub_earnings_history
+
+    payload = get_finnhub_earnings_history(
+        ticker,
+        skill_dir=skill_dir,
+        history_years=get_pead_warm_history_years(skill_dir),
+    )
+    rows = payload.get("rows") if isinstance(payload, dict) else []
+    rows = [dict(r) for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    errors = list(payload.get("errors") or []) if isinstance(payload, dict) else []
+    if rows:
+        _remember_earnings_rows(skill_dir, ticker, provider="finnhub", rows=rows)
+    return rows, errors
+
+
+def earnings_cache_summary(
+    tickers: list[str],
+    skill_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Return fresh/missing counts for a ticker list against the PEAD cache."""
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    provider = _resolve_pead_provider(sd)
+    fresh = 0
+    missing = 0
+    for raw in tickers:
+        tkr = _normalize_ticker(raw)
+        if not tkr:
+            continue
+        if provider != "off" and _cached_earnings_rows(sd, tkr, provider=provider) is not None:
+            fresh += 1
+        else:
+            missing += 1
+    return {
+        "provider": provider,
+        "total": len([t for t in tickers if _normalize_ticker(t)]),
+        "fresh": fresh,
+        "missing": missing,
+    }
+
+
+def warm_earnings_for_ticker(
+    ticker: str,
+    skill_dir: Path | str | None = None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Fetch and cache Finnhub earnings rows for one ticker."""
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    tkr = _normalize_ticker(ticker)
+    provider = _resolve_pead_provider(sd)
+    if provider == "off":
+        return {"ok": False, "ticker": tkr, "skipped": True, "reason": "provider_off", "rows": []}
+    if provider != "finnhub":
+        return {
+            "ok": False,
+            "ticker": tkr,
+            "skipped": True,
+            "reason": "warm_requires_finnhub",
+            "rows": [],
+        }
+    if not force:
+        cached = _cached_earnings_rows(sd, tkr, provider=provider)
+        if cached is not None:
+            return {
+                "ok": True,
+                "ticker": tkr,
+                "skipped": True,
+                "reason": "cache_fresh",
+                "row_count": len(cached),
+                "rows": cached,
+            }
+    rows, errors = _refresh_finnhub_earnings_rows(tkr, sd)
+    return {
+        "ok": bool(rows),
+        "ticker": tkr,
+        "skipped": False,
+        "row_count": len(rows),
+        "rows": rows,
+        "errors": errors,
+    }
+
+
+def _warm_progress_path(skill_dir: Path) -> Path:
+    return skill_dir / EARNINGS_WARM_PROGRESS_FILE
+
+
+def _load_warm_progress(skill_dir: Path) -> dict[str, Any]:
+    path = _warm_progress_path(skill_dir)
+    try:
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        LOG.debug("PEAD warm progress read failed: %s", exc)
+        return {}
+
+
+def _save_warm_progress(skill_dir: Path, payload: dict[str, Any]) -> None:
+    path = _warm_progress_path(skill_dir)
+    try:
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+    except Exception as exc:
+        LOG.debug("PEAD warm progress write failed: %s", exc)
+
+
+def warm_earnings_for_tickers(
+    tickers: list[str],
+    skill_dir: Path | str | None = None,
+    *,
+    force: bool = False,
+    resume: bool = True,
+) -> dict[str, Any]:
+    """Batch warm Finnhub earnings cache for many tickers."""
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    provider = _resolve_pead_provider(sd)
+    normalized = [_normalize_ticker(t) for t in tickers if _normalize_ticker(t)]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tkr in normalized:
+        if tkr in seen:
+            continue
+        seen.add(tkr)
+        ordered.append(tkr)
+
+    progress = _load_warm_progress(sd) if resume and not force else {}
+    completed = {str(t).upper() for t in (progress.get("completed") or []) if str(t).strip()}
+    failed: dict[str, list[str]] = {}
+    for item in progress.get("failed") or []:
+        if isinstance(item, dict):
+            sym = _normalize_ticker(str(item.get("ticker") or ""))
+            if sym:
+                failed[sym] = list(item.get("errors") or [])
+
+    fetched = 0
+    skipped = 0
+    errors_total = 0
+    for idx, tkr in enumerate(ordered, start=1):
+        if resume and not force and tkr in completed:
+            skipped += 1
+            continue
+        result = warm_earnings_for_ticker(tkr, sd, force=force)
+        if result.get("skipped") and result.get("reason") == "cache_fresh":
+            skipped += 1
+            completed.add(tkr)
+            continue
+        if result.get("ok"):
+            fetched += 1
+            completed.add(tkr)
+            failed.pop(tkr, None)
+        else:
+            errors_total += 1
+            failed[tkr] = list(result.get("errors") or [str(result.get("reason") or "fetch_failed")])
+        if idx % 25 == 0 or idx == len(ordered):
+            _save_warm_progress(
+                sd,
+                {
+                    "provider": provider,
+                    "completed": sorted(completed),
+                    "failed": [{"ticker": k, "errors": v} for k, v in sorted(failed.items())],
+                    "processed": idx,
+                    "total": len(ordered),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            LOG.info(
+                "PEAD warm progress %s/%s fetched=%s skipped=%s errors=%s",
+                idx,
+                len(ordered),
+                fetched,
+                skipped,
+                errors_total,
+            )
+
+    summary = {
+        "ok": provider != "off" and errors_total == 0,
+        "provider": provider,
+        "total": len(ordered),
+        "fetched": fetched,
+        "skipped": skipped,
+        "errors": errors_total,
+        "failed_tickers": sorted(failed.keys()),
+    }
+    _save_warm_progress(
+        sd,
+        {
+            **summary,
+            "completed": sorted(completed),
+            "failed": [{"ticker": k, "errors": v} for k, v in sorted(failed.items())],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return summary
+
+
+def _fetch_earnings_df_yfinance(ticker: str) -> pd.DataFrame:
     try:
         import yfinance as yf
 
@@ -97,37 +476,54 @@ def check_recent_earnings(ticker: str, lookback_days: int = 10) -> dict[str, Any
 
         tkr = _normalize_ticker(ticker)
         with yfinance_call():
-            df = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
-        if df.empty:
+            raw = yf.Ticker(tkr).earnings_dates
+        normalized = _normalize_earnings_df(raw)
+        if normalized.empty:
+            return normalized
+        rep_col, est_col = _extract_eps_cols(normalized)
+        if rep_col:
+            normalized = normalized.rename(columns={rep_col: "actual_eps"})
+        if est_col:
+            normalized = normalized.rename(columns={est_col: "estimate_eps"})
+        keep = [c for c in ("actual_eps", "estimate_eps") if c in normalized.columns]
+        return normalized[keep] if keep else normalized
+    except Exception as exc:
+        LOG.debug("yfinance earnings fetch failed for %s: %s", ticker, exc)
+        return pd.DataFrame()
+
+
+def _fetch_earnings_df(ticker: str, skill_dir: Path | None = None) -> tuple[pd.DataFrame, str]:
+    sd = skill_dir or SKILL_DIR
+    provider = _resolve_pead_provider(sd)
+    if provider == "off":
+        return pd.DataFrame(), "off"
+    if provider == "finnhub":
+        return _fetch_earnings_df_finnhub(ticker, sd), provider
+    return _fetch_earnings_df_yfinance(ticker), provider
+
+
+def check_recent_earnings(
+    ticker: str,
+    lookback_days: int = 10,
+    *,
+    skill_dir: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Check if ticker had earnings within lookback window from now.
+    Returns EPS surprise details when available.
+    """
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    try:
+        earnings_df, provider = _fetch_earnings_df(ticker, sd)
+        if provider == "off":
             return None
-
         now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
-        window_start = now - pd.Timedelta(days=max(1, int(lookback_days)))
-        recent = df[(df.index <= now) & (df.index >= window_start)]
-        if recent.empty:
-            return {
-                "had_recent_earnings": False,
-                "earnings_date": None,
-                "actual_eps": None,
-                "estimate_eps": None,
-                "surprise_pct": None,
-                "beat": None,
-            }
-
-        row = recent.iloc[0]
-        rep_col, est_col = _extract_eps_cols(recent)
-        actual_eps = float(row[rep_col]) if rep_col and pd.notna(row[rep_col]) else None
-        estimate_eps = float(row[est_col]) if est_col and pd.notna(row[est_col]) else None
-        surprise = _calc_surprise(actual_eps, estimate_eps)
-        beat = None if surprise is None else bool(surprise > 0)
-        return {
-            "had_recent_earnings": True,
-            "earnings_date": str(recent.index[0].date()),
-            "actual_eps": actual_eps,
-            "estimate_eps": estimate_eps,
-            "surprise_pct": surprise,
-            "beat": beat,
-        }
+        return _evaluate_earnings_window(
+            earnings_df,
+            now,
+            lookback_days,
+            earnings_provider=provider,
+        )
     except Exception as exc:
         LOG.debug("Recent earnings check failed for %s: %s", ticker, exc)
         return None
@@ -138,50 +534,69 @@ def check_earnings_at_date(
     date: Any,
     df: pd.DataFrame | None = None,
     lookback_days: int = 10,
+    *,
+    skill_dir: Path | str | None = None,
 ) -> dict[str, Any] | None:
     """
     Historical earnings check relative to a supplied entry date.
     """
-    if get_schwab_only_data():
-        return None
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
     try:
-        import yfinance as yf
-
-        from _io_utils import yfinance_call
-
-        tkr = _normalize_ticker(ticker)
-        with yfinance_call():
-            earnings = _normalize_earnings_df(yf.Ticker(tkr).earnings_dates)
-        if earnings.empty:
+        earnings_df, provider = _fetch_earnings_df(ticker, sd)
+        if provider == "off":
             return None
-
         anchor = pd.Timestamp(date).tz_localize(None)
-        window_start = anchor - pd.Timedelta(days=max(1, int(lookback_days)))
-        recent = earnings[(earnings.index <= anchor) & (earnings.index >= window_start)]
-        if recent.empty:
-            return {
-                "had_recent_earnings": False,
-                "earnings_date": None,
-                "actual_eps": None,
-                "estimate_eps": None,
-                "surprise_pct": None,
-                "beat": None,
-            }
-
-        row = recent.iloc[0]
-        rep_col, est_col = _extract_eps_cols(recent)
-        actual_eps = float(row[rep_col]) if rep_col and pd.notna(row[rep_col]) else None
-        estimate_eps = float(row[est_col]) if est_col and pd.notna(row[est_col]) else None
-        surprise = _calc_surprise(actual_eps, estimate_eps)
-        beat = None if surprise is None else bool(surprise > 0)
-        return {
-            "had_recent_earnings": True,
-            "earnings_date": str(recent.index[0].date()),
-            "actual_eps": actual_eps,
-            "estimate_eps": estimate_eps,
-            "surprise_pct": surprise,
-            "beat": beat,
-        }
+        return _evaluate_earnings_window(
+            earnings_df,
+            anchor,
+            lookback_days,
+            earnings_provider=provider,
+        )
     except Exception as exc:
         LOG.debug("Historical earnings check failed for %s: %s", ticker, exc)
         return None
+
+
+def maybe_warm_earnings_for_scan(
+    tickers: list[str],
+    skill_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Warm missing Finnhub earnings rows before a live scan (cache-first)."""
+    from config import (
+        get_pead_enabled,
+        get_pead_prescan_warm_enabled,
+        get_pead_prescan_warm_max_missing,
+    )
+
+    sd = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    if not get_pead_enabled(sd) or not get_pead_prescan_warm_enabled(sd):
+        return {"skipped": True, "reason": "prescan_warm_disabled"}
+    provider = _resolve_pead_provider(sd)
+    if provider == "off":
+        return {"skipped": True, "reason": "provider_off", "provider": provider}
+
+    before = earnings_cache_summary(tickers, sd)
+    missing = int(before.get("missing") or 0)
+    if missing == 0:
+        return {"skipped": True, "reason": "cache_warm", "provider": provider, **before}
+
+    max_missing = int(get_pead_prescan_warm_max_missing(sd))
+    if max_missing > 0 and missing > max_missing:
+        return {
+            "skipped": True,
+            "reason": "too_many_missing_run_warm_script",
+            "provider": provider,
+            "missing": missing,
+            "max_missing": max_missing,
+            **before,
+        }
+
+    warm = warm_earnings_for_tickers(tickers, sd, force=False, resume=True)
+    after = earnings_cache_summary(tickers, sd)
+    return {
+        "skipped": False,
+        "provider": provider,
+        "before": before,
+        "after": after,
+        **warm,
+    }

@@ -1182,16 +1182,18 @@ def _run_backtest_core(
     sector_gate_mode = get_scan_sector_gate_mode(sd)
     confluence_mode = get_confluence_gate_mode(sd)
     confluence_require_count = int(get_confluence_require_count(sd))
-    if confluence_mode in ("shadow", "live") and get_schwab_only_data(sd):
-        # check_earnings_at_date returns None in schwab-only mode, so the
-        # pead_positive confirmation can never fire: the advisory_high path is
-        # the only achievable confirmation. Surface that so 0-trade sweeps are
-        # interpretable instead of silently testing "block everything".
-        diagnostics["confluence_pead_unavailable"] = True
-        LOG.warning(
-            "Confluence gate active with SCHWAB_ONLY_DATA=true: PEAD "
-            "confirmation unavailable; only advisory_high can confirm."
-        )
+    if confluence_mode in ("shadow", "live"):
+        from earnings_signal import _resolve_pead_provider
+
+        if _resolve_pead_provider(sd) == "off":
+            # Without a PEAD provider, pead_positive can never confirm; only
+            # advisory_high remains. Surface that so thin/0-trade sweeps are
+            # interpretable instead of silently testing "block everything".
+            diagnostics["confluence_pead_unavailable"] = True
+            LOG.warning(
+                "Confluence gate active but PEAD provider is off: PEAD "
+                "confirmation unavailable; only advisory_high can confirm."
+            )
     quality_mode = get_quality_gates_mode(sd)
     adaptive_stop_enabled = get_adaptive_stop_enabled(sd)
     stop_pct_base = float(get_adaptive_stop_base_pct(sd))
@@ -1580,6 +1582,7 @@ def _run_backtest_core(
                         day_ts,
                         df=window,
                         lookback_days=pead_lookback_days,
+                        skill_dir=sd,
                     )
                 except Exception as e:
                     LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)

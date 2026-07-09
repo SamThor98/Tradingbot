@@ -521,6 +521,24 @@ def run_scheduler() -> None:
                 log.warning("Morning brief failed: %s", e)
                 daily_heartbeat()
 
+    _last_pead_warm_minute: int | None = None
+
+    def _run_pead_warm_if_scheduled() -> None:
+        nonlocal _last_pead_warm_minute
+        now = datetime.now(TZ_NY)
+        key = now.hour * 60 + now.minute
+        if now.hour == 9 and now.minute == 18 and key != _last_pead_warm_minute:
+            _last_pead_warm_minute = key
+            try:
+                from earnings_signal import maybe_warm_earnings_for_scan
+                from signal_scanner import _load_watchlist
+
+                watchlist = _load_watchlist(SKILL_DIR)
+                summary = maybe_warm_earnings_for_scan(watchlist, SKILL_DIR)
+                log.info("PEAD earnings warm: %s", summary)
+            except Exception as e:
+                log.warning("PEAD earnings warm failed: %s", e)
+
     _last_signal_minute: int | None = None
 
     def _run_signal_scan_if_scheduled() -> None:
@@ -657,6 +675,7 @@ def run_scheduler() -> None:
                 log.warning("Challenger scan failed: %s", e)
 
     schedule.every().minute.do(_run_morning_brief_if_scheduled)
+    schedule.every().minute.do(_run_pead_warm_if_scheduled)
     schedule.every().minute.do(_run_signal_scan_if_scheduled)
     schedule.every().minute.do(_run_hold_reminder_if_scheduled)
     schedule.every().minute.do(_run_self_study_if_scheduled)

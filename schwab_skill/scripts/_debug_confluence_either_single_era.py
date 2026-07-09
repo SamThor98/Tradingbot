@@ -21,6 +21,8 @@ os.environ.update(
         "SCHWAB_ONLY_DATA": "true",
         "BACKTEST_SKIP_MIROFISH": "true",
         "SEC_FILING_LLM_SUMMARY_ENABLED": "false",
+        "PEAD_DATA_PROVIDER": "finnhub",
+        "PEAD_ENABLED": "true",
         # confluence_either overrides (validation_artifacts/phase1_env_overrides/confluence_either.json)
         "META_POLICY_MODE": "off",
         "UNCERTAINTY_MODE": "off",
@@ -45,6 +47,11 @@ WATCHLIST = [
 
 
 def main() -> int:
+    from earnings_signal import warm_earnings_for_tickers
+
+    warm = warm_earnings_for_tickers(WATCHLIST, skill_dir=SKILL_DIR, force=False, resume=True)
+    print(f"[debug] PEAD warm: {warm}")
+
     overlay_cfg = BacktestIntelligenceConfig.from_env(SKILL_DIR)
     metrics = run_backtest(
         tickers=WATCHLIST,

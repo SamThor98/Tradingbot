@@ -1279,6 +1279,55 @@ def get_forensic_cache_hours(skill_dir: Path | None = None) -> float:
     return _get_float("FORENSIC_CACHE_HOURS", 24.0, skill_dir)
 
 
+PEAD_DATA_PROVIDER_VALUES = frozenset({"finnhub", "yfinance", "off"})
+
+
+def get_pead_data_provider(skill_dir: Path | None = None) -> str:
+    """PEAD earnings enrichment source (``finnhub`` | ``yfinance`` | ``off``).
+
+    Governs only the earnings calendar / EPS surprise provider. Price history
+    remains under ``SCHWAB_ONLY_DATA``; Finnhub PEAD is compatible with
+    Schwab-only bars.
+
+    When ``PEAD_DATA_PROVIDER`` is unset: ``finnhub`` if ``FINNHUB_API_KEY`` is
+    configured, otherwise ``off``.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("PEAD_DATA_PROVIDER", env).strip().lower()
+    if raw in PEAD_DATA_PROVIDER_VALUES:
+        return raw
+    if raw:
+        return "off"
+    if get_finnhub_api_key(skill_dir):
+        return "finnhub"
+    return "off"
+
+
+def get_pead_cache_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable on-disk cache for PEAD earnings rows (``.earnings_cache.json``)."""
+    return _get_bool("PEAD_CACHE_ENABLED", True, skill_dir)
+
+
+def get_pead_cache_hours(skill_dir: Path | None = None) -> float:
+    """TTL for PEAD earnings cache entries."""
+    return max(0.25, min(168.0, _get_float("PEAD_CACHE_HOURS", 24.0, skill_dir)))
+
+
+def get_pead_warm_history_years(skill_dir: Path | None = None) -> int:
+    """Years of Finnhub earnings history to fetch during cache warm."""
+    return max(1, min(20, _get_int("PEAD_WARM_HISTORY_YEARS", 12, skill_dir)))
+
+
+def get_pead_prescan_warm_enabled(skill_dir: Path | None = None) -> bool:
+    """Warm missing Finnhub earnings rows before live scans when PEAD is active."""
+    return _get_bool("PEAD_PRESCAN_WARM_ENABLED", True, skill_dir)
+
+
+def get_pead_prescan_warm_max_missing(skill_dir: Path | None = None) -> int:
+    """Inline pre-scan warm skips when more than this many tickers lack cache (0 = no cap)."""
+    return max(0, _get_int("PEAD_PRESCAN_WARM_MAX_MISSING", 150, skill_dir))
+
+
 def get_pead_enabled(skill_dir: Path | None = None) -> bool:
     """Enable post-earnings drift enrichment."""
     return _get_bool("PEAD_ENABLED", True, skill_dir)

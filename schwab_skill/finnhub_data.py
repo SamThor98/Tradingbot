@@ -883,3 +883,129 @@ def get_finnhub_research_snapshot(
         if cache_enabled:
             _remember_payload(sd, ticker, payload)
         return payload
+
+
+def _normalize_finnhub_earnings_calendar(payload: Any, *, symbol: str) -> list[dict[str, Any]]:
+    """Normalize Finnhub calendar/earnings rows to announcement-date keyed records."""
+    sym = _cache_key(symbol)
+    rows_out: list[dict[str, Any]] = []
+    cal_rows: list[Any] = []
+    if isinstance(payload, dict):
+        cal_rows = payload.get("earningsCalendar") or []
+    elif isinstance(payload, list):
+        cal_rows = payload
+    if not isinstance(cal_rows, list):
+        return rows_out
+    for row in cal_rows:
+        if not isinstance(row, dict):
+            continue
+        row_sym = _safe_str(row.get("symbol")).upper()
+        if row_sym and row_sym != sym:
+            continue
+        date_str = _safe_str(row.get("date"))
+        if not date_str:
+            continue
+        actual_eps = _safe_float(row.get("epsActual"))
+        estimate_eps = _safe_float(row.get("epsEstimate"))
+        if actual_eps is None and estimate_eps is None:
+            continue
+        rows_out.append(
+            {
+                "date": date_str,
+                "actual_eps": actual_eps,
+                "estimate_eps": estimate_eps,
+                "quarter": _safe_int(row.get("quarter")),
+                "year": _safe_int(row.get("year")),
+                "source": "calendar/earnings",
+            }
+        )
+    rows_out.sort(key=lambda r: r.get("date") or "", reverse=True)
+    return rows_out
+
+
+def _normalize_finnhub_stock_earnings(payload: Any) -> list[dict[str, Any]]:
+    """Fallback: Finnhub stock/earnings uses fiscal period end as the date key."""
+    rows = payload if isinstance(payload, list) else []
+    rows_out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        period = _safe_str(row.get("period"))
+        if not period:
+            continue
+        actual_eps = _safe_float(row.get("actual"))
+        estimate_eps = _safe_float(row.get("estimate"))
+        if actual_eps is None and estimate_eps is None:
+            continue
+        rows_out.append(
+            {
+                "date": period,
+                "actual_eps": actual_eps,
+                "estimate_eps": estimate_eps,
+                "quarter": _safe_int(row.get("quarter")),
+                "year": _safe_int(row.get("year")),
+                "source": "stock/earnings",
+            }
+        )
+    rows_out.sort(key=lambda r: r.get("date") or "", reverse=True)
+    return rows_out
+
+
+def get_finnhub_earnings_history(
+    ticker: str,
+    *,
+    skill_dir: Path | None = None,
+    history_years: int = 12,
+) -> dict[str, Any]:
+    """Fetch historical earnings rows for PEAD enrichment.
+
+    Primary source is ``calendar/earnings`` (announcement dates). When that
+    returns no rows, falls back to ``stock/earnings`` keyed by fiscal period
+    end (less precise for lookback windows).
+    """
+    sd = skill_dir or SKILL_DIR
+    sym = _cache_key(ticker)
+    api_key = get_finnhub_api_key(sd)
+    if not api_key:
+        return {
+            "ok": False,
+            "ticker": sym,
+            "rows": [],
+            "errors": ["finnhub_api_key_missing"],
+            "as_of": datetime.now(UTC).isoformat(),
+        }
+
+    now = datetime.now(UTC)
+    start = now - timedelta(days=max(365, int(history_years) * 365))
+    errors: list[str] = []
+    client = FinnhubClient(
+        api_key=api_key,
+        timeout_sec=get_finnhub_timeout_sec(sd),
+        max_retries=get_finnhub_max_retries(sd),
+        retry_backoff_cap_sec=get_finnhub_retry_backoff_cap_sec(sd),
+        rate_limit_per_min=get_finnhub_rate_limit_per_min(sd),
+    )
+    calendar_payload = client._get_json(
+        "calendar/earnings",
+        {"symbol": sym, "from": _fmt_date(start), "to": _fmt_date(now)},
+        label="earnings_history_calendar",
+        errors=errors,
+    )
+    rows = _normalize_finnhub_earnings_calendar(calendar_payload, symbol=sym)
+    if not rows:
+        stock_payload = client._get_json(
+            "stock/earnings",
+            {"symbol": sym, "limit": 40},
+            label="earnings_history_stock",
+            errors=errors,
+        )
+        rows = _normalize_finnhub_stock_earnings(stock_payload)
+
+    ok = bool(rows)
+    return {
+        "ok": ok,
+        "ticker": sym,
+        "rows": rows,
+        "errors": errors if not ok else [],
+        "as_of": now.isoformat(),
+    }

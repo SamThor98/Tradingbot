@@ -635,6 +635,36 @@ def _load_progress_if_any(run_tag: str | None = None) -> tuple[str, list[dict[st
     return run_id, completed, failed
 
 
+def _warm_earnings_cache_if_requested(ticker_limit: int | None = None) -> bool:
+    """Optional preflight: warm Finnhub earnings cache before multi-era PEAD use."""
+    from earnings_signal import _resolve_pead_provider, earnings_cache_summary, warm_earnings_for_tickers
+
+    if _resolve_pead_provider(_runtime_skill_dir()) == "off":
+        print("[multi-era] earnings warm skipped: PEAD provider off")
+        return True
+    watchlist = _load_universe_tickers()
+    if ticker_limit and ticker_limit > 0:
+        watchlist = watchlist[:ticker_limit]
+    summary_before = earnings_cache_summary(watchlist, skill_dir=_runtime_skill_dir())
+    if summary_before.get("missing") == 0:
+        print(
+            f"[multi-era] earnings cache already warm "
+            f"({summary_before.get('fresh')}/{summary_before.get('total')})"
+        )
+        return True
+    print(
+        f"[multi-era] warming earnings cache for {summary_before.get('missing')} tickers "
+        f"(fresh={summary_before.get('fresh')}/{summary_before.get('total')})"
+    )
+    result = warm_earnings_for_tickers(watchlist, skill_dir=_runtime_skill_dir(), force=False, resume=True)
+    if result.get("errors"):
+        print(
+            f"[multi-era] earnings warm finished with errors={result.get('errors')} "
+            f"(failed={len(result.get('failed_tickers') or [])}); continuing with partial cache"
+        )
+    return True
+
+
 def _orchestrate(
     timeout_seconds: int,
     retry_on_fail: int,
@@ -643,9 +673,12 @@ def _orchestrate(
     max_workers: int,
     run_tag: str | None = None,
     ticker_limit: int | None = None,
+    warm_earnings_cache: bool = False,
 ) -> int:
     if not _auth_preflight_ok():
         return RC_AUTH_PREFLIGHT_FAILED
+    if warm_earnings_cache:
+        _warm_earnings_cache_if_requested(ticker_limit)
     if run_tag:
         run_id = str(run_tag)
         # If a per-run-id progress file from a prior interrupted run exists,
@@ -812,6 +845,11 @@ def main() -> int:
         default=0,
         help="Truncate the universe to the first N tickers (0 = use full Schwab watchlist; for smoke tests).",
     )
+    parser.add_argument(
+        "--warm-earnings-cache",
+        action="store_true",
+        help="Pre-warm Finnhub earnings cache for the universe before era chunks (PEAD/confluence).",
+    )
     args = parser.parse_args()
 
     if args.env_overrides:
@@ -843,6 +881,7 @@ def main() -> int:
         max_workers=args.max_workers,
         run_tag=args.run_tag or None,
         ticker_limit=args.ticker_limit or None,
+        warm_earnings_cache=bool(args.warm_earnings_cache),
     )
 
 

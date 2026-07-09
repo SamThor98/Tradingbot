@@ -2761,6 +2761,13 @@ def scan_for_signals_detailed(
             "sp1500_focused" if universe_mode == "focused" else "sp1500_default"
         )
     diagnostics["watchlist_size"] = len(watchlist)
+    try:
+        from earnings_signal import maybe_warm_earnings_for_scan
+
+        diagnostics["pead_cache"] = maybe_warm_earnings_for_scan(watchlist, skill_dir)
+    except Exception as exc:
+        LOG.debug("PEAD pre-scan warm skipped: %s", exc)
+        diagnostics["pead_cache"] = {"skipped": True, "reason": "error", "detail": str(exc)}
     top_n = get_signal_top_n(skill_dir)
     stage_a_workers = get_scan_stage_a_max_workers(skill_dir)
     stage_b_workers = get_scan_stage_b_max_workers(skill_dir)
