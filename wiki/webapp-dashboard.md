@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/WebApp Dashboard.md
 created: 2026-04-13
-updated: 2026-06-26
+updated: 2026-07-16
 tags: [architecture, webapp, dashboard, ux]
 ---
 
@@ -16,7 +16,7 @@ Four top-level tabs in `index.html` / `app.js`:
 | Tab | Mode | Focus |
 |-----|------|-------|
 | Today | `operations` | Scan workflow + pending queue |
-| Research | `research` | Quick check, backtest, diligence, portfolio (sub-tabs) |
+| Research | `research` | Quick check, backtest, diligence, portfolio (Positions / Risk / Book) |
 | System | `diagnostics` | Health, validation, calibration |
 | Settings | `settings` | Schwab connect, live-order controls, risk presets |
 
@@ -55,10 +55,11 @@ All API routes return `ApiResponse(ok, data, error)` via `_ok()` / `_err()` help
 
 - [[frontend-route-contract]] — frozen deep-link and screen contract
 - [[section-migration-map]] — locked section layout
+- [[portfolio-book]] — Book sub-tab (calendar, tax, journal)
 - [[local-dashboard-endpoints]] — full endpoint reference
 - [[tenant-dashboard-endpoints]] — SaaS per-tenant routes
 - [[system-overview]] — architecture context
 
 ---
 
-*Last compiled: 2026-06-26*
+*Last compiled: 2026-07-16*

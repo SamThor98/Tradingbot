@@ -53,9 +53,10 @@ def _parse_alias_map(source: str) -> dict[str, str]:
     )
     assert match, "SECTION_ALIASES literal block not found in router.js"
     body = match.group(1)
-    pairs = re.findall(r'(\w+)\s*:\s*"([^"]+)"', body)
+    # Support bare keys (backtest) and quoted hyphenated keys ("book-calendar").
+    pairs = re.findall(r'(?:["\']([\w-]+)["\']|(\w+))\s*:\s*"([^"]+)"', body)
     assert pairs, "SECTION_ALIASES body parsed to zero entries"
-    return {k: v for k, v in pairs}
+    return {(a or b): c for a, b, c in pairs}
 
 
 # Friendly-name -> DOM-id contract. These are the URL-safe shortcuts we
@@ -89,6 +90,10 @@ EXPECTED_ALIASES = {
     "portfolio": "portfolioSection",
     "risk": "portfolioPanelRisk",
     "portfoliorisk": "portfolioPanelRisk",
+    "book": "portfolioPanelBook",
+    "book-calendar": "book-calendar",
+    "book-tax": "book-tax",
+    "book-journal": "book-journal",
 }
 
 

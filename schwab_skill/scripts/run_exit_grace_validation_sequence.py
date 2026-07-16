@@ -30,6 +30,10 @@ ARTIFACT_DIR = SKILL_DIR / "validation_artifacts"
 SCRIPTS = SKILL_DIR / "scripts"
 
 DEFAULT_REPLAY_RUN_ID = "control_legacy_aug"
+DEFAULT_AUDIT_CONTROL_RUN_ID = "control_legacy_aug"
+DEFAULT_AUDIT_BARE_RUN_ID = "stage2_only_aug"
+MIN_AUDIT_TRADES = 50
+MIN_AUDIT_ERAS = 3
 REPLAY_PROFILES = [
     "baseline_legacy",
     "control_legacy_defaults",
@@ -51,15 +55,31 @@ def _run_step(name: str, cmd: list[str]) -> dict[str, Any]:
     return {"step": name, "ok": ok, "rc": proc.returncode, "tail": tail}
 
 
-def _chunk_trade_count(run_id: str) -> int:
+def _chunk_trade_coverage(run_id: str) -> tuple[int, int]:
     if str(SKILL_DIR) not in sys.path:
         sys.path.insert(0, str(SKILL_DIR))
-    from scripts.phase2_common import load_trades
+    from scripts.phase2_common import load_trades, per_era_stats
 
     try:
-        return len(load_trades(run_id))
+        trades = load_trades(run_id)
+        return len(trades), len(per_era_stats(trades))
     except Exception:
-        return 0
+        return 0, 0
+
+
+def _audit_inputs_ready(
+    *,
+    control_trades: int,
+    control_eras: int,
+    bare_trades: int,
+    bare_eras: int,
+) -> bool:
+    return (
+        control_trades >= MIN_AUDIT_TRADES
+        and bare_trades >= MIN_AUDIT_TRADES
+        and control_eras >= MIN_AUDIT_ERAS
+        and bare_eras >= MIN_AUDIT_ERAS
+    )
 
 
 def main() -> int:
@@ -167,9 +187,14 @@ def main() -> int:
         steps.append(_run_step("phase1_overlay_sweep_full_era", cmd))
 
     if not args.skip_edge_audit:
-        control_n = _chunk_trade_count("control_legacy")
-        bare_n = _chunk_trade_count("stage2_only")
-        if control_n >= 50 and bare_n >= 50:
+        control_n, control_eras = _chunk_trade_coverage(DEFAULT_AUDIT_CONTROL_RUN_ID)
+        bare_n, bare_eras = _chunk_trade_coverage(DEFAULT_AUDIT_BARE_RUN_ID)
+        if _audit_inputs_ready(
+            control_trades=control_n,
+            control_eras=control_eras,
+            bare_trades=bare_n,
+            bare_eras=bare_eras,
+        ):
             steps.append(
                 _run_step(
                     "phase2_edge_audit",
@@ -177,16 +202,18 @@ def main() -> int:
                         py,
                         str(SCRIPTS / "phase2_edge_audit.py"),
                         "--control-run-id",
-                        "control_legacy",
+                        DEFAULT_AUDIT_CONTROL_RUN_ID,
                         "--bare-run-id",
-                        "stage2_only",
+                        DEFAULT_AUDIT_BARE_RUN_ID,
                     ],
                 )
             )
         else:
             msg = (
-                f"skip phase2_edge_audit: control_legacy trades={control_n}, "
-                f"stage2_only trades={bare_n} (need >=50 each; run --run-full-era first)"
+                f"skip phase2_edge_audit: {DEFAULT_AUDIT_CONTROL_RUN_ID} "
+                f"trades={control_n} eras={control_eras}, {DEFAULT_AUDIT_BARE_RUN_ID} "
+                f"trades={bare_n} eras={bare_eras} (need >={MIN_AUDIT_TRADES} trades "
+                f"and >={MIN_AUDIT_ERAS} eras each)"
             )
             print(f"[sequence] {msg}", flush=True)
             steps.append({"step": "phase2_edge_audit", "ok": None, "skipped": True, "reason": msg})

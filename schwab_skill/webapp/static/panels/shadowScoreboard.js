@@ -1,9 +1,6 @@
 /**
- * Shadow scoreboard panel — would-have counters for every shadow-mode plugin
- * (confluence gate, correlation guard, regime v2, exit manager,
- * quality gates) merged from the last scan's diagnostics and the 7-day
- * execution safety metrics. Read-only evidence view for OFF -> SHADOW -> LIVE
- * promotion decisions.
+ * Shadow scoreboard panel — promotion clarity for OFF → SHADOW → LIVE plugins.
+ * Answers one question per plugin: is this earning promotion?
  */
 
 import { api } from "../modules/api.js";
@@ -19,32 +16,8 @@ import {
 
 const PRIOR_SNAPSHOT_KEY = "tradingbot.shadow_scoreboard_prior";
 
-const COUNTER_LABELS = {
-  confirmed: "Confirmed",
-  would_block: "Would block",
-  blocked: "Blocked",
-  would_demote: "Would demote",
-  demoted: "Demoted",
-  scan_blocked: "Scan blocked",
-  exec_blocked: "Exec blocked",
-  exec_sized: "Exec resized",
-  scored: "Scored",
-  high_confidence: "High conf",
-  medium_confidence: "Medium conf",
-  low_confidence: "Low conf",
-  live_adjustments: "Live adjustments",
-  errors: "Errors",
-  skipped_budget: "Skipped (budget)",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-  unavailable: "Unavailable",
-  would_partial_tp: "Would partial-TP",
-  would_move_stop: "Would move stop",
-  would_time_stop: "Would time-stop",
-  would_filter: "Would filter",
-  filtered: "Filtered",
-};
+const PROMOTION_GATES_PLAIN =
+  "Base signal must clear PF mean ≥ 1.20 and worst-era PF ≥ 1.00 before any plugin goes LIVE.";
 
 const WOULD_KEYS = new Set([
   "would_block",
@@ -74,17 +47,41 @@ function totalWouldHave(plugins = []) {
   return plugins.reduce((sum, plugin) => sum + sumWouldHave(plugin.counters), 0);
 }
 
-function nextRolloutStep(mode, counters = {}) {
+function promotionVerdict(mode, would = 0) {
   const m = String(mode || "off").toLowerCase();
-  const would = sumWouldHave(counters);
-  if (m === "live") return "Maintain LIVE — review counters weekly";
-  if (m === "shadow") {
-    return would > 0
-      ? `SHADOW active — ${would} would-have action(s) this window`
-      : "SHADOW active — no would-have actions; evaluate LIVE promotion";
+  if (m === "live") {
+    return {
+      label: "LIVE — monitor weekly",
+      tone: "good",
+      detail: would > 0 ? `${would} would-have action(s) still logged this window.` : "No would-have friction this window.",
+    };
   }
-  if (would > 0) return `OFF — ${would} would-have action(s); consider SHADOW`;
-  return "OFF — no shadow signal yet";
+  if (m === "shadow") {
+    if (would > 0) {
+      return {
+        label: "SHADOW — gathering evidence",
+        tone: "warn",
+        detail: `${would} would-have action(s). Review counters before promoting to LIVE.`,
+      };
+    }
+    return {
+      label: "SHADOW — candidate for LIVE",
+      tone: "good",
+      detail: "No would-have blocks this window. Still requires base-signal PF gates.",
+    };
+  }
+  if (would > 0) {
+    return {
+      label: "OFF — shadow recommended",
+      tone: "warn",
+      detail: `${would} would-have action(s) detected. Turn on SHADOW before LIVE.`,
+    };
+  }
+  return {
+    label: "OFF — no signal yet",
+    tone: "neutral",
+    detail: "No would-have actions in this window.",
+  };
 }
 
 function readPriorSnapshot() {
@@ -116,6 +113,13 @@ function writePriorSnapshot(data) {
   }
 }
 
+function renderPromotionLegend() {
+  return `<div class="shadow-scoreboard-legend muted">
+    <strong>Promotion path:</strong> OFF → SHADOW → LIVE.
+    <span>${escapeHtml(PROMOTION_GATES_PLAIN)}</span>
+  </div>`;
+}
+
 function renderHeadline(data, prior) {
   const total = totalWouldHave(data.plugins || []);
   const priorTotal = safeNum(prior?.total_would_have, NaN);
@@ -126,47 +130,31 @@ function renderHeadline(data, prior) {
     else if (delta < 0) trend = `<span class="shadow-scoreboard-trend shadow-scoreboard-trend--down">${delta} vs prior scan</span>`;
     else trend = `<span class="shadow-scoreboard-trend muted">unchanged vs prior scan</span>`;
   }
+  const liveCount = (data.plugins || []).filter((p) => String(p.mode || "").toLowerCase() === "live").length;
+  const shadowCount = (data.plugins || []).filter((p) => String(p.mode || "").toLowerCase() === "shadow").length;
   return `
     <div class="shadow-scoreboard-headline">
       <strong>${total} would-have action${total === 1 ? "" : "s"}</strong>
-      <span class="muted">across trial-run plugins this window</span>
+      <span class="muted">across trial-run plugins · ${shadowCount} shadow · ${liveCount} live</span>
       ${trend}
     </div>
   `;
 }
 
-function renderPlugin(p, priorPlugin) {
+function renderPlugin(p) {
   const counters = p.counters || {};
   const would = sumWouldHave(counters);
-  const priorWould = safeNum(priorPlugin?.would, NaN);
-  let trendHtml = "";
-  if (Number.isFinite(priorWould)) {
-    const delta = would - priorWould;
-    if (delta !== 0) {
-      trendHtml = `<span class="shadow-plugin-trend mono-nums">${delta > 0 ? "+" : ""}${delta}</span>`;
-    }
-  }
-  const rows = Object.entries(counters)
-    .map(([key, val]) => {
-      const label = COUNTER_LABELS[key] || key;
-      const n = Number(val) || 0;
-      const valueCls = n > 0 ? "value" : "value muted";
-      return `<div class="perf-metric"><span class="label">${escapeHtml(label)}</span><span class="${valueCls}">${n}</span></div>`;
-    })
-    .join("");
-  let contextHtml = "";
-  if (p.context && (p.context.score != null || p.context.bucket != null)) {
-    const bits = [];
-    if (p.context.score != null) bits.push(`score ${Number(p.context.score).toFixed(2)}`);
-    if (p.context.bucket != null) bits.push(`bucket ${escapeHtml(String(p.context.bucket))}`);
-    contextHtml = `<small class="muted">${bits.join(" · ")}</small>`;
-  }
-  const nextStep = nextRolloutStep(p.mode, counters);
-  return `<div class="preset-subsection shadow-plugin-card">
-    <h3>${escapeHtml(p.label || p.id)} ${modeBadge(p.mode)} ${trendHtml} <small class="muted">${escapeHtml(p.scope || "")}</small></h3>
-    ${contextHtml}
-    <p class="shadow-plugin-next muted">${escapeHtml(nextStep)}</p>
-    ${rows || '<div class="muted">No counters.</div>'}
+  const verdict = promotionVerdict(p.mode, would);
+  const verdictCls = verdict.tone === "good" ? "good" : verdict.tone === "warn" ? "warn" : "neutral";
+  const topCounters = Object.entries(counters)
+    .filter(([key, val]) => Number(val) > 0 && WOULD_KEYS.has(key))
+    .slice(0, 3)
+    .map(([key, val]) => `${key.replaceAll("_", " ")}: ${val}`)
+    .join(" · ");
+  return `<div class="preset-subsection shadow-plugin-card shadow-plugin-card--${verdictCls}">
+    <h3>${escapeHtml(p.label || p.id)} ${modeBadge(p.mode)} <small class="muted">${escapeHtml(p.scope || "")}</small></h3>
+    <p class="shadow-plugin-verdict"><strong>${escapeHtml(verdict.label)}</strong> — ${escapeHtml(verdict.detail)}</p>
+    ${topCounters ? `<p class="muted shadow-plugin-counters">${escapeHtml(topCounters)}</p>` : ""}
   </div>`;
 }
 
@@ -176,7 +164,7 @@ function paintShadowSnapshot(stateName, opts = {}) {
     kpis: [
       { label: "WOULD-HAVE", sub: "actions", value: opts.would ?? "—", tone: opts.would > 0 ? "warn" : "success" },
       { label: "PLUGINS", sub: "tracked", value: opts.pluginCount ?? "—", tone: "neutral" },
-      { label: "MODE", sub: "rollout", value: opts.modeLabel || "—", tone: opts.would > 0 ? "warn" : "success" },
+      { label: "VERDICT", sub: "rollout", value: opts.modeLabel || "—", tone: opts.would > 0 ? "warn" : "success" },
     ],
     lines: [opts.title, opts.detail].filter(Boolean),
   });
@@ -217,7 +205,6 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     return;
   }
   const prior = readPriorSnapshot();
-  const priorById = Object.fromEntries((prior?.plugins || []).map((p) => [p.id, p]));
   const meta = [];
   if (data.scan_at) meta.push(`Last scan: ${escapeHtml(String(data.scan_at))}`);
   if (data.execution_window_days) {
@@ -226,8 +213,9 @@ export function renderShadowScoreboardPanel(panel, data, error) {
   const metaHtml = meta.length ? `<div class="muted" style="margin-bottom: 8px;">${meta.join(" · ")}</div>` : "";
   const html =
     metaHtml +
+    renderPromotionLegend() +
     renderHeadline(data, prior) +
-    data.plugins.map((p) => renderPlugin(p, priorById[p.id])).join("");
+    data.plugins.map((p) => renderPlugin(p)).join("");
   paintSystemPanelSuccess(panel, html);
   const total = totalWouldHave(data.plugins || []);
   const statusState = total > 0 ? "partial" : "success";
@@ -236,8 +224,8 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     statusState,
     `${total} would-have action${total === 1 ? "" : "s"}.`,
     total > 0
-      ? "Review shadow counters before promoting any plugin."
-      : "No trial-run actions in this window; continue monitoring.",
+      ? "Review shadow verdicts before promoting any plugin to LIVE."
+      : "No trial-run friction this window; base-signal PF gates still apply.",
   );
   paintShadowSnapshot(statusState, {
     would: total,
@@ -246,8 +234,8 @@ export function renderShadowScoreboardPanel(panel, data, error) {
     title: `${total} would-have action${total === 1 ? "" : "s"}.`,
     detail:
       total > 0
-        ? "Review shadow counters before promoting any plugin."
-        : "No trial-run actions in this window; continue monitoring.",
+        ? "Review shadow verdicts before promoting any plugin to LIVE."
+        : "No trial-run friction this window; base-signal PF gates still apply.",
   });
   writePriorSnapshot(data);
 }

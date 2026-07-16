@@ -261,8 +261,18 @@ def get_rank_filter_shadow_min_percentile_composite(skill_dir: Path | None = Non
 
 
 def get_rank_filter_shadow_min_percentile_rank_v2(skill_dir: Path | None = None) -> int:
-    """Min score percentile for rank_score_v2 shadow filter (default p70)."""
-    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", 70, skill_dir)))
+    """Min score percentile for rank_score_v2 shadow filter (default p75 per stack counterfactual)."""
+    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", 75, skill_dir)))
+
+
+def get_rank_filter_v2_mode(skill_dir: Path | None = None) -> str:
+    """Rank-v2 percentile trim mode (OFF|SHADOW|LIVE).
+
+    Default promoted to ``live`` at p75 after Stage 2d shadow evidence
+    (ledger seq 15). Live drops below the percentile threshold; keep
+    ``SCAN_LIVE_SORT_KEY=signal_score`` until a separate sort-key promotion.
+    """
+    return _get_mode("RANK_FILTER_V2_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_rank_filter_shadow_min_percentile_signal(skill_dir: Path | None = None) -> int:
@@ -286,8 +296,12 @@ def get_entry_timing_shadow_mode(skill_dir: Path | None = None) -> str:
 
     off — disable. shadow — annotate/count only (never blocks).
     live — drop Stage A candidates that fail entry-timing rules.
+
+    Default promoted to ``live`` with breakout-buffer-only 1% profile after
+    offline stack PF cleared gates (``exit_grace_breakout_buffer_0.010``) and
+    live shadow filter rates stayed in band. See ``SIGNAL_QUALITY_ROLLOUT.md``.
     """
-    return _get_mode("ENTRY_TIMING_SHADOW_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+    return _get_mode("ENTRY_TIMING_SHADOW_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
 def get_entry_shadow_min_pct_above_sma50(skill_dir: Path | None = None) -> float:
@@ -308,14 +322,22 @@ def get_entry_shadow_max_pct_above_sma50(skill_dir: Path | None = None) -> float
 
 
 def get_entry_shadow_min_breakout_buffer_pct(skill_dir: Path | None = None) -> float:
-    """Min close buffer above prior-bar high for breakout shadow (default 0.2%)."""
-    val = _get_float("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT", 0.002, skill_dir)
+    """Min close buffer above prior-bar high for breakout (default 1.0%).
+
+    Offline replay on ``control_legacy_aug`` preferred 1.0% (~50% retention,
+    overlap PF +0.32). The prior 0.2% default was too loose for live enforcement.
+    """
+    val = _get_float("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT", 0.01, skill_dir)
     return max(0.0, min(0.05, val))
 
 
 def get_entry_shadow_disable_sma50_filters(skill_dir: Path | None = None) -> bool:
-    """When true, entry-timing shadow only evaluates breakout buffer (P0 experiment path)."""
-    return _get_bool("ENTRY_SHADOW_DISABLE_SMA50_FILTERS", False, skill_dir)
+    """When true, entry-timing only evaluates breakout buffer (validated P0 path).
+
+    SMA50 cushion/extension caps hurt overlap PF offline; default on so the
+    live profile is ``breakout_buffer_only_0.010``.
+    """
+    return _get_bool("ENTRY_SHADOW_DISABLE_SMA50_FILTERS", True, skill_dir)
 
 
 def get_entry_timing_shadow_profile(skill_dir: Path | None = None) -> str:
@@ -552,13 +574,13 @@ def get_scan_live_sort_key(skill_dir: Path | None = None) -> str:
     """Primary candidate sort key until composite beats signal on realized trades."""
     env = _load_env(skill_dir)
     raw = _env_value("SCAN_LIVE_SORT_KEY", env).strip().lower()
-    if raw in {"signal_score", "composite_score", "rank_score"}:
+    if raw in {"signal_score", "composite_score", "rank_score", "rank_score_v2"}:
         return raw
     return "signal_score"
 
 
 def get_rank_score_v2_mode(skill_dir: Path | None = None) -> str:
-    """Component-weighted rank v2 — diagnostic only; live sort uses composite_score."""
+    """Component-weighted rank-v2 computation mode; sorting is configured separately."""
     return _get_mode("RANK_SCORE_V2_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 
 
@@ -947,10 +969,9 @@ def get_exec_quality_mode(skill_dir: Path | None = None) -> str:
 def get_exit_manager_mode(skill_dir: Path | None = None) -> str:
     """Exit manager plugin mode (OFF|SHADOW|LIVE).
 
-    Default promoted to ``live`` (2026-Q2 exit-returns promotion) after Schwab
-    replay overlay showed exit grace ``t15_h40`` PF mean +0.58 vs baseline.
-    See ``scripts/promotion_ledger.jsonl`` and
-    ``validation_artifacts/replay_exit_overlay_control_legacy_aug.json``.
+    Default promoted to ``live`` after the exit-grace shadow run and explicit
+    operator approval. The promoted stack retains the validated 15/40-day hold
+    settings and live 1% breakout-buffer entry timing.
     """
     return _get_mode("EXIT_MANAGER_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 

@@ -38,19 +38,23 @@ import { renderBacktestEquityCharts, clearBacktestEquityCharts } from "./backtes
 import { setAsyncState, ASYNC_ERROR } from "../modules/asyncState.js";
 
 /**
- * The hosted backtest queue (`/api/backtest-runs*`) only exists on the SaaS
- * backend (`webapp/main_saas.py`). On the local single-user server those
- * routes 404, so every entrypoint below short-circuits with this notice
- * instead of surfacing a raw "resource not found" error.
+ * The backtest queue (`/api/backtest-runs*`) is served by both backends:
+ * SaaS runs it on Celery workers, the local server runs it in a background
+ * thread. This notice only appears on servers that predate the local queue
+ * (no `backtest_transport` in public-config).
  */
 export const LOCAL_BACKTEST_NOTICE =
-  "Hosted backtest queue is available in SaaS mode only. On this local install, run " +
-  "`python backtest.py` (or scripts/phase1_overlay_sweep.py for multi-era sweeps); " +
-  "results are written to .backtest_results.json and validation_artifacts/.";
+  "This server does not expose the backtest queue. Restart the dashboard on a current " +
+  "build, or run `python backtest.py` from schwab_skill/ (results are written to " +
+  ".backtest_results.json and validation_artifacts/).";
 
-export function isHostedBacktestAvailable() {
-  return Boolean(state.publicConfig?.saas_mode);
+export function isBacktestQueueAvailable() {
+  const cfg = state.publicConfig || {};
+  return Boolean(cfg.saas_mode || cfg.backtest_transport === "local_thread");
 }
+
+/** @deprecated Use isBacktestQueueAvailable — kept for any stale call sites. */
+export const isHostedBacktestAvailable = isBacktestQueueAvailable;
 
 export function setDefaultBacktestDates() {
   const startEl = document.getElementById("btStart");
@@ -422,7 +426,7 @@ export function switchBacktestHubTab(which) {
 export async function refreshBacktestRuns() {
   const list = document.getElementById("btRunList");
   if (!list) return;
-  if (!isHostedBacktestAvailable()) {
+  if (!isBacktestQueueAvailable()) {
     list.innerHTML = `<li class="muted">${escapeHtml(LOCAL_BACKTEST_NOTICE)}</li>`;
     setResearchStatusStrip(
       "backtestStatusStrip",
@@ -576,7 +580,7 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
 
 export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
   if (state.backtestQueueBusy) return;
-  if (!isHostedBacktestAvailable()) {
+  if (!isBacktestQueueAvailable()) {
     setBtMetaMessage(LOCAL_BACKTEST_NOTICE, { sticky: true });
     setResearchStatusStrip(
       "backtestStatusStrip",

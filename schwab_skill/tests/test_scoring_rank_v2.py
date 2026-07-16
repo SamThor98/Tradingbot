@@ -4,6 +4,7 @@ from core.scoring_rank_v2 import (
     apply_rank_v2_risk_caps,
     compute_rank_score_v2,
     rank_v2_from_signal_row,
+    score_percentile_threshold,
 )
 
 
@@ -11,6 +12,10 @@ def test_compute_rank_score_v2_volume_heavy() -> None:
     low_vol = compute_rank_score_v2(signal_score=70.0, pts_volume=5.0, pts_mirofish=0.0, exclude_52w=False)
     high_vol = compute_rank_score_v2(signal_score=70.0, pts_volume=18.0, pts_mirofish=0.0, exclude_52w=False)
     assert high_vol > low_vol
+
+
+def test_score_percentile_threshold_keeps_top_thirty_percent_boundary() -> None:
+    assert score_percentile_threshold([float(value) for value in range(1, 11)], 70) == 7.3
 
 
 def test_rank_v2_from_signal_row_uses_components() -> None:

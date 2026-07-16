@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-07-07
+updated: 2026-07-16
 tags: [frontend, routing, deep-links, contract]
 ---
 
@@ -66,6 +66,8 @@ Default landing: `operations` (Today).
 | `sec`, `seccompare` | `secCompareSection` | research |
 | `portfolio` | `portfolioSection` | research |
 | `risk`, `portfoliorisk` | `portfolioPanelRisk` | research (opens Portfolio → Risk sub-tab) |
+| `book` | `portfolioPanelBook` | research (opens Portfolio → Book sub-tab) |
+| `book-calendar`, `book-tax`, `book-journal` | matching deeplink anchors | research (Book → Calendar / Tax / Journal) |
 | `calibration` | `calibrationSection` | diagnostics |
 | `diagnostics`, `health` | `healthRibbon` | diagnostics |
 | `connect`, `onboarding`, `setup` | `onboardingSection` | settings |

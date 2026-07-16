@@ -674,6 +674,35 @@ def run_scheduler() -> None:
             except Exception as e:
                 log.warning("Challenger scan failed: %s", e)
 
+    _last_book_snapshot_minute: int | None = None
+
+    def _run_book_eod_snapshot_if_scheduled() -> None:
+        """Post-close Book MTM snapshot (weekdays ~16:15 ET)."""
+        nonlocal _last_book_snapshot_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if now.weekday() >= 5:
+            return
+        if not (now.hour == 16 and now.minute == 15 and key != _last_book_snapshot_minute):
+            return
+        _last_book_snapshot_minute = key
+        try:
+            from core.book_service import capture_book_snapshot
+            from webapp.db import SessionLocal
+
+            db = SessionLocal()
+            try:
+                result = capture_book_snapshot(db, skill_dir=SKILL_DIR, user_id="local")
+                log.info(
+                    "Book EOD snapshot: ok=%s date=%s",
+                    result.get("ok"),
+                    result.get("snapshot_date"),
+                )
+            finally:
+                db.close()
+        except Exception as e:
+            log.warning("Book EOD snapshot failed: %s", e)
+
     schedule.every().minute.do(_run_morning_brief_if_scheduled)
     schedule.every().minute.do(_run_pead_warm_if_scheduled)
     schedule.every().minute.do(_run_signal_scan_if_scheduled)
@@ -683,6 +712,7 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_false_positive_report_if_scheduled)
     schedule.every().minute.do(_run_evolve_if_scheduled)
     schedule.every().minute.do(_run_challenger_if_scheduled)
+    schedule.every().minute.do(_run_book_eod_snapshot_if_scheduled)
     build_morning_brief()
 
     try:

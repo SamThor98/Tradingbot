@@ -24,7 +24,9 @@ Frozen metric names (do not rename — only add)
 
 from __future__ import annotations
 
+import atexit
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -35,7 +37,13 @@ LOG = logging.getLogger(__name__)
 
 _METRICS_FILE = "cockpit_observability_metrics.json"
 _ROLLING_WINDOW_DAYS = 45
+_FLUSH_DEBOUNCE_SEC = 1.0
 SKILL_DIR = Path(__file__).resolve().parent.parent
+
+_metrics_lock = threading.Lock()
+_metrics_cache: dict[str, dict[str, Any]] = {}
+_metrics_dirty: set[str] = set()
+_metrics_last_save: dict[str, float] = {}
 
 # Frozen metric name constants (import these; never hardcode the strings).
 M_REQUEST_LATENCY_MS = "schwab_request_latency_ms"
@@ -57,6 +65,53 @@ def _enabled(skill_dir: Path | None) -> bool:
 
 def _metrics_path(skill_dir: Path) -> Path:
     return skill_dir / _METRICS_FILE
+
+
+def _cache_key(path: Path) -> str:
+    return str(path.resolve())
+
+
+def _get_cached(path: Path) -> dict[str, Any]:
+    key = _cache_key(path)
+    with _metrics_lock:
+        if key not in _metrics_cache:
+            _metrics_cache[key] = _load(path)
+        return _metrics_cache[key]
+
+
+def flush_observability_metrics(skill_dir: Path | str | None = None, *, force: bool = True) -> None:
+    """Persist in-memory observability buckets (debounced writers call with force=True)."""
+    sd = Path(skill_dir or SKILL_DIR)
+    path = _metrics_path(sd)
+    key = _cache_key(path)
+    with _metrics_lock:
+        if key not in _metrics_dirty:
+            return
+        if not force:
+            last = _metrics_last_save.get(key, 0.0)
+            if time.monotonic() - last < _FLUSH_DEBOUNCE_SEC:
+                return
+        data = _metrics_cache.get(key)
+        if not isinstance(data, dict):
+            _metrics_dirty.discard(key)
+            return
+        _metrics_dirty.discard(key)
+    _save(path, data)
+    with _metrics_lock:
+        _metrics_last_save[key] = time.monotonic()
+
+
+def _flush_all_observability_metrics() -> None:
+    with _metrics_lock:
+        keys = list(_metrics_dirty)
+    for key in keys:
+        try:
+            flush_observability_metrics(Path(key).parent, force=True)
+        except Exception:
+            pass
+
+
+atexit.register(_flush_all_observability_metrics)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -103,16 +158,19 @@ def _prune(data: dict[str, Any]) -> None:
 
 
 def _mutate(skill_dir: Path | None, fn: Any) -> None:
-    """Load → mutate today's bucket → prune → save, guarding all failures."""
+    """Load → mutate today's bucket → prune → debounced save, guarding all failures."""
     if not _enabled(skill_dir):
         return
     try:
         sd = Path(skill_dir or SKILL_DIR)
         path = _metrics_path(sd)
-        data = _load(path)
+        data = _get_cached(path)
         fn(_today_bucket(data))
         _prune(data)
-        _save(path, data)
+        key = _cache_key(path)
+        with _metrics_lock:
+            _metrics_dirty.add(key)
+        flush_observability_metrics(sd, force=False)
     except Exception as exc:  # pragma: no cover
         LOG.debug("observability emit skipped: %s", exc)
 
@@ -263,7 +321,8 @@ def _prom_set(name: str, value: float, **labels: Any) -> None:  # pragma: no cov
 def get_observability_summary(skill_dir: Path | str | None = None, days: int = 1) -> dict[str, Any]:
     """Aggregate the rolling window into a flat, dashboard-friendly summary."""
     sd = Path(skill_dir or SKILL_DIR)
-    data = _load(_metrics_path(sd))
+    flush_observability_metrics(sd, force=True)
+    data = _get_cached(_metrics_path(sd))
     all_days = data.get("days", {})
     day_keys = sorted(all_days.keys())
     take = day_keys[-max(1, int(days)) :] if day_keys else []

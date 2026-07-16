@@ -31,6 +31,7 @@ tags: [wiki, index, catalog]
 - [[database-schema]] — SQLAlchemy tables and relationships
 - [[discord-integration]] — Webhook alerts and notification types
 - [[webapp-dashboard]] — FastAPI local dashboard
+- [[portfolio-book]] — Portfolio Book: P/L calendar, tax estimate, journal
 - [[saas-api]] — Multi-tenant production API
 - [[static-module-layout]] — Frontend ES module map (`/static/modules/*.js`)
 

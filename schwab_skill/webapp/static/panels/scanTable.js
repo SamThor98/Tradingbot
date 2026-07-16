@@ -267,6 +267,61 @@ function getScanReasonText(rawSig = {}) {
   return status === "kept" ? "" : formatNearMissSummary(status, reasons);
 }
 
+function getBreakoutAbovePct(row = {}) {
+  const shadow = row.entry_timing_shadow || row.entry_timing_at_stage2 || {};
+  return optionalNum(shadow.breakout_buffer_pct);
+}
+
+function formatBreakoutAboveLabel(row = {}) {
+  const buf = getBreakoutAbovePct(row);
+  if (buf === null) return "";
+  return `${(buf * 100).toFixed(1)}% above pivot`;
+}
+
+function renderStagePill(row = {}) {
+  if (row.breakout_confirmed) {
+    return `<span class="scan-stage-pill" title="Stage 2 breakout confirmed">S2</span>`;
+  }
+  return `<span class="scan-stage-pill muted" title="Stage 2 setup (breakout pending)">S2</span>`;
+}
+
+function buildQualifiedReasonText(row = {}, rawSig = {}) {
+  const parts = [];
+  const bufLabel = formatBreakoutAboveLabel(row);
+  if (bufLabel) parts.push(bufLabel);
+  if (row.breakout_confirmed) parts.push("Breakout confirmed");
+  const vol = optionalNum(row.volume_ratio);
+  if (vol !== null && vol >= 1.05) parts.push(`${vol.toFixed(1)}x volume`);
+  const flagged = optionalNum(row.flagged_days ?? row.days_flagged);
+  if (flagged !== null && flagged > 0) parts.push(`${flagged}d flagged`);
+  const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "");
+  if (topLive && topLive !== "—") parts.push(topLive);
+  const rank = optionalNum(getRankScore(row));
+  if (rank !== null) parts.push(`rank ${rank.toFixed(1)}`);
+  const filterReasons = getScanReasonText(rawSig);
+  if (filterReasons) parts.push(filterReasons);
+  return parts.length ? parts.join(" · ") : "Qualified breakout";
+}
+
+function renderPriceCell(row = {}) {
+  const price = row.price || row.current_price;
+  const priceText = price ? formatMoney(price) : "—";
+  const above = formatBreakoutAboveLabel(row);
+  const aboveHtml = above
+    ? `<span class="scan-above-pivot" title="Distance above prior-day high / pivot">${escapeHtml(above)}</span>`
+    : "";
+  return `${priceText}${aboveHtml}`;
+}
+
+function renderScanRowActions({ idx, ticker, isKept, viewKey = "data-scan-view" }) {
+  const chartBtn = `<button type="button" class="scan-row-action" ${viewKey}="${idx}" title="Open chart for ${safeText(ticker)}">Chart</button>`;
+  const briefBtn = `<button type="button" class="scan-row-action" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>`;
+  const stageBtn = isKept
+    ? `<button type="button" class="scan-row-action scan-row-action--primary" data-idx="${idx}" title="Stage ${safeText(ticker)} as pending">Stage</button>`
+    : `<button type="button" class="scan-row-action" disabled title="Filtered — cannot stage">Stage</button>`;
+  return `<div class="scan-row-actions">${chartBtn}${stageBtn}${briefBtn}</div>`;
+}
+
 function getScanSortValue(rawSig, field) {
   // Returns either a finite Number (for numeric sort) or a lowercase string
   // (for text/label sort). Returning `null` means "missing"; missing values
@@ -542,18 +597,14 @@ export function renderScanRows(signalsInput = []) {
           <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
           <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
           <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
-          <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
+          <td class="scan-col-secondary">${renderPriceCell(row)}</td>
           <td>${renderRankScoreCell(row)}</td>
           <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
           <td>${renderConfidenceCell(row, conf)}</td>
           <td class="scan-col-advanced">${convictionText}</td>
           <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
           <td class="scan-col-secondary near-miss-reason-cell">${reasonCell}</td>
-          <td class="scan-actions-cell">
-            <button type="button" class="btn small secondary" data-near-miss-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
-            <button type="button" class="btn small secondary" disabled title="Near-miss candidates cannot be staged in this mode.">Stage</button>
-            <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
-          </td>
+          <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept: false, viewKey: "data-near-miss-view" })}</td>
         `;
         nearMissBody.appendChild(tr);
       });
@@ -621,27 +672,24 @@ export function renderScanRows(signalsInput = []) {
     tr.setAttribute("data-filter-status", filterStatus);
     if (!isKept) tr.classList.add("scan-row--filtered");
     tr.tabIndex = 0;
-    const stageBtn = isKept
-      ? `<button type="button" class="btn small secondary" data-idx="${idx}" title="Stage ${safeText(ticker)} as a pending trade">Stage</button>`
-      : `<button type="button" class="btn small secondary" disabled title="Filtered candidates cannot be staged. Adjust gates if you want this signal in the trade queue.">Stage</button>`;
+    const reasonText = buildQualifiedReasonText(row, sig);
+    const reasonCell = reasonText
+      ? `<span class="scan-qualified-reason" title="${escapeHtml(reasonText)}">${escapeHtml(reasonText)}</span>`
+      : `<span class="muted">—</span>`;
     tr.innerHTML = `
-      <td><strong>${safeText(ticker)}</strong> ${renderTradeableVerdict(sig)}</td>
+      <td><strong>${safeText(ticker)}</strong>${renderStagePill(row)} ${renderTradeableVerdict(sig)}</td>
       <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
       <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
       <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
       <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
-      <td class="scan-col-secondary">${row.price || row.current_price ? formatMoney(row.price || row.current_price) : "—"}</td>
+      <td class="scan-col-secondary">${renderPriceCell(row)}</td>
       <td>${renderRankScoreCell(row)}</td>
       <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
       <td>${renderConfidenceCell(row, conf)}</td>
       <td class="scan-col-advanced">${convictionText}</td>
       <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
-      <td class="scan-col-secondary muted">—</td>
-      <td class="scan-actions-cell">
-        <button type="button" class="btn small secondary" data-scan-view="${idx}" title="Open chart and scoring detail for ${safeText(ticker)}">Chart</button>
-        ${stageBtn}
-        <button type="button" class="btn small secondary" data-scan-brief="${idx}" title="Open decision brief for ${safeText(ticker)}">Brief</button>
-      </td>
+      <td class="scan-col-secondary scan-qualified-reason-cell">${reasonCell}</td>
+      <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept })}</td>
     `;
     body.appendChild(tr);
   });

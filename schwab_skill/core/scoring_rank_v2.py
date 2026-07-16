@@ -16,6 +16,23 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, value))
 
 
+def score_percentile_threshold(values: list[float], min_percentile: int) -> float:
+    """Return the score at ``min_percentile`` using linear interpolation."""
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    quantile = max(0.0, min(1.0, float(min_percentile) / 100.0))
+    position = quantile * (len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
 def _signal_for_rank(
     *,
     signal_score: float,

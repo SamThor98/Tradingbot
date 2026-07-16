@@ -74,3 +74,11 @@ def test_scan_live_sort_key_defaults_to_signal_score(monkeypatch: pytest.MonkeyP
 
     clear_env_cache()
     assert get_scan_live_sort_key() == "signal_score"
+
+
+def test_scan_live_sort_key_accepts_rank_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCAN_LIVE_SORT_KEY", "rank_score_v2")
+    from config import clear_env_cache, get_scan_live_sort_key
+
+    clear_env_cache()
+    assert get_scan_live_sort_key() == "rank_score_v2"

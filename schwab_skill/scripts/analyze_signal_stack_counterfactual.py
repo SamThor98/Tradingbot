@@ -45,6 +45,7 @@ ART = SKILL_DIR / "validation_artifacts"
 DEFAULT_RUN_ID = "control_legacy_aug"
 DEFAULT_EXIT_PROFILE = "exit_grace_t15_h40"
 DEFAULT_MIN_BREAKOUT_BUFFER = 0.01
+DEFAULT_RANK_V2_PERCENTILE = 75
 PROMOTION_PF_MEAN = 1.20
 PROMOTION_WORST_ERA_PF = 1.00
 
@@ -77,7 +78,29 @@ def _summarize_stack(df: pd.DataFrame, *, label: str) -> dict[str, Any]:
         "passes_pf_mean_gate": pf_mean >= PROMOTION_PF_MEAN,
         "passes_worst_era_gate": worst_era_pf >= PROMOTION_WORST_ERA_PF,
         "passes_promotion_gates": pf_mean >= PROMOTION_PF_MEAN and worst_era_pf >= PROMOTION_WORST_ERA_PF,
+        "per_era_pf": {
+            str(era): _cohort_stats(group).get("pf")
+            for era, group in df.groupby("era")
+        },
     }
+
+
+def _rank_v2_percentile_filter(
+    df: pd.DataFrame,
+    min_percentile: int,
+) -> tuple[pd.DataFrame, float | None]:
+    from core.scoring_rank_v2 import score_percentile_threshold
+
+    if "rank_score_v2" not in df.columns:
+        return df.iloc[0:0].copy(), None
+    scored = df[df["rank_score_v2"].notna()].copy()
+    if len(scored) < 3:
+        return scored.iloc[0:0].copy(), None
+    threshold = score_percentile_threshold(
+        scored["rank_score_v2"].astype(float).tolist(),
+        min_percentile,
+    )
+    return scored[scored["rank_score_v2"].astype(float) >= threshold].copy(), threshold
 
 
 def _replay_exit_grace_rows(
@@ -181,6 +204,12 @@ def main() -> int:
         default=DEFAULT_MIN_BREAKOUT_BUFFER,
         help="Breakout buffer threshold for entry filter (default: 0.01).",
     )
+    parser.add_argument(
+        "--rank-v2-percentile",
+        type=int,
+        default=DEFAULT_RANK_V2_PERCENTILE,
+        help="Rank-v2 percentile trim evaluated after the promoted stack (default: 75).",
+    )
     args = parser.parse_args()
 
     entry_df = _load_replay_cache(args.run_id)
@@ -210,6 +239,19 @@ def main() -> int:
     stack["retention_pct"] = round(100 * len(kept) / max(1, len(merged)), 1)
     stack["min_breakout_buffer_pct"] = args.min_breakout_buffer
 
+    rank_v2_kept, rank_v2_threshold = _rank_v2_percentile_filter(
+        kept,
+        args.rank_v2_percentile,
+    )
+    rank_v2_label = f"exit_grace_breakout_buffer_rank_v2_p{args.rank_v2_percentile}"
+    rank_v2_stack = _summarize_stack(
+        rank_v2_kept,
+        label=rank_v2_label,
+    )
+    rank_v2_stack["retention_pct"] = round(100 * len(rank_v2_kept) / max(1, len(kept)), 1)
+    rank_v2_stack["rank_v2_min_percentile"] = args.rank_v2_percentile
+    rank_v2_stack["rank_v2_threshold"] = rank_v2_threshold
+
     legacy = _summarize_stack(legacy_df, label="legacy_baseline")
     legacy["retention_pct"] = 100.0
 
@@ -217,6 +259,7 @@ def main() -> int:
         "legacy_baseline": legacy,
         "exit_grace_all": grace_all,
         "exit_grace_breakout_buffer_0.010": stack,
+        rank_v2_label: rank_v2_stack,
     }
     recommendation = _pick_recommendation(scenarios)
 
@@ -264,7 +307,12 @@ def main() -> int:
 
     print(f"Wrote {out_json}")
     print(f"Wrote {out_md}")
-    for key in ("legacy_baseline", "exit_grace_all", "exit_grace_breakout_buffer_0.010"):
+    for key in (
+        "legacy_baseline",
+        "exit_grace_all",
+        "exit_grace_breakout_buffer_0.010",
+        rank_v2_label,
+    ):
         row = scenarios[key]
         print(
             f"{key}: pf_mean={row.get('pf_mean')} worst={row.get('worst_era_pf')} "

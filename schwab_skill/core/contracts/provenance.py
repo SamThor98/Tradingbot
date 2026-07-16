@@ -12,7 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-DataSource = Literal["schwab", "yfinance", "polygon", "cache", "computed", "unknown"]
+# "manual" = user-entered data (manual portfolio book), never a vendor feed.
+DataSource = Literal["schwab", "yfinance", "polygon", "cache", "computed", "manual", "unknown"]
 ConfidenceLevel = Literal["high", "medium", "low"]
 
 

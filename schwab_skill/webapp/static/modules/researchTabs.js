@@ -27,6 +27,10 @@ const SECTION_TO_TAB = Object.freeze({
   // Portfolio sub-tab panels live inside portfolioSection.
   portfolioPanelRisk: "portfolio",
   portfolioPanelPositions: "portfolio",
+  portfolioPanelBook: "portfolio",
+  "book-calendar": "portfolio",
+  "book-tax": "portfolio",
+  "book-journal": "portfolio",
 });
 
 export function researchTabForSection(sectionId) {

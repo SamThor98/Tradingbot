@@ -726,8 +726,13 @@ def _quality_mode_should_filter(reasons: list[str], skill_dir: Path) -> bool:
 
     if not reasons:
         return False
-    # Breakout volume is a hard gate: always filter regardless of mode
-    if "weak_breakout_volume" in reasons:
+    mode = get_quality_gates_mode(skill_dir)
+    # Shadow/off must never hard-drop — match backtest._quality_mode_should_filter.
+    # Stage 2c/2d evidence collection depends on this (rank-v2 shadow samples).
+    if mode in {"off", "shadow"}:
+        return False
+    # Breakout volume is a hard gate only when soft/hard enforcement is active.
+    if "weak_breakout_volume" in reasons and mode in {"soft", "hard"}:
         return True
     forensic_reasons = {
         "forensic_sloan_high",
@@ -742,9 +747,6 @@ def _quality_mode_should_filter(reasons: list[str], skill_dir: Path) -> bool:
             reasons = [r for r in reasons if r not in forensic_reasons]
             if not reasons:
                 return False
-    mode = get_quality_gates_mode(skill_dir)
-    if mode in {"off", "shadow"}:
-        return False
     if mode == "hard":
         return True
     soft_min = max(1, int(get_quality_soft_min_reasons(skill_dir)))
@@ -1684,19 +1686,9 @@ def _accumulate_entry_shadow_stage2_diagnostics(
 
 def _score_quantile_threshold(values: list[float], min_percentile: int) -> float:
     """Return the score at ``min_percentile`` (0-100) using linear interpolation."""
-    if not values:
-        return 0.0
-    ordered = sorted(float(v) for v in values)
-    if len(ordered) == 1:
-        return ordered[0]
-    q = max(0.0, min(1.0, float(min_percentile) / 100.0))
-    pos = q * (len(ordered) - 1)
-    lo = int(pos)
-    hi = min(lo + 1, len(ordered) - 1)
-    if lo == hi:
-        return ordered[lo]
-    weight = pos - lo
-    return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
+    from core.scoring_rank_v2 import score_percentile_threshold
+
+    return score_percentile_threshold(values, min_percentile)
 
 
 def _apply_signal_edge_shadow_diagnostics(
@@ -1802,6 +1794,60 @@ def _apply_signal_edge_shadow_diagnostics(
         diagnostics.get("rank_filter_would_drop_any", 0) or 0
     ) + would_drop_any
     diagnostics["rank_filter_shadow"] = shadow_meta
+
+
+def _apply_rank_v2_percentile_filter(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    skill_dir: Path,
+) -> list[dict[str, Any]]:
+    """Observe or enforce the rank-v2 p70 trim on the post-Stage-B cohort."""
+    from config import get_rank_filter_shadow_min_percentile_rank_v2, get_rank_filter_v2_mode
+    from core.scoring_rank_v2 import rank_v2_from_signal_row, score_percentile_threshold
+
+    mode = get_rank_filter_v2_mode(skill_dir)
+    min_percentile = get_rank_filter_shadow_min_percentile_rank_v2(skill_dir)
+    diagnostics["rank_filter_v2_mode"] = mode
+    diagnostics["rank_filter_v2_min_percentile"] = min_percentile
+    if mode == "off" or not signals:
+        return signals
+
+    scored: list[tuple[dict[str, Any], float]] = []
+    for signal in signals:
+        raw = signal.get("rank_score_v2")
+        if raw is None:
+            try:
+                raw = rank_v2_from_signal_row(signal, skill_dir=skill_dir)
+                signal["rank_score_v2"] = raw
+            except Exception:
+                continue
+        try:
+            scored.append((signal, float(raw)))
+        except (TypeError, ValueError):
+            continue
+
+    diagnostics["rank_filter_v2_evaluated"] = len(scored)
+    if len(scored) < 3:
+        diagnostics["rank_filter_v2_skipped"] = "insufficient_scores"
+        return signals
+
+    threshold = score_percentile_threshold([score for _, score in scored], min_percentile)
+    diagnostics["rank_filter_v2_threshold"] = round(threshold, 4)
+    would_drop_ids = {id(signal) for signal, score in scored if score < threshold}
+    diagnostics["rank_filter_v2_would_drop"] = len(would_drop_ids)
+    for signal, score in scored:
+        signal["rank_filter_v2"] = {
+            "mode": mode,
+            "score": round(score, 4),
+            "threshold": round(threshold, 4),
+            "would_drop": id(signal) in would_drop_ids,
+        }
+
+    if mode != "live":
+        return signals
+    kept = [signal for signal in signals if id(signal) not in would_drop_ids]
+    diagnostics["rank_filter_v2_dropped"] = len(signals) - len(kept)
+    return kept
 
 
 def _apply_post_stage_b_chain(
@@ -2081,6 +2127,12 @@ def _apply_post_stage_b_chain(
         _apply_signal_edge_shadow_diagnostics(signals, diagnostics, skill_dir)
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Signal-edge shadow diagnostics skipped: %s", e)
+    try:
+        before_rank_v2 = list(signals)
+        signals = _apply_rank_v2_percentile_filter(signals, diagnostics, skill_dir)
+        _tag_shortlist_drop(before_rank_v2, signals, "filtered_rank_v2")
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Rank-v2 percentile filter skipped: %s", e)
     signals.sort(
         key=lambda s: s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
         reverse=True,

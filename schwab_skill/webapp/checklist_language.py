@@ -31,6 +31,30 @@ def _checklist_lines(checklist: dict[str, Any]) -> list[dict[str, str]]:
                 "value_plain": f"About {est}% of your max account cap for this trade.",
             }
         )
+    sizing_rationale = str(checklist.get("position_sizing_rationale") or "").strip()
+    if sizing_rationale:
+        lines.append({"label": "Sizing rationale", "value_plain": sizing_rationale})
+    rec_usd = checklist.get("recommended_notional_usd")
+    staged_usd = checklist.get("estimated_notional_usd")
+    if rec_usd is not None:
+        staged_part = f" Staged trade: ~${float(staged_usd):,.0f}." if staged_usd is not None else ""
+        lines.append(
+            {
+                "label": "Recommended budget",
+                "value_plain": f"~${int(rec_usd):,} notional per sizing policy.{staged_part}",
+            }
+        )
+    sector_etf = str(checklist.get("portfolio_sector_etf") or "").strip()
+    sector_now = checklist.get("portfolio_sector_weight_pct")
+    sector_after = checklist.get("portfolio_sector_weight_after_pct")
+    if sector_etf and sector_now is not None:
+        after_txt = f" → {sector_after}% after this buy" if sector_after is not None else ""
+        lines.append(
+            {
+                "label": "Sector exposure",
+                "value_plain": f"{sector_etf} currently {sector_now}% of portfolio{after_txt}.",
+            }
+        )
     max_d = checklist.get("max_daily_trades")
     live_t = checklist.get("live_trades_today")
     if max_d is not None:

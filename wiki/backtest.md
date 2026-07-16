@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/backtest.py
 created: 2026-04-17
-updated: 2026-04-18
+updated: 2026-07-13
 tags: [backtest, validation, scanner, portfolio-sim]
 ---
 
@@ -105,6 +105,15 @@ artifacts, not strategy risk.
   PF regression test feeding [[promotion-playbook]].
 - `scripts/run_multi_era_backtest_schwab_only.py` — long-horizon era
   sweep, chunked + crash-resumable.
+- `scripts/phase2_edge_audit.py` — defaults to the complete augmented
+  `stage2_only_aug` and `control_legacy_aug` five-era runs. The older
+  non-augmented `stage2_only` run contains only one era and must not be used
+  as the default promotion baseline.
+
+The 2026-07-13 complete bare-signal audit loaded 16,423 trades and returned
+`iterate_with_caution` (PF mean 1.162, worst-era PF 1.032). `bear_rates` was
+the weakest PF era at 1.0323. The promoted breakout-buffer plus exit-grace
+counterfactual remained above its gates (PF mean 1.2118, worst-era PF 1.0368).
 
 ## Related Pages
 
@@ -115,4 +124,4 @@ artifacts, not strategy risk.
 
 ---
 
-*Last compiled: 2026-04-17*
+*Last compiled: 2026-07-13*

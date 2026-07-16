@@ -9,6 +9,11 @@ from typing import Any
 
 DEFAULT_RUN_ID = "control_legacy_aug"
 DEFAULT_WOULD_FILTER_BAND = (35.0, 65.0)
+# Session-level live rates are compared to offline replay *daily* distribution,
+# not the decade pooled mean (~58%). See compute_empirical_would_filter_band().
+EMPIRICAL_BAND_QUANTILES = (0.10, 0.95)
+MIN_DAILY_REPLAY_SAMPLES = 10
+REPLAY_CACHE_BASENAME = "entry_timing_replay_cache_{run_id}.json"
 EXPECTED_EXPERIMENT_PROFILE = "breakout_buffer_only_0.010"
 MIN_STAGE_A_DEFAULT = 10
 STAGE2B_MIN_PASS_SCANS = 2
@@ -42,10 +47,113 @@ def load_validation_artifact(skill_dir: Path, name: str) -> dict[str, Any] | Non
     return payload if isinstance(payload, dict) else None
 
 
+def _percentile(sorted_vals: list[float], quantile: float) -> float:
+    if not sorted_vals:
+        return 0.0
+    q = min(1.0, max(0.0, quantile))
+    idx = (len(sorted_vals) - 1) * q
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return sorted_vals[lo]
+    frac = idx - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
+
+
+def compute_empirical_would_filter_band(
+    skill_dir: Path,
+    run_id: str = DEFAULT_RUN_ID,
+    *,
+    low_quantile: float = EMPIRICAL_BAND_QUANTILES[0],
+    high_quantile: float = EMPIRICAL_BAND_QUANTILES[1],
+    min_daily_samples: int = MIN_DAILY_REPLAY_SAMPLES,
+    min_breakout_buffer_pct: float = 0.01,
+) -> dict[str, Any]:
+    """Derive a session-honest would-filter band from offline replay daily rates."""
+    path = skill_dir / "validation_artifacts" / REPLAY_CACHE_BASENAME.format(run_id=run_id)
+    if not path.exists():
+        return {
+            "band_low": DEFAULT_WOULD_FILTER_BAND[0],
+            "band_high": DEFAULT_WOULD_FILTER_BAND[1],
+            "band_source": "default_fixed",
+            "replay_cache_path": str(path),
+        }
+
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "band_low": DEFAULT_WOULD_FILTER_BAND[0],
+            "band_high": DEFAULT_WOULD_FILTER_BAND[1],
+            "band_source": "default_fixed",
+            "replay_cache_path": str(path),
+            "error": str(exc),
+        }
+
+    if not isinstance(rows, list) or not rows:
+        return {
+            "band_low": DEFAULT_WOULD_FILTER_BAND[0],
+            "band_high": DEFAULT_WOULD_FILTER_BAND[1],
+            "band_source": "default_fixed",
+            "replay_cache_path": str(path),
+            "error": "empty replay cache",
+        }
+
+    daily: dict[str, list[bool]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry_date = row.get("entry_date")
+        if not entry_date:
+            continue
+        entry_iso = str(entry_date)[:10]
+        buffer_pct = _safe_float(row.get("breakout_buffer_pct"))
+        if buffer_pct is None:
+            continue
+        daily.setdefault(entry_iso, []).append(buffer_pct < min_breakout_buffer_pct)
+
+    daily_rates: list[float] = []
+    for flags in daily.values():
+        if len(flags) < min_daily_samples:
+            continue
+        daily_rates.append(sum(1 for flag in flags if flag) / len(flags) * 100.0)
+
+    if len(daily_rates) < 5:
+        return {
+            "band_low": DEFAULT_WOULD_FILTER_BAND[0],
+            "band_high": DEFAULT_WOULD_FILTER_BAND[1],
+            "band_source": "default_fixed",
+            "replay_cache_path": str(path),
+            "daily_rate_days": len(daily_rates),
+            "error": "insufficient daily replay samples",
+        }
+
+    daily_rates.sort()
+    band_low = _percentile(daily_rates, low_quantile)
+    band_high = _percentile(daily_rates, high_quantile)
+    pooled_wf = sum(sum(flags) for flags in daily.values()) / sum(len(flags) for flags in daily.values()) * 100.0
+
+    return {
+        "band_low": round(band_low, 1),
+        "band_high": round(band_high, 1),
+        "band_source": "empirical_replay_daily",
+        "band_quantiles": [low_quantile, high_quantile],
+        "min_daily_samples": min_daily_samples,
+        "replay_cache_path": str(path),
+        "replay_rows": len(rows),
+        "daily_rate_days": len(daily_rates),
+        "pooled_would_filter_pct": round(pooled_wf, 1),
+        "daily_rate_p50": round(_percentile(daily_rates, 0.50), 1),
+        "daily_rate_p90": round(_percentile(daily_rates, 0.90), 1),
+    }
+
+
 def offline_entry_timing_targets(
     entry_artifact: dict[str, Any],
     *,
-    band: tuple[float, float] = DEFAULT_WOULD_FILTER_BAND,
+    band: tuple[float, float] | None = None,
+    skill_dir: Path | None = None,
+    run_id: str = DEFAULT_RUN_ID,
 ) -> dict[str, Any]:
     """Extract offline experiment targets from entry-timing counterfactual JSON."""
     rec = entry_artifact.get("recommendation") if isinstance(entry_artifact.get("recommendation"), dict) else {}
@@ -68,12 +176,34 @@ def offline_entry_timing_targets(
     if would_filter_pct is None and replayed > 0:
         would_filter_pct = replay_would_filter / replayed * 100.0
 
+    band_meta: dict[str, Any]
+    if band is not None:
+        band_meta = {
+            "band_low": band[0],
+            "band_high": band[1],
+            "band_source": "explicit",
+        }
+    elif skill_dir is not None:
+        band_meta = compute_empirical_would_filter_band(skill_dir, run_id)
+    else:
+        band_meta = {
+            "band_low": DEFAULT_WOULD_FILTER_BAND[0],
+            "band_high": DEFAULT_WOULD_FILTER_BAND[1],
+            "band_source": "default_fixed",
+        }
+
     return {
         "recommended_action": rec.get("action"),
         "retention_pct": retention_pct,
         "would_filter_pct_offline": would_filter_pct,
-        "would_filter_band_low": band[0],
-        "would_filter_band_high": band[1],
+        "would_filter_band_low": band_meta["band_low"],
+        "would_filter_band_high": band_meta["band_high"],
+        "band_source": band_meta.get("band_source"),
+        "band_quantiles": band_meta.get("band_quantiles"),
+        "pooled_would_filter_pct": band_meta.get("pooled_would_filter_pct"),
+        "daily_rate_days": band_meta.get("daily_rate_days"),
+        "daily_rate_p50": band_meta.get("daily_rate_p50"),
+        "daily_rate_p90": band_meta.get("daily_rate_p90"),
         "expected_profile": EXPECTED_EXPERIMENT_PROFILE,
         "delta_early_stopout_pp": _safe_float((experiment_row or {}).get("delta_early_stopout_pp")),
         "delta_overlap_pf_mean": _safe_float((experiment_row or {}).get("delta_overlap_pf_mean")),
@@ -226,16 +356,20 @@ def compare_live_to_offline(
     if live_pct is None:
         errors.append("live would_filter_pct unavailable (stage_a_candidates=0)")
     elif not (band_low <= live_pct <= band_high):
-        offline_hint = f"{offline_pct:.1f}%" if offline_pct is not None else "offline target"
+        pooled = _safe_float(offline.get("pooled_would_filter_pct"))
+        offline_hint = f"pooled {pooled:.1f}%" if pooled is not None else (
+            f"{offline_pct:.1f}%" if offline_pct is not None else "offline target"
+        )
         errors.append(
             f"live would_filter_pct={live_pct:.1f}% outside band [{band_low:.0f},{band_high:.0f}] "
-            f"(offline ~{offline_hint})"
+            f"({offline_hint})"
         )
 
     delta_pp: float | None = None
     if live_pct is not None and offline_pct is not None:
         delta_pp = live_pct - offline_pct
-        if abs(delta_pp) > 20.0 and not errors:
+        # Pooled offline mean is not a session comparator when live enforcement is active.
+        if abs(delta_pp) > 20.0 and not errors and rate_source != "live_enforcement":
             warnings.append(f"live vs offline would-filter delta {delta_pp:+.1f}pp exceeds 20pp soft limit")
 
     if errors:
@@ -352,7 +486,7 @@ def build_live_entry_shadow_compare_report(
     if entry_artifact is None:
         return None
 
-    offline = offline_entry_timing_targets(entry_artifact)
+    offline = offline_entry_timing_targets(entry_artifact, skill_dir=skill_dir, run_id=run_id)
     live = extract_live_entry_shadow_metrics(diagnostics)
     meta = dict(live_meta or {})
     if meta.get("scan_at") and not live.get("scan_at"):

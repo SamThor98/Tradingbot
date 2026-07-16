@@ -19,6 +19,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
@@ -55,6 +56,23 @@ def _quiet_noisy_yfinance_logging() -> None:
 _quiet_noisy_yfinance_logging()
 
 
+def _atomic_replace(src: Path, dst: Path, *, max_attempts: int = 5) -> None:
+    """``os.replace`` with short backoff for Windows / sync-folder file locks."""
+    last_exc: OSError | None = None
+    for attempt in range(max_attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            if attempt + 1 >= max_attempts:
+                break
+            time.sleep(0.05 * (2**attempt))
+    if last_exc is not None:
+        raise last_exc
+    os.replace(src, dst)
+
+
 def atomic_write_json(
     path: Path | str,
     data: Any,
@@ -85,7 +103,7 @@ def atomic_write_json(
                 os.fsync(fh.fileno())
             except OSError:
                 pass
-        os.replace(tmp_path, target)
+        _atomic_replace(tmp_path, target)
     except Exception:
         try:
             if tmp_path.exists():
@@ -118,7 +136,7 @@ def atomic_write_text(
                 os.fsync(fh.fileno())
             except OSError:
                 pass
-        os.replace(tmp_path, target)
+        _atomic_replace(tmp_path, target)
     except Exception:
         try:
             if tmp_path.exists():

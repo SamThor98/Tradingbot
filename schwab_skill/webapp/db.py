@@ -184,3 +184,12 @@ engine = create_engine(DATABASE_URL, json_serializer=_json_serializer, **engine_
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+def get_db():
+    """FastAPI dependency: yield a SessionLocal and always close it."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+

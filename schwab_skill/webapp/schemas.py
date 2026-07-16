@@ -102,3 +102,23 @@ class AnalyticsEventPayload(BaseModel):
     event: str = Field(min_length=1, max_length=64)
     properties: dict[str, Any] = Field(default_factory=dict)
 
+
+class ManualPositionRow(BaseModel):
+    """One user-entered holding: ticker + share count (long-only)."""
+
+    ticker: str = Field(min_length=1, max_length=16)
+    qty: float = Field(gt=0)
+
+
+class ManualPortfolioBody(BaseModel):
+    """Manual (non-Schwab) portfolio: priced server-side into the risk pack.
+
+    Position count is capped to bound the per-request market-data fan-out on
+    the public manual endpoints.
+    """
+
+    positions: list[ManualPositionRow] = Field(min_length=1, max_length=15)
+    cash: float | None = Field(default=None, ge=0)
+    lookback_days: int | None = Field(default=None, ge=20, le=756)
+    force: bool = False
+

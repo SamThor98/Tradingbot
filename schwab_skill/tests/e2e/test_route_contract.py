@@ -50,6 +50,8 @@ ALIAS_CASES = [
     ("scan", "scanSection"),
     ("health", "healthRibbon"),
     ("calibration", "calibrationSection"),
+    ("book", "portfolioPanelBook"),
+    ("book-calendar", "book-calendar"),
 ]
 
 

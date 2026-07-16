@@ -21,6 +21,8 @@ import { state } from "../modules/state.js";
 import { applyFreshness, markUnavailable, clearUnavailable } from "../modules/freshness.js";
 import { setResearchPanelStatus } from "../modules/researchStatus.js";
 import { buildOperatorAlertHtml } from "../modules/asyncState.js";
+import { getPortfolioSource, renderManualPositionsPanel, loadManualBook } from "./portfolioManual.js";
+import { openBookJournalForSymbol } from "./portfolioBook.js";
 
 function paintPortfolioSurface(stateName, title, detail, extras = {}) {
   return setResearchPanelStatus({
@@ -44,6 +46,26 @@ export async function refreshPortfolio() {
   const body = document.getElementById("portfolioBody");
   const meta = document.getElementById("portfolioMeta");
   if (!body) return;
+  // Manual source: the editor grid owns the Positions panel — no Schwab fetch.
+  if (getPortfolioSource() === "manual") {
+    renderManualPositionsPanel();
+    const tickers = loadManualBook().positions.filter((p) => p.ticker).length;
+    if (card) card.setAttribute("data-async-state", tickers ? "success" : "empty");
+    paintPortfolioSurface(
+      tickers ? "success" : "empty",
+      tickers ? `Manual book: ${tickers} ticker(s).` : "Manual book is empty.",
+      tickers
+        ? "Update prices for a valued snapshot, or open the Risk tab for the full risk dashboard."
+        : "Add tickers and share counts below — the book stays in this browser only.",
+      {
+        output: { value: tickers ? "Ready" : "None", sub: "manual book" },
+        data: { value: "Local", sub: "this browser" },
+        action: { value: tickers ? "Pass" : "Add", sub: tickers ? "risk optional" : "add tickers" },
+        confidence: tickers ? 70 : 0,
+      },
+    );
+    return;
+  }
   if (card) card.setAttribute("data-async-state", "loading");
   paintPortfolioSurface(
     "loading",
@@ -56,7 +78,7 @@ export async function refreshPortfolio() {
       confidence: 28,
     },
   );
-  body.innerHTML = `<tr><td colspan="7" class="muted">
+  body.innerHTML = `<tr><td colspan="8" class="muted">
     <div class="async-state async-state--loading">
       <span class="async-spinner" aria-hidden="true"></span>
       <span>Loading positions…</span>
@@ -84,7 +106,7 @@ export async function refreshPortfolio() {
         markUnavailable(meta, "signed out");
         meta.textContent = "Sign in to load positions.";
       }
-      body.innerHTML = `<tr><td colspan="7">
+      body.innerHTML = `<tr><td colspan="8">
         <div class="signed-out-banner" role="status">
           <strong>Signed out.</strong>
           <span>Sign in to load tenant-scoped portfolio data.</span>
@@ -107,7 +129,7 @@ export async function refreshPortfolio() {
     const hint = out.status === 409
       ? " Link Schwab account + market data in Settings, then retry."
       : "";
-    body.innerHTML = `<tr><td colspan="7">
+    body.innerHTML = `<tr><td colspan="8">
       ${buildOperatorAlertHtml({
         tone: "bad",
         headline: "Data unavailable",
@@ -142,7 +164,7 @@ export async function refreshPortfolio() {
     );
     body.innerHTML = `
       <tr>
-        <td colspan="7" class="muted">
+        <td colspan="8" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -184,7 +206,11 @@ export async function refreshPortfolio() {
       <td class="mono-nums">${Number.isFinite(weightPct) ? `${formatDecimal(weightPct, 1)}%` : "—"}</td>
       <td>${dayPlCell}</td>
       <td>${formatSignedDelta(p.pl_pct, (n) => formatDecimal(n, 2, "0.00"))}%</td>
+      <td><button type="button" class="btn small secondary" data-journal-sym="${safeText(p.symbol)}">Journal</button></td>
     `;
+    tr.querySelector("[data-journal-sym]")?.addEventListener("click", () => {
+      openBookJournalForSymbol(p.symbol);
+    });
     body.appendChild(tr);
   });
   // Provenance label: portfolio meta gets a freshness chip too.

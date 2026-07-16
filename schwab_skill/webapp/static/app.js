@@ -229,6 +229,7 @@ import {
   buildScanMeta,
   diagnosticsHeadline,
   renderScanDeltaStrip,
+  renderStaleScanBanner,
   renderDiagnostics as _renderDiagnosticsPanel,
 } from "./panels/scanDiagnostics.js";
 import { refreshPendingBoard as _refreshPendingBoardPanel } from "./panels/pendingBoard.js";
@@ -433,6 +434,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "secCompareSection",
     "portfolioSection",
     "portfolioPanelRisk",
+    "portfolioPanelBook",
     "performanceSection",
     "cockpitMergedPanel",
     "cockpitSection",
@@ -2615,6 +2617,7 @@ async function refreshStatus() {
   } catch (e) {
     console.warn("hydrateScanTableFromStatus", e);
   }
+  renderStaleScanBanner(status?.last_scan?.at);
   const marketTokenEl = document.getElementById("marketToken");
   const accountTokenEl = document.getElementById("accountToken");
   clearUnavailable(marketTokenEl);
@@ -2662,9 +2665,14 @@ async function refreshStatus() {
   if (validationAgeEl) {
     const failedSteps = (validation.failed_steps || []).slice(0, 2).join(", ");
     const failHint = failedSteps ? ` | failed: ${failedSteps}` : "";
-    validationAgeEl.textContent = validation.exists
-      ? `Updated ${timeAgo(validation.generated_at)}${failHint}`
-      : "No validation artifact yet.";
+    if (validation.exists) {
+      validationAgeEl.textContent = `Updated ${timeAgo(validation.generated_at)}${failHint}`;
+    } else if (state.publicConfig?.saas_mode) {
+      validationAgeEl.textContent =
+        "No validation artifact on this server (ephemeral deploy). Run validate_all locally or in CI.";
+    } else {
+      validationAgeEl.textContent = "No validation artifact yet — run: python scripts/validate_all.py --profile local";
+    }
   }
   if (validationProgressEl) {
     if (runStatus === "running") {
@@ -2833,9 +2841,13 @@ async function refreshStatus() {
       ribbonValidation.className = healthBadgeClass(validOk);
       ribbonValidation.textContent = validOk ? "Pass" : safeText(validation.run_status || "Fail");
     } else {
-      markUnavailable(ribbonValidation, "no validation artifact yet");
+      const noArtifactHint =
+        state.publicConfig?.saas_mode
+          ? "Run validate_all on a build host"
+          : "run python scripts/validate_all.py";
+      markUnavailable(ribbonValidation, `no artifact — ${noArtifactHint}`);
       ribbonValidation.className = "health-badge bg-slate-900";
-      ribbonValidation.textContent = "Unknown";
+      ribbonValidation.textContent = "No run";
     }
   }
   applyFreshness(document.getElementById("ribbonValidationFresh"), {
@@ -4555,6 +4567,14 @@ function connectSSE() {
     safeInit("setupLazySectionLoading", setupLazySectionLoading);
   }
   safeInit("updateActivityBadge", updateActivityBadge);
+  try {
+    if (!localStorage.getItem("tradingbot.keyboard_hint_shown")) {
+      localStorage.setItem("tradingbot.keyboard_hint_shown", "1");
+      showToast("Tip: press ? for shortcuts · Ctrl+K command palette · Ctrl+1..4 switch tabs", "info", 6500);
+    }
+  } catch {
+    /* ignore storage failures */
+  }
   logEvent({ kind: "system", severity: "info", message: "Dashboard loaded." });
 })();
 

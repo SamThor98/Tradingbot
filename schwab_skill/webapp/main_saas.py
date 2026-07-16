@@ -634,6 +634,7 @@ def public_config() -> ApiResponse:
         "runtime_mode": "saas",
         "ui_contract_version": "2026-04-webapp-stabilization",
         "scan_transport": "celery",
+        "backtest_transport": "celery",
         "sse_enabled": False,
         "manual_jwt_entry_enabled": _shared_manual_jwt(default=False),
         "platform_live_trading_kill_switch": plat_kill,
@@ -1603,6 +1604,7 @@ def _backtest_result_summary(result: Any) -> dict[str, Any] | None:
         "total_return_net_pct": result.get("total_return_net_pct"),
         "cagr_net_pct": result.get("cagr_net_pct"),
         "max_drawdown_net_pct": result.get("max_drawdown_net_pct"),
+        "profit_factor_net": result.get("profit_factor_net"),
     }
     findings = result.get("findings")
     if isinstance(findings, str) and findings.strip():

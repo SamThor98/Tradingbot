@@ -73,7 +73,7 @@ from .decision_dashboard_service import (
 from .decision_dashboard_service import (
     signal_edge_shadow_summary as _signal_edge_shadow_summary,
 )
-from .models import AppState, PendingTrade, ScanResult, User
+from .models import AppState, BacktestRun, PendingTrade, ScanResult, User
 from .oauth_schwab import exchange_schwab_code_for_tokens, schwab_authorize_url
 from .preset_catalog import PRESET_PROFILES, build_preset_catalog_payload
 from .recovery_map import map_failure as _map_failure
@@ -96,10 +96,17 @@ from .route_helpers import (
 from .route_helpers import (
     resolve_schwab_redirect_uri as _shared_resolve_schwab_redirect_uri,
 )
+from .routes.book import router as book_router
 from .routes.learning import router as learning_router
 from .routes.research import router as research_router
 from .scan_payload import parse_scan_run_body, scan_runtime_kwargs
-from .schemas import ApiResponse, ApproveTradeRequest, CreatePendingTrade
+from .schemas import (
+    ApiResponse,
+    ApproveTradeRequest,
+    CreatePendingTrade,
+    ManualPortfolioBody,
+    QueueUserBacktestRequest,
+)
 from .security_headers import SecurityHeadersMiddleware
 from .static_assets import NoCacheStaticFiles, render_versioned_html
 
@@ -248,6 +255,36 @@ def _ensure_local_dashboard_user() -> None:
         db.close()
 
 
+def _fail_orphaned_local_backtest_runs() -> None:
+    """Mark queued/running local backtest rows as failed after a restart.
+
+    Local backtests run in an in-process daemon thread, so a server restart
+    kills the run but leaves the row in a non-terminal state; without this the
+    dashboard would show a run as "running" forever.
+    """
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(BacktestRun)
+            .filter(
+                BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+                BacktestRun.status.in_(("queued", "running")),
+            )
+            .all()
+        )
+        for row in rows:
+            row.status = "failed"
+            row.error_message = "Server restarted before the backtest finished. Queue it again."
+        if rows:
+            db.commit()
+            LOG.info("Marked %d orphaned local backtest run(s) as failed after restart.", len(rows))
+    except Exception as exc:
+        LOG.warning("Orphaned backtest cleanup skipped: %s", exc)
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _run_alembic_upgrade_head_for_sqlite() -> None:
     """Apply Alembic revisions so existing SQLite files gain new columns (e.g. Stripe billing)."""
     if (os.getenv("WEBAPP_SKIP_ALEMBIC") or "").strip().lower() in ("1", "true", "yes", "on"):
@@ -291,6 +328,7 @@ except Exception:
     pass
 _run_alembic_upgrade_head_for_sqlite()
 _ensure_local_dashboard_user()
+_fail_orphaned_local_backtest_runs()
 _validate_startup_configuration()
 
 @asynccontextmanager
@@ -335,6 +373,7 @@ app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(research_router)
 app.include_router(learning_router)
+app.include_router(book_router)
 
 
 @app.exception_handler(HTTPException)
@@ -395,6 +434,22 @@ _scan_job: dict[str, Any] = {
     # this so operators can see filtered candidates alongside survivors.
     "shortlist_signals": [],
     "error": None,
+}
+
+# Local backtest queue: one run at a time in a daemon thread, persisted to the
+# existing BacktestRun table so the frontend can reuse the SaaS queue contract
+# (`/api/backtest-runs*`) unchanged. `celery_task_id` stores the run id on
+# local rows so the task-status route resolves with the same URL shape.
+_local_backtest_lock = threading.Lock()
+_local_backtest_thread: threading.Thread | None = None
+
+# Map local BacktestRun.status values onto the Celery status vocabulary the
+# frontend poller already understands.
+_LOCAL_BACKTEST_STATUS_TO_CELERY = {
+    "queued": "pending",
+    "running": "started",
+    "success": "success",
+    "failed": "failure",
 }
 
 
@@ -620,6 +675,70 @@ def _consume_local_oauth_state(token: str) -> str | None:
     return kind
 
 
+def _preflight_sizing_context(trade: PendingTrade, signal: dict[str, Any]) -> dict[str, Any]:
+    """Sizing rationale + portfolio exposure hints for the approve dialog."""
+    ticker = str(trade.ticker or "").strip().upper()
+    price = float(trade.price or 0)
+    qty = int(trade.qty or 0)
+    sector_etf = str(signal.get("sector_etf") or "").strip().upper()
+    out: dict[str, Any] = {
+        "position_sizing_method": "fixed_usd",
+        "position_sizing_rationale": "Default fixed dollar size (POSITION_SIZE_USD).",
+        "recommended_notional_usd": None,
+        "portfolio_sector_etf": sector_etf,
+        "portfolio_sector_weight_pct": None,
+        "portfolio_sector_weight_after_pct": None,
+        "portfolio_total_value_usd": None,
+    }
+    try:
+        from config import get_volatility_sizing_enabled
+
+        recommended = int(
+            get_position_size_usd(
+                ticker=ticker or None,
+                price=price if price > 0 else None,
+                skill_dir=SKILL_DIR,
+            )
+        )
+        out["recommended_notional_usd"] = recommended
+        if get_volatility_sizing_enabled(SKILL_DIR) and ticker and price > 0:
+            out["position_sizing_method"] = "volatility_atr"
+            out["position_sizing_rationale"] = (
+                f"Volatility-adjusted size targets ~${recommended:,} notional "
+                f"(ATR-based risk budget, not flat $5k)."
+            )
+        else:
+            out["position_sizing_rationale"] = (
+                f"Fixed position budget ~${recommended:,} per trade "
+                f"(set POSITION_SIZE_USD or enable VOLATILITY_SIZING_ENABLED)."
+            )
+    except Exception as exc:
+        LOG.debug("Preflight sizing context skipped: %s", exc)
+
+    try:
+        auth = get_shared_auth()
+        account = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+        summary = _build_portfolio_summary(account if isinstance(account, dict) else {})
+        total_value = float(summary.get("total_value") or 0)
+        out["portfolio_total_value_usd"] = round(total_value, 2) if total_value > 0 else None
+        positions = summary.get("positions_weighted") if isinstance(summary.get("positions_weighted"), list) else []
+        sector_etf = out["portfolio_sector_etf"]
+        if sector_etf and total_value > 0 and positions:
+            sector_mkt = sum(
+                float(p.get("market_value") or 0)
+                for p in positions
+                if str(p.get("sector_etf") or "").strip().upper() == sector_etf
+            )
+            current = round((sector_mkt / total_value) * 100.0, 2)
+            out["portfolio_sector_weight_pct"] = current
+            if price > 0 and qty > 0:
+                add_pct = round(((price * qty) / total_value) * 100.0, 2)
+                out["portfolio_sector_weight_after_pct"] = round(current + add_pct, 2)
+    except Exception as exc:
+        LOG.debug("Preflight portfolio context skipped: %s", exc)
+    return out
+
+
 def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dict[str, Any]:
     env = _read_json_file(EXECUTION_METRICS_PATH, {"days": {}})
     days = env.get("days", {}) if isinstance(env, dict) else {}
@@ -663,6 +782,7 @@ def _build_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> di
             "blocked": bool(blocked),
             "block_reasons": blocked,
             "requires_explicit_approval": True,
+            **_preflight_sizing_context(trade, signal if isinstance(signal, dict) else {}),
         }
     )
 
@@ -1682,6 +1802,7 @@ def public_config() -> ApiResponse:
         "runtime_mode": "local",
         "ui_contract_version": "2026-04-webapp-stabilization",
         "scan_transport": "local_thread",
+        "backtest_transport": "local_thread",
         "sse_enabled": True,
         "schwab_oauth": schwab_oauth,
         "schwab_market_oauth": schwab_market_oauth,
@@ -2160,6 +2281,164 @@ def scan_lifecycle(db: Session = Depends(get_db)) -> ApiResponse:
     return _ok(_scan_lifecycle_payload(snapshot, last_scan=last_scan))
 
 
+def _local_backtest_worker(run_id: str) -> None:
+    """Run one queued backtest in-process and persist the outcome on its row."""
+    global _local_backtest_thread
+    from .backtest_spec import parse_strategy_spec, run_strategy_backtest
+
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(BacktestRun)
+            .filter(BacktestRun.id == run_id, BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID)
+            .first()
+        )
+        if row is None:
+            return
+        row.status = "running"
+        db.commit()
+        try:
+            spec = parse_strategy_spec(_coerce_json_dict(row.spec_json))
+            result = run_strategy_backtest(SKILL_DIR, spec)
+            row.status = "success"
+            row.result_json = json.dumps(result, default=_json_default)
+            row.error_message = None
+            db.commit()
+        except Exception as exc:
+            LOG.warning("Local backtest %s failed: %s", run_id, exc)
+            row.status = "failed"
+            row.error_message = str(exc)[:2000] or "backtest_failed"
+            row.result_json = None
+            db.commit()
+            _record_endpoint_error("backtest_worker")
+    finally:
+        db.close()
+        with _local_backtest_lock:
+            _local_backtest_thread = None
+
+
+def _backtest_run_result_summary(result: Any) -> dict[str, Any] | None:
+    """Short metrics for the run-list UI; mirrors the SaaS list shape."""
+    if not isinstance(result, dict) or "total_trades" not in result:
+        return None
+    out: dict[str, Any] = {
+        "total_trades": result.get("total_trades"),
+        "win_rate_net": result.get("win_rate_net"),
+        "total_return_net_pct": result.get("total_return_net_pct"),
+        "cagr_net_pct": result.get("cagr_net_pct"),
+        "max_drawdown_net_pct": result.get("max_drawdown_net_pct"),
+        "profit_factor_net": result.get("profit_factor_net"),
+    }
+    findings = result.get("findings")
+    if isinstance(findings, str) and findings.strip():
+        snippet = findings.strip()
+        out["findings_preview"] = snippet[:280] + ("…" if len(snippet) > 280 else "")
+    return out
+
+
+@app.post("/api/backtest-runs", response_model=ApiResponse)
+def queue_local_backtest_run(
+    payload: QueueUserBacktestRequest,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    """Queue a backtest on the local single-user server (thread transport).
+
+    Same URL and response contract as the SaaS Celery queue so the dashboard
+    backtest panel works identically in both deploy modes.
+    """
+    from .backtest_spec import parse_strategy_spec, spec_preview_dict
+
+    global _local_backtest_thread
+    try:
+        spec = parse_strategy_spec(payload.spec)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid strategy spec: {exc}") from exc
+    with _local_backtest_lock:
+        if _local_backtest_thread is not None and _local_backtest_thread.is_alive():
+            raise HTTPException(
+                status_code=409,
+                detail="A backtest is already running. Wait for it to finish before queueing another.",
+            )
+        run_id = uuid.uuid4().hex
+        row = BacktestRun(
+            id=run_id,
+            user_id=LOCAL_DASHBOARD_USER_ID,
+            celery_task_id=run_id,
+            status="queued",
+            spec_json=json.dumps(spec.model_dump(), default=_json_default),
+        )
+        db.add(row)
+        db.commit()
+        thread = threading.Thread(
+            target=_local_backtest_worker,
+            args=(run_id,),
+            daemon=True,
+            name=f"backtest-{run_id[:8]}",
+        )
+        _local_backtest_thread = thread
+        thread.start()
+    return _ok({"ok": True, "run_id": run_id, "task_id": run_id, "preview": spec_preview_dict(spec)})
+
+
+@app.get("/api/backtest-runs", response_model=ApiResponse)
+def list_local_backtest_runs(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    rows = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID)
+        .order_by(BacktestRun.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        parsed_result = _coerce_json_dict(row.result_json) if row.result_json else {}
+        item: dict[str, Any] = {
+            "id": row.id,
+            "celery_task_id": row.celery_task_id,
+            "status": row.status,
+            "spec": _coerce_json_dict(row.spec_json),
+            "error_message": row.error_message,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "has_result": bool(row.result_json),
+        }
+        summary = _backtest_run_result_summary(parsed_result)
+        if summary is not None:
+            item["result_summary"] = summary
+        payload.append(item)
+    return _ok(payload)
+
+
+@app.get("/api/backtest-runs/tasks/{task_id}", response_model=ApiResponse)
+def local_backtest_run_task_status(
+    task_id: str,
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    row = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.celery_task_id == task_id,
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "celery_status": _LOCAL_BACKTEST_STATUS_TO_CELERY.get(row.status, "pending"),
+        "run_id": row.id,
+        "db_status": row.status,
+        "error_message": row.error_message,
+    }
+    if row.result_json:
+        payload["result"] = _coerce_json_dict(row.result_json)
+    return _ok(payload)
+
+
 @app.get("/api/portfolio", response_model=ApiResponse)
 def portfolio(db: Session = Depends(get_db)) -> ApiResponse:
     try:
@@ -2304,6 +2583,152 @@ def portfolio_risk_dashboard(
         return _ok(payload)
     except Exception as e:
         return _err("portfolio_risk_dashboard", e)
+
+
+# --- Manual (non-Schwab) portfolio risk -------------------------------------
+# Public ingestion adapter: anonymous users enter ticker/qty rows and reuse
+# the same risk pack a Schwab-linked account gets. These endpoints are
+# compute-only (no orders, no account access, no persistence) which is why
+# they intentionally carry no API-key dependency; abuse is bounded by the
+# position cap (schema), a per-IP build interval, and a shared payload cache.
+_MANUAL_RISK_CACHE_TTL_SEC = 300.0
+_MANUAL_BUILD_MIN_INTERVAL_SEC = 60.0
+_manual_risk_cache: dict[str, Any] = {"key": None, "at": 0.0, "payload": None}
+_manual_risk_cache_lock = threading.Lock()
+_manual_build_last_by_ip: dict[str, float] = {}
+_manual_build_lock = threading.Lock()
+
+
+def _shared_auth_or_none() -> DualSchwabAuth | None:
+    """Best-effort Schwab auth: manual mode must keep working without tokens
+    (market_data falls back to yfinance when the Schwab session is unusable)."""
+    try:
+        return get_shared_auth()
+    except Exception:
+        return None
+
+
+def _manual_cache_key(body: ManualPortfolioBody) -> str:
+    rows = sorted((r.ticker.upper().strip(), float(r.qty)) for r in body.positions)
+    return json.dumps({"rows": rows, "cash": body.cash, "lookback": body.lookback_days})
+
+
+def _manual_rate_limited(request: Request) -> float:
+    """Returns seconds the caller must still wait (0 = allowed) and stamps the slot."""
+    ip = (request.client.host if request.client else None) or "unknown"
+    now = time.time()
+    with _manual_build_lock:
+        last = _manual_build_last_by_ip.get(ip, 0.0)
+        wait = _MANUAL_BUILD_MIN_INTERVAL_SEC - (now - last)
+        if wait > 0:
+            return wait
+        # Opportunistic pruning keeps the map from growing unbounded.
+        if len(_manual_build_last_by_ip) > 1000:
+            cutoff = now - _MANUAL_BUILD_MIN_INTERVAL_SEC
+            for stale_ip in [k for k, v in _manual_build_last_by_ip.items() if v < cutoff]:
+                del _manual_build_last_by_ip[stale_ip]
+        _manual_build_last_by_ip[ip] = now
+        return 0.0
+
+
+@app.post("/api/portfolio/manual/positions", response_model=ApiResponse)
+def manual_portfolio_positions(body: ManualPortfolioBody) -> ApiResponse:
+    """Price a manually entered book: last close, market value, and weights.
+
+    Fail-closed: any unpriceable ticker rejects the whole book so weights are
+    never silently wrong. Public by design (compute-only; see block comment).
+    """
+    try:
+        from core.providers import ManualPortfolioError, ManualPortfolioProvider
+
+        try:
+            state, summary = ManualPortfolioProvider.build(
+                [r.model_dump() for r in body.positions],
+                cash=body.cash,
+                skill_dir=SKILL_DIR,
+                auth=_shared_auth_or_none(),
+            )
+        except ManualPortfolioError as exc:
+            _record_endpoint_error("manual_portfolio_positions")
+            return ApiResponse(ok=False, error=str(exc), data={"unpriced_tickers": exc.unpriced})
+        payload = dict(summary)
+        payload["positions"] = [
+            {**row, "weight_pct": round(row["market_value"] / state.equity * 100, 2) if state.equity else None}
+            for row in summary["positions"]
+        ]
+        payload["as_of"] = datetime.now(timezone.utc).isoformat()
+        return _ok(payload)
+    except Exception as e:
+        return _err("manual_portfolio_positions", e)
+
+
+@app.post("/api/portfolio/risk-dashboard/manual", response_model=ApiResponse)
+def portfolio_risk_dashboard_manual(body: ManualPortfolioBody, request: Request) -> ApiResponse:
+    """Risk dashboard for a manually entered book — same pack as the Schwab route.
+
+    Public by design (compute-only; see block comment). Identical payloads are
+    served from a 5-minute cache; fresh builds are limited to one per minute
+    per client IP because each build fans out a year of history per ticker.
+    """
+    try:
+        from core.portfolio_analytics_service import build_portfolio_risk_dashboard
+        from core.providers import ManualPortfolioError, ManualPortfolioProvider
+        from sector_strength import get_ticker_sector_etf
+
+        cache_key = _manual_cache_key(body)
+        if not body.force:
+            with _manual_risk_cache_lock:
+                cached = _manual_risk_cache
+                if (
+                    cached["key"] == cache_key
+                    and cached["payload"] is not None
+                    and (time.time() - cached["at"]) < _MANUAL_RISK_CACHE_TTL_SEC
+                ):
+                    payload = dict(cached["payload"])
+                    payload["cache_hit"] = True
+                    return _ok(payload)
+
+        wait = _manual_rate_limited(request)
+        if wait > 0:
+            _record_endpoint_error("portfolio_risk_dashboard_manual")
+            return ApiResponse(
+                ok=False,
+                error=f"Rate limited: manual risk builds are capped at one per minute. Retry in {int(wait) + 1}s.",
+                data={"retry_after_sec": int(wait) + 1},
+            )
+
+        auth = _shared_auth_or_none()
+        try:
+            state, summary = ManualPortfolioProvider.build(
+                [r.model_dump() for r in body.positions],
+                cash=body.cash,
+                skill_dir=SKILL_DIR,
+                auth=auth,
+                sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR),
+            )
+        except ManualPortfolioError as exc:
+            _record_endpoint_error("portfolio_risk_dashboard_manual")
+            return ApiResponse(ok=False, error=str(exc), data={"unpriced_tickers": exc.unpriced})
+
+        static_risk = _build_portfolio_risk_analytics(summary, skill_dir=SKILL_DIR)
+        pack = build_portfolio_risk_dashboard(
+            state,
+            summary,
+            static_risk=static_risk,
+            skill_dir=SKILL_DIR,
+            auth=auth,
+            lookback_days=body.lookback_days,
+            equity_curve=[],
+        )
+        payload = pack.model_dump(mode="json")
+        payload["source"] = "manual"
+        payload["cached_at"] = datetime.now(timezone.utc).isoformat()
+        payload["cache_hit"] = False
+        with _manual_risk_cache_lock:
+            _manual_risk_cache.update({"key": cache_key, "at": time.time(), "payload": payload})
+        return _ok(payload)
+    except Exception as e:
+        return _err("portfolio_risk_dashboard_manual", e)
 
 
 @app.get("/api/sectors", response_model=ApiResponse)

@@ -1836,9 +1836,9 @@ body[data-theme="editorial"] .health-badge {
        reads as ambient telemetry above the kanban. Stays pinned while
        scrolling diagnostics content below the top bar. */
 body[data-theme="editorial"] #healthRibbon {
-  position: sticky;
-  top: calc(var(--app-chrome-offset) + 6px);
-  z-index: 15;
+  position: relative;
+  top: auto;
+  z-index: 1;
   background:
     linear-gradient(180deg, rgba(10, 13, 20, 0.96) 0%, rgba(10, 13, 20, 0.9) 100%) !important;
   backdrop-filter: blur(8px);
@@ -2155,7 +2155,7 @@ body[data-theme="editorial"] .mode-header-kpis {
 
 body[data-theme="editorial"] .section-nav,
 body[data-theme="editorial"] .health-ribbon {
-  top: calc(var(--app-chrome-offset) + 6px);
+  top: auto;
 }
 
 body[data-theme="editorial"] .table-wrap {

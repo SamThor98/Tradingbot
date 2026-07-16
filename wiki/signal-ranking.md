@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Signal Ranking.md
 created: 2026-04-13
-updated: 2026-06-25
+updated: 2026-07-13
 tags: [strategy, ranking]
 ---
 
@@ -16,14 +16,33 @@ tags: [strategy, ranking]
 | Direct core | volume / signal−52w / mirofish weights | Predictive blend (matches rank v2 evidence) |
 | Edge (blend) | `edge_score` | Optional 20% stack blend into composite |
 | Safety | reliability / execution | **Caps only** — not blended into rank |
-| **Quality rank** | **`composite_score`** | **Live sort key** |
+| Quality rank | `composite_score` | Offline challenger |
 | Diagnostic | `rank_score_v2` | Shadow comparison |
 
 ## Top-N Selection
 
-`SIGNAL_TOP_N` (default 5, 0 = unlimited). Sorted by **`composite_score` descending**.
+`SIGNAL_TOP_N` (default 5, 0 = unlimited). `SCAN_LIVE_SORT_KEY` defaults to
+**`signal_score`** until a challenger demonstrates positive realized-return
+ranking evidence.
 
 Offline validation: `scripts/run_scoring_ic_pipeline.py` (build → tune → strict validate) or stepwise via `build_scoring_audit_dataset.py`, `tune_composite_weights.py`, `validate_scoring_metrics.py --strict`.
+
+## Latest Full-Era Evidence
+
+The 2026-07-13 `stage2_only_aug` trade audit covered 16,423 trades across all
+five eras. Current score IC remained negative (`signal_score` -0.0268,
+`composite_score` -0.0403, `rank_score_v2` -0.0120). A constrained weight
+search improved IC versus the baseline in 4/5 eras but still produced negative
+absolute IC, so `promote_recommended_defaults=false`. No ranking challenger was
+promoted as the live sort key; hard breakout-volume and confluence gates remain
+excluded.
+
+Conditioning on the promoted 1% breakout-buffer + exit-grace stack changes the
+filter result: a rank-v2 p70 trim raises the offline PF mean from 1.2118 to
+1.2312 and worst-era PF from 1.0368 to 1.1431 at roughly 30% retention.
+`RANK_FILTER_V2_MODE=shadow` observes this isolated trim in live scans while
+`SCAN_LIVE_SORT_KEY` remains `signal_score`. Enforcement and rank-v2 sorting
+require separate promotion decisions.
 
 ## Scoring Components
 
@@ -52,4 +71,4 @@ When `STRATEGY_ENSEMBLE_MODE` is shadow/live, breakout and pullback strategies a
 
 ---
 
-*Last compiled: 2026-06-25*
+*Last compiled: 2026-07-13*

@@ -1199,14 +1199,14 @@ body[data-theme="editorial"] .report-empty {
   line-height: 1.5 !important;
 }
 
-/* Status chips: explicit readable text */
+/* Status chips: explicit readable text (0.8125rem = 13px floor) */
 body[data-theme="editorial"] .pill,
 body[data-theme="editorial"] .chip,
 body[data-theme="editorial"] .health-badge {
   background: var(--ol-surface-soft) !important;
   color: #2a2a2a !important;
   border: 1px solid rgba(26, 58, 46, 0.24) !important;
-  font-size: 0.8rem !important;
+  font-size: 0.8125rem !important;
 }
 
 body[data-theme="editorial"] .health-badge.bg-green-900,
@@ -2158,7 +2158,7 @@ body[data-theme="editorial"] .btn.bad {
 
 /* Scan severity legend: readable words, palette-aligned chips */
 body[data-theme="editorial"] .scan-severity-legend .pill {
-  font-size: 0.76rem !important;
+  font-size: 0.8125rem !important; /* 13px supporting-text floor */
   text-transform: capitalize;
 }
 
@@ -4075,5 +4075,469 @@ body[data-theme="editorial"] .onboarding-step-card[data-state="ok"] {
 body[data-theme="editorial"] .onboarding-step-card[data-state="fail"] {
   border-color: rgba(201, 73, 73, 0.44);
   background: rgba(201, 73, 73, 0.08);
+}
+
+/* ============================================================
+   2026-07-07 palette-unification pass.
+   styles.css "Visual Overhaul v2" redefines the base tokens to a
+   dark navy theme (--bg #04060f, --muted #a8b3d6, --panel navy).
+   Every selector the editorial theme didn't override still consumed
+   those, producing slate labels at 2:1 contrast, near-white values
+   on cream, and dark-navy islands. Remap the base tokens here so
+   var(--muted)/var(--panel)/... resolve to Old Logan values, then
+   convert the remaining dark surfaces to cream.
+============================================================ */
+body[data-theme="editorial"] {
+  --bg: var(--ol-bg);
+  --bg-elevated: var(--ol-surface-soft);
+  --panel: var(--ol-surface);
+  --panel-border: var(--ol-border-strong);
+  --text: var(--ol-text);
+  --muted: var(--ol-muted);
+  --accent: var(--ol-accent);
+  --accent-2: var(--ol-accent-2);
+  --good: var(--ol-ok);
+  --bad: var(--ol-bad);
+  --warn: var(--ol-warn);
+  --border: var(--ol-border);
+  /* overhaul.css cream-on-ink tokens: their dark surfaces are gone,
+     so the "paper" text tokens must resolve to dark editorial text. */
+  --paper: var(--ol-text);
+  --paper-warm: var(--ol-text);
+  --paper-mute: var(--ol-muted);
+  --positive: var(--ol-ok);
+  --positive-soft: rgba(45, 90, 74, 0.14);
+  --negative: var(--ol-bad-text);
+  --negative-soft: rgba(201, 73, 73, 0.12);
+}
+
+/* Active topbar tab + primary buttons keep the forest fill (they were
+   the two intentional consumers of --paper-warm as a background). */
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .btn.primary,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  background: var(--ol-accent) !important;
+  border-color: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+/* —— Dark-island conversions —— */
+
+/* Scan funnel + diagnostics blocks (were navy gradient cards) */
+body[data-theme="editorial"] .scan-block,
+body[data-theme="editorial"] .scan-block--blockers {
+  background: var(--ol-surface-soft) !important;
+  border-color: var(--ol-border) !important;
+}
+
+body[data-theme="editorial"] .funnel-node {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+}
+
+body[data-theme="editorial"] .funnel-node .label {
+  color: var(--ol-muted) !important;
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .funnel-node-pct {
+  color: var(--ol-muted) !important;
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .funnel-node-filtered {
+  color: var(--ol-bad-text) !important;
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .funnel-bar-track {
+  background: rgba(26, 26, 26, 0.1) !important;
+}
+
+body[data-theme="editorial"] .funnel-shadow-live,
+body[data-theme="editorial"] .funnel-shadow-would,
+body[data-theme="editorial"] .funnel-shadow-badge {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .funnel-shadow-live { color: var(--ol-ok) !important; }
+body[data-theme="editorial"] .funnel-shadow-would { color: var(--ol-warn) !important; }
+
+/* Amber shadow badge was #fbbf24 on cream (1.66:1) */
+body[data-theme="editorial"] .funnel-shadow-badge {
+  background: rgba(201, 169, 98, 0.22) !important;
+  color: var(--ol-warn) !important;
+  border-color: rgba(176, 133, 42, 0.5) !important;
+}
+
+/* Blocker chips (near-white strong text was invisible on cream) */
+body[data-theme="editorial"] .blocker-chips li {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+  color: var(--ol-text-soft) !important;
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .blocker-chips li strong {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .blocker-chips li .pill {
+  font-size: 0.8125rem !important;
+}
+
+/* Activity drawer log bubbles (navy with dark text) */
+body[data-theme="editorial"] .log-list li {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border) !important;
+  color: var(--ol-text-soft) !important;
+}
+
+body[data-theme="editorial"] .log-kind {
+  font-size: 0.78rem !important;
+  border-color: var(--ol-border-strong) !important;
+}
+
+body[data-theme="editorial"] .log-kind.system { color: var(--ol-accent) !important; }
+body[data-theme="editorial"] .log-kind.scan { color: var(--ol-accent-2) !important; }
+body[data-theme="editorial"] .log-kind.trade { color: var(--ol-warn) !important; }
+body[data-theme="editorial"] .log-kind.report { color: var(--ol-muted) !important; }
+body[data-theme="editorial"] .log-kind.error { color: var(--ol-bad-text) !important; border-color: rgba(201, 73, 73, 0.44) !important; }
+
+/* Onboarding stepper (navy tiles + slate text; also uneven layout) */
+body[data-theme="editorial"] .onboarding-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li {
+  flex: 1 1 180px;
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li .step-label {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li .step-num {
+  background: var(--ol-surface-soft) !important;
+  color: var(--ol-text-soft) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li .step-state {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.done {
+  border-color: rgba(45, 90, 74, 0.45) !important;
+  background: rgba(45, 90, 74, 0.08) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.done .step-num {
+  background: var(--ol-ok) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.done .step-state { color: var(--ol-ok) !important; }
+
+body[data-theme="editorial"] .onboarding-stepper li.verifying {
+  border-color: rgba(138, 92, 31, 0.5) !important;
+  background: rgba(201, 169, 98, 0.13) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.verifying .step-num {
+  background: var(--ol-warn) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.verifying .step-state { color: var(--ol-warn) !important; }
+
+body[data-theme="editorial"] .onboarding-stepper li.failed {
+  border-color: rgba(201, 73, 73, 0.44) !important;
+  background: rgba(201, 73, 73, 0.08) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.failed .step-num {
+  background: var(--ol-bad) !important;
+  color: #fffefb !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.failed .step-state { color: var(--ol-bad-text) !important; }
+
+body[data-theme="editorial"] .onboarding-stepper li.current {
+  border-color: var(--ol-accent-border) !important;
+  background: var(--ol-accent-soft) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.current .step-num {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .onboarding-stepper li.current .step-state { color: var(--ol-accent) !important; }
+
+/* Onboarding "next step" row (navy card with dark muted text) */
+body[data-theme="editorial"] .onboarding-next-row {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-accent-border) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .onboarding-next-title,
+body[data-theme="editorial"] p.onboarding-next-title {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .onboarding-next-desc {
+  color: var(--ol-muted) !important;
+}
+
+/* Meters: dark track + neon gradients → editorial track and fills */
+body[data-theme="editorial"] .meter {
+  background: rgba(26, 26, 26, 0.12) !important;
+}
+
+body[data-theme="editorial"] .meter > span {
+  background: var(--ol-accent-2) !important;
+}
+
+body[data-theme="editorial"] .meter.info > span {
+  background: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] .meter.conviction > span {
+  background: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] .meter-label {
+  color: var(--ol-muted) !important;
+  font-size: 0.8125rem !important;
+}
+
+/* Shadow scoreboard / review loop metric rows (labels were slate,
+   values were near-white) */
+body[data-theme="editorial"] .perf-metric .label {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .perf-metric .value {
+  color: var(--ol-text) !important;
+}
+
+/* Status dots, activity badge, scroll-top, skip-link, clear buttons */
+body[data-theme="editorial"] .status-dot.good { background: var(--ol-ok) !important; }
+body[data-theme="editorial"] .status-dot.bad { background: var(--ol-bad) !important; }
+body[data-theme="editorial"] .status-dot.warn { background: var(--ol-warn) !important; }
+
+body[data-theme="editorial"] .activity-badge {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .scroll-top-btn {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+  color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .skip-link {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+  border-color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .btn-clear-pending {
+  background: var(--ol-surface) !important;
+  border-color: var(--ol-border-strong) !important;
+  color: var(--ol-bad-text) !important;
+}
+
+/* Trade drawer tabs (slate text on cream) */
+body[data-theme="editorial"] .trade-drawer-tab {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .trade-drawer-tab.active {
+  color: var(--ol-accent) !important;
+}
+
+/* Decision dashboard inner ribbon (navy band inside a cream card) */
+body[data-theme="editorial"] .decision-dashboard-ribbon {
+  background: var(--ol-surface-soft) !important;
+  border-color: var(--ol-border) !important;
+}
+
+/* Default chip (slate) + pill.info/muted variants missing from the
+   earlier good/warn/bad/neutral overrides */
+body[data-theme="editorial"] .chip {
+  background: var(--ol-surface-soft) !important;
+  border-color: var(--ol-border-strong) !important;
+  color: var(--ol-text-soft) !important;
+}
+
+body[data-theme="editorial"] .pill.info {
+  background: var(--ol-accent-soft) !important;
+  color: var(--ol-accent) !important;
+  border-color: var(--ol-accent-border) !important;
+}
+
+body[data-theme="editorial"] .pill.muted {
+  background: var(--ol-surface-soft) !important;
+  color: var(--ol-muted) !important;
+  border-color: var(--ol-border) !important;
+}
+
+/* Preset / profile panel leftovers (gold + paper text on cream) */
+body[data-theme="editorial"] .preset-panel strong,
+body[data-theme="editorial"] #profilePanel strong {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .preset-panel span,
+body[data-theme="editorial"] #profilePanel span {
+  color: var(--ol-text-soft);
+}
+
+/* Near-miss + scan table paper-mute leftovers */
+body[data-theme="editorial"] #nearMissTableBody strong,
+body[data-theme="editorial"] #scanTableBody .empty-state-cell,
+body[data-theme="editorial"] .near-miss-reason {
+  color: var(--ol-text-soft) !important;
+}
+
+/* ============================================================
+   Type-floor sweep (audit 2026-07-07): supporting labels >= 13px.
+============================================================ */
+body[data-theme="editorial"] .field-label,
+body[data-theme="editorial"] .today-summary-label,
+body[data-theme="editorial"] .research-summary-label,
+body[data-theme="editorial"] .system-summary-label,
+body[data-theme="editorial"] .settings-summary-label,
+body[data-theme="editorial"] .decision-gate-label,
+body[data-theme="editorial"] .decision-pf-label,
+body[data-theme="editorial"] .health-label,
+body[data-theme="editorial"] .calibration-board-title,
+body[data-theme="editorial"] .scan-rank-inline,
+body[data-theme="editorial"] .mover-col-title,
+body[data-theme="editorial"] .change-chip,
+body[data-theme="editorial"] .decision-summary-pill,
+body[data-theme="editorial"] .scan-block--blockers h3,
+body[data-theme="editorial"] .scan-block-hint,
+body[data-theme="editorial"] #scanDetailAdvancedStats .muted {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .field-label {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .pill {
+  font-size: 0.8125rem;
+}
+
+body[data-theme="editorial"] .btn.small,
+body[data-theme="editorial"] a.btn.small,
+body[data-theme="editorial"] .app-topbar .btn,
+body[data-theme="editorial"] #scanBtn,
+body[data-theme="editorial"] .screen-context-links a,
+body[data-theme="editorial"] #screenContextCta,
+body[data-theme="editorial"] #screenContextAltCta {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table .btn.small {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .operations-status-pill,
+body[data-theme="editorial"] .research-status-pill,
+body[data-theme="editorial"] .system-status-pill {
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .code-block--tight {
+  font-size: 0.8125rem !important;
+}
+
+/* ============================================================
+   Spacing / overflow fixes from the audit screenshots.
+============================================================ */
+/* Near-miss reason pills were clipped by the nowrap-ellipsis cells */
+body[data-theme="editorial"] #nearMissTableBody td:last-child,
+body[data-theme="editorial"] #nearMissTableBody td .near-miss-reason {
+  white-space: normal !important;
+}
+
+/* Cockpit lanes: correlation/positions chip grids overflowed the lane */
+body[data-theme="editorial"] .cockpit-grid .lane {
+  min-width: 0;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] #cockpitPortfolioBody,
+body[data-theme="editorial"] #cockpitBlotterBody {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* ============================================================
+   Portfolio Book — Tax / Calendar / Journal polish
+============================================================ */
+body[data-theme="editorial"] .book-shell {
+  gap: var(--space-3);
+}
+body[data-theme="editorial"] .book-kpi,
+body[data-theme="editorial"] .book-estimate-card,
+body[data-theme="editorial"] .book-rates-panel,
+body[data-theme="editorial"] .book-day-card,
+body[data-theme="editorial"] .book-journal-detail,
+body[data-theme="editorial"] .book-journal-item,
+body[data-theme="editorial"] .book-cal-cell {
+  background: var(--ol-bg, var(--panel));
+  border-color: var(--ol-border, var(--panel-border));
+}
+body[data-theme="editorial"] .book-kpi-label,
+body[data-theme="editorial"] .book-section-title,
+body[data-theme="editorial"] .book-field-label,
+body[data-theme="editorial"] .book-cal-head {
+  color: var(--ol-warn, var(--muted));
+}
+body[data-theme="editorial"] .book-kpi-value,
+body[data-theme="editorial"] .book-estimate-total {
+  color: var(--ol-accent, var(--accent));
+}
+body[data-theme="editorial"] .book-kpi-value.book-pl-pos,
+body[data-theme="editorial"] .book-pl-pos {
+  color: var(--good);
+}
+body[data-theme="editorial"] .book-kpi-value.book-pl-neg,
+body[data-theme="editorial"] .book-pl-neg {
+  color: var(--bad);
+}
+body[data-theme="editorial"] .book-cal-selected,
+body[data-theme="editorial"] .book-journal-item.active {
+  outline-color: var(--ol-accent, var(--accent));
+}
+body[data-theme="editorial"] .book-input,
+body[data-theme="editorial"] .book-textarea {
+  background: var(--ol-bg, var(--panel));
+  border-color: var(--ol-border, var(--panel-border));
+}
+body[data-theme="editorial"] .book-banner--warn {
+  background: color-mix(in srgb, var(--ol-warn, #c9a962) 16%, transparent);
+  border-color: color-mix(in srgb, var(--ol-warn, #c9a962) 40%, var(--ol-border, transparent));
+}
+body[data-theme="editorial"] .book-journal-layout {
+  gap: var(--space-3);
+}
+body[data-theme="editorial"] .book-cal-realized {
+  font-size: 0.84rem;
 }
 

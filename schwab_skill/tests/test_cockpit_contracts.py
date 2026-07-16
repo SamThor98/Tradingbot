@@ -339,3 +339,15 @@ def test_timed_request_records_latency(tmp_path) -> None:
     summary = obs.get_observability_summary(tmp_path, days=1)
     keys = list(summary["latency_avg_ms"].keys())
     assert any("trader.orders" in k for k in keys)
+
+
+def test_observability_flush_persists_debounced_writes(tmp_path) -> None:
+    path = tmp_path / obs._METRICS_FILE
+    for _ in range(50):
+        obs.record_request_latency(tmp_path, "marketdata.quotes", "market", 10.0)
+    obs.flush_observability_metrics(tmp_path, force=True)
+    assert path.exists()
+    summary = obs.get_observability_summary(tmp_path, days=1)
+    lat_key = "schwab_request_latency_ms{endpoint=marketdata.quotes,session=market}"
+    assert summary["counters"] or summary["latency_avg_ms"]
+    assert summary["latency_avg_ms"][lat_key] == 10.0

@@ -450,6 +450,15 @@ def _saas_pretrade_checklist(trade: PendingTrade, signal: dict[str, Any]) -> dic
             "blocked": bool(blocked),
             "block_reasons": blocked,
             "requires_explicit_approval": True,
+            "position_sizing_method": "fixed_usd",
+            "position_sizing_rationale": (
+                f"Staged notional ~${round(est_value, 0):,.0f} from qty × price at stage time."
+            ),
+            "recommended_notional_usd": None,
+            "portfolio_sector_etf": str(signal.get("sector_etf") or "").strip().upper(),
+            "portfolio_sector_weight_pct": None,
+            "portfolio_sector_weight_after_pct": None,
+            "portfolio_total_value_usd": None,
         }
     )
 

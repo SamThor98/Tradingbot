@@ -132,6 +132,58 @@ class PortfolioEquitySnapshot(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
+class BookTaxPrefs(Base):
+    """Local Book tax-rate preferences (schema ready for tenant_id / user_id)."""
+
+    __tablename__ = "book_tax_prefs"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True, default="local")
+    federal_st_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    federal_lt_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    state_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tax_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rates_configured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BookJournalTicker(Base):
+    """Per-symbol journal header (thesis / plan)."""
+
+    __tablename__ = "book_journal_tickers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uq_book_journal_ticker_user_symbol"),
+        Index("ix_book_journal_tickers_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, default="local")
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    thesis_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class BookJournalNote(Base):
+    """Dated journal entry (quick note or full review template)."""
+
+    __tablename__ = "book_journal_notes"
+    __table_args__ = (
+        Index("ix_book_journal_notes_user_symbol", "user_id", "symbol"),
+        Index("ix_book_journal_notes_user_date", "user_id", "note_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, default="local")
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="quick")
+    note_type: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    note_date: Mapped[date] = mapped_column(Date, nullable=False)
+    fill_activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    template_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
     __table_args__ = (Index("ix_scan_results_user_created", "user_id", "created_at"),)

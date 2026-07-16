@@ -13,6 +13,8 @@ ART = SKILL_DIR / "validation_artifacts"
 DEFAULT_RUN_ID = "control_legacy_aug"
 PF_MEAN_MIN = 1.20
 WORST_ERA_MIN = 1.00
+BARE_OK_VERDICTS = {"proceed", "iterate", "iterate_with_caution"}
+BARE_HALT_VERDICTS = {"halt", "halt_fix_signal_first", "halt_insufficient_data"}
 
 
 def _load(name: str) -> dict | None:
@@ -26,6 +28,10 @@ def _load(name: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _normalize_verdict(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
 def main() -> int:
     run_id = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_RUN_ID
     phase2 = _load("phase2_edge_audit.json")
@@ -35,6 +41,7 @@ def main() -> int:
     notes: list[str] = []
 
     bare_verdict = (phase2 or {}).get("verdict")
+    bare_verdict_key = _normalize_verdict(bare_verdict)
     bare_pf_mean = None
     bare_worst = None
     if phase2 and isinstance(phase2.get("bare"), dict):
@@ -42,7 +49,7 @@ def main() -> int:
         bare_worst = phase2["bare"].get("worst_era_pf")
     if phase2 is None:
         notes.append("phase2_edge_audit.json missing — run scripts/phase2_edge_audit.py")
-    elif bare_verdict not in {"PROCEED", "ITERATE"}:
+    elif bare_verdict_key not in BARE_OK_VERDICTS:
         notes.append(f"bare signal phase2 verdict={bare_verdict} (stack may still clear offline gates)")
 
     stack_row: dict = {}
@@ -61,8 +68,8 @@ def main() -> int:
             errors.append(f"stack worst_era_pf {worst:.4f} < {WORST_ERA_MIN}")
 
     stack_passes = not errors and bool(stack_row.get("passes_promotion_gates"))
-    bare_ok = bare_verdict in {"PROCEED", "ITERATE"}
-    bare_halt = bare_verdict in {"HALT", "halt_fix_signal_first", "halt_insufficient_data"}
+    bare_ok = bare_verdict_key in BARE_OK_VERDICTS
+    bare_halt = bare_verdict_key in BARE_HALT_VERDICTS
 
     if stack_passes and bare_halt:
         recommendation = "stack_offline_clears_gates_bare_signal_halt"

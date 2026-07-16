@@ -36,6 +36,12 @@ def run_scan(
         watchlist_override=watchlist_override,
         capture_shortlist=shortlist,
     )
+    try:
+        from core.observability import flush_observability_metrics
+
+        flush_observability_metrics(skill_dir, force=True)
+    except Exception:
+        pass
     return ScanRunResult(
         signals=signals,
         diagnostics=diagnostics,

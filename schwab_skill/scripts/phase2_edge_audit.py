@@ -10,10 +10,10 @@ Question this script answers
 
 How it works
 ------------
-* Loads two existing run_ids from validation_artifacts/multi_era_chunks/:
-    - stage2_only:    bare Stage 2 + breakout, every gate / overlay off.
-    - control_legacy: same backtest harness with the production-default
-                      pre-overlay scoring (the historical baseline).
+* Loads two augmented five-era run_ids from validation_artifacts/multi_era_chunks/:
+    - stage2_only_aug:    bare Stage 2 + breakout, every gate / overlay off.
+    - control_legacy_aug: same backtest harness with the production-default
+                          pre-overlay scoring (the historical baseline).
 * Computes per-era PF, win rate, expectancy, equity-curve max DD,
   total return, trade count, avg hold, median stop. Same code path as
   every Phase 2 script via phase2_common.
@@ -340,12 +340,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 2 Stage 1 edge audit")
     parser.add_argument(
         "--bare-run-id",
-        default="stage2_only",
+        default="stage2_only_aug",
         help="Sub-directory of multi_era_chunks/ that holds the bare-signal run.",
     )
     parser.add_argument(
         "--control-run-id",
-        default="control_legacy",
+        default="control_legacy_aug",
         help="Sub-directory of multi_era_chunks/ that holds the comparison run.",
     )
     parser.add_argument(

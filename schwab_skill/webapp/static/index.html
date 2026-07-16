@@ -1376,10 +1376,20 @@
             <button type="button" id="portfolioTabRisk" class="tab-btn" role="tab" aria-selected="false" aria-controls="portfolioPanelRisk">
               Risk
             </button>
+            <button type="button" id="portfolioTabBook" class="tab-btn" role="tab" aria-selected="false" aria-controls="portfolioPanelBook">
+              Book
+            </button>
+            <span class="muted small" style="margin-left:auto;align-self:center">Source</span>
+            <button type="button" id="portfolioSourceSchwab" class="tab-btn tab-btn-active" aria-pressed="true" title="Positions from the linked Schwab account">
+              Schwab
+            </button>
+            <button type="button" id="portfolioSourceManual" class="tab-btn" aria-pressed="false" title="Enter tickers and shares by hand — no brokerage required">
+              Manual
+            </button>
           </div>
 
           <div id="portfolioPanelPositions" role="tabpanel">
-            <div class="table-wrap">
+            <div id="schwabPositionsWrap" class="table-wrap">
               <table>
                 <caption class="visually-hidden">Portfolio positions table</caption>
                 <thead>
@@ -1391,18 +1401,72 @@
                     <th>Weight %</th>
                     <th>Day P/L</th>
                     <th>P/L %</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody id="portfolioBody">
-                  <tr><td colspan="7" class="muted">Open Portfolio screen or click Refresh.</td></tr>
+                  <tr><td colspan="8" class="muted">Open Portfolio screen or click Refresh.</td></tr>
                 </tbody>
               </table>
+            </div>
+
+            <div id="manualPortfolioEditor" class="hidden">
+              <p class="muted small">
+                Enter tickers and share counts (long-only, up to 15 names). The book is stored only in this
+                browser — nothing is saved on the server.
+              </p>
+              <div class="table-wrap">
+                <table>
+                  <caption class="visually-hidden">Manual portfolio editor</caption>
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      <th>Shares</th>
+                      <th aria-label="Remove"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="manualPortfolioRows"></tbody>
+                </table>
+              </div>
+              <div class="inline-form">
+                <button type="button" id="manualAddRowBtn" class="btn small secondary">+ Add row</button>
+                <label class="muted small" for="manualCashInput">Cash ($)
+                  <input type="number" id="manualCashInput" min="0" step="any" placeholder="0" style="width:8rem">
+                </label>
+                <button type="button" id="manualPriceBtn" class="btn small">Update prices</button>
+              </div>
+              <div id="manualPortfolioStatus" class="muted small" aria-live="polite"></div>
+              <div id="manualPortfolioSnapshotWrap" class="table-wrap hidden">
+                <table>
+                  <caption class="visually-hidden">Manual portfolio priced snapshot</caption>
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Qty</th>
+                      <th>Last</th>
+                      <th>Market Value</th>
+                      <th>Weight %</th>
+                    </tr>
+                  </thead>
+                  <tbody id="manualPortfolioBody"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 
           <div id="portfolioPanelRisk" class="risk-panel-content hidden" role="tabpanel">
             <div id="portfolioRiskMount">
               <div class="muted">Open the Risk tab to load the risk dashboard.</div>
+            </div>
+          </div>
+
+          <div id="portfolioPanelBook" class="hidden" role="tabpanel">
+            <!-- Deeplink anchors for ?section=book-calendar|book-tax|book-journal -->
+            <span id="book-calendar" class="visually-hidden" aria-hidden="true"></span>
+            <span id="book-tax" class="visually-hidden" aria-hidden="true"></span>
+            <span id="book-journal" class="visually-hidden" aria-hidden="true"></span>
+            <div id="portfolioBookMount">
+              <div class="muted">Open the Book tab for P/L calendar, tax estimate, and journal.</div>
             </div>
           </div>
         </article>

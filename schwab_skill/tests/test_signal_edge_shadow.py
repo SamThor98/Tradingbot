@@ -12,8 +12,15 @@ def _record_nonfatal_stub(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
-def _run_chain(signals: list[dict[str, Any]], *, skill_dir, monkeypatch) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _run_chain(
+    signals: list[dict[str, Any]],
+    *,
+    skill_dir,
+    monkeypatch,
+    rank_filter_mode: str = "shadow",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     monkeypatch.setenv("SIGNAL_EDGE_SHADOW_MODE", "shadow")
+    monkeypatch.setenv("RANK_FILTER_V2_MODE", rank_filter_mode)
     diagnostics: dict[str, Any] = defaultdict(int)
     out = signal_scanner._apply_post_stage_b_chain(
         signals,
@@ -100,10 +107,37 @@ def test_rank_filter_shadow_counts_would_drop(tmp_path, hermetic_chain, monkeypa
     assert diagnostics["signal_edge_shadow_mode"] == "shadow"
     assert diagnostics["rank_filter_would_drop_composite"] >= 1
     assert diagnostics["rank_filter_would_drop_any"] >= 1
+    assert diagnostics["rank_filter_v2_would_drop"] >= 1
+    assert diagnostics["rank_filter_v2_dropped"] == 0
     low = next(s for s in out if s["ticker"] == "LOW")
     assert low.get("rank_filter_shadow", {}).get("composite_score_would_drop") is True
     high = next(s for s in out if s["ticker"] == "HIGH")
     assert high.get("rank_filter_shadow", {}).get("composite_score_would_drop") is False
+
+
+def test_rank_filter_v2_live_keeps_top_thirty_percent(tmp_path, hermetic_chain, monkeypatch) -> None:
+    signals = [
+        {
+            "ticker": f"T{score}",
+            "signal_score": float(score),
+            "composite_score": float(score),
+            "rank_score_v2": float(score),
+            "mirofish_conviction": 100.0,
+        }
+        for score in range(1, 11)
+    ]
+
+    out, diagnostics = _run_chain(
+        signals,
+        skill_dir=tmp_path,
+        monkeypatch=monkeypatch,
+        rank_filter_mode="live",
+    )
+
+    assert [signal["ticker"] for signal in out] == ["T10", "T9", "T8"]
+    assert diagnostics["rank_filter_v2_evaluated"] == 10
+    assert diagnostics["rank_filter_v2_would_drop"] == 7
+    assert diagnostics["rank_filter_v2_dropped"] == 7
 
 
 def test_signal_edge_shadow_off_skips_counters(tmp_path, hermetic_chain, monkeypatch) -> None:

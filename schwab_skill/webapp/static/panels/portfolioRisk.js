@@ -32,6 +32,9 @@ import {
   compactMoney,
   renderEquitySparkline,
 } from "../modules/portfolioFormat.js";
+import { getPortfolioSource, getManualPayload, wirePortfolioSource } from "./portfolioManual.js";
+import { refreshPortfolio } from "./portfolio.js";
+import { loadBook, resolveBookHash } from "./portfolioBook.js";
 
 const HEATMAP_MAX_TICKERS = 20;
 const LOOKBACK_OPTIONS = [
@@ -730,9 +733,33 @@ export async function loadPortfolioRiskDashboard(options = {}) {
   const mount = document.getElementById("portfolioRiskMount");
   if (!mount) return;
   const lookback = state.riskDashboardLookback || 252;
+  const source = getPortfolioSource();
   const cached = state.lastPortfolioRiskDashboard;
-  if (!options.force && !options.reload && cached && cached._lookback === lookback) {
-    return; // rendered this session at this lookback; instant tab re-entry
+  if (!options.force && !options.reload && cached && cached._lookback === lookback && cached._source === source) {
+    return; // rendered this session at this lookback+source; instant tab re-entry
+  }
+
+  // Manual source with an empty book: prompt instead of hitting the API.
+  const manualPayload = source === "manual" ? getManualPayload() : null;
+  if (source === "manual" && !manualPayload) {
+    state.lastPortfolioRiskDashboard = null;
+    setRiskPanelState("empty");
+    mount.innerHTML = `
+      <div class="empty-state-cell" style="padding:2rem 0;text-align:center">
+        <div style="font-weight:700;font-size:1rem">Manual book is empty</div>
+        <div class="muted" style="max-width:420px;margin:0.5rem auto 0.75rem">Add tickers and share counts on the Positions tab, then reopen Risk to build the dashboard.</div>
+        <button type="button" class="btn small secondary" id="riskGoManualPositionsBtn">Open Positions</button>
+      </div>`;
+    mount.querySelector("#riskGoManualPositionsBtn")?.addEventListener("click", () => {
+      document.getElementById("portfolioTabPositions")?.click();
+    });
+    paintRiskSurface("empty", "Manual book is empty.", "Add tickers on the Positions tab to build risk analytics.", {
+      output: { value: "None", sub: "manual book" },
+      data: { value: "Local", sub: "this browser" },
+      action: { value: "Add", sub: "tickers" },
+      confidence: 0,
+    });
+    return;
   }
   setRiskPanelState("loading");
   renderLoadingSkeleton(mount, state.lastPortfolioData?.positions_count);
@@ -748,19 +775,30 @@ export async function loadPortfolioRiskDashboard(options = {}) {
     },
   );
 
-  const params = new URLSearchParams({ lookback_days: String(lookback) });
-  if (options.force) params.set("force", "true");
-  const out = await api.get(`/api/portfolio/risk-dashboard?${params}`, { timeoutMs: 120000 });
+  let out;
+  if (source === "manual") {
+    out = await api.post(
+      "/api/portfolio/risk-dashboard/manual",
+      { ...manualPayload, lookback_days: lookback, force: Boolean(options.force) },
+      { timeoutMs: 120000 },
+    );
+  } else {
+    const params = new URLSearchParams({ lookback_days: String(lookback) });
+    if (options.force) params.set("force", "true");
+    out = await api.get(`/api/portfolio/risk-dashboard?${params}`, { timeoutMs: 120000 });
+  }
   stopProgress();
   if (!out.ok) {
     state.lastPortfolioRiskDashboard = null;
     setRiskPanelState("error");
     const reason = safeText(out.user_message || out.error || "fetch failed");
-    const hint = out.status === 409
-      ? "Link Schwab account + market data in Settings, then retry."
-      : out.status === 401
-        ? "Sign in first to load tenant-scoped analytics."
-        : "Retry in a moment. If this persists, check backend logs.";
+    const hint = source === "manual"
+      ? "Fix or remove flagged tickers on the Positions tab (or wait out the one-build-per-minute limit), then retry."
+      : out.status === 409
+        ? "Link Schwab account + market data in Settings, then retry."
+        : out.status === 401
+          ? "Sign in first to load tenant-scoped analytics."
+          : "Retry in a moment. If this persists, check backend logs.";
     mount.innerHTML = `
       ${renderToolbar(null)}
       ${buildOperatorAlertHtml({
@@ -784,6 +822,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
 
   const d = out.data || {};
   d._lookback = lookback;
+  d._source = source;
   state.lastPortfolioRiskDashboard = d;
   if (!d.position_count) {
     setRiskPanelState("empty");
@@ -834,9 +873,18 @@ export async function loadPortfolioRiskDashboard(options = {}) {
 
 /** Wire the Positions | Risk sub-tab bar inside the portfolio card. */
 export function wirePortfolioSubtabs() {
+  // Schwab | Manual source toggle: switching sources invalidates the cached
+  // risk pack and repaints whichever panel is visible.
+  wirePortfolioSource(() => {
+    state.lastPortfolioRiskDashboard = null;
+    void refreshPortfolio();
+    const riskVisible = !document.getElementById("portfolioPanelRisk")?.classList.contains("hidden");
+    if (riskVisible) void loadPortfolioRiskDashboard({ reload: true });
+  });
   const tabs = [
     { btn: "portfolioTabPositions", panel: "portfolioPanelPositions" },
     { btn: "portfolioTabRisk", panel: "portfolioPanelRisk" },
+    { btn: "portfolioTabBook", panel: "portfolioPanelBook" },
   ];
   tabs.forEach(({ btn }) => {
     const el = document.getElementById(btn);
@@ -849,6 +897,7 @@ export function wirePortfolioSubtabs() {
         document.getElementById(t.panel)?.classList.toggle("hidden", !active);
       });
       if (btn === "portfolioTabRisk") void loadPortfolioRiskDashboard();
+      if (btn === "portfolioTabBook") void loadBook();
     });
   });
   // Deep link: router resolves ?section=risk to #portfolioPanelRisk. The
@@ -857,11 +906,18 @@ export function wirePortfolioSubtabs() {
   const maybeOpenRisk = () => {
     if (window.location.hash === "#portfolioPanelRisk") openPortfolioRiskTab();
   };
+  const maybeOpenBook = () => {
+    const id = (window.location.hash || "").replace(/^#/, "");
+    resolveBookHash(id);
+  };
   window.addEventListener("hashchange", maybeOpenRisk);
+  window.addEventListener("hashchange", maybeOpenBook);
   window.addEventListener("route_hash_applied", (e) => {
     if (e.detail?.id === "portfolioPanelRisk") openPortfolioRiskTab();
+    if (e.detail?.id) resolveBookHash(e.detail.id);
   });
   maybeOpenRisk();
+  maybeOpenBook();
 }
 
 /** Programmatic navigation target for router alias ?section=risk. */

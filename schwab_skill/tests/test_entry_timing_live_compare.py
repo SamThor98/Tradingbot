@@ -73,7 +73,8 @@ def test_compare_fails_wrong_profile() -> None:
 
 def test_compare_fails_when_experiment_rate_out_of_band() -> None:
     offline = offline_entry_timing_targets(
-        {"breakout_buffer_only_sweep": [{"min_breakout_buffer_pct": 0.01, "retention_pct": 50.0}]}
+        {"breakout_buffer_only_sweep": [{"min_breakout_buffer_pct": 0.01, "retention_pct": 50.0}]},
+        band=(35.0, 65.0),
     )
     live = extract_live_entry_shadow_metrics(
         {
@@ -86,6 +87,54 @@ def test_compare_fails_when_experiment_rate_out_of_band() -> None:
     result = compare_live_to_offline(live, offline)
     assert result["verdict"] == "fail"
     assert any("outside band" in err for err in result["errors"])
+
+
+def test_empirical_band_accepts_live_enforcement_session_rate(tmp_path: Path) -> None:
+    import shutil
+
+    from core.entry_timing_live_compare import (
+        build_live_entry_shadow_compare_report,
+        compute_empirical_would_filter_band,
+    )
+
+    src_cache = Path(__file__).resolve().parents[1] / "validation_artifacts" / "entry_timing_replay_cache_control_legacy_aug.json"
+    if not src_cache.exists():
+        return
+
+    art_dir = tmp_path / "validation_artifacts"
+    art_dir.mkdir()
+    shutil.copy(src_cache, art_dir / "entry_timing_replay_cache_control_legacy_aug.json")
+    (art_dir / "entry_timing_shadow_counterfactual_control_legacy_aug.json").write_text(
+        json.dumps(
+            {
+                "breakout_buffer_only_sweep": [{"min_breakout_buffer_pct": 0.01, "retention_pct": 41.9}],
+                "live_shadow_replay": {"replayed_trades": 16402, "would_filter_any": 9533},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    band = compute_empirical_would_filter_band(tmp_path)
+    assert band["band_source"] == "empirical_replay_daily"
+    assert band["band_low"] < 35.0
+    assert band["band_high"] > 65.0
+
+    report = build_live_entry_shadow_compare_report(
+        {
+            "stage_a_candidates": 35,
+            "entry_shadow_would_filter_any": 0,
+            "entry_shadow_stage2_evaluated": 514,
+            "entry_shadow_stage2_would_filter_any": 468,
+            "entry_timing_blocked": 159,
+            "entry_timing_live_enforced": 1,
+            "entry_timing_shadow_mode": "live",
+            "entry_timing_shadow_profile": "breakout_buffer_only_0.010",
+        },
+        skill_dir=tmp_path,
+    )
+    assert report is not None
+    assert report["comparison"]["verdict"] in {"pass", "warn"}
+    assert report["comparison"]["verdict"] != "fail"
 
 
 def test_write_live_entry_shadow_compare_report(tmp_path: Path) -> None:

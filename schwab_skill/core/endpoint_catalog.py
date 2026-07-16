@@ -169,12 +169,13 @@ _CATALOG: tuple[EndpointSpec, ...] = (
         method="GET",
         path="/trader/v1/accounts/{hash}/transactions",
         session="account",
-        status="gap",
-        phase="P3",
+        status="live",
+        phase="live",
         p95_latency_budget_ms=2000,
-        fallback="self-study fill log (current behavior)",
-        degraded_mode="reconcile fills from order activity instead",
-        notes="realized fill reconciliation for execution-quality attribution",
+        fallback="Book calendar/tax omit realized rows when fetch fails",
+        degraded_mode="fail closed for realized P/L; MTM still uses local snapshots",
+        callers=("core.schwab_transactions.fetch_trades_for_skill", "webapp.routes.book"),
+        notes="Book feature: realized P/L calendar + tax estimate (FIFO)",
     ),
     # --- execution ---------------------------------------------------------
     EndpointSpec(

@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.providers.execution_provider import ExecutionProvider
+from core.providers.manual_portfolio_provider import ManualPortfolioError, ManualPortfolioProvider
 from core.providers.market_provider import MarketContextProvider
 from core.providers.options_provider import OptionsProvider
 from core.providers.portfolio_provider import PortfolioProvider
@@ -24,6 +25,8 @@ __all__ = [
     "MarketContextProvider",
     "SymbolIntelProvider",
     "PortfolioProvider",
+    "ManualPortfolioProvider",
+    "ManualPortfolioError",
     "ExecutionProvider",
     "OptionsProvider",
     "cockpit_providers_mode",

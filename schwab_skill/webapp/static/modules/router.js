@@ -29,6 +29,27 @@
 import { activateResearchTabForSection } from "./researchTabs.js";
 
 /**
+ * True when the URL hash carries Supabase OAuth / magic-link tokens.
+ * The deep-link rewriter must not replace this hash or sign-in from email links fails.
+ */
+export function isSupabaseAuthCallbackHash(hash = "") {
+  const raw = String(hash || "").replace(/^#/, "").trim();
+  if (!raw) return false;
+  try {
+    const params = new URLSearchParams(raw);
+    return (
+      params.has("access_token") ||
+      params.has("refresh_token") ||
+      params.get("type") === "magiclink" ||
+      params.get("type") === "signup" ||
+      params.has("error_description")
+    );
+  } catch {
+    return raw.includes("access_token=") || raw.includes("error_description=");
+  }
+}
+
+/**
  * Default short-form ``?section=…`` aliases. Keep keys lowercase; values are
  * the actual element ``id`` to anchor to. New aliases land here so docs /
  * emails can keep using friendly names without callers having to know the
@@ -61,6 +82,10 @@ export const SECTION_ALIASES = Object.freeze({
   portfolio: "portfolioSection",
   risk: "portfolioPanelRisk",
   portfoliorisk: "portfolioPanelRisk",
+  book: "portfolioPanelBook",
+  "book-calendar": "book-calendar",
+  "book-tax": "book-tax",
+  "book-journal": "book-journal",
 });
 
 /**
@@ -140,9 +165,14 @@ export function applyQuerySectionDeepLink(aliases = SECTION_ALIASES) {
     const id = resolveSectionAlias(raw, aliases);
     if (!id) return "";
     if (!window.document?.getElementById?.(id)) return "";
-    activateResearchTabForSection(id);
     u.searchParams.delete("section");
     const q = u.searchParams.toString();
+    if (isSupabaseAuthCallbackHash(u.hash)) {
+      // Preserve magic-link tokens; only strip the ?section= query param.
+      window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}${u.hash}`);
+      return "";
+    }
+    activateResearchTabForSection(id);
     window.history.replaceState({}, "", `${u.pathname}${q ? `?${q}` : ""}#${id}`);
     return id;
   } catch (_err) {

@@ -17,6 +17,9 @@ ENTRY_TIMING_LIVE_ENV: dict[str, str] = {
 }
 
 # Offline-validated stack: exit grace (15d defer) + 1% breakout buffer in shadow only.
+# Use for clean counterfactual weeks — forces entry back to shadow and turns off
+# already-promoted plugins (event risk / exec quality). Prefer SIGNAL_STACK_ENFORCED_ENV
+# for normal local operation after entry-timing live promotion.
 SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
     **ENTRY_TIMING_EXPERIMENT_ENV,
     "EXIT_MANAGER_MODE": "shadow",
@@ -32,6 +35,22 @@ SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
     "CONFLUENCE_GATE_MODE": "shadow",
     "EVENT_RISK_MODE": "off",
     "EXEC_QUALITY_MODE": "off",
+}
+
+# Promoted operating stack: live 1% breakout buffer + live exit grace (15/40)
+# + live rank-v2 p75 trim. Does not demote EVENT_RISK / EXEC_QUALITY.
+SIGNAL_STACK_ENFORCED_ENV: dict[str, str] = {
+    **ENTRY_TIMING_LIVE_ENV,
+    "EXIT_MANAGER_MODE": "live",
+    "RANK_FILTER_V2_MODE": "live",
+    "RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2": "75",
+    "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+    "EXIT_MAX_HOLD_DAYS": "40",
+    "HOLD_DAYS": "40",
+    "BACKTEST_HOLD_DAYS": "40",
+    "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
+    "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "true",
+    "COUNTERFACTUAL_LOGGING_ENABLED": "true",
 }
 
 
@@ -183,6 +202,83 @@ def signal_stack_shadow_file_readiness(env_path: Path) -> dict[str, Any]:
 def apply_signal_stack_shadow_env(env_path: Path) -> list[str]:
     """Enable P0 stack shadow vars (exit grace + breakout buffer) in a local .env file."""
     return upsert_env_file(env_path, SIGNAL_STACK_SHADOW_ENV)
+
+
+def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
+    """Evaluate live-entry + live-exit-grace operating stack readiness."""
+    mode = str(values.get("ENTRY_TIMING_SHADOW_MODE", "live")).strip().lower()
+    disable_sma50 = _env_bool(values.get("ENTRY_SHADOW_DISABLE_SMA50_FILTERS"), True)
+    buffer = max(0.0, min(0.05, _env_float(values.get("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT"), 0.01)))
+    exit_mode = str(values.get("EXIT_MANAGER_MODE", "off")).strip().lower()
+    rank_filter_mode = str(values.get("RANK_FILTER_V2_MODE", "live")).strip().lower()
+    rank_filter_percentile = max(
+        0,
+        min(95, int(_env_float(values.get("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"), 75))),
+    )
+    min_hold = max(0, int(_env_float(values.get("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL"), 15)))
+    max_hold = max(1, int(_env_float(values.get("EXIT_MAX_HOLD_DAYS"), 40)))
+    hold_days = max(1, int(_env_float(values.get("HOLD_DAYS"), 40)))
+    bt_hold = max(1, int(_env_float(values.get("BACKTEST_HOLD_DAYS"), 40)))
+    bt_min = max(0, int(_env_float(values.get("BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL"), 15)))
+    bt_defer = _env_bool(values.get("BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS"), True)
+    cf_log = _env_bool(values.get("COUNTERFACTUAL_LOGGING_ENABLED"), True)
+
+    if disable_sma50:
+        profile = f"breakout_buffer_only_{buffer:.3f}"
+    else:
+        profile = "default_sma50_and_buffer"
+
+    missing: list[str] = []
+    if mode != "live":
+        missing.append("ENTRY_TIMING_SHADOW_MODE=live")
+    if not disable_sma50:
+        missing.append("ENTRY_SHADOW_DISABLE_SMA50_FILTERS=true")
+    if abs(buffer - 0.01) > 1e-9:
+        missing.append("ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT=0.01")
+    if exit_mode != "live":
+        missing.append("EXIT_MANAGER_MODE=live")
+    if rank_filter_mode != "live":
+        missing.append("RANK_FILTER_V2_MODE=live")
+    if rank_filter_percentile != 75:
+        missing.append("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2=75")
+    if min_hold != 15:
+        missing.append("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL=15")
+    if max_hold != 40:
+        missing.append("EXIT_MAX_HOLD_DAYS=40")
+    if hold_days != 40:
+        missing.append("HOLD_DAYS=40")
+    if bt_hold != 40:
+        missing.append("BACKTEST_HOLD_DAYS=40")
+    if bt_min != 15:
+        missing.append("BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL=15")
+    if not bt_defer:
+        missing.append("BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS=true")
+    if not cf_log:
+        missing.append("COUNTERFACTUAL_LOGGING_ENABLED=true")
+
+    ready = not missing and profile == "breakout_buffer_only_0.010"
+    return {
+        "ready": ready,
+        "profile": profile,
+        "expected_profile": "breakout_buffer_only_0.010",
+        "entry_timing_mode": mode,
+        "exit_manager_mode": exit_mode,
+        "rank_filter_v2_mode": rank_filter_mode,
+        "rank_filter_v2_min_percentile": rank_filter_percentile,
+        "exit_min_hold_days_before_trail": min_hold,
+        "exit_max_hold_days": max_hold,
+        "missing_env": missing,
+        "recommended_env": dict(SIGNAL_STACK_ENFORCED_ENV),
+    }
+
+
+def signal_stack_enforced_file_readiness(env_path: Path) -> dict[str, Any]:
+    return signal_stack_enforced_readiness_from_values(parse_env_file(env_path))
+
+
+def apply_signal_stack_enforced_env(env_path: Path) -> list[str]:
+    """Enable live 1% breakout buffer + live exit-grace stack in a local .env file."""
+    return upsert_env_file(env_path, SIGNAL_STACK_ENFORCED_ENV)
 
 
 def reload_env_file_into_process(env_path: Path, keys: list[str] | None = None) -> dict[str, str | None]:

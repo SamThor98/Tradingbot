@@ -29,6 +29,7 @@ def main() -> int:
 
     entry = _load(f"entry_timing_shadow_counterfactual_{run_id}.json")
     early = _load(f"early_stopout_cohorts_{run_id}.json")
+    stack = _load(f"signal_stack_counterfactual_{run_id}.json")
     cache_path = ART / f"entry_timing_replay_cache_{run_id}.json"
 
     if entry is None:
@@ -55,14 +56,22 @@ def main() -> int:
             errors.append(f"replay sample too small: {replayed} (<500)")
         sweep = entry.get("breakout_buffer_only_sweep") or []
         exp = next((r for r in sweep if r.get("min_breakout_buffer_pct") == 0.01), None)
+        stack_scenarios = stack.get("scenarios") if stack and isinstance(stack.get("scenarios"), dict) else {}
+        combined = stack_scenarios.get("exit_grace_breakout_buffer_0.010") or {}
+        combined_retention = float(combined.get("retention_pct") or 0.0)
+        combined_stack_ready = (
+            bool(combined.get("passes_promotion_gates"))
+            and int(combined.get("n_eras") or 0) == 5
+            and 40.0 <= combined_retention <= 60.0
+        )
         if exp is None:
             errors.append("breakout_buffer_only sweep missing 0.01 row")
         elif not (
             (exp.get("retention_pct") or 0) >= 50
             and (exp.get("delta_early_stopout_pp") or 0) <= -3
             and (exp.get("delta_overlap_pf_mean") or 0) >= 0.05
-        ):
-            errors.append("breakout_buffer 0.01 row does not meet promotion shape")
+        ) and not combined_stack_ready:
+            errors.append("breakout_buffer 0.01 row and combined exit-grace stack do not meet promotion shape")
 
     if early:
         baseline = early.get("baseline") or {}
@@ -80,6 +89,12 @@ def main() -> int:
         rec = entry.get("recommendation") or {}
         print(f"- recommendation: {rec.get('action')}")
         print(f"- replay trades: {(entry.get('live_shadow_replay') or {}).get('replayed_trades')}")
+    if stack:
+        combined = ((stack.get("scenarios") or {}).get("exit_grace_breakout_buffer_0.010") or {})
+        print(
+            f"- combined stack: pf_mean={combined.get('pf_mean')} "
+            f"worst={combined.get('worst_era_pf')} retention={combined.get('retention_pct')}%"
+        )
     return 0
 
 

@@ -416,14 +416,20 @@ so production behavior for those remains legacy until explicitly enabled.
 1. ✅ `EXEC_QUALITY_MODE=shadow` -> `live` (promoted 2026-Q2; bare default is now `live`)
 2. ✅ `EVENT_RISK_MODE=shadow` -> `live` (promoted 2026-Q2; bare default is now `live`)
 3. 🟡 `REGIME_V2_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 3)
-4. 🟡 `EXIT_MANAGER_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 4)
+4. ✅ `EXIT_MANAGER_MODE=shadow` -> `live` (operator-promoted after shadow run; ledger seq 6)
 5. 🟡 `CORRELATION_GUARD_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 5)
 
-Live promotion of steps 3–5 is currently blocked by the Phase 2 edge audit
+Live promotion of steps 3 and 5 remains blocked by the Phase 2 edge audit
 verdict `halt_fix_signal_first` (bare-signal PF mean 1.005, worst-era PF 0.801
 across 5 eras — `validation_artifacts/phase2_edge_audit_aug.md`). Re-run the
 audit after base-signal work; promote only once PF mean >= 1.20 and
 worst-era PF >= 1.00.
+
+P0 operating stack (Stages 2c–2d): live 1% breakout buffer + live exit grace
++ live rank-v2 p75 trim
+(`python scripts/apply_signal_stack_enforced_env.py`). Offline combined stack
+clears PF gates. Rank filter promoted 2026-07-16 (ledger seq 15); keep
+`SCAN_LIVE_SORT_KEY=signal_score` until a separate sort-key promotion.
 
 Promote one plugin at a time, hold for at least one full market week, then proceed.
 Every promotion appends a signed entry to `scripts/promotion_ledger.jsonl`

@@ -63,6 +63,23 @@ export function renderScanIntegrityBanner(diag = {}, signals = [], shortlist = [
   el.dataset.integrity = dq === "ok" && !safeNum(diag.scan_blocked, 0) ? "good" : "warn";
 }
 
+/** Warn when the persisted last scan is older than 24 hours. */
+export function renderStaleScanBanner(lastScanAt) {
+  const el = document.getElementById("scanIntegrityBanner");
+  if (!el) return;
+  const iso = safeText(lastScanAt || "").trim();
+  if (!iso) return;
+  const ts = Date.parse(iso);
+  if (!Number.isFinite(ts)) return;
+  const ageHours = (Date.now() - ts) / (1000 * 60 * 60);
+  if (ageHours < 24) return;
+  const rounded = Math.round(ageHours);
+  const label = rounded >= 48 ? `${Math.round(rounded / 24)}d` : `${rounded}h`;
+  el.textContent = `Last scan was ${label} ago — run a fresh scan before staging or approving trades.`;
+  el.classList.remove("hidden");
+  el.dataset.integrity = "stale";
+}
+
 export function renderScanGateModesToolbar(diag = {}) {
   const el = document.getElementById("scanGateModesChip");
   if (!el) return;

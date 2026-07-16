@@ -1169,6 +1169,9 @@ def _run_backtest_core(
         "entry_timing_shadow_evaluated": 0,
         "entry_timing_shadow_would_filter": 0,
         "entry_timing_blocked": 0,
+        "rank_filter_v2_evaluated": 0,
+        "rank_filter_v2_would_drop": 0,
+        "rank_filter_v2_dropped": 0,
         "exits_trailing_stop": 0,
         "exits_time_exit": 0,
         "exits_sma50_break": 0,
@@ -1341,18 +1344,49 @@ def _run_backtest_core(
                 mark += float(pos.qty) * float(pos.entry_price)
         return mark
 
-    def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float]:
+    def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float, float]:
         from config import get_scan_live_sort_key
 
         sort_key = get_scan_live_sort_key(sd)
         primary = _safe_telemetry_float(candidate.signal.get(sort_key))
+        rank_v2 = _safe_telemetry_float(candidate.signal.get("rank_score_v2"))
         composite_score = _safe_telemetry_float(candidate.signal.get("composite_score"))
         rank_score = _safe_telemetry_float(candidate.signal.get("rank_score"))
         return (
             primary,
+            rank_v2 if sort_key != "rank_score_v2" else composite_score,
             composite_score if sort_key != "composite_score" else rank_score,
             _safe_telemetry_float(candidate.signal.get("signal_score")),
         )
+
+    def _apply_candidate_rank_v2_filter(candidates: list[CandidateSignal]) -> list[CandidateSignal]:
+        from config import get_rank_filter_shadow_min_percentile_rank_v2, get_rank_filter_v2_mode
+        from core.scoring_rank_v2 import score_percentile_threshold
+
+        mode = get_rank_filter_v2_mode(sd)
+        diagnostics["rank_filter_v2_mode"] = mode
+        if mode == "off" or not candidates:
+            return candidates
+        scored = [
+            (candidate, _safe_telemetry_float(candidate.signal.get("rank_score_v2")))
+            for candidate in candidates
+            if candidate.signal.get("rank_score_v2") is not None
+        ]
+        diagnostics["rank_filter_v2_evaluated"] = int(diagnostics["rank_filter_v2_evaluated"]) + len(scored)
+        if len(scored) < 3:
+            return candidates
+        min_percentile = get_rank_filter_shadow_min_percentile_rank_v2(sd)
+        threshold = score_percentile_threshold([score for _, score in scored], min_percentile)
+        diagnostics["rank_filter_v2_threshold"] = round(threshold, 4)
+        would_drop_ids = {id(candidate) for candidate, score in scored if score < threshold}
+        diagnostics["rank_filter_v2_would_drop"] = int(diagnostics["rank_filter_v2_would_drop"]) + len(would_drop_ids)
+        if mode != "live":
+            return candidates
+        kept = [candidate for candidate in candidates if id(candidate) not in would_drop_ids]
+        diagnostics["rank_filter_v2_dropped"] = int(diagnostics["rank_filter_v2_dropped"]) + (
+            len(candidates) - len(kept)
+        )
+        return kept
 
     for day_ts in timeline:
         # Exit pass first: capital from exits is available for same-day entries.
@@ -1763,6 +1797,7 @@ def _run_backtest_core(
                 )
             )
 
+        candidates = _apply_candidate_rank_v2_filter(candidates)
         day_equity = _equity_at(day_ts)
         max_position_notional = max(0.0, float(day_equity) * max_position_size_pct)
         for candidate in sorted(candidates, key=_candidate_rank_key, reverse=True):

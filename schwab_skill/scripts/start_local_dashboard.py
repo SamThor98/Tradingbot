@@ -10,6 +10,7 @@ Schwab requires an https://127.0.0.1 callback. This script:
 Usage (from schwab_skill):
   python scripts/start_local_dashboard.py
   python scripts/start_local_dashboard.py --port 8182 --no-sync-env
+  python scripts/start_local_dashboard.py --signal-stack-enforced
   python scripts/start_local_dashboard.py --entry-timing-experiment
   python scripts/start_local_dashboard.py --entry-timing-live
 """
@@ -85,6 +86,11 @@ def main() -> int:
         help="Upsert P0 stack SHADOW vars (exit grace + breakout buffer) into .env before starting",
     )
     parser.add_argument(
+        "--signal-stack-enforced",
+        action="store_true",
+        help="Upsert promoted P0 stack (live 1%% buffer + live exit grace) into .env before starting",
+    )
+    parser.add_argument(
         "--entry-timing-experiment",
         action="store_true",
         help="Upsert P0 entry-timing SHADOW experiment vars into .env before starting",
@@ -97,7 +103,15 @@ def main() -> int:
     args = parser.parse_args()
 
     sys.path.insert(0, str(SKILL_DIR))
-    if args.entry_timing_live:
+    if args.signal_stack_enforced:
+        from core.env_local import apply_signal_stack_enforced_env
+
+        changed = apply_signal_stack_enforced_env(ENV_PATH)
+        if changed:
+            print(f"Signal stack enforced env updated in {ENV_PATH}: {', '.join(changed)}")
+        else:
+            print(f"Signal stack enforced env already set in {ENV_PATH}")
+    elif args.entry_timing_live:
         from core.env_local import apply_entry_timing_live_env
 
         changed = apply_entry_timing_live_env(ENV_PATH)

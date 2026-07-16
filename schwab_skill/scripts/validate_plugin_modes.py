@@ -30,6 +30,7 @@ from config import (  # noqa: E402
     get_exit_max_hold_days,
     get_exit_partial_tp_fraction,
     get_exit_partial_tp_r_mult,
+    get_rank_filter_v2_mode,
     get_rank_score_v2_mode,
     get_rank_v2_mirofish_weight,
     get_rank_v2_signal_weight,
@@ -51,6 +52,7 @@ MODE_GETTERS = {
     "CORRELATION_GUARD_MODE": get_correlation_guard_mode,
     "REGIME_V2_MODE": get_regime_v2_mode,
     "RANK_SCORE_V2_MODE": get_rank_score_v2_mode,
+    "RANK_FILTER_V2_MODE": get_rank_filter_v2_mode,
 }
 
 # Promoted defaults (2026-Q2): see docs/RELEASE_NOTES_PLUGIN_PROMOTIONS.md
@@ -61,6 +63,7 @@ PROMOTED_DEFAULTS = {
     "EVENT_RISK_MODE": "live",
     "EXIT_MANAGER_MODE": "live",
     "RANK_SCORE_V2_MODE": "shadow",
+    "RANK_FILTER_V2_MODE": "live",
 }
 
 

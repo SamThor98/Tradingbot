@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { SECTION_ALIASES } from "../../webapp/static/modules/router.js";
+import { SECTION_ALIASES, applyQuerySectionDeepLink, isSupabaseAuthCallbackHash } from "../../webapp/static/modules/router.js";
 
 test("SECTION_ALIASES is a frozen object", () => {
   assert.equal(Object.isFrozen(SECTION_ALIASES), true);
@@ -30,4 +30,42 @@ test("core deep-link aliases resolve to their contract targets", () => {
   assert.equal(SECTION_ALIASES.connect, "onboardingSection");
   assert.equal(SECTION_ALIASES.health, "healthRibbon");
   assert.equal(SECTION_ALIASES.sec, "secCompareSection");
+});
+
+test("isSupabaseAuthCallbackHash detects magic-link token hashes", () => {
+  assert.equal(isSupabaseAuthCallbackHash(""), false);
+  assert.equal(isSupabaseAuthCallbackHash("#onboardingSection"), false);
+  assert.equal(
+    isSupabaseAuthCallbackHash("#access_token=abc&refresh_token=def&type=magiclink"),
+    true,
+  );
+});
+
+test("applyQuerySectionDeepLink preserves Supabase auth hash", () => {
+  const original = globalThis.window;
+  const replaceStateCalls = [];
+  globalThis.window = {
+    location: {
+      href: "https://app.example/?section=connect#access_token=tok&type=magiclink",
+      pathname: "/",
+      hash: "#access_token=tok&type=magiclink",
+    },
+    history: {
+      replaceState(_state, _title, url) {
+        replaceStateCalls.push(url);
+      },
+    },
+    document: {
+      getElementById: (id) => (id === "onboardingSection" ? {} : null),
+    },
+  };
+  try {
+    const id = applyQuerySectionDeepLink();
+    assert.equal(id, "");
+    assert.equal(replaceStateCalls.length, 1);
+    assert.match(replaceStateCalls[0], /#access_token=tok&type=magiclink$/);
+    assert.doesNotMatch(replaceStateCalls[0], /#onboardingSection/);
+  } finally {
+    globalThis.window = original;
+  }
 });

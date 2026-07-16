@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
@@ -25,7 +26,7 @@ from earnings_signal import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_config_cache() -> None:
+def _clear_config_cache() -> Iterator[None]:
     clear_env_cache()
     yield
     clear_env_cache()

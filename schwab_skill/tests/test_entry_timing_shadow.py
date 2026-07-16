@@ -93,3 +93,30 @@ def test_entry_timing_shadow_off_skips_filter(entry_df: pd.DataFrame, tmp_path, 
     assert result["mode"] == "off"
     assert result["would_filter"] is False
     assert result["would_filter_reasons"] == []
+
+
+def test_entry_timing_promoted_defaults(tmp_path, monkeypatch) -> None:
+    from config import (
+        clear_env_cache,
+        get_entry_shadow_disable_sma50_filters,
+        get_entry_shadow_min_breakout_buffer_pct,
+        get_entry_timing_breakout_buffer_readiness,
+        get_entry_timing_shadow_mode,
+        get_entry_timing_shadow_profile,
+    )
+
+    for key in (
+        "ENTRY_TIMING_SHADOW_MODE",
+        "ENTRY_SHADOW_DISABLE_SMA50_FILTERS",
+        "ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    clear_env_cache()
+    # Avoid loading schwab_skill/.env — use empty tmp skill dir
+    assert get_entry_timing_shadow_mode(tmp_path) == "live"
+    assert get_entry_shadow_disable_sma50_filters(tmp_path) is True
+    assert get_entry_shadow_min_breakout_buffer_pct(tmp_path) == pytest.approx(0.01)
+    assert get_entry_timing_shadow_profile(tmp_path) == "breakout_buffer_only_0.010"
+    readiness = get_entry_timing_breakout_buffer_readiness(tmp_path)
+    assert readiness["ready"] is True
+    assert readiness["live_enforced"] is True
