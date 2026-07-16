@@ -32,8 +32,8 @@ REFRESH_TICKERS = [
 def main() -> int:
     from config import get_edgar_user_agent
     from data_health import assess_scan_session_data_health
-    from sec_enrichment import fetch_sec_snapshot
     from schwab_auth import DualSchwabAuth
+    from sec_enrichment import fetch_sec_snapshot
 
     ua = get_edgar_user_agent(SKILL_DIR)
     ok = fail = 0
