@@ -50,7 +50,7 @@ from .route_helpers import (
 from .route_helpers import (
     simple_err as _shared_simple_err,
 )
-from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping
+from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping, worker_busy_hint
 from .scan_payload import parse_scan_run_body
 from .schemas import (
     AnalyticsEventPayload,
@@ -529,10 +529,21 @@ def _celery_worker_health() -> dict[str, Any]:
     cached = _CELERY_WORKER_HEALTH_CACHE
     if cached and (now - cached[0]) < _CELERY_INSPECT_CACHE_TTL_SEC:
         return cached[1]
+    busy = worker_busy_hint()
     try:
         insp = celery_app.control.inspect(timeout=0.75)
         if not insp:
-            out = {"reachable": False, "workers": 0, "queues": []}
+            out = {"reachable": False, "workers": 0, "queues": [], "busy_hint": busy}
+            if busy.get("busy"):
+                # Solo pool workers cannot answer inspect mid-scan.
+                out.update(
+                    {
+                        "reachable": True,
+                        "workers": 1,
+                        "queues": ["scan"],
+                        "busy_inferred": True,
+                    }
+                )
             _CELERY_WORKER_HEALTH_CACHE = (now, out)
             return out
         ping = insp.ping() or {}
@@ -547,21 +558,42 @@ def _celery_worker_health() -> dict[str, Any]:
                 name = str(queue.get("name") or "").strip()
                 if name:
                     queues.add(name)
-        out = {
+        out: dict[str, Any] = {
             "reachable": bool(ping),
             "workers": len(ping),
             "queues": sorted(queues),
+            "busy_hint": busy,
         }
+        if not ping and busy.get("busy"):
+            out.update(
+                {
+                    "reachable": True,
+                    "workers": 1,
+                    "queues": sorted(queues | {"scan"}),
+                    "busy_inferred": True,
+                }
+            )
         _CELERY_WORKER_HEALTH_CACHE = (now, out)
         return out
     except Exception:
+        if busy.get("busy"):
+            out = {
+                "reachable": True,
+                "workers": 1,
+                "queues": ["scan"],
+                "busy_inferred": True,
+                "busy_hint": busy,
+                "inspect_error": True,
+            }
+            _CELERY_WORKER_HEALTH_CACHE = (now, out)
+            return out
         if cached:
             return {
                 **cached[1],
                 "inspect_cached": True,
                 "inspect_error": True,
             }
-        return {"reachable": False, "workers": 0, "queues": [], "inspect_error": True}
+        return {"reachable": False, "workers": 0, "queues": [], "inspect_error": True, "busy_hint": busy}
 
 
 def _order_rate_limit(user_id: str) -> None:

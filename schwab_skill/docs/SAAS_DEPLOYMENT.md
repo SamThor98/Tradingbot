@@ -173,6 +173,8 @@ These paths remain supported for migration safety, but new tenants should use fu
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ready` is 503 while `live` is 200 | Redis/Celery queue not ready | Verify worker is up and listening on `scan,orders,celery`; check `REDIS_URL` |
+| Scan queued forever / `ready` shows 0 workers during a scan | Solo Celery pool cannot answer inspect while Stage B MiroFish LLM runs | Confirm worker CPU/memory is active; set `MIROFISH_MAX_LLM_TICKERS_PER_SCAN` (default 12) and `MIROFISH_CACHE_DIR`; redeploy worker |
+| SaaS scan takes 30+ minutes (local is fast) | Ephemeral tenant dirs wipe MiroFish cache; 3 OpenAI calls per shortlist ticker | Shared `MIROFISH_CACHE_DIR` + LLM ticker budget; optional higher worker RAM |
 | OAuth callback succeeds but scans fail with market-session error | Missing per-user market token and no platform fallback | Reconnect market OAuth or configure `SAAS_PLATFORM_MARKET_SKILL_DIR` intentionally |
 | JWT accepted locally, rejected in prod | Missing claim config | Set `SUPABASE_JWT_AUDIENCE` and `SUPABASE_JWT_ISSUER` |
 | Browser sign-in UI missing | `SUPABASE_URL`/`SUPABASE_ANON_KEY` not set on web service | Set both on web service or use manual JWT input path |

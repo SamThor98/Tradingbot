@@ -562,6 +562,41 @@ class MarketSimulation:
         seed, seed_df = self._fetch_seed_data()
         seed_fingerprint = compute_seed_fingerprint(seed_df, self.ticker, self.skill_dir) if seed_df is not None else ""
 
+        def _unavailable(reason: str, summary: str) -> dict[str, Any]:
+            sim_id = f"sim_unavailable_{uuid.uuid4().hex[:12]}"
+            LOG.info("MiroFish unavailable for %s: %s", self.ticker, reason)
+            return {
+                "simulation_id": sim_id,
+                "ticker": self.ticker,
+                "conviction_score": None,
+                "summary": summary,
+                "agent_votes": [],
+                "mirofish_disagreement": None,
+                "agent_weighting": {
+                    "version": 1,
+                    "mode": "unavailable",
+                    "weights": {
+                        "institutional_trend": 0.0,
+                        "mean_reversion": 0.0,
+                        "retail_fomo": 0.0,
+                    },
+                    "regime_bucket": "unknown",
+                    "applied": False,
+                },
+                "continuation_probability": None,
+                "bull_trap_probability": None,
+                "seed_fingerprint": seed_fingerprint,
+                "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
+                "unavailable_reason": reason,
+            }
+
+        if not _mirofish_llm_budget_allow():
+            return _unavailable(
+                "llm_budget_exhausted",
+                "MiroFish skipped (per-scan LLM budget exhausted)",
+            )
+        _mirofish_llm_budget_consume()
+
         # Heuristic sentiment proxy from the news portion in `seed` (used only for weighting).
         news_proxy = _estimate_news_sentiment_proxy(seed)
 
@@ -595,38 +630,8 @@ class MarketSimulation:
             parsed_agents.append(parsed)
 
         if llm_response_count == 0:
-            sim_id = f"sim_unavailable_{uuid.uuid4().hex[:12]}"
-            LOG.info(
-                "MiroFish unavailable for %s: no LLM responses (check MIROFISH_API_KEY / OPENAI_API_KEY).",
-                self.ticker,
-            )
-            # Return a structured "unavailable" payload with conviction_score=None.
-            # Downstream code (signal_scanner, UI, cache) already treats `None`
-            # as "no MiroFish opinion" and renders it as a missing value.
-            return {
-                "simulation_id": sim_id,
-                "ticker": self.ticker,
-                "conviction_score": None,
-                "summary": "MiroFish unavailable (no LLM)",
-                "agent_votes": [],
-                "mirofish_disagreement": None,
-                "agent_weighting": {
-                    "version": 1,
-                    "mode": "unavailable",
-                    "weights": {
-                        "institutional_trend": 0.0,
-                        "mean_reversion": 0.0,
-                        "retail_fomo": 0.0,
-                    },
-                    "regime_bucket": "unknown",
-                    "applied": False,
-                },
-                "continuation_probability": None,
-                "bull_trap_probability": None,
-                "seed_fingerprint": seed_fingerprint,
-                "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
-                "unavailable_reason": "no_llm_response",
-            }
+            # Downstream treats conviction_score=None as "no MiroFish opinion".
+            return _unavailable("no_llm_response", "MiroFish unavailable (no LLM)")
 
         # Convert each agent's probabilities+alignments into a bounded conviction_score.
         # Also populate backward-compatible `score` and `reason` fields.
@@ -801,6 +806,42 @@ class MarketSimulation:
 
 MIROFISH_CACHE_FILE = ".mirofish_cache.json"
 
+# Per-process budget for fresh LLM simulations. SaaS Celery workers use an
+# ephemeral tenant skill_dir, so the on-disk MiroFish cache is wiped every
+# scan unless MIROFISH_CACHE_DIR points at a shared path. Without a budget,
+# Stage B can issue 3 OpenAI calls per shortlist ticker and hang for 30+ min
+# on a solo 512MB worker.
+_LLM_TICKER_BUDGET: dict[str, int] = {"used": 0}
+
+
+def reset_mirofish_llm_budget() -> None:
+    """Reset the per-scan MiroFish LLM ticker budget (call at scan start)."""
+    _LLM_TICKER_BUDGET["used"] = 0
+
+
+def _mirofish_llm_budget_limit() -> int | None:
+    raw = (os.environ.get("MIROFISH_MAX_LLM_TICKERS_PER_SCAN") or "").strip()
+    if not raw:
+        return None
+    try:
+        limit = int(raw)
+    except ValueError:
+        return None
+    if limit < 0:
+        return None
+    return limit
+
+
+def _mirofish_llm_budget_allow() -> bool:
+    limit = _mirofish_llm_budget_limit()
+    if limit is None:
+        return True
+    return int(_LLM_TICKER_BUDGET["used"]) < limit
+
+
+def _mirofish_llm_budget_consume() -> None:
+    _LLM_TICKER_BUDGET["used"] = int(_LLM_TICKER_BUDGET["used"]) + 1
+
 
 def _persist_simulation(sim_id: str, result: dict[str, Any], skill_dir: Path | None = None) -> None:
     """Write simulation result to mirofish_sims/{sim_id}.json for viewer consumption."""
@@ -817,6 +858,20 @@ def _persist_simulation(sim_id: str, result: dict[str, Any], skill_dir: Path | N
 
 
 def _get_cache_path(skill_dir: Path | None) -> Path:
+    # Prefer an explicit shared cache dir so SaaS temp tenant dirs do not
+    # discard MiroFish results between scans.
+    shared = (
+        (os.environ.get("MIROFISH_CACHE_DIR") or "").strip()
+        or (os.environ.get("SAAS_SHARED_CACHE_DIR") or "").strip()
+    )
+    if shared:
+        base = Path(shared)
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            LOG.warning("MiroFish shared cache dir unavailable (%s): %s", base, exc)
+            return (skill_dir or SKILL_DIR) / MIROFISH_CACHE_FILE
+        return base / MIROFISH_CACHE_FILE
     return (skill_dir or SKILL_DIR) / MIROFISH_CACHE_FILE
 
 

@@ -116,6 +116,13 @@ services:
         value: "2"
       - key: SCAN_STAGE_B_MAX_WORKERS
         value: "2"
+      # Persist MiroFish cache across ephemeral tenant dirs; cap LLM fan-out.
+      - key: MIROFISH_CACHE_DIR
+        value: /tmp/tradingbot_shared_cache
+      - key: MIROFISH_MAX_LLM_TICKERS_PER_SCAN
+        value: "12"
+      - key: LLM_TIMEOUT_SECONDS
+        value: "8"
       - key: DATABASE_URL
         fromDatabase:
           name: tradingbot-db
