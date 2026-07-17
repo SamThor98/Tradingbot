@@ -35,7 +35,7 @@ def upgrade() -> None:
             sa.Column("federal_lt_rate", sa.Float(), nullable=True),
             sa.Column("state_rate", sa.Float(), nullable=True),
             sa.Column("tax_year", sa.Integer(), nullable=True),
-            sa.Column("rates_configured", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+            sa.Column("rates_configured", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         )
 
