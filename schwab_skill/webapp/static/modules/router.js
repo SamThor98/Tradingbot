@@ -115,7 +115,10 @@ function openAncestorDetails(el) {
  */
 export function handleRouteHash() {
   if (typeof window === "undefined" || !window.document) return;
-  const id = (window.location?.hash || "").slice(1);
+  const hash = window.location?.hash || "";
+  // Magic-link / OAuth callback hashes are not section ids — leave them for Supabase.
+  if (isSupabaseAuthCallbackHash(hash)) return;
+  const id = hash.slice(1);
   if (!id) return;
   const el = window.document.getElementById?.(id);
   if (!el) return;

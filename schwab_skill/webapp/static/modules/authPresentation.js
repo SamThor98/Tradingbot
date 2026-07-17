@@ -146,7 +146,7 @@ export async function requestVerificationEmail({
     email: cleanEmail,
     options: {
       shouldCreateUser: true,
-      emailRedirectTo: redirectTo || `${window.location.origin}/?section=connect`,
+      emailRedirectTo: redirectTo || `${window.location.origin}/login`,
     },
   });
   if (error) {

@@ -74,6 +74,7 @@ import {
   clearOAuthQueryParams,
   handleRouteHash,
   installRouter,
+  isSupabaseAuthCallbackHash,
 } from "./modules/router.js";
 import {
   attachVerifyCooldownButton,
@@ -1041,7 +1042,7 @@ async function initSupabaseAuth(url, anonKey) {
     const result = await requestVerificationEmail({
       supabase: sb,
       email,
-      redirectTo: `${window.location.origin}/?section=connect`,
+      redirectTo: `${window.location.origin}/login`,
       verified: hasVerifiedEmailOnce(),
     });
     logEvent({
@@ -4532,7 +4533,10 @@ function connectSSE() {
     // installRouter rewrites ?section= deep links into a #hash via
     // history.replaceState, which does NOT fire hashchange. Run the route
     // handler once here before applyScreenMode writes any ?screen= param.
-    if (window.location.hash) handleRouteHash();
+    // Skip Supabase magic-link / OAuth hashes — those are not section ids.
+    if (window.location.hash && !isSupabaseAuthCallbackHash(window.location.hash)) {
+      handleRouteHash();
+    }
   });
   safeInit("applyDisplayMode", () => applyDisplayMode(consumeDisplayModeFromUrl() || getDisplayMode()));
   safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
