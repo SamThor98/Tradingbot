@@ -71,3 +71,17 @@ def test_heartbeat_grace_infers_busy_after_race_clear(monkeypatch):
     assert fake.get(sr._WORKER_HEARTBEAT_KEY) is not None
     sr.clear_worker_busy()
     assert sr.worker_busy_hint()["busy"] is False
+
+
+def test_stale_busy_stamp_is_cleared(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr(sr, "redis_client", lambda: fake)
+    monkeypatch.setenv("SAAS_BUSY_HEARTBEAT_GRACE_SEC", "60")
+
+    sr.mark_worker_busy("webapp.scan_for_user")
+    # Heartbeat from well past the grace window (SIGKILL left Redis dirty).
+    fake.set(sr._WORKER_HEARTBEAT_KEY, str(int(__import__("time").time()) - 120))
+    hint = sr.worker_busy_hint()
+    assert hint["busy"] is False
+    assert hint.get("busy_stale") is True
+    assert fake.get(sr._WORKER_BUSY_KEY) is None

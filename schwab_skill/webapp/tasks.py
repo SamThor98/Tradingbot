@@ -102,6 +102,39 @@ def _metrics_observe(name: str, value_sec: float) -> None:
         pass
 
 
+def _solo_scan_deadline_sec() -> int:
+    return max(60, int(os.getenv("SAAS_SCAN_SOFT_TIME_LIMIT_SEC", "900")))
+
+
+def _install_solo_scan_deadline(seconds: int) -> bool:
+    """Celery soft/hard limits are ignored by the solo pool; use SIGALRM instead."""
+    pool = (os.getenv("CELERY_WORKER_POOL") or "").strip().lower()
+    if pool != "solo":
+        return False
+    try:
+        import signal
+
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        def _on_alarm(_signum: int, _frame: Any) -> None:
+            raise SoftTimeLimitExceeded()
+
+        signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(max(30, int(seconds)))
+        return True
+    except Exception:
+        return False
+
+
+def _clear_solo_scan_deadline() -> None:
+    try:
+        import signal
+
+        signal.alarm(0)
+    except Exception:
+        return
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -353,11 +386,15 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
     started = time.perf_counter()
     task_ok = False
     _metrics_inc("scan_tasks_total")
+    soft_limit = _solo_scan_deadline_sec()
+    hard_limit = max(soft_limit + 60, int(os.getenv("SAAS_SCAN_HARD_TIME_LIMIT_SEC", "960")))
     # Solo workers cannot answer Celery inspect while this task runs; stamp Redis
     # so /api/health/ready does not report "0 workers" during a long scan.
-    mark_token = mark_worker_busy(
-        "webapp.scan_for_user", ttl_sec=int(os.getenv("SAAS_SCAN_BUSY_TTL_SEC", "7200"))
-    )
+    # TTL tracks the hard deadline so a SIGKILL'd solo worker cannot leave /ready
+    # stuck "busy" for hours.
+    busy_ttl = max(hard_limit + 120, int(os.getenv("SAAS_SCAN_BUSY_TTL_SEC", str(hard_limit + 120))))
+    mark_token = mark_worker_busy("webapp.scan_for_user", ttl_sec=busy_ttl)
+    alarm_armed = _install_solo_scan_deadline(soft_limit)
     # Ephemeral tenant skill dirs wipe MiroFish cache each run — pin a shared dir
     # and cap fresh LLM simulations so SaaS scans finish in minutes, not hours.
     os.environ.setdefault(
@@ -468,6 +505,8 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
             pass
         return {"ok": False, "job_id": job_id, "error": safe_exception_message(exc, fallback="scan_failed")}
     finally:
+        if alarm_armed:
+            _clear_solo_scan_deadline()
         clear_worker_busy(mark_token)
         if task_ok:
             _metrics_inc("scan_tasks_succeeded_total")
