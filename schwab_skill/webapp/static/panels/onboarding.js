@@ -491,7 +491,7 @@ async function requestInlineEmailVerification() {
   const result = await requestVerificationEmail({
     supabase: sb,
     email: cleanEmail,
-    redirectTo: `${window.location.origin}/?section=connect`,
+    redirectTo: `${window.location.origin}/login`,
     verified: hasVerifiedEmailOnce(),
     onStatus: _setVerifyStatusMessage,
   });

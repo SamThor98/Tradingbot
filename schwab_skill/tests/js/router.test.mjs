@@ -41,6 +41,28 @@ test("isSupabaseAuthCallbackHash detects magic-link token hashes", () => {
   );
 });
 
+test("handleRouteHash ignores Supabase auth callback hashes", async () => {
+  const { handleRouteHash } = await import("../../webapp/static/modules/router.js");
+  const original = globalThis.window;
+  let scrolled = false;
+  globalThis.window = {
+    location: { hash: "#access_token=tok&type=magiclink" },
+    document: {
+      getElementById: () => {
+        throw new Error("should not resolve auth hash as a section id");
+      },
+    },
+    requestAnimationFrame: (cb) => cb(),
+    dispatchEvent: () => {},
+  };
+  try {
+    handleRouteHash();
+    assert.equal(scrolled, false);
+  } finally {
+    globalThis.window = original;
+  }
+});
+
 test("applyQuerySectionDeepLink preserves Supabase auth hash", () => {
   const original = globalThis.window;
   const replaceStateCalls = [];

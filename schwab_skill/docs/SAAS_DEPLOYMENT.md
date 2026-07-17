@@ -108,6 +108,13 @@ Legacy/optional:
 | `SUPABASE_ANON_KEY` | **anon** key from Supabase → Settings → API (public; not the service_role key) |
 | `WEB_IMPLEMENTATION_GUIDE_URL` | Optional `http://` or `https://` URL — when set, the dashboard **Schwab setup guide** link opens this URL in a new tab. If unset and Schwab OAuth is configured, the UI links to the built-in **`/static/connect-schwab-guide.html`** (see `docs/CONNECT_SCHWAB_END_USERS.md`). |
 
+**Supabase Auth URL config (required for email / magic-link sign-in):**
+
+- **Site URL:** `https://<your-saas-host>/login` (or `https://<your-saas-host>/`)
+- **Redirect URLs:** include `https://<your-saas-host>/login` and `https://<your-saas-host>/**`
+
+SaaS `/login` serves a client handoff that preserves `#access_token=…` and `?code=…` before opening the dashboard. Do **not** rely on a server 302 from `/login` — that drops email-link tokens and traps users in a sign-in loop.
+
 If either is unset, the dashboard still works by pasting a JWT under **Advanced**. Workers do **not** need these.
 
 Optional: `SCHWAB_TOKEN_ENCRYPTION_KEY` — Fernet key for Schwab token files (see `schwab_auth.py`).
@@ -169,6 +176,7 @@ These paths remain supported for migration safety, but new tenants should use fu
 | OAuth callback succeeds but scans fail with market-session error | Missing per-user market token and no platform fallback | Reconnect market OAuth or configure `SAAS_PLATFORM_MARKET_SKILL_DIR` intentionally |
 | JWT accepted locally, rejected in prod | Missing claim config | Set `SUPABASE_JWT_AUDIENCE` and `SUPABASE_JWT_ISSUER` |
 | Browser sign-in UI missing | `SUPABASE_URL`/`SUPABASE_ANON_KEY` not set on web service | Set both on web service or use manual JWT input path |
+| Email magic link loops back to “Sign in” | `/login` was a 302 that dropped tokens; or Redirect URLs omit `/login` | Deploy build with `/login` client handoff; allowlist `https://<host>/login` in Supabase Auth URL config |
 
 ## Hosted Phase 2 Stage 1 rerun (remote, no local token files)
 

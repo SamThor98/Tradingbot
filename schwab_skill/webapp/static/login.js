@@ -134,6 +134,32 @@ function updateSbUi(session) {
   if (session?.user) setMessage("You are signed in. Continue to the dashboard.");
 }
 
+/** True when this page load is a Supabase email / magic-link / PKCE callback. */
+function isAuthCallbackLanding() {
+  const hash = String(window.location.hash || "").replace(/^#/, "");
+  if (hash.includes("access_token=") || hash.includes("type=magiclink") || hash.includes("type=recovery")) {
+    return true;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return params.has("code") || params.has("error_description");
+  } catch {
+    return false;
+  }
+}
+
+function continueToDashboard() {
+  const params = new URLSearchParams(window.location.search || "");
+  if (!params.has("section")) params.set("section", "connect");
+  // Drop one-time auth params; session is already persisted.
+  params.delete("code");
+  params.delete("error");
+  params.delete("error_description");
+  params.delete("error_code");
+  const q = params.toString();
+  window.location.replace(`/${q ? `?${q}` : ""}`);
+}
+
 async function initSupabase(url, anonKey) {
   let createClient;
   try {
@@ -147,14 +173,24 @@ async function initSupabase(url, anonKey) {
   supabaseClient = createClient(url, anonKey, {
     auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true },
   });
+  const fromCallback = isAuthCallbackLanding();
   const {
     data: { session },
   } = await supabaseClient.auth.getSession();
   persistJwt(session);
   updateSbUi(session);
+  if (fromCallback && session?.access_token) {
+    setMessage("Signed in. Opening dashboard…");
+    continueToDashboard();
+    return;
+  }
   supabaseClient.auth.onAuthStateChange((_e, next) => {
     persistJwt(next);
     updateSbUi(next);
+    if (fromCallback && next?.access_token) {
+      setMessage("Signed in. Opening dashboard…");
+      continueToDashboard();
+    }
   });
 
   document.getElementById("loginSbSignIn")?.addEventListener("click", async () => {

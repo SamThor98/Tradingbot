@@ -598,9 +598,45 @@ def cockpit_page() -> RedirectResponse:
 
 
 @app.get("/login")
-def login_page() -> RedirectResponse:
-    """Legacy login path now forwards to connect-first dashboard flow."""
-    return RedirectResponse("/?section=connect", status_code=302)
+def login_page() -> HTMLResponse:
+    """Handoff for Supabase email / magic-link / PKCE callbacks.
+
+    Supabase Site URL is often ``https://<host>/login``. A 302 to
+    ``/?section=connect`` drops ``#access_token=…`` (implicit/magic-link) and
+    ``?code=…`` (PKCE), so the dashboard never sees a session and users loop
+    on "request another email". Serve a tiny same-document bounce that keeps
+    query + hash, then lands on the connect deep link.
+    """
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="robots" content="noindex"/>
+  <title>Signing in…</title>
+</head>
+<body>
+  <p>Signing you in…</p>
+  <script>
+(function () {
+  try {
+    var params = new URLSearchParams(window.location.search || "");
+    if (!params.has("section")) params.set("section", "connect");
+    var q = params.toString();
+    var dest = "/" + (q ? "?" + q : "") + (window.location.hash || "");
+    window.location.replace(dest);
+  } catch (err) {
+    window.location.replace("/?section=connect");
+  }
+})();
+  </script>
+  <noscript><p><a href="/?section=connect">Continue to dashboard</a></p></noscript>
+</body>
+</html>
+""",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/public-config", response_model=ApiResponse)
