@@ -50,10 +50,19 @@ _celery_conf: dict[str, Any] = {
     # Without this, AsyncResult can remain PENDING until completion and the UI
     # incorrectly reports "waiting for worker" even after execution starts.
     "task_track_started": True,
+    # If a solo worker is OOM-killed mid-scan, do not restore the unacked
+    # message forever — that caused a poison requeue loop on Render 512MB.
+    "task_reject_on_worker_lost": True,
+    "task_acks_late": False,
     # Keep broker pressure lower on small/free Redis footprints.
     "worker_prefetch_multiplier": 1,
     "broker_pool_limit": int(os.getenv("CELERY_BROKER_POOL_LIMIT", "5")),
     "result_expires": int(os.getenv("CELERY_RESULT_EXPIRES_SEC", "3600")),
+    # Free Redis + long Stage B: raise visibility so in-flight scans are not
+    # duplicated while still bounded by soft/hard time limits below.
+    "broker_transport_options": {
+        "visibility_timeout": int(os.getenv("CELERY_VISIBILITY_TIMEOUT_SEC", "7200")),
+    },
     "task_routes": {
         "webapp.scan_for_user": {"queue": "scan"},
         "webapp.execute_order_for_user": {"queue": "orders"},
@@ -334,7 +343,11 @@ def _run_logged_subprocess(*, cmd: list[str], env: dict[str, str], cwd: Path, ti
     }
 
 
-@celery_app.task(name="webapp.scan_for_user")
+@celery_app.task(
+    name="webapp.scan_for_user",
+    soft_time_limit=int(os.getenv("SAAS_SCAN_SOFT_TIME_LIMIT_SEC", "900")),
+    time_limit=int(os.getenv("SAAS_SCAN_HARD_TIME_LIMIT_SEC", "960")),
+)
 def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> dict[str, Any]:
     job_id = uuid.uuid4().hex
     started = time.perf_counter()
@@ -440,6 +453,17 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
     except Exception as exc:
         db.rollback()
         _metrics_inc("scan_tasks_failed_total")
+        try:
+            from celery.exceptions import SoftTimeLimitExceeded
+
+            if isinstance(exc, SoftTimeLimitExceeded):
+                return {
+                    "ok": False,
+                    "job_id": job_id,
+                    "error": "Scan timed out on the worker. Retry once; if this persists, lower MIROFISH_MAX_LLM_TICKERS_PER_SCAN.",
+                }
+        except Exception:
+            pass
         return {"ok": False, "job_id": job_id, "error": safe_exception_message(exc, fallback="scan_failed")}
     finally:
         clear_worker_busy()
