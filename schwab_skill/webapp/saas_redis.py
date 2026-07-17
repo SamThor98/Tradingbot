@@ -78,6 +78,46 @@ def order_idempotency_existing_task(user_id: str, idempotency_key: str) -> str |
         return None
 
 
+_WORKER_BUSY_KEY = "saas:celery:worker_busy"
+_WORKER_HEARTBEAT_KEY = "saas:celery:worker_heartbeat"
+
+
+def mark_worker_busy(task_name: str, ttl_sec: int = 3600) -> None:
+    """Signal that a long-running solo worker task is in flight (inspect will time out)."""
+    try:
+        r = redis_client()
+        r.set(_WORKER_BUSY_KEY, str(task_name or "task"), ex=max(60, int(ttl_sec)))
+        r.set(_WORKER_HEARTBEAT_KEY, str(int(time.time())), ex=max(60, int(ttl_sec)))
+    except redis.RedisError:
+        return
+
+
+def clear_worker_busy() -> None:
+    try:
+        redis_client().delete(_WORKER_BUSY_KEY)
+    except redis.RedisError:
+        return
+
+
+def worker_busy_hint() -> dict[str, str | int | bool]:
+    """Best-effort busy signal for health checks when Celery inspect cannot answer."""
+    try:
+        r = redis_client()
+        busy = r.get(_WORKER_BUSY_KEY)
+        hb = r.get(_WORKER_HEARTBEAT_KEY)
+        out: dict[str, str | int | bool] = {"busy": bool(busy)}
+        if busy:
+            out["task"] = str(busy)
+        if hb:
+            try:
+                out["heartbeat_epoch"] = int(hb)
+            except (TypeError, ValueError):
+                pass
+        return out
+    except redis.RedisError:
+        return {"busy": False, "inspect_error": True}
+
+
 def order_idempotency_record_task(
     user_id: str, idempotency_key: str, task_id: str, ttl_sec: int = 86400
 ) -> None:

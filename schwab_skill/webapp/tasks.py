@@ -21,6 +21,7 @@ from .db import SessionLocal
 from .learning_state import upsert_trade_outcome
 from .models import AppState, BacktestRun, Order, ScanResult, User
 from .redaction import safe_exception_message
+from .saas_redis import clear_worker_busy, mark_worker_busy
 from .scan_payload import scan_runtime_kwargs
 from .tenant_runtime import scan_runtime_prerequisite_errors, tenant_skill_dir
 
@@ -339,6 +340,23 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
     started = time.perf_counter()
     task_ok = False
     _metrics_inc("scan_tasks_total")
+    # Solo workers cannot answer Celery inspect while this task runs; stamp Redis
+    # so /api/health/ready does not report "0 workers" during a long scan.
+    mark_worker_busy("webapp.scan_for_user", ttl_sec=int(os.getenv("SAAS_SCAN_BUSY_TTL_SEC", "7200")))
+    # Ephemeral tenant skill dirs wipe MiroFish cache each run — pin a shared dir
+    # and cap fresh LLM simulations so SaaS scans finish in minutes, not hours.
+    os.environ.setdefault(
+        "MIROFISH_CACHE_DIR",
+        (os.getenv("SAAS_SHARED_CACHE_DIR") or "").strip() or "/tmp/tradingbot_shared_cache",
+    )
+    os.environ.setdefault("MIROFISH_MAX_LLM_TICKERS_PER_SCAN", "12")
+    os.environ.setdefault("LLM_TIMEOUT_SECONDS", "8")
+    try:
+        from engine_analysis import reset_mirofish_llm_budget
+
+        reset_mirofish_llm_budget()
+    except Exception:
+        pass
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -424,6 +442,7 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
         _metrics_inc("scan_tasks_failed_total")
         return {"ok": False, "job_id": job_id, "error": safe_exception_message(exc, fallback="scan_failed")}
     finally:
+        clear_worker_busy()
         if task_ok:
             _metrics_inc("scan_tasks_succeeded_total")
         _metrics_observe("scan_task_duration", time.perf_counter() - started)
