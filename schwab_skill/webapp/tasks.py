@@ -355,7 +355,9 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
     _metrics_inc("scan_tasks_total")
     # Solo workers cannot answer Celery inspect while this task runs; stamp Redis
     # so /api/health/ready does not report "0 workers" during a long scan.
-    mark_worker_busy("webapp.scan_for_user", ttl_sec=int(os.getenv("SAAS_SCAN_BUSY_TTL_SEC", "7200")))
+    mark_token = mark_worker_busy(
+        "webapp.scan_for_user", ttl_sec=int(os.getenv("SAAS_SCAN_BUSY_TTL_SEC", "7200"))
+    )
     # Ephemeral tenant skill dirs wipe MiroFish cache each run — pin a shared dir
     # and cap fresh LLM simulations so SaaS scans finish in minutes, not hours.
     os.environ.setdefault(
@@ -466,7 +468,7 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
             pass
         return {"ok": False, "job_id": job_id, "error": safe_exception_message(exc, fallback="scan_failed")}
     finally:
-        clear_worker_busy()
+        clear_worker_busy(mark_token)
         if task_ok:
             _metrics_inc("scan_tasks_succeeded_total")
         _metrics_observe("scan_task_duration", time.perf_counter() - started)

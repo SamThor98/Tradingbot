@@ -80,21 +80,43 @@ def order_idempotency_existing_task(user_id: str, idempotency_key: str) -> str |
 
 _WORKER_BUSY_KEY = "saas:celery:worker_busy"
 _WORKER_HEARTBEAT_KEY = "saas:celery:worker_heartbeat"
+# Compare-and-delete so a finishing task cannot clear a newer worker's busy stamp.
+_CLEAR_BUSY_LUA = """
+local cur = redis.call('get', KEYS[1])
+if cur == ARGV[1] then
+  redis.call('del', KEYS[1])
+  redis.call('del', KEYS[2])
+  return 1
+end
+return 0
+"""
 
 
-def mark_worker_busy(task_name: str, ttl_sec: int = 3600) -> None:
-    """Signal that a long-running solo worker task is in flight (inspect will time out)."""
+def mark_worker_busy(task_name: str, ttl_sec: int = 3600) -> str:
+    """Signal that a long-running solo worker task is in flight (inspect will time out).
+
+    Returns an opaque token that must be passed to clear_worker_busy so a
+    finishing task cannot wipe a newer in-flight task's busy stamp (deploy race).
+    """
+    token = f"{task_name or 'task'}:{time.time_ns()}"
     try:
         r = redis_client()
-        r.set(_WORKER_BUSY_KEY, str(task_name or "task"), ex=max(60, int(ttl_sec)))
-        r.set(_WORKER_HEARTBEAT_KEY, str(int(time.time())), ex=max(60, int(ttl_sec)))
+        ex = max(60, int(ttl_sec))
+        r.set(_WORKER_BUSY_KEY, token, ex=ex)
+        r.set(_WORKER_HEARTBEAT_KEY, str(int(time.time())), ex=ex)
     except redis.RedisError:
-        return
+        return token
+    return token
 
 
-def clear_worker_busy() -> None:
+def clear_worker_busy(token: str | None = None) -> None:
+    """Clear busy stamp. Prefer token-scoped clear to avoid cross-task races."""
     try:
-        redis_client().delete(_WORKER_BUSY_KEY)
+        r = redis_client()
+        if token:
+            r.eval(_CLEAR_BUSY_LUA, 2, _WORKER_BUSY_KEY, _WORKER_HEARTBEAT_KEY, token)
+            return
+        r.delete(_WORKER_BUSY_KEY, _WORKER_HEARTBEAT_KEY)
     except redis.RedisError:
         return
 
@@ -107,10 +129,22 @@ def worker_busy_hint() -> dict[str, str | int | bool]:
         hb = r.get(_WORKER_HEARTBEAT_KEY)
         out: dict[str, str | int | bool] = {"busy": bool(busy)}
         if busy:
-            out["task"] = str(busy)
+            # Token format is "task_name:nanos"; expose the task prefix for diagnostics.
+            raw = str(busy)
+            out["task"] = raw.split(":", 1)[0] if ":" in raw else raw
         if hb:
             try:
-                out["heartbeat_epoch"] = int(hb)
+                hb_epoch = int(hb)
+                out["heartbeat_epoch"] = hb_epoch
+                # Deploy race: an older worker may have deleted the busy key while a
+                # newer scan is still running. Heartbeat is only written at mark time;
+                # if it is still within the scan time-limit window, treat as busy.
+                if not busy:
+                    age = int(time.time()) - hb_epoch
+                    grace = int(os.getenv("SAAS_BUSY_HEARTBEAT_GRACE_SEC", "960"))
+                    if 0 <= age <= max(60, grace):
+                        out["busy"] = True
+                        out["busy_inferred_from_heartbeat"] = True
             except (TypeError, ValueError):
                 pass
         return out
