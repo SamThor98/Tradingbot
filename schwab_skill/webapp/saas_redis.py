@@ -121,32 +121,43 @@ def clear_worker_busy(token: str | None = None) -> None:
         return
 
 
+def _busy_grace_sec() -> int:
+    return max(60, int(os.getenv("SAAS_BUSY_HEARTBEAT_GRACE_SEC", "960")))
+
+
 def worker_busy_hint() -> dict[str, str | int | bool]:
     """Best-effort busy signal for health checks when Celery inspect cannot answer."""
     try:
         r = redis_client()
         busy = r.get(_WORKER_BUSY_KEY)
         hb = r.get(_WORKER_HEARTBEAT_KEY)
-        out: dict[str, str | int | bool] = {"busy": bool(busy)}
-        if busy:
-            # Token format is "task_name:nanos"; expose the task prefix for diagnostics.
-            raw = str(busy)
-            out["task"] = raw.split(":", 1)[0] if ":" in raw else raw
+        out: dict[str, str | int | bool] = {"busy": False}
+        hb_epoch: int | None = None
         if hb:
             try:
                 hb_epoch = int(hb)
                 out["heartbeat_epoch"] = hb_epoch
-                # Deploy race: an older worker may have deleted the busy key while a
-                # newer scan is still running. Heartbeat is only written at mark time;
-                # if it is still within the scan time-limit window, treat as busy.
-                if not busy:
-                    age = int(time.time()) - hb_epoch
-                    grace = int(os.getenv("SAAS_BUSY_HEARTBEAT_GRACE_SEC", "960"))
-                    if 0 <= age <= max(60, grace):
-                        out["busy"] = True
-                        out["busy_inferred_from_heartbeat"] = True
             except (TypeError, ValueError):
+                hb_epoch = None
+        grace = _busy_grace_sec()
+        now = int(time.time())
+        fresh_hb = hb_epoch is not None and 0 <= (now - hb_epoch) <= grace
+        if busy and fresh_hb:
+            raw = str(busy)
+            out["busy"] = True
+            out["task"] = raw.split(":", 1)[0] if ":" in raw else raw
+        elif busy and not fresh_hb:
+            # Worker was SIGKILL'd (solo pool has no hard time limit) and finally
+            # never cleared Redis — drop the stale stamp so /ready recovers.
+            out["busy_stale"] = True
+            try:
+                r.delete(_WORKER_BUSY_KEY, _WORKER_HEARTBEAT_KEY)
+            except redis.RedisError:
                 pass
+        elif not busy and fresh_hb:
+            # Deploy race: older worker cleared busy while a newer scan still runs.
+            out["busy"] = True
+            out["busy_inferred_from_heartbeat"] = True
         return out
     except redis.RedisError:
         return {"busy": False, "inspect_error": True}
