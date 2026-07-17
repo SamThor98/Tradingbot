@@ -3318,9 +3318,12 @@ async function waitForSaaScanCompletion(taskId) {
       // or reserved task means we're simply queued behind a running scan, so
       // the "start a worker" hint would be misleading.
       const wq = data.worker_queue || {};
+      const busyHint = wq.busy_hint && typeof wq.busy_hint === "object" ? wq.busy_hint : {};
       const workerReachable = wq.inspect_available === true && wq.inspect_error !== true;
       const workerBusy =
-        workerReachable && (safeNum(wq.active_total, 0) + safeNum(wq.reserved_total, 0)) > 0;
+        wq.worker_busy === true ||
+        busyHint.busy === true ||
+        (workerReachable && (safeNum(wq.active_total, 0) + safeNum(wq.reserved_total, 0)) > 0);
       metaEl.textContent = workerBusy
         ? "Scan queued… worker is busy finishing another scan."
         : "Scan queued… waiting for worker.";

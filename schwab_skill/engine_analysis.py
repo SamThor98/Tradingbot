@@ -559,6 +559,36 @@ class MarketSimulation:
         - agent_votes: list of {name, score, reason}
         - seed_preview: str (truncated)
         """
+        # Budget check MUST come before seed fetch. After the per-scan LLM
+        # budget is exhausted we still get called for every Stage-B ticker;
+        # fetching OHLCV/news for hundreds of skips was making SaaS scans
+        # look "stuck" for 20+ minutes with the solo worker monopolized.
+        if not _mirofish_llm_budget_allow():
+            return {
+                "simulation_id": f"sim_unavailable_{uuid.uuid4().hex[:12]}",
+                "ticker": self.ticker,
+                "conviction_score": None,
+                "summary": "MiroFish skipped (per-scan LLM budget exhausted)",
+                "agent_votes": [],
+                "mirofish_disagreement": None,
+                "agent_weighting": {
+                    "version": 1,
+                    "mode": "unavailable",
+                    "weights": {
+                        "institutional_trend": 0.0,
+                        "mean_reversion": 0.0,
+                        "retail_fomo": 0.0,
+                    },
+                    "regime_bucket": "unknown",
+                    "applied": False,
+                },
+                "continuation_probability": None,
+                "bull_trap_probability": None,
+                "seed_fingerprint": "",
+                "seed_preview": "",
+                "unavailable_reason": "llm_budget_exhausted",
+            }
+
         seed, seed_df = self._fetch_seed_data()
         seed_fingerprint = compute_seed_fingerprint(seed_df, self.ticker, self.skill_dir) if seed_df is not None else ""
 
@@ -590,11 +620,6 @@ class MarketSimulation:
                 "unavailable_reason": reason,
             }
 
-        if not _mirofish_llm_budget_allow():
-            return _unavailable(
-                "llm_budget_exhausted",
-                "MiroFish skipped (per-scan LLM budget exhausted)",
-            )
         _mirofish_llm_budget_consume()
 
         # Heuristic sentiment proxy from the news portion in `seed` (used only for weighting).

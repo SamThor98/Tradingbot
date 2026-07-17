@@ -496,20 +496,29 @@ def _celery_queue_estimate() -> dict[str, Any]:
     cached = _CELERY_QUEUE_ESTIMATE_CACHE
     if cached and (now - cached[0]) < _CELERY_INSPECT_CACHE_TTL_SEC:
         return cached[1]
+    busy = worker_busy_hint()
     try:
         insp = celery_app.control.inspect(timeout=0.75)
         if not insp:
-            out = {"inspect_available": False}
+            out: dict[str, Any] = {
+                "inspect_available": False,
+                "busy_hint": busy,
+                "worker_busy": bool(busy.get("busy")),
+            }
             _CELERY_QUEUE_ESTIMATE_CACHE = (now, out)
             return out
         reserved = insp.reserved() or {}
         scheduled = insp.scheduled() or {}
         active = insp.active() or {}
+        active_total = sum(len(v) for v in active.values())
+        reserved_total = sum(len(v) for v in reserved.values())
         out = {
             "inspect_available": True,
-            "reserved_total": sum(len(v) for v in reserved.values()),
+            "reserved_total": reserved_total,
             "scheduled_total": sum(len(v) for v in scheduled.values()),
-            "active_total": sum(len(v) for v in active.values()),
+            "active_total": active_total,
+            "busy_hint": busy,
+            "worker_busy": bool(busy.get("busy")) or (active_total + reserved_total) > 0,
         }
         _CELERY_QUEUE_ESTIMATE_CACHE = (now, out)
         return out
@@ -519,8 +528,15 @@ def _celery_queue_estimate() -> dict[str, Any]:
                 **cached[1],
                 "inspect_cached": True,
                 "inspect_error": True,
+                "busy_hint": busy,
+                "worker_busy": bool(busy.get("busy")) or bool(cached[1].get("worker_busy")),
             }
-        return {"inspect_available": False, "inspect_error": True}
+        return {
+            "inspect_available": False,
+            "inspect_error": True,
+            "busy_hint": busy,
+            "worker_busy": bool(busy.get("busy")),
+        }
 
 
 def _celery_worker_health() -> dict[str, Any]:
@@ -540,7 +556,7 @@ def _celery_worker_health() -> dict[str, Any]:
                     {
                         "reachable": True,
                         "workers": 1,
-                        "queues": ["scan"],
+                        "queues": ["scan", "orders", "celery"],
                         "busy_inferred": True,
                     }
                 )
@@ -569,7 +585,7 @@ def _celery_worker_health() -> dict[str, Any]:
                 {
                     "reachable": True,
                     "workers": 1,
-                    "queues": sorted(queues | {"scan"}),
+                    "queues": sorted(queues | {"scan", "orders", "celery"}),
                     "busy_inferred": True,
                 }
             )
@@ -580,7 +596,7 @@ def _celery_worker_health() -> dict[str, Any]:
             out = {
                 "reachable": True,
                 "workers": 1,
-                "queues": ["scan"],
+                "queues": ["scan", "orders", "celery"],
                 "busy_inferred": True,
                 "busy_hint": busy,
                 "inspect_error": True,
@@ -839,7 +855,11 @@ def health_ready(response: Response) -> ApiResponse:
     worker = _celery_worker_health()
     worker_ok = bool(worker.get("reachable")) and bool(worker.get("workers", 0))
     required_queues = {"scan", "orders"}
-    queues_ok = required_queues.issubset({str(q) for q in worker.get("queues", [])})
+    # Solo-pool workers cannot answer inspect mid-scan; busy_inferred already
+    # synthesizes the required queues, but treat that path as queues_ok anyway.
+    queues_ok = bool(worker.get("busy_inferred")) or required_queues.issubset(
+        {str(q) for q in worker.get("queues", [])}
+    )
     require_redis = os.getenv("SAAS_HEALTH_REQUIRE_REDIS", "1").lower() in ("1", "true", "yes")
     require_workers = os.getenv("SAAS_HEALTH_REQUIRE_WORKERS", "1").lower() in ("1", "true", "yes")
     ready = (
@@ -1348,11 +1368,17 @@ def scan_task_status(
             task_id,
             safe_exception_message(exc, fallback="scan_task_status_error"),
         )
+        busy = worker_busy_hint()
         return _ok(
             {
                 "task_id": task_id,
                 "status": "unknown",
-                "worker_queue": {"inspect_available": False, "inspect_error": True},
+                "worker_queue": {
+                    "inspect_available": False,
+                    "inspect_error": True,
+                    "busy_hint": busy,
+                    "worker_busy": bool(busy.get("busy")),
+                },
                 "status_error": safe_exception_message(exc, fallback="scan_task_status_error"),
             }
         )
@@ -1408,11 +1434,17 @@ def scan_lifecycle(
                 safe_exception_message(exc, fallback="scan_lifecycle_error"),
             )
             # Return a degradable payload instead of bubbling non-JSON gateway errors.
+            busy = worker_busy_hint()
             return _ok(
                 _scan_lifecycle_payload(
                     tid,
                     "unknown",
-                    worker_queue={"inspect_available": False, "inspect_error": True},
+                    worker_queue={
+                        "inspect_available": False,
+                        "inspect_error": True,
+                        "busy_hint": busy,
+                        "worker_busy": bool(busy.get("busy")),
+                    },
                     task_result={"ok": False, "error": safe_exception_message(exc, fallback="scan_lifecycle_error")},
                 )
             )
