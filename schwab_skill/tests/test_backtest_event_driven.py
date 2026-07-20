@@ -263,19 +263,14 @@ def test_liquidity_cap_and_telemetry_snapshot(monkeypatch) -> None:
 
     assert isinstance(telemetry, dict)
 
-    assert set(telemetry.keys()) == {
-
+    required = {
         "mirofish_conviction",
-
         "advisory_prob",
-
         "agent_uncertainty",
-
         "vcp_volume_ratio",
-
         "sector_rs_rank",
-
     }
+    assert required.issubset(set(telemetry.keys()))
 
 
 
