@@ -38,6 +38,7 @@ from config import (
     get_adaptive_stop_enabled,
     get_backtest_adaptive_guardrail_policy_path,
     get_backtest_adaptive_guardrails_enabled,
+    get_backtest_entry_family,
     get_backtest_hold_days,
     get_backtest_min_hold_days_before_trail,
     get_backtest_min_hold_defer_soft_exits,
@@ -70,14 +71,20 @@ from config import (
 )
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
+from sector_regime_analysis import build_spy_regime_series, lookup_regime_at, summarize_sector_regime
 from signal_scanner import _apply_score_stack, _evaluate_confluence, _evaluate_quality_gates, _load_watchlist
 from stage_analysis import (
     add_indicators,
     check_vcp_volume,
     compute_signal_components,
+    early_stop_gate_blocks_stage_a,
     entry_timing_blocks_stage_a,
+    evaluate_early_stop_gate,
     evaluate_entry_timing_shadow,
+    evaluate_pts_52w_cap,
+    is_pullback_entry,
     is_stage_2,
+    pts_52w_cap_blocks_stage_a,
 )
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -642,6 +649,7 @@ def _provider_segment_metrics_from_trades(trades_df: pd.DataFrame) -> dict[str, 
 def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> dict[str, Any]:
     advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
     meta_policy = signal.get("meta_policy") if isinstance(signal.get("meta_policy"), dict) else {}
+    prob_rank = signal.get("prob_rank") if isinstance(signal.get("prob_rank"), dict) else {}
     return {
         "mirofish_conviction": _safe_telemetry_float(signal.get("mirofish_conviction")),
         "advisory_prob": _safe_telemetry_float(advisory.get("p_up_10d")),
@@ -650,6 +658,9 @@ def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> d
         "sector_rs_rank": _safe_telemetry_int(
             signal.get("sector_rs_rank", signal.get("sector_relative_strength_rank"))
         ),
+        "prob_rank_expected_return_40d": _safe_telemetry_float(prob_rank.get("expected_return_40d")),
+        "prob_rank_confidence": _safe_telemetry_float(prob_rank.get("confidence")),
+        "prob_rank_model_id": str(prob_rank.get("model_id") or signal.get("prob_rank_model_id") or ""),
     }
 
 
@@ -685,6 +696,9 @@ def _score_fields_for_trade(signal: dict[str, Any]) -> dict[str, Any]:
         "composite_score": signal.get("composite_score"),
         "rank_score": signal.get("rank_score"),
         "rank_score_v2": signal.get("rank_score_v2"),
+        "expected_return_40d": signal.get("expected_return_40d"),
+        "prob_rank_confidence": signal.get("prob_rank_confidence"),
+        "prob_rank_model_id": signal.get("prob_rank_model_id"),
         "p_up_calibrated": signal.get("p_up_calibrated"),
         "ev_10d": signal.get("ev_10d"),
         "advisory_confidence_bucket": advisory.get("confidence_bucket"),
@@ -1169,6 +1183,14 @@ def _run_backtest_core(
         "entry_timing_shadow_evaluated": 0,
         "entry_timing_shadow_would_filter": 0,
         "entry_timing_blocked": 0,
+        "pts_52w_cap_evaluated": 0,
+        "pts_52w_cap_would_filter": 0,
+        "pts_52w_cap_blocked": 0,
+        "early_stop_gate_evaluated": 0,
+        "early_stop_gate_would_filter": 0,
+        "early_stop_gate_blocked": 0,
+        "entry_family_fail": 0,
+        "pead_primary_fail": 0,
         "rank_filter_v2_evaluated": 0,
         "rank_filter_v2_would_drop": 0,
         "rank_filter_v2_dropped": 0,
@@ -1179,7 +1201,9 @@ def _run_backtest_core(
         "exits_final_liquidation": 0,
     }
 
-    breakout_enabled = get_breakout_confirm_enabled(sd)
+    entry_family = get_backtest_entry_family(sd)
+    diagnostics["entry_family"] = entry_family
+    breakout_enabled = get_breakout_confirm_enabled(sd) and entry_family == "stage2"
     breakout_confirm_bars = int(get_breakout_confirm_bars(sd))
     vcp_gate_mode = get_scan_vcp_gate_mode(sd)
     sector_gate_mode = get_scan_sector_gate_mode(sd)
@@ -1259,11 +1283,11 @@ def _run_backtest_core(
         LOG.warning("Prediction-market backtest setup skipped: %s", e)
 
     spy_df = context.sector_perf.get("SPY")
-    spy_regime: pd.Series | None = None
     allow_bear_regime = bool(get_scan_allow_bear_regime(sd))
-    if spy_df is not None and len(spy_df) >= 200 and not allow_bear_regime:
-        spy_with_sma = add_indicators(spy_df)
-        spy_regime = spy_with_sma["close"] > spy_with_sma["sma_200"]
+    # Always build regime series for trade tagging; only use above-200 as a hard
+    # entry block when SCAN_ALLOW_BEAR_REGIME is false.
+    spy_above_200, spy_regime_bucket = build_spy_regime_series(spy_df)
+    spy_regime = spy_above_200 if (spy_above_200 is not None and not allow_bear_regime) else None
 
     forensic_cache: dict[str, dict[str, Any] | None] = {}
     ticker_date_index: dict[str, dict[pd.Timestamp, int]] = {}
@@ -1388,6 +1412,50 @@ def _run_backtest_core(
         )
         return kept
 
+    def _apply_candidate_prob_rank(candidates: list[CandidateSignal]) -> list[CandidateSignal]:
+        from config import get_prob_rank_mode, get_prob_rank_top_n
+
+        mode = get_prob_rank_mode(sd)
+        diagnostics["prob_rank_mode"] = mode
+        if mode == "off" or not candidates:
+            return candidates
+        scored = [
+            c
+            for c in candidates
+            if c.signal.get("expected_return_40d") is not None
+        ]
+        diagnostics["prob_rank_scored"] = int(diagnostics.get("prob_rank_scored", 0) or 0) + len(scored)
+        if not scored:
+            return candidates
+        ordered = sorted(
+            scored,
+            key=lambda c: _safe_telemetry_float(c.signal.get("expected_return_40d")),
+            reverse=True,
+        )
+        top_n = max(1, int(get_prob_rank_top_n(sd)))
+        diagnostics["prob_rank_top_n"] = top_n
+        diagnostics["prob_rank_would_keep"] = int(diagnostics.get("prob_rank_would_keep", 0) or 0) + min(
+            top_n, len(ordered)
+        )
+        diagnostics["prob_rank_would_drop"] = int(diagnostics.get("prob_rank_would_drop", 0) or 0) + max(
+            0, len(ordered) - top_n
+        )
+        for i, cand in enumerate(ordered):
+            block = cand.signal.get("prob_rank") if isinstance(cand.signal.get("prob_rank"), dict) else {}
+            block = dict(block)
+            block["cross_section_rank"] = i + 1
+            block["cross_section_n"] = len(ordered)
+            block["mode"] = mode
+            cand.signal["prob_rank"] = block
+        if mode != "live":
+            return candidates
+        kept_ids = {id(c) for c in ordered[:top_n]}
+        kept = [c for c in candidates if id(c) in kept_ids]
+        diagnostics["prob_rank_dropped"] = int(diagnostics.get("prob_rank_dropped", 0) or 0) + (
+            len(candidates) - len(kept)
+        )
+        return kept
+
     for day_ts in timeline:
         # Exit pass first: capital from exits is available for same-day entries.
         for ticker, pos in list(active_positions.items()):
@@ -1437,6 +1505,7 @@ def _run_backtest_core(
             mfe, mae = _compute_mfe_mae(df, pos.entry_idx, idx, float(pos.entry_price))
             ohlc_path = _build_ohlc_path(df, pos.entry_idx, idx) if _is_ohlc_path_logging_enabled() else []
 
+            regime_tags = lookup_regime_at(pos.entry_date, spy_above_200, spy_regime_bucket)
             all_trades.append(
                 {
                     "ticker": pos.ticker,
@@ -1456,7 +1525,10 @@ def _run_backtest_core(
                     "data_provider_primary": pos.signal.get("data_provider_primary"),
                     "used_fallback_data": pos.signal.get("used_fallback_data"),
                     "fallback_reason": pos.signal.get("fallback_reason"),
+                    "sector_etf": context.sector_etf_by_ticker.get(pos.ticker),
                     "sector_filter": pos.sector_reason,
+                    "regime_above_200": regime_tags.get("regime_above_200"),
+                    "regime_bucket": regime_tags.get("regime_bucket"),
                     "quality_reasons": pos.reasons,
                     "forensic_sloan": pos.signal.get("forensic_sloan"),
                     "forensic_beneish": pos.signal.get("forensic_beneish"),
@@ -1506,13 +1578,28 @@ def _run_backtest_core(
                 except Exception:
                     pass
 
-            if not is_stage_2(window, sd):
-                diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
-                continue
+            if entry_family == "pullback":
+                if not is_pullback_entry(window, sd):
+                    diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+                    continue
+            elif entry_family == "pead_primary":
+                # Generator gate applied after PEAD enrichment below; liquidity floor here.
+                try:
+                    px = float(window["close"].iloc[-1])
+                    avg_vol = float(window["avg_vol_50"].iloc[-1]) if "avg_vol_50" in window.columns else 0.0
+                except Exception:
+                    px, avg_vol = 0.0, 0.0
+                if px < 5.0 or avg_vol < 200_000.0:
+                    diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+                    continue
+            else:
+                if not is_stage_2(window, sd):
+                    diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
+                    continue
             vcp_ok = check_vcp_volume(window, sd)
             if not vcp_ok:
                 diagnostics["vcp_fail"] = int(diagnostics["vcp_fail"]) + 1
-                if vcp_gate_mode == "hard":
+                if vcp_gate_mode == "hard" and entry_family == "stage2":
                     continue
                 diagnostics["vcp_would_block"] = int(diagnostics["vcp_would_block"]) + 1
             if breakout_enabled and idx >= breakout_confirm_bars:
@@ -1578,6 +1665,37 @@ def _run_backtest_core(
                 mirofish_conviction=miro.get("conviction_score") if miro else None,
                 mirofish_result=miro,
             )
+            pts_cap = evaluate_pts_52w_cap(
+                float(comps["pts_52w"]) if comps.get("pts_52w") is not None else None,
+                sd,
+            )
+            if str(pts_cap.get("mode") or "off") != "off":
+                diagnostics["pts_52w_cap_evaluated"] = int(diagnostics["pts_52w_cap_evaluated"]) + 1
+                if pts_cap.get("would_filter"):
+                    diagnostics["pts_52w_cap_would_filter"] = (
+                        int(diagnostics["pts_52w_cap_would_filter"]) + 1
+                    )
+                    if pts_52w_cap_blocks_stage_a(pts_cap, sd):
+                        diagnostics["pts_52w_cap_blocked"] = int(diagnostics["pts_52w_cap_blocked"]) + 1
+                        continue
+            early_stop_gate = evaluate_early_stop_gate(
+                pts_52w=float(comps["pts_52w"]) if comps.get("pts_52w") is not None else None,
+                breakout_buffer_pct=(
+                    float(entry_shadow.get("breakout_buffer_pct"))
+                    if isinstance(entry_shadow, dict) and entry_shadow.get("breakout_buffer_pct") is not None
+                    else None
+                ),
+                skill_dir=sd,
+            )
+            if str(early_stop_gate.get("mode") or "off") != "off":
+                diagnostics["early_stop_gate_evaluated"] = int(diagnostics["early_stop_gate_evaluated"]) + 1
+                if early_stop_gate.get("would_filter"):
+                    diagnostics["early_stop_gate_would_filter"] = (
+                        int(diagnostics["early_stop_gate_would_filter"]) + 1
+                    )
+                    if early_stop_gate_blocks_stage_a(early_stop_gate, sd):
+                        diagnostics["early_stop_gate_blocked"] = int(diagnostics["early_stop_gate_blocked"]) + 1
+                        continue
             signal: dict[str, Any] = {
                 "ticker": ticker,
                 "signal_score": float(comps.get("score", 0) or 0),
@@ -1607,7 +1725,8 @@ def _run_backtest_core(
             signal["fallback_reason"] = history_meta.get("reason")
 
             pead_info = None
-            if pead_enabled:
+            pead_required = pead_enabled or entry_family == "pead_primary"
+            if pead_required:
                 try:
                     from earnings_signal import check_earnings_at_date
 
@@ -1620,10 +1739,20 @@ def _run_backtest_core(
                     )
                 except Exception as e:
                     LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
+            if entry_family == "pead_primary":
+                beat = bool((pead_info or {}).get("beat"))
+                surprise = (pead_info or {}).get("surprise_pct")
+                try:
+                    surprise_f = float(surprise) if surprise is not None else None
+                except (TypeError, ValueError):
+                    surprise_f = None
+                if not beat or surprise_f is None or surprise_f <= 0.0:
+                    diagnostics["pead_primary_fail"] = int(diagnostics["pead_primary_fail"]) + 1
+                    continue
             signal["pead_surprise_pct"] = (pead_info or {}).get("surprise_pct")
             signal["pead_beat"] = (pead_info or {}).get("beat")
             pead_score_delta = 0.0
-            if pead_enabled and signal["pead_surprise_pct"] is not None:
+            if pead_required and signal["pead_surprise_pct"] is not None:
                 try:
                     s = float(signal["pead_surprise_pct"])
                     if s > 0.15:
@@ -1772,6 +1901,12 @@ def _run_backtest_core(
                 skill_dir=sd,
                 mode=overlay_cfg.exec_quality,
             )
+            try:
+                from research.runtime import score_candidates_for_backtest_day
+
+                score_candidates_for_backtest_day(signal, df.iloc[: idx + 1], day_ts, skill_dir=sd)
+            except Exception:
+                pass
             telemetry = _build_telemetry_payload(signal, comps)
             candidates.append(
                 CandidateSignal(
@@ -1798,6 +1933,7 @@ def _run_backtest_core(
             )
 
         candidates = _apply_candidate_rank_v2_filter(candidates)
+        candidates = _apply_candidate_prob_rank(candidates)
         day_equity = _equity_at(day_ts)
         max_position_notional = max(0.0, float(day_equity) * max_position_size_pct)
         for candidate in sorted(candidates, key=_candidate_rank_key, reverse=True):
@@ -1899,6 +2035,7 @@ def _run_backtest_core(
         current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
         mfe, mae = _compute_mfe_mae(df, pos.entry_idx, exit_idx, float(pos.entry_price))
         ohlc_path = _build_ohlc_path(df, pos.entry_idx, exit_idx) if _is_ohlc_path_logging_enabled() else []
+        regime_tags = lookup_regime_at(pos.entry_date, spy_above_200, spy_regime_bucket)
         all_trades.append(
             {
                 "ticker": pos.ticker,
@@ -1918,7 +2055,10 @@ def _run_backtest_core(
                 "data_provider_primary": pos.signal.get("data_provider_primary"),
                 "used_fallback_data": pos.signal.get("used_fallback_data"),
                 "fallback_reason": pos.signal.get("fallback_reason"),
+                "sector_etf": context.sector_etf_by_ticker.get(pos.ticker),
                 "sector_filter": pos.sector_reason,
+                "regime_above_200": regime_tags.get("regime_above_200"),
+                "regime_bucket": regime_tags.get("regime_bucket"),
                 "quality_reasons": pos.reasons,
                 "forensic_sloan": pos.signal.get("forensic_sloan"),
                 "forensic_beneish": pos.signal.get("forensic_beneish"),
@@ -2001,6 +2141,7 @@ def _run_backtest_core(
             "data_integrity": context.data_integrity,
             "score_stack_metrics": {},
             "provider_segment_metrics": {},
+            "sector_regime_summary": summarize_sector_regime([]),
             "findings": "No trades generated over the requested window.",
             "trades_sample": [],
         }
@@ -2043,6 +2184,7 @@ def _run_backtest_core(
     )
     score_stack_metrics = _score_stack_metrics_from_trades(trades_df)
     provider_segment_metrics = _provider_segment_metrics_from_trades(trades_df)
+    sector_regime_summary = summarize_sector_regime(all_trades)
     curve_payload = _serialize_equity_curves(equity_curve, starting_equity)
 
     out: dict[str, Any] = {
@@ -2103,6 +2245,7 @@ def _run_backtest_core(
         "data_integrity": context.data_integrity,
         "score_stack_metrics": score_stack_metrics,
         "provider_segment_metrics": provider_segment_metrics,
+        "sector_regime_summary": sector_regime_summary,
         "trades_sample": all_trades[:5],
         "findings": findings,
     }

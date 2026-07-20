@@ -247,6 +247,15 @@ const DIAGNOSTIC_DETAIL_SKIP_KEYS = new Set([
   "rank_filter_shadow",
   "signal_edge_shadow_mode",
   "entry_timing_shadow_mode",
+  "prob_rank_mode",
+  "prob_rank_scored",
+  "prob_rank_unscored",
+  "prob_rank_would_keep",
+  "prob_rank_would_drop",
+  "prob_rank_top_n",
+  "prob_rank_skipped",
+  "prob_rank_dropped",
+  "prob_rank_shadow_evidence",
   ...SIGNAL_EDGE_SHADOW_BLOCKER_KEYS,
 ]);
 
@@ -581,6 +590,42 @@ export function renderDiagnostics(diag = {}, deps = {}) {
       "warn",
     );
   }
+  const probRankMode = safeText(diag.prob_rank_mode || "").toLowerCase();
+  if (probRankMode === "shadow" || probRankMode === "live") {
+    const scored = safeNum(diag.prob_rank_scored, 0);
+    const wouldDrop = safeNum(diag.prob_rank_would_drop, 0);
+    const wouldKeep = safeNum(diag.prob_rank_would_keep, 0);
+    const topN = safeNum(diag.prob_rank_top_n, 0);
+    const ev = diag.prob_rank_shadow_evidence && typeof diag.prob_rank_shadow_evidence === "object"
+      ? diag.prob_rank_shadow_evidence
+      : null;
+    const jaccard = ev && ev.jaccard != null && Number.isFinite(Number(ev.jaccard))
+      ? Number(ev.jaccard)
+      : null;
+    const overlap = ev && ev.overlap_n != null ? safeNum(ev.overlap_n, 0) : null;
+    const jPart = jaccard != null
+      ? ` | vs rank-v2 J=${jaccard.toFixed(2)} overlap ${overlap ?? "—"}`
+      : "";
+    appendDiagnosticChip(
+      chipWrap,
+      "Prob-rank",
+      `${probRankMode}: scored ${scored} | keep ${wouldKeep}/${Math.max(wouldKeep + wouldDrop, scored)} (top ${topN || "—"})${jPart}`,
+      probRankMode === "live" ? "warn" : "info",
+    );
+    const ledgerN = ev ? safeNum(ev.ledger_n_scans, 0) : 0;
+    const ledgerMean = ev && ev.ledger_mean_jaccard != null && Number.isFinite(Number(ev.ledger_mean_jaccard))
+      ? Number(ev.ledger_mean_jaccard)
+      : null;
+    if (ledgerN > 0 && ledgerMean != null) {
+      appendDiagnosticChip(
+        chipWrap,
+        "Shadow evidence",
+        `${ledgerN} scan(s) · mean J=${ledgerMean.toFixed(2)} (log only)`,
+        "info",
+      );
+    }
+  }
+
   const entryShadowMode = safeText(diag.entry_timing_shadow_mode || "").toLowerCase();
   const preflight = state.entryTimingScanPreflight;
   if (preflight?.needs_dashboard_restart) {

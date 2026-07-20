@@ -1095,6 +1095,64 @@ def _scan_stage_a_one(
         except Exception as _e:
             LOG.debug("Entry timing shadow skipped for %s: %s", ticker, _e)
             candidate_entry_shadow = None
+        candidate_pts_52w_cap = None
+        try:
+            from config import get_pts_52w_cap_mode
+            from stage_analysis import evaluate_pts_52w_cap, pts_52w_cap_blocks_stage_a
+
+            if get_pts_52w_cap_mode(skill_dir) != "off":
+                pts_raw = components.get("pts_52w") if isinstance(components, dict) else None
+                candidate_pts_52w_cap = evaluate_pts_52w_cap(
+                    float(pts_raw) if pts_raw is not None else None,
+                    skill_dir,
+                )
+                for reason in list(candidate_pts_52w_cap.get("would_filter_reasons") or []):
+                    stage_a_penalties.append(reason)
+                if pts_52w_cap_blocks_stage_a(candidate_pts_52w_cap, skill_dir):
+                    return _with_stage2_shadow(
+                        {
+                            "ok": False,
+                            "reason": "pts_52w_cap_blocked",
+                            "provider": provider,
+                            "used_fallback": used_fallback,
+                            "fallback_reason": history_meta.get("fallback_reason"),
+                            "pts_52w_cap": candidate_pts_52w_cap,
+                        }
+                    )
+        except Exception as _e:
+            LOG.debug("pts_52w cap skipped for %s: %s", ticker, _e)
+            candidate_pts_52w_cap = None
+        candidate_early_stop_gate = None
+        try:
+            from config import get_early_stop_gate_mode
+            from stage_analysis import early_stop_gate_blocks_stage_a, evaluate_early_stop_gate
+
+            if get_early_stop_gate_mode(skill_dir) != "off":
+                pts_raw = components.get("pts_52w") if isinstance(components, dict) else None
+                buf_raw = None
+                if isinstance(candidate_entry_shadow, dict):
+                    buf_raw = candidate_entry_shadow.get("breakout_buffer_pct")
+                candidate_early_stop_gate = evaluate_early_stop_gate(
+                    pts_52w=float(pts_raw) if pts_raw is not None else None,
+                    breakout_buffer_pct=float(buf_raw) if buf_raw is not None else None,
+                    skill_dir=skill_dir,
+                )
+                for reason in list(candidate_early_stop_gate.get("would_filter_reasons") or []):
+                    stage_a_penalties.append(reason)
+                if early_stop_gate_blocks_stage_a(candidate_early_stop_gate, skill_dir):
+                    return _with_stage2_shadow(
+                        {
+                            "ok": False,
+                            "reason": "early_stop_gate_blocked",
+                            "provider": provider,
+                            "used_fallback": used_fallback,
+                            "fallback_reason": history_meta.get("fallback_reason"),
+                            "early_stop_gate": candidate_early_stop_gate,
+                        }
+                    )
+        except Exception as _e:
+            LOG.debug("early_stop gate skipped for %s: %s", ticker, _e)
+            candidate_early_stop_gate = None
         stage_a_score = max(0.0, stage_a_score)
         candidate = {
             "ticker": ticker,
@@ -1110,6 +1168,8 @@ def _scan_stage_a_one(
             "score_components_stage_a": components,
             "stage_a_penalties": stage_a_penalties,
             "entry_timing_shadow": candidate_entry_shadow,
+            "pts_52w_cap": candidate_pts_52w_cap,
+            "early_stop_gate": candidate_early_stop_gate,
             "data_provider": provider,
             "data_provider_primary": provider == "schwab",
             "used_fallback_data": used_fallback,
@@ -1619,6 +1679,22 @@ def _scan_stage_b_enrich(
             LOG.debug("Strategy plugin evaluation skipped for %s: %s", ticker, e)
 
         signal_row = _apply_score_stack(signal_row)
+        # Prob-rank shadow/live: score from Stage-B bars (selection applied later in cohort).
+        try:
+            from config import get_prob_rank_mode
+            from research.runtime import score_signal_with_bars
+
+            if get_prob_rank_mode(skill_dir) != "off":
+                block = score_signal_with_bars(signal_row, df, skill_dir=skill_dir)
+                if block is not None:
+                    diag_delta["prob_rank_scored"] = int(diag_delta.get("prob_rank_scored", 0) or 0) + 1
+                else:
+                    diag_delta["prob_rank_score_failed"] = (
+                        int(diag_delta.get("prob_rank_score_failed", 0) or 0) + 1
+                    )
+        except Exception as e:
+            LOG.debug("prob-rank Stage B scoring skipped for %s: %s", ticker, e)
+            diag_delta["prob_rank_score_failed"] = int(diag_delta.get("prob_rank_score_failed", 0) or 0) + 1
         return {"ok": True, "signal": signal_row, "diag": diag_delta}
     except Exception as e:
         diag_delta["stage_b_exceptions"] += 1
@@ -2133,6 +2209,18 @@ def _apply_post_stage_b_chain(
         _tag_shortlist_drop(before_rank_v2, signals, "filtered_rank_v2")
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Rank-v2 percentile filter skipped: %s", e)
+    try:
+        from research.runtime import apply_prob_rank_cohort
+
+        before_prob = list(signals)
+        signals = apply_prob_rank_cohort(signals, diagnostics, skill_dir)
+        _tag_shortlist_drop(before_prob, signals, "filtered_prob_rank")
+        if str(diagnostics.get("prob_rank_mode") or "off").lower() in {"shadow", "live"}:
+            from research.shadow_evidence import record_shadow_evidence
+
+            record_shadow_evidence(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Prob-rank cohort skipped: %s", e)
     signals.sort(
         key=lambda s: s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
         reverse=True,
@@ -2313,7 +2401,8 @@ def scan_for_signals_detailed(
         ``kept`` (made the final cut), ``filtered_self_study``,
         ``filtered_quality_gates`` (with ``_filter_reasons``),
         ``filtered_confluence``, ``filtered_event_risk``,
-        ``filtered_meta_policy``, ``trimmed_top_n``.
+        ``filtered_meta_policy``, ``filtered_rank_v2``, ``filtered_prob_rank``,
+        ``trimmed_top_n``.
         The dashboard uses this to render the full shortlist with disposition
         badges instead of just the post-filter survivors. Existing callers
         that only use the 2-tuple return are unaffected.
@@ -2416,10 +2505,24 @@ def scan_for_signals_detailed(
         "entry_shadow_stage2_would_filter_breakout_buffer": 0,
         "entry_timing_blocked": 0,
         "entry_timing_live_enforced": 0,
+        "pts_52w_cap_mode": None,
+        "pts_52w_cap_max": None,
+        "pts_52w_cap_would_filter": 0,
+        "pts_52w_cap_blocked": 0,
+        "early_stop_gate_mode": None,
+        "early_stop_gate_would_filter": 0,
+        "early_stop_gate_blocked": 0,
         "rank_filter_would_drop_composite": 0,
         "rank_filter_would_drop_rank_v2": 0,
         "rank_filter_would_drop_signal": 0,
         "rank_filter_would_drop_any": 0,
+        "prob_rank_mode": "off",
+        "prob_rank_scored": 0,
+        "prob_rank_unscored": 0,
+        "prob_rank_score_failed": 0,
+        "prob_rank_would_keep": 0,
+        "prob_rank_would_drop": 0,
+        "prob_rank_dropped": 0,
         "stage_a_timeouts": 0,
         "stage_b_processed": 0,
         "stage_b_exceptions": 0,
@@ -2854,6 +2957,20 @@ def scan_for_signals_detailed(
     except Exception:
         diagnostics["entry_timing_shadow_mode"] = "off"
         diagnostics["entry_timing_shadow_profile"] = "off"
+    try:
+        from config import get_pts_52w_cap_max, get_pts_52w_cap_mode
+
+        diagnostics["pts_52w_cap_mode"] = get_pts_52w_cap_mode(skill_dir)
+        diagnostics["pts_52w_cap_max"] = get_pts_52w_cap_max(skill_dir)
+    except Exception:
+        diagnostics["pts_52w_cap_mode"] = "off"
+        diagnostics["pts_52w_cap_max"] = None
+    try:
+        from config import get_early_stop_gate_mode
+
+        diagnostics["early_stop_gate_mode"] = get_early_stop_gate_mode(skill_dir)
+    except Exception:
+        diagnostics["early_stop_gate_mode"] = "off"
 
     # Optional composite regime diagnostics/gate.
     regime_v2_snapshot: dict[str, Any] | None = None
@@ -2893,6 +3010,8 @@ def scan_for_signals_detailed(
         "sector_not_winning",
         "breakout_not_confirmed",
         "entry_timing_blocked",
+        "pts_52w_cap_blocked",
+        "early_stop_gate_blocked",
         "exceptions",
     }
     future_map_a: dict[cf.Future[Any], str] = {}
@@ -2959,6 +3078,14 @@ def scan_for_signals_detailed(
                             elif penalty == "entry_shadow_breakout_buffer_low":
                                 diagnostics["entry_shadow_would_filter_breakout_buffer"] = int(
                                     diagnostics.get("entry_shadow_would_filter_breakout_buffer", 0) or 0
+                                ) + 1
+                            elif penalty == "pts_52w_cap_high":
+                                diagnostics["pts_52w_cap_would_filter"] = int(
+                                    diagnostics.get("pts_52w_cap_would_filter", 0) or 0
+                                ) + 1
+                            elif str(penalty).startswith("early_stop_"):
+                                diagnostics["early_stop_gate_would_filter"] = int(
+                                    diagnostics.get("early_stop_gate_would_filter", 0) or 0
                                 ) + 1
                         entry_shadow_hits = [
                             p

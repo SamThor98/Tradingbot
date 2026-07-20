@@ -1650,6 +1650,9 @@ function buildScanBriefNoteText(row, sections) {
   const lines = [
     `${ticker} decision brief`,
     "",
+    ...(Array.isArray(sections.triageContext) && sections.triageContext.length
+      ? ["Triage context:", ...sections.triageContext.map((x) => `- ${safeText(x)}`), ""]
+      : []),
     `Setup summary: ${safeText(sections.setupSummary)}`,
     `Expected move window: ${safeText(sections.expectedMoveWindow)}`,
     "",
@@ -1715,6 +1718,45 @@ function summarizeBriefRiskSeverity(items) {
   return { label: "Risk low", cls: "good" };
 }
 
+function formatScanBreakoutAboveLabel(row = {}) {
+  const shadow = row.entry_timing_shadow || row.entry_timing_at_stage2 || {};
+  const buf = optionalNum(shadow.breakout_buffer_pct);
+  if (buf === null) return "";
+  return `${(buf * 100).toFixed(1)}% above pivot`;
+}
+
+function buildScanTriageContextHtml(row = {}) {
+  const strategy = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
+  const confidenceLabel = formatConfidenceLabel(
+    (row.advisory || {}).confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence,
+  );
+  const above = formatScanBreakoutAboveLabel(row);
+  const reasons = formatFilterReasons(row._filter_reasons);
+  const reasonText = reasons.length
+    ? reasons.slice(0, 3).join(" · ")
+    : safeText(row._filter_status || "kept") === "kept"
+      ? "Qualified breakout"
+      : "See filter disposition";
+  const metaBits = [
+    above ? `<span>${escapeHtml(above)}</span>` : "",
+    confidenceLabel && confidenceLabel !== "—"
+      ? `<span>Confidence ${escapeHtml(confidenceLabel)}</span>`
+      : "",
+    strategy && strategy !== "—"
+      ? `<span>Strategy ${escapeHtml(strategy)}</span>`
+      : "",
+  ].filter(Boolean);
+  return `
+    <div class="scan-brief-triage">
+      <div class="scan-brief-triage-chips">
+        ${renderSignalProvenanceChip(row)}
+      </div>
+      <div class="scan-brief-triage-meta muted small">${metaBits.join('<span aria-hidden="true"> · </span>') || "—"}</div>
+      <p class="scan-brief-triage-reason muted small" title="${escapeHtml(reasons.join("; ") || reasonText)}">${escapeHtml(reasonText)}</p>
+    </div>
+  `;
+}
+
 function renderScanDetailBrief(row, brief) {
   const container = document.getElementById("scanDetailBrief");
   if (!container) return;
@@ -1722,10 +1764,11 @@ function renderScanDetailBrief(row, brief) {
     container.innerHTML = `<p class="muted">Select a candidate to load the bullet decision card.</p>`;
     return;
   }
+  const strategyLabel = formatStrategyLabel((row.strategy_attribution || {}).top_live || "");
   const fallbackSetup =
     `Score ${getCompositeScore(row) === null ? "—" : formatDecimal(getCompositeScore(row), 1)}, ` +
     `confidence ${formatConfidenceLabel((row.advisory || {}).confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence)}, ` +
-    `strategy ${safeText((row.strategy_attribution || {}).top_live || "unknown")}.`;
+    `strategy ${strategyLabel === "—" ? "n/a" : strategyLabel}.`;
   const setupSummary = safeText(brief?.setup_summary || fallbackSetup);
   const keyRisks =
     Array.isArray(brief?.key_risks) && brief.key_risks.length
@@ -1753,6 +1796,7 @@ function renderScanDetailBrief(row, brief) {
   const pUp = getCalibratedPUp(row);
   const score = getCompositeScore(row);
   const riskSeverity = summarizeBriefRiskSeverity(keyRisks);
+  const triageAbove = formatScanBreakoutAboveLabel(row);
   const sections = {
     setupSummary,
     keyRisks,
@@ -1761,6 +1805,11 @@ function renderScanDetailBrief(row, brief) {
     secNotes,
     expectedMoveWindow,
     entryStopIdeas,
+    triageContext: [
+      triageAbove || null,
+      confidenceLabel && confidenceLabel !== "—" ? `Confidence ${confidenceLabel}` : null,
+      `Strategy ${safeText((row.strategy_attribution || {}).top_live || "unknown")}`,
+    ].filter(Boolean),
   };
   const noteText = buildScanBriefNoteText(row, sections);
   const asList = (items) => `<ul>${items.map((x) => `<li>${escapeHtml(safeText(x))}</li>`).join("")}</ul>`;
@@ -1771,6 +1820,7 @@ function renderScanDetailBrief(row, brief) {
     </details>
   `;
   container.innerHTML = `
+    ${buildScanTriageContextHtml(row)}
     <div class="scan-brief-header">
       <strong>Setup summary</strong>
       <div class="scan-brief-badges">

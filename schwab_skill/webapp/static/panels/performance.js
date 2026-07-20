@@ -21,6 +21,7 @@ import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { safeText, prettyJson, formatPercentPoints, formatDecimal } from "../modules/format.js";
 import { humanizeEnvParam, humanizeVerdict } from "../modules/humanize.js";
+import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 
 function prettifySourceName(rawSource) {
   if (!rawSource && rawSource !== 0) return "Unavailable";
@@ -46,7 +47,7 @@ function formatRunStatus(rawStatus) {
   if (status === "running" || status === "in_progress") return "Running";
   if (status === "completed" || status === "success") return "Completed";
   if (status === "idle") return "Idle";
-  if (status === "failed" || status === "error") return "Failed";
+  if (status === "failed" || status === "error") return "Did not complete";
   return status
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
@@ -166,11 +167,21 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     else rawDetails.classList.remove("hidden");
   }
   if (error) {
-    rootEl.innerHTML = `<div class="panel-error">${safeText(error)}</div>`;
+    rootEl.innerHTML = buildOperatorAlertHtml({
+      tone: "bad",
+      headline: "Data unavailable",
+      detail: String(error),
+      retry: true,
+      retryAttr: "data-performance-retry",
+    });
     return;
   }
   if (!data || typeof data !== "object") {
-    rootEl.innerHTML = `<div class="report-empty">No performance snapshot loaded yet.</div>`;
+    rootEl.innerHTML = buildOperatorAlertHtml({
+      tone: "neutral",
+      headline: "No performance snapshot yet",
+      detail: "Run self-study or refresh once trade outcomes are recorded.",
+    });
     return;
   }
 
@@ -190,7 +201,7 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     valBadgeText = "Passed";
   } else if (passed === false) {
     valBadgeClass = "bg-red-900";
-    valBadgeText = "Failed";
+    valBadgeText = "Did not pass";
   } else if (String(vstat.run_status || "").trim().toLowerCase() === "idle" || vstat.exists === false) {
     valBadgeClass = "bg-slate-900";
     valBadgeText = "Idle";
@@ -247,7 +258,12 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
 
   const calloutMsg = sg.message != null && String(sg.message).trim() ? safeText(sg.message) : "";
   const callout = calloutMsg
-    ? `<p class="performance-callout" role="note">${calloutMsg}</p>`
+    ? `<div class="async-state operator-alert operator-alert--warn performance-callout" role="note">
+        <div class="operator-alert__body">
+          <strong class="operator-alert__headline">Some data degraded</strong>
+          <p class="operator-alert__detail">${calloutMsg}</p>
+        </div>
+      </div>`
     : "";
 
   rootEl.innerHTML = `
@@ -423,20 +439,14 @@ export async function refreshPerformance({ getDisplayMode = () => "balanced" } =
   const out = await api.get("/api/performance");
   if (!out.ok) {
     if (card) card.setAttribute("data-async-state", "error");
+    const detail = safeText(out.user_message || out.error || "Unable to reach performance API.");
     renderPerformancePanel(panel, null, {
-      error: `Performance load failed: ${safeText(out.user_message || out.error)}`,
+      error: detail,
       getDisplayMode,
     });
-    const errBox = panel.querySelector(".panel-error");
-    if (errBox && !errBox.querySelector("[data-performance-retry]")) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn small secondary";
-      btn.setAttribute("data-performance-retry", "");
-      btn.textContent = "Retry";
-      btn.addEventListener("click", () => void refreshPerformance({ getDisplayMode }));
-      errBox.appendChild(btn);
-    }
+    panel.querySelector("[data-performance-retry]")?.addEventListener("click", () =>
+      void refreshPerformance({ getDisplayMode }),
+    );
     if (evolveBtn) {
       evolveBtn.disabled = true;
       evolveBtn.title = "Performance data unavailable.";

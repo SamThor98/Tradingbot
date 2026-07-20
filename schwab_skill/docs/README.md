@@ -13,6 +13,9 @@ specs, checklists, and runbooks that are too detailed for top-level READMEs.
 
 | File | Primary use |
 |---|---|
+| `BACKTEST_CATALOG.md` | Polished catalog of multi-era backtests, stacks, sweeps, and promotion decisions |
+| `Backtest_Catalog.docx` | Plain-English Word summary of the same results (regenerate via `scripts/generate_backtest_catalog_docx.py`) |
+| `PROBABILISTIC_RANKING_RESEARCH_ARCHITECTURE.md` | Probabilistic ranking research platform (Phases B–F; ops via `run_prob_rank_ops_pipeline.py`) |
 | `SAAS_DEPLOYMENT.md` | Production deployment checklist and environment setup |
 | `CONNECT_SCHWAB_END_USERS.md` | End-user Schwab connect flow and implementation guide |
 | `LEGAL_DISCLOSURES.md` | Legal/disclaimer language for UI and docs |

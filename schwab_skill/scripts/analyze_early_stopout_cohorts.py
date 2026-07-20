@@ -150,6 +150,39 @@ def _signal_score_quartiles(df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
+def _oracle_ceiling(df: pd.DataFrame) -> dict[str, Any]:
+    """PF if early_stop cohort trades were never taken (Track A1 upper bound)."""
+    from scripts.analyze_rank_filter_counterfactual import _era_pf_from_df
+
+    early_mask = (df["hold_days"] <= 20) & (df["net_return"] < 0)
+    kept = df[~early_mask].copy()
+    baseline_mean, baseline_worst, n_eras_b = _era_pf_from_df(df)
+    kept_mean, kept_worst, n_eras_k = _era_pf_from_df(kept)
+    n = len(df)
+    n_early = int(early_mask.sum())
+    retention = round(100.0 * len(kept) / n, 2) if n else 0.0
+    target_pf = 1.50
+    return {
+        "n_baseline": n,
+        "n_early_stops_removed": n_early,
+        "n_kept": int(len(kept)),
+        "retention_pct": retention,
+        "baseline_pf_mean": baseline_mean,
+        "baseline_worst_era_pf": baseline_worst,
+        "oracle_pf_mean": kept_mean,
+        "oracle_worst_era_pf": kept_worst,
+        "n_eras_baseline": n_eras_b,
+        "n_eras_oracle": n_eras_k,
+        "clears_pf_150": bool(kept_mean >= target_pf and kept_worst >= 1.0),
+        "track_a_alone_can_hit_1_50": bool(kept_mean >= target_pf and kept_worst >= 1.0),
+        "note": (
+            "Oracle removes all realized early-stop losers; real pre-entry filters "
+            "cannot match this without false positives. If oracle_pf_mean < 1.50, "
+            "Track A alone cannot hit strict 1A — Track B is mandatory."
+        ),
+    }
+
+
 def _pick_recommendation(
     baseline: dict[str, Any],
     cohorts: dict[str, dict[str, Any]],
@@ -222,12 +255,14 @@ def main() -> int:
     df["cohort"] = df.apply(_label_cohort, axis=1)
     baseline = _cohort_stats(df)
     cohorts = {name: _summarize_group(sub) for name, sub in df.groupby("cohort")}
+    oracle = _oracle_ceiling(df)
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "run_id": args.run_id,
         "baseline": baseline,
         "cohorts": cohorts,
+        "oracle_ceiling": oracle,
         "by_era": _era_breakdown(df),
         "signal_score_quartiles": _signal_score_quartiles(df),
         "recommendation": _pick_recommendation(
@@ -253,6 +288,13 @@ def main() -> int:
         f"- Trades: {baseline.get('n')} | PF: {baseline.get('pf')} | early stop-outs: {baseline.get('early_stopout_pct')}%",
         f"- 21-40d PF: {baseline.get('hold_21_40d_pf')} | <=20d PF: {baseline.get('hold_lte20d_pf')}",
         "",
+        "## Oracle ceiling (drop all early_stop losers)",
+        f"- Kept: {oracle.get('n_kept')} ({oracle.get('retention_pct')}% retention)",
+        f"- PF mean: {oracle.get('baseline_pf_mean')} → **{oracle.get('oracle_pf_mean')}**",
+        f"- Worst-era: {oracle.get('baseline_worst_era_pf')} → **{oracle.get('oracle_worst_era_pf')}**",
+        f"- Clears strict PF 1.50 gates: **{oracle.get('clears_pf_150')}**",
+        f"- Track A alone can hit 1.50: **{oracle.get('track_a_alone_can_hit_1_50')}**",
+        "",
         "## Cohort contrast",
         f"- early_stop: n={early.get('n')} trailing_stop={((early.get('exit_reason_counts') or {}).get('trailing_stop', 0))}",
         f"- winner_21_40: n={winner.get('n')} time_exit={((winner.get('exit_reason_counts') or {}).get('time_exit', 0))}",
@@ -275,6 +317,10 @@ def main() -> int:
 
     print(f"Wrote {out_json}")
     print(f"Wrote {out_md}")
+    print(
+        f"Oracle PF mean={oracle.get('oracle_pf_mean')} "
+        f"clears_1.50={oracle.get('clears_pf_150')}"
+    )
     print(f"Recommendation: {rec.get('action')} — {rec.get('reason')}")
     return 0
 

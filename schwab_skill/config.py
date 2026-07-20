@@ -275,6 +275,57 @@ def get_rank_filter_v2_mode(skill_dir: Path | None = None) -> str:
     return _get_mode("RANK_FILTER_V2_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
 
+def get_prob_rank_mode(skill_dir: Path | None = None) -> str:
+    """Probabilistic ranker mode (OFF|SHADOW|LIVE).
+
+    Default ``off``. Shadow attaches ``prob_rank`` scores without changing
+    selection. Live keeps top ``PROB_RANK_TOP_N`` by expected_return_40d.
+    Requires a trained model under ``research_store/models/`` or
+    ``PROB_RANK_MODEL_DIR``.
+    """
+    return _get_mode("PROB_RANK_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_prob_rank_model_dir(skill_dir: Path | None = None) -> str:
+    """Optional path to a trained model directory (artifact.json + model.txt)."""
+    env = _load_env(skill_dir)
+    return _env_value("PROB_RANK_MODEL_DIR", env).strip()
+
+
+def get_prob_rank_top_n(skill_dir: Path | None = None) -> int:
+    """Top-N cross-sectional keep count when PROB_RANK_MODE=live."""
+    return max(1, min(50, _get_int("PROB_RANK_TOP_N", 5, skill_dir)))
+
+
+def get_prob_rank_include_shap(skill_dir: Path | None = None) -> bool:
+    """Compute local SHAP contributors on each scored signal (slower)."""
+    return _get_bool("PROB_RANK_INCLUDE_SHAP", False, skill_dir)
+
+
+def get_prob_rank_sizing_mode(skill_dir: Path | None = None) -> str:
+    """Portfolio sizing for prob-rank live path: equal | edge_vol."""
+    env = _load_env(skill_dir)
+    raw = _env_value("PROB_RANK_SIZING_MODE", env).strip().lower()
+    if raw in {"equal", "edge_vol", "dynamic", "edge", "off"}:
+        return "equal" if raw == "off" else ("edge_vol" if raw in {"dynamic", "edge"} else raw)
+    return "equal"
+
+
+def get_prob_rank_max_position(skill_dir: Path | None = None) -> float:
+    """Max fraction of day book per name under edge_vol sizing."""
+    return max(0.05, min(1.0, _get_float("PROB_RANK_MAX_POSITION", 0.25, skill_dir)))
+
+
+def get_prob_rank_max_sector(skill_dir: Path | None = None) -> float:
+    """Max fraction of day book per sector under edge_vol sizing."""
+    return max(0.10, min(1.0, _get_float("PROB_RANK_MAX_SECTOR", 0.40, skill_dir)))
+
+
+def get_prob_rank_kelly_cap(skill_dir: Path | None = None) -> float:
+    """Kelly-style cap added onto equal-weight baseline for size multipliers."""
+    return max(0.05, min(0.50, _get_float("PROB_RANK_KELLY_CAP", 0.25, skill_dir)))
+
+
 def get_rank_filter_shadow_min_percentile_signal(skill_dir: Path | None = None) -> int:
     """Min score percentile for signal_score shadow filter (default p70)."""
     return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_SIGNAL", 70, skill_dir)))
@@ -289,6 +340,61 @@ def get_stage2_shadow_52w_pct(skill_dir: Path | None = None) -> float:
 def get_stage2_shadow_sma_upward_days(skill_dir: Path | None = None) -> int:
     """Stricter 200-SMA upward window for Stage 2 shadow tighten (live default 20)."""
     return max(1, _get_int("STAGE2_SHADOW_SMA_UPWARD_DAYS", 25, skill_dir))
+
+
+def get_pts_52w_cap_mode(skill_dir: Path | None = None) -> str:
+    """Bare Stage A: cap deepest 52w-high chase (pts_52w).
+
+    off — disable. shadow — annotate/count only (never blocks).
+    live — drop Stage A / backtest entries above the cap.
+
+    Default ``live`` after multi-era ``stage2_pts52w_cap37`` (2026-07-18)
+    cleared PF mean ≥ 1.20 and worst-era ≥ 1.00. See ``SIGNAL_QUALITY_ROLLOUT.md``.
+    """
+    return _get_mode("PTS_52W_CAP_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
+
+
+def get_pts_52w_cap_max(skill_dir: Path | None = None) -> float:
+    """Max pts_52w allowed at entry (default 37.0; component scale 0–40)."""
+    val = _get_float("PTS_52W_CAP_MAX", 37.0, skill_dir)
+    return max(0.0, min(40.0, val))
+
+
+def get_early_stop_gate_mode(skill_dir: Path | None = None) -> str:
+    """Track A3: pre-entry early-stop risk gate (pts_52w + breakout buffer).
+
+    off — disable. shadow — annotate/count only (never blocks).
+    live — drop Stage A / backtest entries that fail the rule.
+
+    Default ``shadow`` until offline CF clears incremental lift gates.
+    """
+    return _get_mode("EARLY_STOP_GATE_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_early_stop_gate_pts_52w_max(skill_dir: Path | None = None) -> float:
+    """Max pts_52w for early-stop gate (default 35.0 from preentry CF)."""
+    val = _get_float("EARLY_STOP_GATE_PTS_52W_MAX", 35.0, skill_dir)
+    return max(0.0, min(40.0, val))
+
+
+def get_early_stop_gate_breakout_buffer_min(skill_dir: Path | None = None) -> float:
+    """Min breakout buffer pct for early-stop gate (default 1.0%)."""
+    val = _get_float("EARLY_STOP_GATE_BREAKOUT_BUFFER_MIN", 0.01, skill_dir)
+    return max(0.0, min(0.25, val))
+
+
+def get_backtest_entry_family(skill_dir: Path | None = None) -> str:
+    """Backtest / multi-era entry generator family (Track B).
+
+    - stage2: legacy Stage 2 hard entry (default)
+    - pullback: peer pullback-to-SMA50 generator (no Stage 2 required)
+    - pead_primary: peer PEAD/earnings-beat generator (no Stage 2 required)
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("BACKTEST_ENTRY_FAMILY", env).strip().lower()
+    if raw in {"stage2", "pullback", "pead_primary"}:
+        return raw
+    return "stage2"
 
 
 def get_entry_timing_shadow_mode(skill_dir: Path | None = None) -> str:
@@ -1352,18 +1458,19 @@ def get_forensic_cache_hours(skill_dir: Path | None = None) -> float:
     return _get_float("FORENSIC_CACHE_HOURS", 24.0, skill_dir)
 
 
-PEAD_DATA_PROVIDER_VALUES = frozenset({"finnhub", "yfinance", "off"})
+PEAD_DATA_PROVIDER_VALUES = frozenset({"finnhub", "yfinance", "alphavantage", "off"})
 
 
 def get_pead_data_provider(skill_dir: Path | None = None) -> str:
-    """PEAD earnings enrichment source (``finnhub`` | ``yfinance`` | ``off``).
+    """PEAD earnings enrichment source (``finnhub`` | ``yfinance`` | ``alphavantage`` | ``off``).
 
     Governs only the earnings calendar / EPS surprise provider. Price history
-    remains under ``SCHWAB_ONLY_DATA``; Finnhub PEAD is compatible with
-    Schwab-only bars.
+    remains under ``SCHWAB_ONLY_DATA``; Finnhub/Alpha Vantage PEAD is compatible
+    with Schwab-only bars.
 
     When ``PEAD_DATA_PROVIDER`` is unset: ``finnhub`` if ``FINNHUB_API_KEY`` is
-    configured, otherwise ``off``.
+    configured, else ``alphavantage`` if ``ALPHA_VANTAGE_API_KEY`` is set,
+    otherwise ``off``.
     """
     env = _load_env(skill_dir)
     raw = _env_value("PEAD_DATA_PROVIDER", env).strip().lower()
@@ -1373,7 +1480,29 @@ def get_pead_data_provider(skill_dir: Path | None = None) -> str:
         return "off"
     if get_finnhub_api_key(skill_dir):
         return "finnhub"
+    if get_alpha_vantage_api_key(skill_dir):
+        return "alphavantage"
     return "off"
+
+
+def get_alpha_vantage_api_key(skill_dir: Path | None = None) -> str:
+    """Optional Alpha Vantage key for PEAD historical EPS (``EARNINGS`` endpoint)."""
+    env = _load_env(skill_dir)
+    return (_env_value("ALPHA_VANTAGE_API_KEY", env) or "").strip()
+
+
+def get_pead_min_history_rows(skill_dir: Path | None = None) -> int:
+    """Min cached earnings rows before a ticker is treated as warm/complete.
+
+    Shallow Finnhub calendar-only caches (~4 recent quarters) fail multi-era
+    PEAD. Default 20 ≈ 5 years once yfinance limit=100 backfill is applied.
+    """
+    return max(1, min(80, _get_int("PEAD_MIN_HISTORY_ROWS", 20, skill_dir)))
+
+
+def get_pead_yf_history_fallback(skill_dir: Path | None = None) -> bool:
+    """Fill thin Finnhub/AV earnings history from yfinance (earnings only, not bars)."""
+    return _get_bool("PEAD_YF_HISTORY_FALLBACK", True, skill_dir)
 
 
 def get_pead_cache_enabled(skill_dir: Path | None = None) -> bool:
@@ -1388,7 +1517,7 @@ def get_pead_cache_hours(skill_dir: Path | None = None) -> float:
 
 def get_pead_warm_history_years(skill_dir: Path | None = None) -> int:
     """Years of Finnhub earnings history to fetch during cache warm."""
-    return max(1, min(20, _get_int("PEAD_WARM_HISTORY_YEARS", 12, skill_dir)))
+    return max(1, min(20, _get_int("PEAD_WARM_HISTORY_YEARS", 15, skill_dir)))
 
 
 def get_pead_prescan_warm_enabled(skill_dir: Path | None = None) -> bool:

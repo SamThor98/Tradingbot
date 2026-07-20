@@ -419,10 +419,10 @@ so production behavior for those remains legacy until explicitly enabled.
 4. ✅ `EXIT_MANAGER_MODE=shadow` -> `live` (operator-promoted after shadow run; ledger seq 6)
 5. 🟡 `CORRELATION_GUARD_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 5)
 
-Live promotion of steps 3 and 5 remains blocked by the Phase 2 edge audit
-verdict `halt_fix_signal_first` (bare-signal PF mean 1.005, worst-era PF 0.801
-across 5 eras — `validation_artifacts/phase2_edge_audit_aug.md`). Re-run the
-audit after base-signal work; promote only once PF mean >= 1.20 and
+Live promotion of steps 3 and 5 remains blocked until bare-signal PF mean
+>= 1.20 (2026-07-17 re-audit: `iterate_with_caution`, PF mean 1.162,
+worst-era 1.032 — `validation_artifacts/phase2_edge_audit_post_rank_live.md`).
+Plugins may stay in shadow; promote LIVE only once PF mean >= 1.20 and
 worst-era PF >= 1.00.
 
 P0 operating stack (Stages 2c–2d): live 1% breakout buffer + live exit grace

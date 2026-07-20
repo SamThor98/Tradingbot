@@ -351,3 +351,140 @@ def entry_timing_blocks_stage_a(entry_shadow: dict[str, Any] | None, skill_dir: 
     if not isinstance(entry_shadow, dict):
         return False
     return get_entry_timing_shadow_mode(skill_dir) == "live" and bool(entry_shadow.get("would_filter"))
+
+
+def evaluate_pts_52w_cap(
+    pts_52w: float | None,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Evaluate deepest 52w-high chase cap. Shadow never blocks — use ``pts_52w_cap_blocks_stage_a``."""
+    from config import get_pts_52w_cap_max, get_pts_52w_cap_mode
+
+    mode = get_pts_52w_cap_mode(skill_dir)
+    cap = float(get_pts_52w_cap_max(skill_dir))
+    out: dict[str, Any] = {
+        "mode": mode,
+        "cap_max": cap,
+        "pts_52w": None,
+        "would_filter": False,
+        "would_filter_reasons": [],
+    }
+    if mode == "off":
+        return out
+    if pts_52w is None:
+        return out
+    try:
+        pts = float(pts_52w)
+    except (TypeError, ValueError):
+        return out
+    out["pts_52w"] = round(pts, 2)
+    if pts > cap:
+        out["would_filter_reasons"] = ["pts_52w_cap_high"]
+        out["would_filter"] = True
+    return out
+
+
+def pts_52w_cap_blocks_stage_a(
+    pts_cap: dict[str, Any] | None,
+    skill_dir: Path | None = None,
+) -> bool:
+    """True when pts_52w cap live mode should reject a Stage A / backtest entry."""
+    from config import get_pts_52w_cap_mode
+
+    if not isinstance(pts_cap, dict):
+        return False
+    return get_pts_52w_cap_mode(skill_dir) == "live" and bool(pts_cap.get("would_filter"))
+
+
+def is_pullback_entry(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
+    """Peer generator: uptrend pullback into SMA50 zone (Track B1).
+
+    Mirrors ``strategy_plugins.evaluate_pullback_strategy`` trigger logic so
+    backtest ``BACKTEST_ENTRY_FAMILY=pullback`` can select entries without
+    requiring Stage 2.
+    """
+    del skill_dir  # reserved for future tunables
+    if df is None or getattr(df, "empty", True) or len(df) < 200:
+        return False
+    work = add_indicators(df)
+    latest = work.iloc[-1]
+    try:
+        price = float(latest["close"])
+        sma50 = float(latest[SMA_50])
+        sma200 = float(latest[SMA_200])
+    except (TypeError, ValueError, KeyError):
+        return False
+    if price <= 0 or sma50 <= 0 or sma200 <= 0:
+        return False
+    if pd.isna(sma50) or pd.isna(sma200):
+        return False
+    dist_to_sma50 = (price - sma50) / sma50
+    trend_ok = sma50 > sma200 and price > sma200
+    pullback_zone = -0.05 <= dist_to_sma50 <= 0.02
+    return bool(trend_ok and pullback_zone)
+
+
+def evaluate_early_stop_gate(
+    *,
+    pts_52w: float | None,
+    breakout_buffer_pct: float | None,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Track A3: pre-entry early-stop risk gate (shadow/live via config).
+
+    Default rule (from offline CF sweeps): reject deep 52w chase combined with
+    weak breakout buffer — ``pts_52w > cap`` OR ``breakout_buffer < min``.
+    Missing features fail open (do not filter).
+    """
+    from config import (
+        get_early_stop_gate_breakout_buffer_min,
+        get_early_stop_gate_mode,
+        get_early_stop_gate_pts_52w_max,
+    )
+
+    mode = get_early_stop_gate_mode(skill_dir)
+    pts_max = float(get_early_stop_gate_pts_52w_max(skill_dir))
+    buf_min = float(get_early_stop_gate_breakout_buffer_min(skill_dir))
+    out: dict[str, Any] = {
+        "mode": mode,
+        "pts_52w_max": pts_max,
+        "breakout_buffer_min": buf_min,
+        "pts_52w": None,
+        "breakout_buffer_pct": None,
+        "would_filter": False,
+        "would_filter_reasons": [],
+    }
+    if mode == "off":
+        return out
+    reasons: list[str] = []
+    if pts_52w is not None:
+        try:
+            pts = float(pts_52w)
+            out["pts_52w"] = round(pts, 2)
+            if pts > pts_max:
+                reasons.append("early_stop_pts_52w_high")
+        except (TypeError, ValueError):
+            pass
+    if breakout_buffer_pct is not None:
+        try:
+            buf = float(breakout_buffer_pct)
+            out["breakout_buffer_pct"] = round(buf, 4)
+            if buf < buf_min:
+                reasons.append("early_stop_breakout_buffer_low")
+        except (TypeError, ValueError):
+            pass
+    out["would_filter_reasons"] = reasons
+    out["would_filter"] = bool(reasons)
+    return out
+
+
+def early_stop_gate_blocks_stage_a(
+    gate: dict[str, Any] | None,
+    skill_dir: Path | None = None,
+) -> bool:
+    """True when early-stop gate live mode should reject the candidate."""
+    from config import get_early_stop_gate_mode
+
+    if not isinstance(gate, dict):
+        return False
+    return get_early_stop_gate_mode(skill_dir) == "live" and bool(gate.get("would_filter"))

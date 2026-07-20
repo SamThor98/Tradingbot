@@ -247,11 +247,26 @@ def log_stage_b_signal(
             "mirofish_disagreement", "agent_weighting", "meta_policy",
             "meta_policy_size_multiplier", "prediction_market_size_multiplier",
             "edge_score", "reliability_score", "execution_score", "composite_score",
-            "rank_score", "rank_basis", "score_stack_version", "p_up_calibrated", "ev_10d",
+            "rank_score", "rank_score_v2", "rank_basis", "score_stack_version",
+            "p_up_calibrated", "ev_10d",
             "data_provider", "data_provider_primary", "used_fallback_data", "fallback_reason",
             "pead_score_delta", "guidance_score_delta",
+            "close_vs_sma50_pct", "close_vs_sma200_pct",
+            "dist_sma50_pct", "dist_sma200_pct",
+            "atr_pct", "atr_14", "volume_ratio",
+            "ret_5d_prev", "ret_20d_prev", "sector_rel_21d", "sec_risk_score",
         }
         raw = {k: v for k, v in signal.items() if k in safe_keys}
+        # Align overlapping fields to research feature_registry canonical names.
+        try:
+            from research.registry import extract_registry_aligned_from_signal
+
+            aligned = extract_registry_aligned_from_signal(signal)
+            for key, value in aligned.items():
+                raw.setdefault(key, value)
+            raw["feature_schema_version"] = 1
+        except Exception as align_exc:
+            LOG.debug("Registry feature alignment skipped: %s", align_exc)
         record.raw_features_json = json.dumps(raw, default=str)
 
         db.add(record)

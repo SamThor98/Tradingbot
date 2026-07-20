@@ -121,6 +121,17 @@ export function formatScanStatusBadge(status, reasons) {
   };
 }
 
+/** Map `_filter_status` to triage severity bucket used by the scan filter. */
+export function scanStatusSeverityBucket(status) {
+  const safeStatus = safeText(status || "kept").toLowerCase() || "kept";
+  if (safeStatus === "kept") return "pass";
+  const badge = STATUS_BADGES[safeStatus];
+  const cls = safeText(badge?.cls || "");
+  if (cls.includes("bad")) return "blocked";
+  if (cls.includes("warn")) return "review";
+  return "info";
+}
+
 /** Gate mode label for scan toolbar / integrity banner. */
 export function formatGateModeLabel(mode) {
   const m = safeText(mode || "").toLowerCase();

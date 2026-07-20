@@ -2069,6 +2069,55 @@ def config() -> ApiResponse:
     )
 
 
+@app.get("/api/prob-rank/shadow-evidence", response_model=ApiResponse)
+def prob_rank_shadow_evidence(
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Summarize append-only prob-rank vs rank-v2 shadow evidence ledger."""
+    try:
+        from research.shadow_evidence import (
+            ledger_path,
+            load_shadow_evidence_records,
+            summarize_shadow_evidence,
+        )
+
+        records = load_shadow_evidence_records(SKILL_DIR)
+        cf_rows = [r for r in records if r.get("source") == "cf_day_cohort"]
+        live_rows = [r for r in records if r.get("source") != "cf_day_cohort"]
+        disagreement = None
+        disagree_path = (
+            SKILL_DIR
+            / "validation_artifacts"
+            / "prob_rank_shadow_evidence"
+            / "disagreement_attribution.json"
+        )
+        if disagree_path.is_file():
+            try:
+                disagreement = json.loads(disagree_path.read_text(encoding="utf-8"))
+            except Exception:
+                disagreement = None
+        return _ok(
+            {
+                "all": summarize_shadow_evidence(records),
+                "live_scans": summarize_shadow_evidence(live_rows),
+                "cf_day_cohorts": summarize_shadow_evidence(cf_rows),
+                "disagreement_attribution": {
+                    "verdict": (disagreement or {}).get("verdict"),
+                    "rationale": (disagreement or {}).get("rationale"),
+                    "mean_jaccard": (disagreement or {}).get("mean_jaccard"),
+                    "n_days": (disagreement or {}).get("n_days"),
+                    "buckets": (disagreement or {}).get("buckets"),
+                    "full_top_n_arms": (disagreement or {}).get("full_top_n_arms"),
+                    "path": str(disagree_path) if disagreement else None,
+                },
+                "ledger": str(ledger_path(SKILL_DIR)),
+                "note": "Shadow log only — does not change selection; do not enable live from this alone",
+            }
+        )
+    except Exception as e:
+        return _err("prob_rank_shadow_evidence", e)
+
+
 @app.get("/api/status", response_model=ApiResponse)
 def status(
     db: Session = Depends(get_db),

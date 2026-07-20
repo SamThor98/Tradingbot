@@ -48,6 +48,16 @@ def test_apply_signal_stack_enforced_env_ready(tmp_path: Path) -> None:
     assert readiness["exit_manager_mode"] == "live"
     assert readiness["rank_filter_v2_mode"] == "live"
     assert readiness["rank_filter_v2_min_percentile"] == 75
+    assert readiness["pts_52w_cap_mode"] == "live"
+    assert readiness["pts_52w_cap_max"] == 37.0
+
+
+def test_signal_stack_enforced_readiness_rejects_shadow_pts_52w_cap() -> None:
+    values = dict(SIGNAL_STACK_ENFORCED_ENV)
+    values["PTS_52W_CAP_MODE"] = "shadow"
+    readiness = signal_stack_enforced_readiness_from_values(values)
+    assert readiness["ready"] is False
+    assert "PTS_52W_CAP_MODE=live" in readiness["missing_env"]
 
 
 def test_signal_stack_enforced_readiness_rejects_shadow_entry() -> None:

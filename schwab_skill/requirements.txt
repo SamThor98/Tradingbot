@@ -2,6 +2,7 @@ requests>=2.28.0
 discord.py>=2.0.0
 cryptography>=41.0.0
 pandas>=2.0.0
+pyarrow>=14.0.0
 schedule>=1.2.0
 yfinance>=0.2.0
 openai>=1.0.0
@@ -15,6 +16,8 @@ psycopg2-binary>=2.9.0
 PyJWT>=2.8.0
 stripe>=10.0.0
 scikit-learn>=1.4.0
+lightgbm>=4.0.0
+shap>=0.44.0
 # Required by pandas.read_html() in watchlist_loader to parse Wikipedia
 # index pages (S&P 500/400/600). Without it the universe falls back to a
 # hard-coded list of 18 tickers.

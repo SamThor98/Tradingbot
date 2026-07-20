@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Signal Ranking.md
 created: 2026-04-13
-updated: 2026-07-13
+updated: 2026-07-17
 tags: [strategy, ranking]
 ---
 
@@ -63,12 +63,21 @@ Each signal carries `strategy_attribution.top_live` — the dominant strategy la
 
 When `STRATEGY_ENSEMBLE_MODE` is shadow/live, breakout and pullback strategies are weighted separately per regime via regime router.
 
+## Probabilistic ranker (research)
+
+`PROB_RANK_MODE` attaches LightGBM `prob_rank` scores after Stage B. In
+`shadow`, selection is unchanged (rank-v2 control still applies). In `live`,
+top `PROB_RANK_TOP_N` by `expected_return_40d` are kept. **Go/no-go locked
+2026-07-18: KEEP SHADOW** (not LIVE) — see
+[[probabilistic-ranking-research-architecture]].
+
 ## Related Pages
 
 - [[signal-scanner]] — ranking at end of Stage B
 - [[advisory-model]] — probability overlay
+- [[probabilistic-ranking-research-architecture]] — ML ranking research path
 - [[scanner-tunables]], [[feature-flags]]
 
 ---
 
-*Last compiled: 2026-07-13*
+*Last compiled: 2026-07-17*

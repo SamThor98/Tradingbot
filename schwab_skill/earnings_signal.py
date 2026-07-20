@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 
@@ -27,7 +30,13 @@ from config import (
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
 EARNINGS_CACHE_FILE = ".earnings_cache.json"
+EARNINGS_CACHE_LOCK_FILE = ".earnings_cache.json.lock"
 EARNINGS_WARM_PROGRESS_FILE = ".earnings_cache_warm_progress.json"
+
+# Process-local memo: avoid reloading/rewriting the JSON cache on every
+# day×ticker PEAD check inside a backtest worker.
+_MEMO: dict[str, dict[str, Any]] = {}
+_MEMO_MTIME: dict[str, float] = {}
 
 
 def _normalize_ticker(ticker: str) -> str:
@@ -41,17 +50,96 @@ def _resolve_pead_provider(skill_dir: Path | None = None) -> str:
     if provider == "yfinance" and get_schwab_only_data(skill_dir):
         LOG.debug("PEAD yfinance blocked under SCHWAB_ONLY_DATA; set PEAD_DATA_PROVIDER=finnhub")
         return "off"
+    if provider == "alphavantage":
+        from config import get_alpha_vantage_api_key
+
+        if not get_alpha_vantage_api_key(skill_dir):
+            return "off"
+        return "alphavantage"
     if provider == "finnhub":
         from config import get_finnhub_api_key
 
         if not get_finnhub_api_key(skill_dir):
             LOG.debug("PEAD finnhub provider selected but FINNHUB_API_KEY is missing")
             return "off"
+    if provider == "alphavantage":
+        from config import get_alpha_vantage_api_key
+
+        if not get_alpha_vantage_api_key(skill_dir):
+            LOG.debug("PEAD alphavantage provider selected but ALPHA_VANTAGE_API_KEY is missing")
+            return "off"
     return provider
 
 
 def _cache_path(skill_dir: Path) -> Path:
     return skill_dir / EARNINGS_CACHE_FILE
+
+
+def _cache_lock_path(skill_dir: Path) -> Path:
+    return skill_dir / EARNINGS_CACHE_LOCK_FILE
+
+
+def _memo_key(skill_dir: Path) -> str:
+    return str(skill_dir.resolve())
+
+
+def clear_earnings_cache_memo(skill_dir: Path | str | None = None) -> None:
+    """Drop process-local memo (tests / forced re-warm)."""
+    if skill_dir is None:
+        _MEMO.clear()
+        _MEMO_MTIME.clear()
+        return
+    key = _memo_key(Path(skill_dir))
+    _MEMO.pop(key, None)
+    _MEMO_MTIME.pop(key, None)
+
+
+@contextmanager
+def _earnings_cache_lock(skill_dir: Path, *, timeout_s: float = 120.0) -> Iterator[None]:
+    """Cross-process exclusive lock for earnings cache read-modify-write."""
+    lock_path = _cache_lock_path(skill_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = lock_path.open("a+b")
+    deadline = time.time() + max(1.0, float(timeout_s))
+    locked = False
+    try:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    fh.seek(0)
+                    if fh.read(1) == b"":
+                        fh.write(b"\0")
+                        fh.flush()
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"PEAD earnings cache lock timeout: {lock_path}")
+                time.sleep(0.05)
+        yield
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        fh.close()
 
 
 def _load_earnings_cache(skill_dir: Path) -> dict[str, Any]:
@@ -68,26 +156,60 @@ def _load_earnings_cache(skill_dir: Path) -> dict[str, Any]:
 
 
 def _save_earnings_cache(skill_dir: Path, cache: dict[str, Any]) -> None:
+    """Atomic replace so readers never observe a truncated JSON file.
+
+    Retries ``os.replace`` for OneDrive/Windows ``Access is denied`` (WinError 5).
+    """
     path = _cache_path(skill_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=".earnings_cache.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_name)
     try:
-        with path.open("w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(cache, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        last_exc: Exception | None = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp_path, path)
+                last_exc = None
+                break
+            except OSError as exc:
+                last_exc = exc
+                # WinError 5 / sharing violation while OneDrive holds the target.
+                time.sleep(0.05 * (2**attempt))
+        if last_exc is not None:
+            raise last_exc
+        key = _memo_key(skill_dir)
+        _MEMO[key] = cache
+        try:
+            _MEMO_MTIME[key] = float(path.stat().st_mtime)
+        except OSError:
+            _MEMO_MTIME[key] = time.time()
     except Exception as exc:
-        LOG.debug("PEAD earnings cache write failed: %s", exc)
+        LOG.warning("PEAD earnings cache write failed: %s", exc)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
-def _cached_earnings_rows(
+def _cache_entry_rows(
     skill_dir: Path,
-    ticker: str,
+    entry: dict[str, Any] | None,
     *,
     provider: str,
 ) -> list[dict[str, Any]] | None:
-    if not get_pead_cache_enabled(skill_dir):
-        return None
-    entry = _load_earnings_cache(skill_dir).get(_normalize_ticker(ticker))
     if not isinstance(entry, dict):
         return None
-    if str(entry.get("provider") or "").lower() != provider:
+    cached_provider = str(entry.get("provider") or "").lower()
+    # Accept merged multi-source caches written as finnhub+* / alphavantage+*.
+    if cached_provider != provider and not cached_provider.startswith(f"{provider}+"):
         return None
     stored_at = entry.get("stored_at")
     try:
@@ -99,7 +221,43 @@ def _cached_earnings_rows(
     rows = entry.get("rows")
     if not isinstance(rows, list):
         return None
-    return [dict(r) for r in rows if isinstance(r, dict)]
+    out = [dict(r) for r in rows if isinstance(r, dict)]
+    # Reject shallow calendar-only caches that break multi-era PEAD.
+    from config import get_pead_min_history_rows
+
+    if len(out) < int(get_pead_min_history_rows(skill_dir)):
+        return None
+    return out
+
+
+def _memo_snapshot(skill_dir: Path) -> dict[str, Any]:
+    """Return process memo, refreshing from disk when the file mtime changes."""
+    key = _memo_key(skill_dir)
+    path = _cache_path(skill_dir)
+    try:
+        mtime = float(path.stat().st_mtime) if path.exists() else -1.0
+    except OSError:
+        mtime = -1.0
+    cached = _MEMO.get(key)
+    if cached is not None and _MEMO_MTIME.get(key) == mtime:
+        return cached
+    data = _load_earnings_cache(skill_dir)
+    _MEMO[key] = data
+    _MEMO_MTIME[key] = mtime
+    return data
+
+
+def _cached_earnings_rows(
+    skill_dir: Path,
+    ticker: str,
+    *,
+    provider: str,
+) -> list[dict[str, Any]] | None:
+    if not get_pead_cache_enabled(skill_dir):
+        return None
+    tkr = _normalize_ticker(ticker)
+    entry = _memo_snapshot(skill_dir).get(tkr)
+    return _cache_entry_rows(skill_dir, entry if isinstance(entry, dict) else None, provider=provider)
 
 
 def _remember_earnings_rows(
@@ -111,13 +269,16 @@ def _remember_earnings_rows(
 ) -> None:
     if not get_pead_cache_enabled(skill_dir):
         return
-    cache = _load_earnings_cache(skill_dir)
-    cache[_normalize_ticker(ticker)] = {
+    tkr = _normalize_ticker(ticker)
+    entry = {
         "stored_at": time.time(),
         "provider": provider,
         "rows": rows,
     }
-    _save_earnings_cache(skill_dir, cache)
+    with _earnings_cache_lock(skill_dir):
+        cache = _load_earnings_cache(skill_dir)
+        cache[tkr] = entry
+        _save_earnings_cache(skill_dir, cache)
 
 
 def _normalize_earnings_df(df: Any) -> pd.DataFrame:
@@ -258,6 +419,92 @@ def _evaluate_earnings_window(
     }
 
 
+def _df_to_earnings_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
+    if df is None or df.empty:
+        return []
+    rows: list[dict[str, Any]] = []
+    for ts, row in df.iterrows():
+        try:
+            date_str = pd.Timestamp(ts).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+        actual = row.get("actual_eps") if hasattr(row, "get") else None
+        estimate = row.get("estimate_eps") if hasattr(row, "get") else None
+        try:
+            actual_f = float(actual) if actual is not None and not pd.isna(actual) else None
+        except (TypeError, ValueError):
+            actual_f = None
+        try:
+            estimate_f = float(estimate) if estimate is not None and not pd.isna(estimate) else None
+        except (TypeError, ValueError):
+            estimate_f = None
+        if actual_f is None and estimate_f is None:
+            continue
+        rows.append(
+            {
+                "date": date_str,
+                "actual_eps": actual_f,
+                "estimate_eps": estimate_f,
+                "source": "yfinance",
+            }
+        )
+    return rows
+
+
+def _merge_row_lists(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_date: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        for row in group:
+            if not isinstance(row, dict):
+                continue
+            date_str = str(row.get("date") or "")[:10]
+            if not date_str:
+                continue
+            # Prefer rows that already have both actual and estimate.
+            prev = by_date.get(date_str)
+            if prev is None:
+                by_date[date_str] = dict(row)
+                continue
+            prev_complete = prev.get("actual_eps") is not None and prev.get("estimate_eps") is not None
+            new_complete = row.get("actual_eps") is not None and row.get("estimate_eps") is not None
+            if new_complete and not prev_complete:
+                by_date[date_str] = dict(row)
+    out = list(by_date.values())
+    out.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
+    return out
+
+
+def _enrich_thin_history_rows(
+    rows: list[dict[str, Any]],
+    ticker: str,
+    skill_dir: Path,
+) -> list[dict[str, Any]]:
+    """Backfill thin primary-provider history with yfinance and/or Alpha Vantage."""
+    from config import (
+        get_alpha_vantage_api_key,
+        get_pead_min_history_rows,
+        get_pead_yf_history_fallback,
+    )
+
+    min_rows = int(get_pead_min_history_rows(skill_dir))
+    merged = list(rows)
+    if len(merged) >= min_rows:
+        return merged
+    if get_pead_yf_history_fallback(skill_dir):
+        yf_rows = _df_to_earnings_rows(_fetch_earnings_df_yfinance(ticker))
+        merged = _merge_row_lists(merged, yf_rows)
+    if len(merged) < min_rows and get_alpha_vantage_api_key(skill_dir):
+        try:
+            from alphavantage_data import get_alphavantage_earnings_history
+
+            av = get_alphavantage_earnings_history(ticker, skill_dir=skill_dir)
+            av_rows = [dict(r) for r in (av.get("rows") or []) if isinstance(r, dict)]
+            merged = _merge_row_lists(merged, av_rows)
+        except Exception as exc:
+            LOG.debug("Alpha Vantage PEAD backfill failed for %s: %s", ticker, exc)
+    return merged
+
+
 def _fetch_earnings_df_finnhub(ticker: str, skill_dir: Path) -> pd.DataFrame:
     provider = "finnhub"
     cached_rows = _cached_earnings_rows(skill_dir, ticker, provider=provider)
@@ -267,6 +514,24 @@ def _fetch_earnings_df_finnhub(ticker: str, skill_dir: Path) -> pd.DataFrame:
     warm = warm_earnings_for_ticker(ticker, skill_dir=skill_dir, force=False)
     rows = warm.get("rows") if isinstance(warm, dict) else []
     rows = [dict(r) for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    rows = _enrich_thin_history_rows(rows, ticker, skill_dir)
+    if rows:
+        _remember_earnings_rows(skill_dir, ticker, provider="finnhub+enriched", rows=rows)
+    return _rows_to_earnings_df(rows)
+
+
+def _fetch_earnings_df_alphavantage(ticker: str, skill_dir: Path) -> pd.DataFrame:
+    provider = "alphavantage"
+    cached_rows = _cached_earnings_rows(skill_dir, ticker, provider=provider)
+    if cached_rows is not None:
+        return _rows_to_earnings_df(cached_rows)
+    from alphavantage_data import get_alphavantage_earnings_history
+
+    payload = get_alphavantage_earnings_history(ticker, skill_dir=skill_dir)
+    rows = [dict(r) for r in (payload.get("rows") or []) if isinstance(r, dict)]
+    rows = _enrich_thin_history_rows(rows, ticker, skill_dir)
+    if rows:
+        _remember_earnings_rows(skill_dir, ticker, provider="alphavantage+enriched", rows=rows)
     return _rows_to_earnings_df(rows)
 
 
@@ -323,12 +588,39 @@ def warm_earnings_for_ticker(
     provider = _resolve_pead_provider(sd)
     if provider == "off":
         return {"ok": False, "ticker": tkr, "skipped": True, "reason": "provider_off", "rows": []}
+    if provider == "alphavantage":
+        from alphavantage_data import get_alphavantage_earnings_history
+
+        if not force:
+            cached = _cached_earnings_rows(sd, tkr, provider=provider)
+            if cached is not None:
+                return {
+                    "ok": True,
+                    "ticker": tkr,
+                    "skipped": True,
+                    "reason": "cache_fresh",
+                    "row_count": len(cached),
+                    "rows": cached,
+                }
+        payload = get_alphavantage_earnings_history(tkr, skill_dir=sd)
+        rows = [dict(r) for r in (payload.get("rows") or []) if isinstance(r, dict)]
+        rows = _enrich_thin_history_rows(rows, tkr, sd)
+        if rows:
+            _remember_earnings_rows(sd, tkr, provider="alphavantage+enriched", rows=rows)
+        return {
+            "ok": bool(rows),
+            "ticker": tkr,
+            "skipped": False,
+            "row_count": len(rows),
+            "rows": rows,
+            "errors": list(payload.get("errors") or []),
+        }
     if provider != "finnhub":
         return {
             "ok": False,
             "ticker": tkr,
             "skipped": True,
-            "reason": "warm_requires_finnhub",
+            "reason": "warm_requires_finnhub_or_alphavantage",
             "rows": [],
         }
     if not force:
@@ -343,6 +635,9 @@ def warm_earnings_for_ticker(
                 "rows": cached,
             }
     rows, errors = _refresh_finnhub_earnings_rows(tkr, sd)
+    rows = _enrich_thin_history_rows(rows, tkr, sd)
+    if rows:
+        _remember_earnings_rows(sd, tkr, provider="finnhub+enriched", rows=rows)
     return {
         "ok": bool(rows),
         "ticker": tkr,
@@ -407,13 +702,26 @@ def warm_earnings_for_tickers(
             if sym:
                 failed[sym] = list(item.get("errors") or [])
 
+    if force:
+        clear_earnings_cache_memo(sd)
+
     fetched = 0
     skipped = 0
+    progress_stale = 0
     errors_total = 0
     for idx, tkr in enumerate(ordered, start=1):
+        # Progress file alone is not proof of cache contents (lost writes / races).
         if resume and not force and tkr in completed:
-            skipped += 1
-            continue
+            cached = (
+                _cached_earnings_rows(sd, tkr, provider=provider)
+                if provider not in {"off", ""}
+                else None
+            )
+            if cached is not None:
+                skipped += 1
+                continue
+            progress_stale += 1
+            completed.discard(tkr)
         result = warm_earnings_for_ticker(tkr, sd, force=force)
         if result.get("skipped") and result.get("reason") == "cache_fresh":
             skipped += 1
@@ -439,28 +747,43 @@ def warm_earnings_for_tickers(
                 },
             )
             LOG.info(
-                "PEAD warm progress %s/%s fetched=%s skipped=%s errors=%s",
+                "PEAD warm progress %s/%s fetched=%s skipped=%s errors=%s stale_progress=%s",
                 idx,
                 len(ordered),
                 fetched,
                 skipped,
                 errors_total,
+                progress_stale,
             )
 
+    clear_earnings_cache_memo(sd)
+    cache_summary = earnings_cache_summary(ordered, sd)
+    cache_fresh = int(cache_summary.get("fresh") or 0)
+    cache_missing = int(cache_summary.get("missing") or 0)
+    # Only count tickers that are both in progress "completed" and actually fresh on disk.
+    verified_completed = [
+        t
+        for t in sorted(completed)
+        if provider not in {"off", ""} and _cached_earnings_rows(sd, t, provider=provider) is not None
+    ]
     summary = {
-        "ok": provider != "off" and errors_total == 0,
+        "ok": provider != "off" and errors_total == 0 and cache_missing == 0,
         "provider": provider,
         "total": len(ordered),
         "fetched": fetched,
         "skipped": skipped,
+        "progress_stale": progress_stale,
         "errors": errors_total,
         "failed_tickers": sorted(failed.keys()),
+        "cache_fresh": cache_fresh,
+        "cache_missing": cache_missing,
+        "verified_completed": len(verified_completed),
     }
     _save_warm_progress(
         sd,
         {
             **summary,
-            "completed": sorted(completed),
+            "completed": verified_completed,
             "failed": [{"ticker": k, "errors": v} for k, v in sorted(failed.items())],
             "finished_at": datetime.now(timezone.utc).isoformat(),
         },
@@ -475,16 +798,39 @@ def _fetch_earnings_df_yfinance(ticker: str) -> pd.DataFrame:
         from _io_utils import yfinance_call
 
         tkr = _normalize_ticker(ticker)
+        raw = None
         with yfinance_call():
-            raw = yf.Ticker(tkr).earnings_dates
+            t = yf.Ticker(tkr)
+            # Default .earnings_dates is short (~12–25 rows). limit=100 reaches
+            # early-2000s for liquid names — required for five-era PEAD.
+            try:
+                raw = t.get_earnings_dates(limit=100)
+            except Exception:
+                raw = getattr(t, "earnings_dates", None)
         normalized = _normalize_earnings_df(raw)
         if normalized.empty:
             return normalized
+        # yfinance columns are typically "Reported EPS" / "EPS Estimate".
         rep_col, est_col = _extract_eps_cols(normalized)
+        rename: dict[str, str] = {}
         if rep_col:
-            normalized = normalized.rename(columns={rep_col: "actual_eps"})
+            rename[rep_col] = "actual_eps"
         if est_col:
-            normalized = normalized.rename(columns={est_col: "estimate_eps"})
+            rename[est_col] = "estimate_eps"
+        # Also accept already-normalized names / Surprise path.
+        cols_lower = {str(c).lower(): c for c in normalized.columns}
+        if "actual_eps" not in rename.values():
+            for key in ("reported eps", "reportedeps"):
+                if key in cols_lower:
+                    rename[cols_lower[key]] = "actual_eps"
+                    break
+        if "estimate_eps" not in rename.values():
+            for key in ("eps estimate", "epsestimate"):
+                if key in cols_lower:
+                    rename[cols_lower[key]] = "estimate_eps"
+                    break
+        if rename:
+            normalized = normalized.rename(columns=rename)
         keep = [c for c in ("actual_eps", "estimate_eps") if c in normalized.columns]
         return normalized[keep] if keep else normalized
     except Exception as exc:
@@ -499,6 +845,8 @@ def _fetch_earnings_df(ticker: str, skill_dir: Path | None = None) -> tuple[pd.D
         return pd.DataFrame(), "off"
     if provider == "finnhub":
         return _fetch_earnings_df_finnhub(ticker, sd), provider
+    if provider == "alphavantage":
+        return _fetch_earnings_df_alphavantage(ticker, sd), provider
     return _fetch_earnings_df_yfinance(ticker), provider
 
 

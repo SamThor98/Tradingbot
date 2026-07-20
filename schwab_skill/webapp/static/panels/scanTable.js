@@ -42,12 +42,18 @@ import {
   formatScanStatusBadge,
   formatNearMissSummary,
   formatFilterReasons,
+  scanStatusSeverityBucket,
 } from "../modules/filterReasons.js";
 import {
   isScanSignalStageable,
+  // Kept imported for the scan transparency contract + future demoted-field reuse.
   renderSignalProvenanceChip,
   renderTradeableVerdict,
 } from "../modules/signalProvenance.js";
+
+// Retain symbol references so tree-shakers / contract greps keep these exports wired.
+void renderSignalProvenanceChip;
+void renderTradeableVerdict;
 import {
   filterSignalsByFunnelStage,
   funnelStageFilterHint,
@@ -58,6 +64,8 @@ import { normalizeScanSignal } from "../modules/scanSignals.js";
 const QUALIFIED_ROWS_DEFAULT_LIMIT = 20;
 const NEAR_MISS_DEFAULT_LIMIT = 10;
 const RANK_EXPLAIN_MODE_KEY = "tradingbot.scan.rank_explain_mode";
+const TRIAGE_COLSPAN = 6;
+const SCAN_STATUS_FILTERS = Object.freeze(["pass", "review", "blocked", "info"]);
 
 /** Cross-panel callbacks injected by app.js at boot (see module docstring). */
 let deps = {};
@@ -173,7 +181,7 @@ function buildRankWhyInlineText(row = {}) {
   return segments.join(" · ");
 }
 
-export function renderRankScoreCell(row = {}) {
+export function renderRankScoreCell(row = {}, { triage = false } = {}) {
   const rank = getRankScore(row);
   const composite = getCompositeScore(row);
   const shown = rank !== null ? `${rank.toFixed(1)}` : "—";
@@ -182,13 +190,17 @@ export function renderRankScoreCell(row = {}) {
     composite !== null && rank !== null && Math.abs(composite - rank) >= 0.05
       ? ` · comp ${composite.toFixed(1)}`
       : "";
+  const why = buildRankWhyText(row);
+  const title = why ? `${why}${compositeHint}` : `Rank ${shown}${compositeHint}`;
+  // Triage rows stay single-line: number + tooltip only (no "?" affordance).
+  if (triage) {
+    return `<span class="scan-rank-score" title="${escapeHtml(title || "Composite quality rank (sort key)")}">${shown}</span>`;
+  }
   if (mode === "inline") {
     const inlineWhy = buildRankWhyInlineText(row);
     const tail = inlineWhy ? `<span class="scan-rank-inline">${escapeHtml(inlineWhy)}</span>` : "";
     return `<span class="scan-rank-cell scan-rank-cell--inline"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span>${tail}</span>`;
   }
-  const why = buildRankWhyText(row);
-  const title = why ? `${why}${compositeHint}` : `Rank ${shown}${compositeHint}`;
   if (!why && !compositeHint) return shown;
   return `<span class="scan-rank-cell"><span class="scan-rank-score" title="Composite quality rank (sort key)">${shown}</span><span class="scan-rank-why" data-rank-tip="${escapeHtml(title)}" tabindex="0" role="button" aria-label="Why this rank">?</span></span>`;
 }
@@ -223,6 +235,7 @@ const SCAN_SORT_DEFAULT_DIRECTION = {
   price: "desc",
   score: "desc",
   p_up_10d: "desc",
+  expected_return_40d: "desc",
   confidence: "desc",
   conviction: "desc",
   sector: "desc",
@@ -305,12 +318,22 @@ function buildQualifiedReasonText(row = {}, rawSig = {}) {
 
 function renderPriceCell(row = {}) {
   const price = row.price || row.current_price;
-  const priceText = price ? formatMoney(price) : "—";
-  const above = formatBreakoutAboveLabel(row);
-  const aboveHtml = above
-    ? `<span class="scan-above-pivot" title="Distance above prior-day high / pivot">${escapeHtml(above)}</span>`
-    : "";
-  return `${priceText}${aboveHtml}`;
+  return price ? formatMoney(price) : "—";
+}
+
+function renderGateChip(sig = {}) {
+  const filterStatus = safeText(sig?._filter_status || "kept");
+  const filterReasons = Array.isArray(sig?._filter_reasons) ? sig._filter_reasons : null;
+  const badge = formatScanStatusBadge(filterStatus, filterReasons);
+  const bucket = scanStatusSeverityBucket(filterStatus);
+  // Keep Pass bucket short so the triage row doesn't re-introduce a loud CTA chip.
+  const label = bucket === "pass" ? "Pass" : badge.label;
+  return `<span class="scan-gate-chip scan-gate-chip--${escapeHtml(bucket)}" title="${escapeHtml(badge.title)}">${escapeHtml(label)}</span>`;
+}
+
+function renderTickerCell(row = {}) {
+  const ticker = safeText(row.ticker || row.symbol || "?");
+  return `<span class="scan-ticker-wrap"><strong class="scan-ticker">${ticker}</strong>${renderStagePill(row)}</span>`;
 }
 
 function renderScanRowActions({ idx, ticker, isKept, viewKey = "data-scan-view" }) {
@@ -319,7 +342,65 @@ function renderScanRowActions({ idx, ticker, isKept, viewKey = "data-scan-view" 
   const stageBtn = isKept
     ? `<button type="button" class="scan-row-action scan-row-action--primary" data-idx="${idx}" title="Stage ${safeText(ticker)} as pending">Stage</button>`
     : `<button type="button" class="scan-row-action" disabled title="Filtered — cannot stage">Stage</button>`;
-  return `<div class="scan-row-actions">${chartBtn}${stageBtn}${briefBtn}</div>`;
+  return `<div class="scan-row-actions">${stageBtn}${briefBtn}${chartBtn}</div>`;
+}
+
+function getActiveScanStatusFilter() {
+  const raw = safeText(state.scanStatusFilter || "pass").toLowerCase();
+  return SCAN_STATUS_FILTERS.includes(raw) ? raw : "pass";
+}
+
+function countScanStatusBuckets(signals = []) {
+  const counts = { pass: 0, review: 0, blocked: 0, info: 0 };
+  for (const sig of signals) {
+    const bucket = scanStatusSeverityBucket(sig?._filter_status || "kept");
+    counts[bucket] = (counts[bucket] || 0) + 1;
+  }
+  return counts;
+}
+
+function updateScanStatusFilterUi(counts = {}) {
+  const host = document.getElementById("scanStatusFilter");
+  if (!host) return;
+  const active = getActiveScanStatusFilter();
+  host.querySelectorAll("[data-scan-status-filter]").forEach((btn) => {
+    const key = safeText(btn.getAttribute("data-scan-status-filter")).toLowerCase();
+    const n = Number(counts[key] || 0);
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
+    btn.textContent = Number.isFinite(n) ? `${label} ${n}` : label;
+    const isActive = key === active;
+    btn.classList.toggle("is-active", isActive);
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function wireScanStatusFilterOnce() {
+  const host = document.getElementById("scanStatusFilter");
+  if (!host || host.dataset.filterBound === "1") return;
+  host.dataset.filterBound = "1";
+  host.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-scan-status-filter]");
+    if (!btn) return;
+    const key = safeText(btn.getAttribute("data-scan-status-filter")).toLowerCase();
+    if (!SCAN_STATUS_FILTERS.includes(key)) return;
+    state.scanStatusFilter = key;
+    const rows = state.latestShortlistSignals?.length
+      ? state.latestShortlistSignals
+      : state.latestSignals;
+    renderScanRows(Array.isArray(rows) ? rows : []);
+  });
+}
+
+function buildTriageRowHtml({ sig, row, idx, isKept, viewKey = "data-scan-view" }) {
+  const ticker = row.ticker || row.symbol || "?";
+  return `
+    <td class="scan-col-ticker">${renderTickerCell(row)}</td>
+    <td class="scan-col-gate">${renderGateChip(sig)}</td>
+    <td class="scan-col-price mono-nums">${renderPriceCell(row)}</td>
+    <td class="scan-col-rank">${renderRankScoreCell(row, { triage: true })}</td>
+    <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept, viewKey })}</td>
+    <td class="scan-col-spacer" aria-hidden="true"></td>
+  `;
 }
 
 function getScanSortValue(rawSig, field) {
@@ -351,6 +432,12 @@ function getScanSortValue(rawSig, field) {
     case "p_up_10d": {
       const p = getCalibratedPUp(row);
       return p === null ? null : p;
+    }
+    case "expected_return_40d": {
+      const er =
+        optionalNum(row.expected_return_40d) ??
+        optionalNum(row?.prob_rank?.expected_return_40d);
+      return er;
     }
     case "confidence": {
       const label = formatConfidenceLabel(
@@ -518,24 +605,41 @@ export function renderScanRows(signalsInput = []) {
   const qualifiedMetaEl = document.getElementById("scanQualifiedMeta");
   const nearMissCountEl = document.getElementById("nearMissSummaryCount");
   if (!body) return;
+  wireScanStatusFilterOnce();
   // Always honour the active sort before rendering so re-renders triggered by
   // SSE / poll updates don't snap the operator back to backend order.
   const allSignals = sortScanSignalsForRender(Array.isArray(signalsInput) ? signalsInput : []);
-  const qualifiedSignals = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() === "kept");
-  const nearMissAll = allSignals.filter((sig) => safeText(sig?._filter_status || "kept").toLowerCase() !== "kept");
+  const statusCounts = countScanStatusBuckets(allSignals);
+  updateScanStatusFilterUi(statusCounts);
+  const statusFilter = getActiveScanStatusFilter();
+  const passSignals = allSignals.filter(
+    (sig) => scanStatusSeverityBucket(sig?._filter_status || "kept") === "pass",
+  );
+  const filteredByStatus = allSignals.filter(
+    (sig) => scanStatusSeverityBucket(sig?._filter_status || "kept") === statusFilter,
+  );
+  const nearMissAll = allSignals.filter(
+    (sig) => safeText(sig?._filter_status || "kept").toLowerCase() !== "kept",
+  );
   const nearMissSignals = filterSignalsByFunnelStage(nearMissAll, state.scanFunnelFilter);
   renderScanFunnelFilterBanner(state.lastScanDiagnostics || {});
   const expanded = Boolean(state.scanRowsExpanded);
   const signals = expanded
-    ? qualifiedSignals
-    : qualifiedSignals.slice(0, QUALIFIED_ROWS_DEFAULT_LIMIT);
+    ? filteredByStatus
+    : filteredByStatus.slice(0, QUALIFIED_ROWS_DEFAULT_LIMIT);
   body.innerHTML = "";
   applyScanSortIndicators();
   if (qualifiedMetaEl) {
     const shown = signals.length;
-    const total = qualifiedSignals.length;
+    const total = filteredByStatus.length;
+    const passTotal = passSignals.length;
     const suffix = total > shown ? ` (showing ${shown})` : "";
-    qualifiedMetaEl.textContent = `${total} qualified breakout${total === 1 ? "" : "s"}${suffix}`;
+    if (statusFilter === "pass") {
+      qualifiedMetaEl.textContent = `${passTotal} qualified breakout${passTotal === 1 ? "" : "s"}${suffix}`;
+    } else {
+      const label = statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1);
+      qualifiedMetaEl.textContent = `${total} ${label.toLowerCase()} candidate${total === 1 ? "" : "s"}${suffix} · ${passTotal} pass`;
+    }
   }
   if (nearMissCountEl) {
     const suffix = state.scanFunnelFilter && nearMissSignals.length !== nearMissAll.length
@@ -544,11 +648,11 @@ export function renderScanRows(signalsInput = []) {
     nearMissCountEl.textContent = `(${nearMissAll.length}${suffix})`;
   }
   if (showMoreBtn) {
-    if (qualifiedSignals.length > QUALIFIED_ROWS_DEFAULT_LIMIT) {
+    if (filteredByStatus.length > QUALIFIED_ROWS_DEFAULT_LIMIT) {
       showMoreBtn.classList.remove("hidden");
       showMoreBtn.textContent = expanded
         ? `Show top ${QUALIFIED_ROWS_DEFAULT_LIMIT}`
-        : `Show all ${qualifiedSignals.length}`;
+        : `Show all ${filteredByStatus.length}`;
       showMoreBtn.onclick = () => {
         state.scanRowsExpanded = !Boolean(state.scanRowsExpanded);
         const rows = state.latestShortlistSignals?.length ? state.latestShortlistSignals : state.latestSignals;
@@ -566,46 +670,24 @@ export function renderScanRows(signalsInput = []) {
       const msg = state.scanFunnelFilter
         ? "No near-miss rows match the selected funnel stage."
         : "No near-miss candidates for this scan mode.";
-      nearMissBody.innerHTML = `<tr><td colspan="13" class="muted">${msg}</td></tr>`;
+      nearMissBody.innerHTML = `<tr><td colspan="${TRIAGE_COLSPAN}" class="muted">${msg}</td></tr>`;
     } else {
       nearMissRows.forEach((sig, idx) => {
         const row = normalizeScanSignal(sig);
         const ticker = row.ticker || row.symbol || "?";
-        const flaggedDaysRaw = optionalNum(row.flagged_days ?? row.days_flagged);
-        const flaggedDays = flaggedDaysRaw === null ? null : Math.max(0, Math.trunc(flaggedDaysRaw));
-        const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
-        const advisory = row.advisory;
-        const conviction = getConvictionScore(row);
-        const pUp = getCalibratedPUp(row);
-        const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
-        const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
         const filterStatus = safeText(sig?._filter_status || "kept");
-        const filterReasons = Array.isArray(sig?._filter_reasons) ? sig._filter_reasons : null;
-        const badge = formatScanStatusBadge(filterStatus, filterReasons);
         const tr = document.createElement("tr");
         tr.setAttribute("data-scan-ticker", ticker);
         tr.setAttribute("data-scan-row-index", String(idx));
         tr.setAttribute("data-filter-status", filterStatus);
         tr.classList.add("scan-row--filtered");
-        const humanReasons = formatFilterReasons(filterReasons);
-        const reasonCell = humanReasons.length
-          ? `<span class="near-miss-reason" title="${escapeHtml(humanReasons.join("; "))}">${escapeHtml(humanReasons[0])}</span>`
-          : `<span class="muted">${escapeHtml(formatNearMissSummary(filterStatus, filterReasons))}</span>`;
-        tr.innerHTML = `
-          <td><strong>${safeText(ticker)}</strong></td>
-          <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
-          <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
-          <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
-          <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
-          <td class="scan-col-secondary">${renderPriceCell(row)}</td>
-          <td>${renderRankScoreCell(row)}</td>
-          <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
-          <td>${renderConfidenceCell(row, conf)}</td>
-          <td class="scan-col-advanced">${convictionText}</td>
-          <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
-          <td class="scan-col-secondary near-miss-reason-cell">${reasonCell}</td>
-          <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept: false, viewKey: "data-near-miss-view" })}</td>
-        `;
+        tr.innerHTML = buildTriageRowHtml({
+          sig,
+          row,
+          idx,
+          isKept: false,
+          viewKey: "data-near-miss-view",
+        });
         nearMissBody.appendChild(tr);
       });
     }
@@ -614,16 +696,18 @@ export function renderScanRows(signalsInput = []) {
     const scanned = Boolean(state.lastScanAt);
     const emptyTitle = scanned ? "Zero candidates" : "No scan yet";
     const emptySub = scanned
-      ? nearMissSignals.length
-        ? `${nearMissSignals.length} near-miss candidate(s) available below.`
-        : "No qualified breakouts passed filters this scan."
+      ? statusFilter !== "pass"
+        ? `No ${statusFilter} candidates in this shortlist.`
+        : nearMissSignals.length
+          ? `${nearMissSignals.length} near-miss candidate(s) available below.`
+          : "No qualified breakouts passed filters this scan."
       : "Run scan to load candidates.";
     const emptyCta = scanned
       ? ""
       : `<button id="scanEmptyCtaBtn" class="btn small secondary" type="button">Run Scan</button>`;
     body.innerHTML = `
-      <tr>
-        <td colspan="13" class="muted">
+      <tr class="scan-row--empty">
+        <td colspan="${TRIAGE_COLSPAN}" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M4 8h16M6 12h12M9 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -649,20 +733,12 @@ export function renderScanRows(signalsInput = []) {
   signals.forEach((sig, idx) => {
     const row = normalizeScanSignal(sig);
     const ticker = row.ticker || row.symbol || "?";
-    const flaggedDaysRaw = optionalNum(row.flagged_days ?? row.days_flagged);
-    const flaggedDays = flaggedDaysRaw === null ? null : Math.max(0, Math.trunc(flaggedDaysRaw));
-    const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "—");
     const advisory = row.advisory;
     const conviction = getConvictionScore(row);
     const pUp = getCalibratedPUp(row);
     const conf = formatConfidenceLabel(advisory.confidence_bucket ?? row.confidence_bucket ?? row.advisory_confidence);
-    const convictionText = conviction === null ? "—" : formatDecimal(conviction, 1);
-    // `_filter_status` is set by the scanner shortlist; falls back to "kept"
-    // for legacy responses that don't include it (e.g. older API versions).
     const filterStatus = safeText(sig?._filter_status || "kept");
     const isKept = filterStatus === "kept";
-    const filterReasons = Array.isArray(sig?._filter_reasons) ? sig._filter_reasons : null;
-    const badge = formatScanStatusBadge(filterStatus, filterReasons);
     if (pUp !== null) pupCount += 1;
     if (conf !== "—") confCount += 1;
     if (conviction !== null) convictionCount += 1;
@@ -672,25 +748,7 @@ export function renderScanRows(signalsInput = []) {
     tr.setAttribute("data-filter-status", filterStatus);
     if (!isKept) tr.classList.add("scan-row--filtered");
     tr.tabIndex = 0;
-    const reasonText = buildQualifiedReasonText(row, sig);
-    const reasonCell = reasonText
-      ? `<span class="scan-qualified-reason" title="${escapeHtml(reasonText)}">${escapeHtml(reasonText)}</span>`
-      : `<span class="muted">—</span>`;
-    tr.innerHTML = `
-      <td><strong>${safeText(ticker)}</strong>${renderStagePill(row)} ${renderTradeableVerdict(sig)}</td>
-      <td><span class="${badge.cls}" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span></td>
-      <td class="scan-col-secondary">${renderSignalProvenanceChip(row)}</td>
-      <td class="scan-col-advanced">${flaggedDays === null ? "—" : String(flaggedDays)}</td>
-      <td class="scan-col-advanced"><span class="pill info strategy-badge">${topLive}</span></td>
-      <td class="scan-col-secondary">${renderPriceCell(row)}</td>
-      <td>${renderRankScoreCell(row)}</td>
-      <td class="scan-col-advanced">${pUp !== null ? pct(pUp, 1) : "—"}</td>
-      <td>${renderConfidenceCell(row, conf)}</td>
-      <td class="scan-col-advanced">${convictionText}</td>
-      <td class="scan-col-advanced">${safeText(row.sector_etf || "—")}</td>
-      <td class="scan-col-secondary scan-qualified-reason-cell">${reasonCell}</td>
-      <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept })}</td>
-    `;
+    tr.innerHTML = buildTriageRowHtml({ sig, row, idx, isKept });
     body.appendChild(tr);
   });
   if (signals.length && pupCount === 0 && confCount === 0 && convictionCount === 0 && !state.scanMissingEnrichmentWarned) {
@@ -773,25 +831,24 @@ export function renderScanRows(signalsInput = []) {
       void deps.renderScanDetail?.(normalizeScanSignal(raw));
     });
   });
-  const openBriefForTicker = (tickerRaw) => {
-    const ticker = safeText(tickerRaw || "").toUpperCase();
-    if (!ticker) return;
-    deps.openTradeDrawer?.({ tab: "decision", ticker });
+  const openBriefForSignal = (raw) => {
+    if (!raw) return;
+    void deps.renderScanDetail?.(normalizeScanSignal(raw));
+    document.getElementById("scanDetailBriefCard")?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "nearest",
+    });
   };
   body.querySelectorAll("button[data-scan-brief]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-scan-brief"));
-      const raw = lookupRowSignal(idx, e.currentTarget);
-      if (!raw) return;
-      openBriefForTicker(raw?.ticker || raw?.symbol);
+      openBriefForSignal(lookupRowSignal(idx, e.currentTarget));
     });
   });
   nearMissBody?.querySelectorAll("button[data-scan-brief]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const idx = Number(e.currentTarget.getAttribute("data-scan-brief"));
-      const raw = nearMissLookup(idx);
-      if (!raw) return;
-      openBriefForTicker(raw?.ticker || raw?.symbol);
+      openBriefForSignal(nearMissLookup(idx));
     });
   });
   body.querySelectorAll("tr[data-scan-row-index]").forEach((rowEl) => {

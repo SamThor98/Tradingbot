@@ -77,6 +77,11 @@ validation_artifacts/
 mirofish_sims/
 exports/
 
+# Research feature warehouse (panels/datasets/models); keep registry/README tracked
+research_store/panels/
+research_store/datasets/
+research_store/models/
+
 # Editor/OS
 .DS_Store
 Thumbs.db

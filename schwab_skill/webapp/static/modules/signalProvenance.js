@@ -64,10 +64,10 @@ export function renderSignalProvenanceChip(row = {}) {
  */
 export function renderTradeableVerdict(sig = {}) {
   if (isScanSignalStageable(sig)) {
-    return `<span class="pill good scan-tradeable-verdict" title="Eligible for staging">Tradeable</span>`;
+    return `<span class="scan-gate-chip scan-gate-chip--pass scan-tradeable-verdict" title="Eligible for staging">Tradeable</span>`;
   }
   const reasons = Array.isArray(sig._filter_reasons) ? sig._filter_reasons : [];
   const status = safeText(sig._filter_status || "filtered").toLowerCase();
   const hint = reasons.length ? safeText(reasons[0]).replace(/_/g, " ") : status.replace(/_/g, " ");
-  return `<span class="pill bad scan-tradeable-verdict" title="Not stageable: ${escapeHtml(hint)}">Blocked</span>`;
+  return `<span class="scan-gate-chip scan-gate-chip--blocked scan-tradeable-verdict" title="Not stageable: ${escapeHtml(hint)}">Blocked</span>`;
 }

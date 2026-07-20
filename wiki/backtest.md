@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/backtest.py
 created: 2026-04-17
-updated: 2026-07-13
+updated: 2026-07-17
 tags: [backtest, validation, scanner, portfolio-sim]
 ---
 
@@ -110,18 +110,38 @@ artifacts, not strategy risk.
   non-augmented `stage2_only` run contains only one era and must not be used
   as the default promotion baseline.
 
-The 2026-07-13 complete bare-signal audit loaded 16,423 trades and returned
+The 2026-07-17 re-audit (same augmented baselines) returned
 `iterate_with_caution` (PF mean 1.162, worst-era PF 1.032). `bear_rates` was
-the weakest PF era at 1.0323. The promoted breakout-buffer plus exit-grace
-counterfactual remained above its gates (PF mean 1.2118, worst-era PF 1.0368).
+the weakest PF era. The promoted breakout-buffer plus exit-grace
+counterfactual clears gates (PF mean 1.212, worst-era PF 1.037); optional
+rank-v2 p75 trim reaches PF mean 1.249 / worst-era 1.120.
+
+**Polished catalog of all runs, sweeps, and decisions:**
+`schwab_skill/docs/BACKTEST_CATALOG.md` (compiled from `validation_artifacts/`).
+
+## Research redesign (design only)
+
+Rank-v2 p75 improves PF at ~25% retention, but does not explain *why* those
+trades are better. The planned research platform replaces further hard filters
+with continuous features and a probabilistic ranker evaluated side-by-side on
+this same harness:
+
+- Canonical: `schwab_skill/docs/PROBABILISTIC_RANKING_RESEARCH_ARCHITECTURE.md`
+- Wiki digest: [[probabilistic-ranking-research-architecture]]
+
+No implementation until that design is approved. Legacy Stage-2 / stack /
+rank-v2 remain the control path for dual-run evaluation.
 
 ## Related Pages
 
 - [[signal-scanner]] — Live pipeline whose rules the backtest replays
 - [[backtest-intelligence-overlay]] — Plugin-aware historical attribution
+- [[probabilistic-ranking-research-architecture]] — Feature store + ML ranking design
+- [[feature-store]] — Ops SQL vs research Parquet split
 - [[validation]] — Where backtest fits into the broader gate matrix
 - [[promotion-playbook]] — Promotion gates that consume backtest PF
+- [[signal-quality-rollout]] — Live stack rollout that consumes these results
 
 ---
 
-*Last compiled: 2026-07-13*
+*Last compiled: 2026-07-17*

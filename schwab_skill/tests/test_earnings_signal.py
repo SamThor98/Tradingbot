@@ -72,7 +72,8 @@ def test_resolve_pead_provider_blocks_yfinance_under_schwab_only(
 
 def test_check_earnings_at_date_uses_finnhub_cache(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nSCHWAB_ONLY_DATA=true\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nSCHWAB_ONLY_DATA=true\n"
+        "PEAD_MIN_HISTORY_ROWS=1\n",
         encoding="utf-8",
     )
 
@@ -131,7 +132,7 @@ def test_warm_earnings_for_ticker_uses_cache(
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.delenv("PEAD_DATA_PROVIDER", raising=False)
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_MIN_HISTORY_ROWS=1\n",
         encoding="utf-8",
     )
     cache_path = tmp_path / EARNINGS_CACHE_FILE
@@ -160,7 +161,8 @@ def test_warm_earnings_for_ticker_fetches_when_missing(
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.delenv("PEAD_DATA_PROVIDER", raising=False)
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\n"
+        "PEAD_MIN_HISTORY_ROWS=1\nPEAD_YF_HISTORY_FALLBACK=false\n",
         encoding="utf-8",
     )
 
@@ -188,7 +190,7 @@ def test_warm_earnings_batch_resumes(
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.delenv("PEAD_DATA_PROVIDER", raising=False)
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_MIN_HISTORY_ROWS=1\n",
         encoding="utf-8",
     )
     calls: list[str] = []
@@ -206,6 +208,69 @@ def test_warm_earnings_batch_resumes(
     warm_earnings_for_tickers(["AAA", "BBB"], skill_dir=tmp_path, force=False, resume=True)
     warm_earnings_for_tickers(["AAA", "BBB"], skill_dir=tmp_path, force=False, resume=True)
     assert calls == ["AAA", "BBB"]
+
+
+def test_warm_resume_refetches_when_progress_lies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Progress 'completed' without cache rows must not skip the fetch."""
+    from earnings_signal import EARNINGS_WARM_PROGRESS_FILE
+
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    monkeypatch.delenv("PEAD_DATA_PROVIDER", raising=False)
+    (tmp_path / ".env").write_text(
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_MIN_HISTORY_ROWS=1\n"
+        "PEAD_YF_HISTORY_FALLBACK=false\n",
+        encoding="utf-8",
+    )
+    (tmp_path / EARNINGS_WARM_PROGRESS_FILE).write_text(
+        json.dumps({"completed": ["GHOST"], "failed": [], "total": 1}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def _fake_history(ticker: str, *, skill_dir: Path | None = None, history_years: int = 12):
+        calls.append(ticker)
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "rows": [{"date": "2024-02-01", "actual_eps": 1.0, "estimate_eps": 0.9}],
+            "errors": [],
+        }
+
+    monkeypatch.setattr("finnhub_data.get_finnhub_earnings_history", _fake_history)
+    out = warm_earnings_for_tickers(["GHOST"], skill_dir=tmp_path, force=False, resume=True)
+    assert calls == ["GHOST"]
+    assert out.get("progress_stale") == 1
+    assert out.get("cache_fresh") == 1
+    cached = json.loads((tmp_path / EARNINGS_CACHE_FILE).read_text(encoding="utf-8"))
+    assert "GHOST" in cached
+
+
+def test_concurrent_remember_preserves_all_tickers(tmp_path: Path) -> None:
+    """Regression: parallel writers must not stomp each other down to a tiny cache."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from earnings_signal import _remember_earnings_rows, clear_earnings_cache_memo
+
+    (tmp_path / ".env").write_text("PEAD_CACHE_ENABLED=true\n", encoding="utf-8")
+    clear_earnings_cache_memo(tmp_path)
+    tickers = [f"T{i:03d}" for i in range(40)]
+
+    def _write(tkr: str) -> None:
+        _remember_earnings_rows(
+            tmp_path,
+            tkr,
+            provider="finnhub+enriched",
+            rows=[{"date": "2024-01-01", "actual_eps": 1.0, "estimate_eps": 0.9}],
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_write, tickers))
+
+    cached = json.loads((tmp_path / EARNINGS_CACHE_FILE).read_text(encoding="utf-8"))
+    assert set(cached) == set(tickers)
 
 
 def test_earnings_cache_summary_counts_fresh(
@@ -228,7 +293,7 @@ def test_earnings_cache_summary_counts_fresh(
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_MIN_HISTORY_ROWS=1\n",
         encoding="utf-8",
     )
     summary = earnings_cache_summary(["AAA", "BBB"], skill_dir=tmp_path)
@@ -243,7 +308,8 @@ def test_maybe_warm_earnings_for_scan_skips_when_warm(
     monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.delenv("PEAD_DATA_PROVIDER", raising=False)
     (tmp_path / ".env").write_text(
-        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_ENABLED=true\n",
+        "PEAD_DATA_PROVIDER=finnhub\nFINNHUB_API_KEY=test-key\nPEAD_ENABLED=true\n"
+        "PEAD_MIN_HISTORY_ROWS=1\n",
         encoding="utf-8",
     )
     cache_path = tmp_path / EARNINGS_CACHE_FILE

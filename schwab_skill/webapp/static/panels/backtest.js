@@ -33,7 +33,7 @@ import {
 } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
 import { setResearchStatusStrip } from "../modules/researchStatus.js";
-import { scrollStrategyChatToEnd } from "./strategyChat.js";
+import { scrollStrategyChatToEnd, renderStrategyChatMessages } from "./strategyChat.js";
 import { renderBacktestEquityCharts, clearBacktestEquityCharts } from "./backtestCharts.js";
 import { setAsyncState, ASYNC_ERROR } from "../modules/asyncState.js";
 
@@ -420,7 +420,10 @@ export function switchBacktestHubTab(which) {
   }
   if (formPanel) formPanel.classList.toggle("hidden", !isForm);
   if (chatPanel) chatPanel.classList.toggle("hidden", isForm);
-  if (!isForm) scrollStrategyChatToEnd();
+  if (!isForm) {
+    renderStrategyChatMessages();
+    scrollStrategyChatToEnd();
+  }
 }
 
 export async function refreshBacktestRuns() {

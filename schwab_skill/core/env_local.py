@@ -38,12 +38,15 @@ SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
 }
 
 # Promoted operating stack: live 1% breakout buffer + live exit grace (15/40)
-# + live rank-v2 p75 trim. Does not demote EVENT_RISK / EXEC_QUALITY.
+# + live rank-v2 p75 trim + live pts_52w≤37 Stage A cap.
+# Does not demote EVENT_RISK / EXEC_QUALITY. Does not enable PROB_RANK live.
 SIGNAL_STACK_ENFORCED_ENV: dict[str, str] = {
     **ENTRY_TIMING_LIVE_ENV,
     "EXIT_MANAGER_MODE": "live",
     "RANK_FILTER_V2_MODE": "live",
     "RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2": "75",
+    "PTS_52W_CAP_MODE": "live",
+    "PTS_52W_CAP_MAX": "37",
     "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
     "EXIT_MAX_HOLD_DAYS": "40",
     "HOLD_DAYS": "40",
@@ -215,6 +218,8 @@ def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[
         0,
         min(95, int(_env_float(values.get("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"), 75))),
     )
+    pts_52w_mode = str(values.get("PTS_52W_CAP_MODE", "live")).strip().lower()
+    pts_52w_max = max(0.0, min(40.0, _env_float(values.get("PTS_52W_CAP_MAX"), 37.0)))
     min_hold = max(0, int(_env_float(values.get("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL"), 15)))
     max_hold = max(1, int(_env_float(values.get("EXIT_MAX_HOLD_DAYS"), 40)))
     hold_days = max(1, int(_env_float(values.get("HOLD_DAYS"), 40)))
@@ -241,6 +246,10 @@ def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[
         missing.append("RANK_FILTER_V2_MODE=live")
     if rank_filter_percentile != 75:
         missing.append("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2=75")
+    if pts_52w_mode != "live":
+        missing.append("PTS_52W_CAP_MODE=live")
+    if abs(pts_52w_max - 37.0) > 1e-9:
+        missing.append("PTS_52W_CAP_MAX=37")
     if min_hold != 15:
         missing.append("EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL=15")
     if max_hold != 40:
@@ -265,6 +274,8 @@ def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[
         "exit_manager_mode": exit_mode,
         "rank_filter_v2_mode": rank_filter_mode,
         "rank_filter_v2_min_percentile": rank_filter_percentile,
+        "pts_52w_cap_mode": pts_52w_mode,
+        "pts_52w_cap_max": pts_52w_max,
         "exit_min_hold_days_before_trail": min_hold,
         "exit_max_hold_days": max_hold,
         "missing_env": missing,

@@ -244,7 +244,7 @@ body[data-theme="editorial"] .btn.icon-btn {
 body[data-theme="editorial"] input,
 body[data-theme="editorial"] select,
 body[data-theme="editorial"] textarea {
-  background: rgba(7, 10, 18, 0.85) !important;
+  background: #fffdf8 !important;
   border: 1px solid var(--ink-line) !important;
   border-radius: 2px !important;
   color: var(--paper) !important;
@@ -715,7 +715,7 @@ body[data-theme="editorial"] details > summary {
 }
 
 body[data-theme="editorial"] .panel-disclosure {
-  background: rgba(7, 10, 18, 0.6) !important;
+  background: var(--ink-2) !important;
   border: 1px solid var(--ink-line) !important;
   border-radius: 0 !important;
 }
@@ -1029,7 +1029,10 @@ body[data-theme="editorial"] #platformKillSwitchBanner {
   display: none !important;
 }
 
-body[data-theme="editorial"] #todaySummaryLanding,
+/* Only force the Today summary on Operations — never leak onto Research/System/Settings. */
+body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding {
+  display: block !important;
+}
 body.ui-pro[data-theme="editorial"] #actionCenter {
   display: block !important;
 }
@@ -1117,7 +1120,7 @@ body[data-theme="editorial"] .app-topbar {
   gap: 18px;
   padding: 10px clamp(18px, 4vw, 36px);
   background:
-    linear-gradient(180deg, rgba(10, 13, 20, 0.96) 0%, rgba(10, 13, 20, 0.88) 100%);
+    linear-gradient(180deg, rgba(250, 246, 238, 0.98) 0%, rgba(245, 241, 232, 0.94) 100%);
   border-bottom: 1px solid var(--ink-line-strong);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -1163,7 +1166,7 @@ body[data-theme="editorial"] .app-topbar-tabs {
   gap: 0;
   border: 1px solid var(--ink-line);
   border-radius: 2px;
-  background: rgba(7, 10, 18, 0.6);
+  background: var(--ink-2);
   padding: 2px;
 }
 
@@ -1839,15 +1842,13 @@ body[data-theme="editorial"] #healthRibbon {
   position: relative;
   top: auto;
   z-index: 1;
-  background:
-    linear-gradient(180deg, rgba(10, 13, 20, 0.96) 0%, rgba(10, 13, 20, 0.9) 100%) !important;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: none !important;
-  border-top: 1px solid var(--ink-line) !important;
-  border-bottom: 1px solid var(--ink-line) !important;
-  border-radius: 0 !important;
-  padding: 4px 0 !important;
+  background: var(--ol-surface, var(--ui-surface, #fffefb)) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--ink-line) !important;
+  border-radius: 8px !important;
+  padding: 8px 0 !important;
+  color: var(--paper, #1a1a1a) !important;
 }
 
 body[data-theme="editorial"] #healthRibbon .health-tile {
@@ -1890,7 +1891,8 @@ body[data-theme="editorial"] .app-topbar-tabs .tab-num {
   margin-right: 6px;
   font-family: var(--mono);
   font-size: 0.66rem;
-  color: var(--gold);
+  /* ol/gold fails AA as text on cream — numerals use muted / on-accent only */
+  color: var(--ol-muted, var(--paper-mute));
   font-weight: 700;
 }
 
@@ -2266,6 +2268,22 @@ body[data-theme="editorial"] .operate-kanban #pendingSection .task-board {
    This single block replaces layered v6-v12 overrides.
 ============================================================ */
 body[data-theme="editorial"] {
+  /* Remap legacy dark-first tokens used by earlier overhaul rules.
+     Without this, ink-* backgrounds stay navy while later rules force
+     dark body text → unreadable dark-on-dark across the site. */
+  --ink: #f5f1e8;
+  --ink-2: #fffefb;
+  --ink-3: #ebe5d6;
+  --ink-line: rgba(26, 26, 26, 0.12);
+  --ink-line-strong: rgba(26, 26, 26, 0.22);
+  --paper: #1a1a1a;
+  --paper-soft: #2a2a2a;
+  --paper-warm: #1a1a1a;
+  --paper-mute: #5a5a5a;
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-glow: none;
+
   /* Aliased to the canonical Old Logan palette (see readability.css) */
   --ui-bg: #f5f1e8;
   --ui-surface: #fffefb;

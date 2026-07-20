@@ -2167,10 +2167,123 @@ body[data-theme="editorial"] .btn.bad {
   box-shadow: none !important;
 }
 
-/* Scan severity legend: readable words, palette-aligned chips */
-body[data-theme="editorial"] .scan-severity-legend .pill {
-  font-size: 0.8125rem !important; /* 13px supporting-text floor */
-  text-transform: capitalize;
+/* Scan triage status filter + gate chips */
+body[data-theme="editorial"] .scan-status-filter {
+  border-color: var(--ol-border) !important;
+  background: var(--ol-surface-soft) !important;
+}
+body[data-theme="editorial"] .scan-status-filter__btn {
+  color: var(--ol-muted) !important;
+  font-size: 0.78rem !important;
+}
+body[data-theme="editorial"] .scan-status-filter__btn.is-active {
+  color: var(--ol-text) !important;
+  background: var(--ol-surface) !important;
+  box-shadow: inset 0 0 0 1px var(--ol-border-strong) !important;
+}
+body[data-theme="editorial"] .scan-gate-chip--pass {
+  border-color: rgba(45, 90, 74, 0.42) !important;
+  background: rgba(45, 90, 74, 0.12) !important;
+  color: var(--ol-ok) !important;
+}
+body[data-theme="editorial"] .scan-gate-chip--review {
+  border-color: rgba(176, 133, 42, 0.5) !important;
+  background: rgba(201, 169, 98, 0.16) !important;
+  color: var(--ol-warn) !important;
+}
+body[data-theme="editorial"] .scan-gate-chip--blocked {
+  border-color: rgba(201, 73, 73, 0.44) !important;
+  background: rgba(201, 73, 73, 0.12) !important;
+  color: var(--ol-bad) !important;
+}
+body[data-theme="editorial"] .scan-gate-chip--info {
+  border-color: var(--ol-border) !important;
+  background: var(--ol-surface-soft) !important;
+  color: var(--ol-muted) !important;
+}
+body[data-theme="editorial"] .scan-row-action--primary {
+  border-color: var(--ol-accent) !important;
+  background: var(--ol-accent-soft) !important;
+  color: var(--ol-accent) !important;
+}
+body[data-theme="editorial"] .scan-brief-triage {
+  border-bottom-color: var(--ol-border) !important;
+}
+body[data-theme="editorial"] #scanSection.kanban-lane {
+  display: flex !important;
+  flex-direction: column !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
+}
+body[data-theme="editorial"] #scanSection .qualified-table-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+body[data-theme="editorial"] #scanSection .scan-list-pane:has(tr.scan-row--empty) .qualified-table-wrap {
+  flex: 1 1 auto !important;
+  min-height: clamp(220px, 30vh, 480px) !important;
+}
+body[data-theme="editorial"] #scanSection .scan-list-pane:not(:has(tr.scan-row--empty)) .qualified-table-wrap {
+  flex: 0 1 auto !important;
+  min-height: 0 !important;
+}
+body[data-theme="editorial"] #scanSection .near-miss-table-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+body[data-theme="editorial"] #scanSection .scan-near-miss-panel {
+  width: 100% !important;
+  margin-top: 12px !important;
+}
+body[data-theme="editorial"] #scanSection .scan-list-pane:has(tr.scan-row--empty) .scan-near-miss-panel {
+  margin-top: auto !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(4),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(4),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-rank {
+  text-align: left !important;
+  font-family: inherit !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-actions-cell,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-th-actions {
+  width: 13.75rem !important;
+  min-width: 13.75rem !important;
+  max-width: 13.75rem !important;
+  font-family: inherit !important;
+  font-variant-numeric: normal !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th.scan-th-spacer,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-spacer {
+  width: 100% !important;
+  padding: 0 !important;
+  border: none !important;
+}
+body[data-theme="editorial"] .scan-results-layout {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  min-height: 0 !important;
+}
+body[data-theme="editorial"] .scan-list-pane {
+  gap: 10px;
+  width: 100% !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+body[data-theme="editorial"] .scan-detail-panel[data-state="empty"] {
+  min-height: 0 !important;
+}
+body[data-theme="editorial"] #scanDetailPanel.kanban-lane[data-state="empty"] {
+  /* Beat operate-kanban .kanban-lane min-height so empty Lane 2 doesn't leave a tall blank. */
+  min-height: 0 !important;
+}
+body[data-theme="editorial"] .scan-detail-chart:not(:has(.scan-detail-chart-canvas)) {
+  min-height: 0 !important;
 }
 
 body[data-theme="editorial"] details > summary:hover {
@@ -2591,6 +2704,10 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
     padding: 12px !important;
   }
 
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel.kanban-lane[data-state="empty"] {
+    min-height: 0 !important;
+  }
+
   body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-header p {
     font-size: 0.92rem !important;
     line-height: 1.45 !important;
@@ -2604,8 +2721,11 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
     margin-bottom: 8px !important;
   }
 
-  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart {
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart:has(.scan-detail-chart-canvas) {
     min-height: clamp(220px, 32vh, 320px) !important;
+  }
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart:not(:has(.scan-detail-chart-canvas)) {
+    min-height: 0 !important;
   }
 
   body[data-theme="editorial"].ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-actions {
