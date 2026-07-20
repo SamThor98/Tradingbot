@@ -29,13 +29,33 @@ export function scrollStrategyChatToEnd() {
 export function renderStrategyChatMessages() {
   const el = document.getElementById("scMessages");
   const chips = document.getElementById("scEmptyChips");
+  const panel = document.getElementById("strategyChatPanel");
   if (!el) return;
   const msgs = Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [];
   el.innerHTML = "";
+
+  // Local install: degraded banner per Wave 5 (SaaS-only surface).
+  if (panel && !state.publicConfig?.saas_mode) {
+    let banner = panel.querySelector("[data-strategy-chat-degraded]");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.setAttribute("data-strategy-chat-degraded", "");
+      banner.className = "async-state operator-alert operator-alert--warn";
+      banner.setAttribute("role", "status");
+      banner.innerHTML = `<div class="operator-alert__body">
+        <strong class="operator-alert__headline">Some data degraded</strong>
+        <p class="operator-alert__detail">Strategy chat is SaaS-only on this local install. Use the Form tab or run <code>python backtest.py</code>.</p>
+      </div>`;
+      panel.insertBefore(banner, el);
+    }
+  }
+
   if (!msgs.length) {
     const hint = document.createElement("div");
     hint.className = "chat-empty-hint";
-    hint.textContent = "Describe the universe, date range, and any rule tweaks. Examples below.";
+    hint.textContent = state.publicConfig?.saas_mode
+      ? "Describe the universe, date range, and any rule tweaks. Examples below."
+      : "No messages yet. Starter chips still work as Form-tab ideas.";
     el.appendChild(hint);
     if (chips) chips.classList.remove("hidden");
     return;
@@ -52,6 +72,19 @@ export function renderStrategyChatMessages() {
     const body = document.createElement("div");
     body.textContent = m.content != null ? String(m.content) : "";
     wrap.appendChild(body);
+    if (role === "assistant" && m.resendable && m.failedUserText) {
+      const resend = document.createElement("button");
+      resend.type = "button";
+      resend.className = "btn small secondary";
+      resend.setAttribute("data-strategy-chat-resend", "");
+      resend.textContent = "Resend";
+      resend.addEventListener("click", () => {
+        const input = document.getElementById("scInput");
+        if (input) input.value = String(m.failedUserText || "");
+        void sendStrategyChat(state._strategyChatDeps || {});
+      });
+      wrap.appendChild(resend);
+    }
     if (role === "assistant" && Array.isArray(m.toolResults) && m.toolResults.length) {
       const det = document.createElement("details");
       det.className = "chat-tool-details";
@@ -104,6 +137,7 @@ export function showScQueueCallout(taskId, runId, { switchBacktestHubTab = () =>
 }
 
 export async function sendStrategyChat({ refreshBacktestRuns = async () => {}, switchBacktestHubTab = () => {} } = {}) {
+  state._strategyChatDeps = { refreshBacktestRuns, switchBacktestHubTab };
   if (state.strategyChatBusy) return;
   const input = document.getElementById("scInput");
   const text = input?.value?.trim() || "";
@@ -126,6 +160,8 @@ export async function sendStrategyChat({ refreshBacktestRuns = async () => {}, s
   }
   hideScQueueCallout();
   state.strategyChatMessages.push({ role: "user", content: text });
+  // Preserve draft until the server accepts — Wave 5 Unavailable + Resend.
+  const draft = text;
   input.value = "";
   renderStrategyChatMessages();
   state.strategyChatBusy = true;
@@ -134,8 +170,15 @@ export async function sendStrategyChat({ refreshBacktestRuns = async () => {}, s
   try {
     const out = await api.post("/api/strategy-chat", { messages: strategyChatPayloadMessages() }, { timeoutMs: 180000 });
     if (!out.ok) {
-      logEvent({ kind: "system", severity: "error", message: `Strategy chat: ${out.error}` });
-      state.strategyChatMessages.push({ role: "assistant", content: `Error: ${out.error}` });
+      const errDetail = safeText(out.user_message || out.error || "Request unavailable.");
+      logEvent({ kind: "system", severity: "error", message: `Strategy chat: ${errDetail}` });
+      if (input) input.value = draft;
+      state.strategyChatMessages.push({
+        role: "assistant",
+        content: `Assistant: Request unavailable: ${errDetail}`,
+        resendable: true,
+        failedUserText: draft,
+      });
       renderStrategyChatMessages();
       return;
     }

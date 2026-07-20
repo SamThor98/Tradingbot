@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -143,6 +145,53 @@ def book_snapshot(
         return _ok(result)
     except Exception as exc:
         return _err("book_snapshot", exc)
+
+
+@router.get("/api/book/export/status", response_model=ApiResponse)
+def book_export_status() -> ApiResponse:
+    try:
+        from core.book_export import read_export_status
+
+        return _ok(read_export_status(SKILL_DIR))
+    except Exception as exc:
+        return _err("book_export_status", exc)
+
+
+@router.get("/api/book/export")
+def book_export(
+    tax_year: int | None = Query(default=None, ge=2000, le=2100),
+    _auth: dict[str, str] = Depends(_require_api_key_if_set),
+) -> Response:
+    """Regenerate canonical YTD workbook on disk and download a copy."""
+    try:
+        from core.book_export import export_ytd_workbook
+
+        year = int(tax_year or datetime.now(timezone.utc).year)
+        result = export_ytd_workbook(
+            skill_dir=SKILL_DIR, tax_year=year, source="button"
+        )
+        if not result.get("ok"):
+            err = _err("book_export", RuntimeError(result.get("error") or "export_failed"))
+            return Response(
+                content=json.dumps(err.model_dump(), indent=2),
+                media_type="application/json",
+                status_code=409 if "locked" in str(result.get("error") or "").lower() else 500,
+            )
+        body = result.get("xlsx_bytes") or b""
+        filename = str(result.get("filename") or f"book_ytd_{year}.xlsx")
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+    except Exception as exc:
+        error = _err("book_export", exc)
+        return Response(
+            content=json.dumps(error.model_dump(), indent=2),
+            media_type="application/json",
+            status_code=500,
+        )
 
 
 @router.get("/api/book/journal", response_model=ApiResponse)

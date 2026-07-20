@@ -3556,19 +3556,34 @@ progressive disclosure {
 }
 
 .scan-results-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: start;
-}
-.scan-results-layout > * {
+  align-items: stretch;
   min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+}
+.scan-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .scan-actions-cell {
-  display: flex;
-  gap: 6px;
+  /* Keep table-cell display — flex on <td> breaks column alignment. */
+  text-align: right;
+  white-space: nowrap;
+}
+.scan-actions-cell .scan-row-actions {
+  display: inline-flex;
+  gap: 4px;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-end;
 }
 
 /* Filtered candidates (everything in the shortlist except disposition="kept")
@@ -3608,7 +3623,7 @@ tr.scan-row--filtered td:first-child strong {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 250px;
+  min-height: 0;
   border-radius: 12px;
   border: 1px solid rgba(100, 116, 139, 0.35);
   background: rgba(15, 23, 42, 0.42);
@@ -3617,6 +3632,14 @@ tr.scan-row--filtered td:first-child strong {
   justify-content: center;
   padding: 8px;
   overflow: hidden;
+}
+.scan-detail-chart:has(.scan-detail-chart-canvas) {
+  min-height: 220px;
+}
+.scan-detail-chart:not(:has(.scan-detail-chart-canvas)) {
+  min-height: 0;
+  padding: 10px 12px;
+  justify-content: flex-start;
 }
 .scan-detail-chart > * {
   max-width: 100%;
@@ -3656,7 +3679,7 @@ tr.scan-row--filtered td:first-child strong {
 }
 
 .scan-brief-setup {
-  margin: 8px 0;
+  margin: 6px 0 8px;
   color: rgba(226, 232, 240, 0.96);
 }
 
@@ -3664,7 +3687,7 @@ tr.scan-row--filtered td:first-child strong {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 8px;
+  margin: 0 0 10px;
 }
 
 .scan-brief-sections {
@@ -4082,16 +4105,18 @@ body.ui-screen-settings .cockpit-drawer {
   cursor: not-allowed;
 }
 .scan-row-action--primary {
-  border-color: rgba(52, 211, 153, 0.45);
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(16, 185, 129, 0.18);
+  color: inherit;
 }
 .scan-stage-pill {
   display: inline-flex;
   margin-left: 0.35rem;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 0.1rem 0.35rem;
+  padding: 0.08rem 0.3rem;
   border-radius: 4px;
   border: 1px solid rgba(52, 211, 153, 0.35);
   color: #6ee7b7;
@@ -4139,7 +4164,112 @@ body.ui-screen-settings .cockpit-drawer {
   align-items: center;
   margin-top: 0.35rem;
 }
-.scan-tradeable-verdict { font-size: 0.72rem; margin-left: 4px; }
+.scan-tradeable-verdict { margin-left: 0; }
+.scan-gate-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  background: rgba(148, 163, 184, 0.1);
+  color: inherit;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scan-gate-chip--pass {
+  border-color: rgba(45, 90, 74, 0.4);
+  background: rgba(45, 90, 74, 0.1);
+}
+.scan-gate-chip--review {
+  border-color: rgba(176, 133, 42, 0.45);
+  background: rgba(201, 169, 98, 0.14);
+}
+.scan-gate-chip--blocked {
+  border-color: rgba(201, 73, 73, 0.4);
+  background: rgba(201, 73, 73, 0.1);
+}
+.scan-gate-chip--info {
+  border-color: rgba(100, 116, 139, 0.4);
+  background: rgba(148, 163, 184, 0.12);
+}
+.scan-ticker-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  max-width: 100%;
+}
+.scan-col-ticker .scan-ticker {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.scan-col-price {
+  font-variant-numeric: tabular-nums;
+}
+.scan-status-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+}
+.scan-status-filter__btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  padding: 0.28rem 0.62rem;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.78;
+}
+.scan-status-filter__btn:hover {
+  opacity: 1;
+  background: rgba(148, 163, 184, 0.14);
+}
+.scan-status-filter__btn.is-active {
+  opacity: 1;
+  background: rgba(15, 23, 42, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28);
+}
+.scan-brief-triage {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
+}
+.scan-brief-triage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.scan-brief-triage-meta,
+.scan-brief-triage-reason {
+  margin: 0;
+  line-height: 1.35;
+}
+.scan-detail-panel[data-state="empty"] {
+  align-content: start;
+  min-height: 0;
+}
+.scan-detail-panel[data-state="empty"] .scan-detail-chart {
+  min-height: 0;
+}
 .system-status-compact {
   padding: 0.45rem 0.75rem;
   margin: 0 0 0.75rem;
@@ -4914,10 +5044,13 @@ body.ui-simple.ui-screen-settings #onboardingSection {
 }
 
 .scan-results-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .scan-detail-panel {
@@ -4965,10 +5098,6 @@ body.ui-simple.ui-screen-settings #onboardingSection {
   .scan-detail-panel {
     position: static;
     max-height: none;
-  }
-
-  .scan-results-layout {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -5023,7 +5152,6 @@ body.ui-pro .panel-disclosure--advanced {
   .stats { grid-template-columns: repeat(3, minmax(170px, 1fr)); }
   .performance-buckets { grid-template-columns: 1fr; }
   .layout-2 { grid-template-columns: 1fr; }
-  .scan-results-layout { grid-template-columns: 1fr; }
   .scan-detail-grid { grid-template-columns: 1fr; }
   .research-workflow-strip { grid-template-columns: 1fr; }
   .diagnostics-workflow-strip,
@@ -6109,6 +6237,13 @@ html, body {
   border-radius: 18px;
 }
 
+/* Production: Lane 1 is a column flex so the qualified list can fill leftover height. */
+#scanSection.kanban-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 #scanSection .table-wrap {
   border-radius: 14px;
   border: 1px solid rgba(125, 211, 252, 0.2);
@@ -6117,28 +6252,102 @@ html, body {
 
 #scanSection .scan-candidates-table {
   table-layout: fixed;
-  min-width: 1040px;
+  min-width: 0;
+  width: 100%;
+}
+
+/*
+  Production triage (Figma: full-bleed):
+  - Table + wrap = 100% lane width (same as Near-miss).
+  - fixed layout: Ticker/Gate/Price/Actions sized; Rank absorbs leftover.
+  - Rank stays left-aligned so scores don't float into the Actions gutter.
+*/
+#scanSection .scan-candidates-table--triage {
+  table-layout: fixed;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 #scanSection .scan-candidates-table th,
 #scanSection .scan-candidates-table td {
-  padding: 8px 7px;
-  font-size: 0.78rem;
+  padding: 7px 8px;
+  font-size: 0.8rem;
+  vertical-align: middle;
 }
 
-#scanSection .scan-candidates-table th:nth-child(1) { width: 9%; }
-#scanSection .scan-candidates-table th:nth-child(2) { width: 8%; }
-#scanSection .scan-candidates-table th:nth-child(3) { width: 8%; }
-#scanSection .scan-candidates-table th:nth-child(4) { width: 6%; }
-#scanSection .scan-candidates-table th:nth-child(5) { width: 9%; }
-#scanSection .scan-candidates-table th:nth-child(6) { width: 7%; }
-#scanSection .scan-candidates-table th:nth-child(7) { width: 7%; }
-#scanSection .scan-candidates-table th:nth-child(8) { width: 8%; }
-#scanSection .scan-candidates-table th:nth-child(9) { width: 8%; }
-#scanSection .scan-candidates-table th:nth-child(10) { width: 8%; }
-#scanSection .scan-candidates-table th:nth-child(11) { width: 6%; }
-#scanSection .scan-candidates-table th:nth-child(12) { width: 9%; }
-#scanSection .scan-candidates-table th:nth-child(13) { width: 9%; }
+#scanSection .scan-candidates-table--triage .scan-triage-col-ticker,
+#scanSection .scan-candidates-table--triage th:nth-child(1),
+#scanSection .scan-candidates-table--triage td:nth-child(1) {
+  width: 9rem;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-gate,
+#scanSection .scan-candidates-table--triage th:nth-child(2),
+#scanSection .scan-candidates-table--triage td:nth-child(2) {
+  width: 6.5rem;
+  text-align: left;
+  font-family: inherit;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-price,
+#scanSection .scan-candidates-table--triage th:nth-child(3),
+#scanSection .scan-candidates-table--triage td:nth-child(3) {
+  width: 6.5rem;
+  text-align: right;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-rank,
+#scanSection .scan-candidates-table--triage th:nth-child(4),
+#scanSection .scan-candidates-table--triage td:nth-child(4),
+#scanSection .scan-candidates-table--triage .scan-col-rank {
+  width: 5rem;
+  text-align: left;
+  font-family: inherit;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-actions,
+#scanSection .scan-candidates-table--triage th:nth-child(5),
+#scanSection .scan-candidates-table--triage td:nth-child(5),
+#scanSection .scan-candidates-table--triage .scan-actions-cell,
+#scanSection .scan-candidates-table--triage .scan-th-actions {
+  width: 13.75rem;
+  min-width: 13.75rem;
+  max-width: 13.75rem;
+  white-space: nowrap;
+  text-align: right;
+  font-family: inherit;
+  font-variant-numeric: normal;
+}
+/* Trailing spacer absorbs leftover width so Actions stay next to Rank (full-bleed frame). */
+#scanSection .scan-candidates-table--triage .scan-triage-col-spacer,
+#scanSection .scan-candidates-table--triage th.scan-th-spacer,
+#scanSection .scan-candidates-table--triage td.scan-col-spacer {
+  width: 100%;
+  padding: 0;
+  border: none;
+  pointer-events: none;
+}
+/* Keep header/row chrome continuous across the spacer so the table reads full-bleed. */
+#scanSection .scan-candidates-table--triage th.scan-th-spacer {
+  background: inherit;
+}
+
+/* Empty qualified state: fill the allotted table shell and center the message. */
+#scanSection .qualified-table-wrap:has(tr.scan-row--empty) {
+  min-height: clamp(220px, 30vh, 480px);
+}
+#scanSection .qualified-table-wrap #scanTableBody tr.scan-row--empty td {
+  height: 100%;
+  min-height: clamp(200px, 26vh, 360px);
+  vertical-align: middle;
+  text-align: center;
+}
+#scanSection .qualified-table-wrap #scanTableBody .empty-state-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: clamp(160px, 22vh, 300px);
+  padding: 1.25rem 1rem;
+}
 
 #scanSection .scan-candidates-table td {
   overflow: hidden;
@@ -6338,7 +6547,8 @@ html, body {
 }
 
 .operate-kanban #scanSection .scan-results-layout {
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
 }
 
 .operate-kanban #scanSection .table-wrap {
@@ -6486,8 +6696,11 @@ html, body {
     margin-bottom: 8px;
   }
 
-  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart {
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart:has(.scan-detail-chart-canvas) {
     min-height: clamp(220px, 32vh, 320px);
+  }
+  body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-chart:not(:has(.scan-detail-chart-canvas)) {
+    min-height: 0;
   }
 
   body.ui-screen-operations .operate-kanban #scanDetailPanel .scan-detail-actions {
@@ -6639,34 +6852,57 @@ body[data-theme="editorial"] .queue-scan-headline {
 }
 
 .scan-severity-legend {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.scan-severity-legend .pill {
-  font-size: 0.66rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  display: none;
 }
 
 .qualified-table-wrap {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.scan-list-pane:has(tr.scan-row--empty) .qualified-table-wrap {
+  flex: 1 1 auto;
+  min-height: clamp(220px, 30vh, 480px);
+}
+.scan-list-pane:not(:has(tr.scan-row--empty)) .qualified-table-wrap {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+.qualified-table-wrap > .scan-candidates-table--triage {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+#scanSection .near-miss-table-wrap {
   margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .scan-list-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 8px;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 
 .scan-near-miss-panel {
   margin-top: 12px;
+  width: 100%;
+  flex-shrink: 0;
   border: 1px solid rgba(248, 113, 113, 0.24);
   border-radius: 10px;
   background: rgba(51, 17, 17, 0.16);
   padding: 8px 10px;
+}
+/* Only pin near-miss to the pane bottom when the qualified list is empty and filling height. */
+.scan-list-pane:has(tr.scan-row--empty) .scan-near-miss-panel {
+  margin-top: auto;
 }
 
 .scan-near-miss-panel > summary {

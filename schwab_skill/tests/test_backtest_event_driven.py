@@ -190,9 +190,9 @@ def test_cross_sectional_ranks_candidates_same_day(monkeypatch) -> None:
     assert len(trades) >= 1
 
     assert trades[0]["ticker"] == "AAA"
-
-
-
+    assert "regime_bucket" in trades[0]
+    assert "sector_etf" in trades[0]
+    assert "sector_regime_summary" in out
 
 
 def test_liquidity_cap_and_telemetry_snapshot(monkeypatch) -> None:
@@ -263,19 +263,14 @@ def test_liquidity_cap_and_telemetry_snapshot(monkeypatch) -> None:
 
     assert isinstance(telemetry, dict)
 
-    assert set(telemetry.keys()) == {
-
+    required = {
         "mirofish_conviction",
-
         "advisory_prob",
-
         "agent_uncertainty",
-
         "vcp_volume_ratio",
-
         "sector_rs_rank",
-
     }
+    assert required.issubset(set(telemetry.keys()))
 
 
 

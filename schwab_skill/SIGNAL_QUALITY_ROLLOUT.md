@@ -93,6 +93,31 @@ Go/No-Go:
 - No-Go if rate is near 0% (experiment env not loaded) or outside band with env ready.
 - Do **not** enable rank filter or SMA50 extension cap (12% cap hurt overlap PF offline).
 
+## Stage 2b-ii: pts_52w Cap — LIVE (P0 bare-signal, promoted 2026-07-18)
+
+Weak-era diagnosis + multi-era bare re-run `stage2_pts52w_cap37`:
+
+| Metric | Result |
+|---|---:|
+| PF mean | **1.214** |
+| Worst-era PF | **1.105** (`bear_rates`) |
+| Trades | 15,994 |
+
+Clears bare-signal floors (PF mean ≥ 1.20, worst ≥ 1.00). Cap is now part of the
+promoted Stage A / enforced stack. **Keep `PROB_RANK_MODE=shadow`.**
+
+```env
+PTS_52W_CAP_MODE=live
+PTS_52W_CAP_MAX=37
+```
+
+Apply with stack:
+
+```bash
+python scripts/apply_signal_stack_enforced_env.py
+python scripts/validate_signal_stack_enforced_env.py
+```
+
 ## Stage 2c: Enforced Stack (live entry + live exit grace)
 
 Offline stack `exit_grace_breakout_buffer_0.010` clears PF promotion gates
@@ -114,6 +139,9 @@ BACKTEST_HOLD_DAYS=40
 BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL=15
 BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS=true
 COUNTERFACTUAL_LOGGING_ENABLED=true
+PTS_52W_CAP_MODE=live
+PTS_52W_CAP_MAX=37
+# PROB_RANK_MODE=shadow  # keep shadow; do not promote live here
 ```
 
 Preflight:
@@ -177,8 +205,39 @@ Go/No-Go (post-promote monitoring):
 | Label | Day (UTC) | Rank mode | Entry WF% | Rank eval / drop / ret% | Signals | DQ | Provider notes |
 |---|---|---|---|---|---|---|---|
 | post_rank_live_rth1 | 2026-07-16 | live p75 | 72.3 (pass) | 26 / 19 / **26.9** | 7 | ok | primary 1505, fallback 1 (DNOW) |
+| post_rank_live_rth2 | 2026-07-17 | live p75 | 52.7 (pass) | 27 / 20 / **25.9** | 7 | ok | heavy Schwab 401 → yfinance fallback during scan |
 
-Qualifying RTH/`ok` sessions toward Phase 1 gate (need 2): **1 / 2**.
+Qualifying RTH/`ok` sessions toward Phase 1 gate (need 2): **2 / 2** — Phase 1 live-fidelity gate **PASS** (retention in 25–35% both days; no rollback).
+
+### Phase 3 re-audit (2026-07-17)
+
+Artifact: `validation_artifacts/phase2_edge_audit_post_rank_live.json` (+ synced `phase2_edge_audit.json`).
+
+| Check | Result |
+|---|---|
+| Bare verdict | `iterate_with_caution` (PF mean **1.162**, worst-era **1.032**) |
+| Stack offline | PASS (buffer+exit PF mean 1.2118 / worst 1.0368; p75 1.2491 / 1.1203) |
+| Readiness | `stack_and_bare_aligned` — plugin **shadow** ok after live week; **LIVE** plugins still blocked until bare PF mean ≥ 1.20 |
+
+### Phase 4 hold (post-plan)
+
+- Keep stack as-is: live entry 1% / exit 15/40 / rank-v2 p75 / QG shadow / `SCAN_LIVE_SORT_KEY=signal_score`
+- Do **not** promote `REGIME_V2` or `CORRELATION_GUARD` to LIVE without fresh bare/stack evidence (pts_52w cap cleared bare 1.20; collect live week)
+- Do **not** change sort key or enable Stage 3 QG hard this cycle
+- Re-auth Schwab before next full-universe scan (rth2 saw primary 471 / fallback 528 on HTTP 401)
+- Do **not** add new hard filters to chase PF. Prob-rank research path (Phases B–D) is implemented with `PROB_RANK_MODE=off` by default. To shadow-score without changing fills: train a model, then set `PROB_RANK_MODE=shadow` (+ optional `PROB_RANK_MODEL_DIR`). Rank-v2 p75 remains the live control until a separate promotion.
+
+## Stage 2e: PF 1.50 dual-track (research, 2026-07-18)
+
+Strict target remains five-era PF mean ≥ 1.50 / worst-era ≥ 1.00 (see `docs/BACKTEST_CATALOG.md` §11).
+
+| Track | Status | Action |
+|---|---|---|
+| A early-stop gate | Offline CF: `pts_52w_cap_35` → PF mean 1.314 / worst 1.065 | Keep `EARLY_STOP_GATE_MODE=shadow` (default). Do **not** set live. |
+| B pullback peer | Smoke 40-ticker PF mean **1.492** / worst **1.062**; full-universe `pullback_only_aug_full` in progress (recent_current PF 0.959 on 4086 trades — smoke≠full) | Finish full five-era + stack transfer |
+| B PEAD-primary peer | Earnings history fixed: Finnhub merge + yfinance `limit=100` backfill; cache beats in all 5 eras (e.g. late_bull 311 on 40 names) | Re-run smoke/full after pullback finishes (avoid dual Schwab runs) |
+
+Diagnostics: `early_stop_gate_mode`, `early_stop_gate_would_filter`, `early_stop_gate_blocked`.
 
 ## Stage 3: Narrow Enforcement (1 week)
 

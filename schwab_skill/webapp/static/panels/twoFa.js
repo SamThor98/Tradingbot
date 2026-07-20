@@ -55,7 +55,7 @@ export function renderTwoFaPanel() {
   document.getElementById("twoFaSetupBtn")?.addEventListener("click", async () => {
     const out = await api.post("/api/security/2fa/setup", {});
     if (!out.ok) {
-      updateActionCenter({ title: "2FA setup failed", message: safeText(out.error), severity: "error" });
+      updateActionCenter({ title: "2FA setup unavailable", message: safeText(out.error), severity: "error" });
       return;
     }
     const pre = document.getElementById("twoFaSetupOutput");
@@ -77,7 +77,7 @@ export function renderTwoFaPanel() {
     }
     const out = await api.post("/api/security/2fa/enable", { otp_code: code });
     if (!out.ok) {
-      updateActionCenter({ title: "2FA enable failed", message: safeText(out.error), severity: "error" });
+      updateActionCenter({ title: "2FA enable unavailable", message: safeText(out.error), severity: "error" });
       return;
     }
     updateActionCenter({ title: "2FA enabled", message: "High-value approvals now require OTP verification.", severity: "success" });

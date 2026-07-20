@@ -167,6 +167,7 @@ def test_filter_reasons_exports(filter_reasons_js: str) -> None:
         "export function formatScanStatusBadge",
         "export function formatNearMissSummary",
         "export function formatGateModeLabel",
+        "export function scanStatusSeverityBucket",
         "REASON_LABELS",
         "filtered_quality_gates",
     ):

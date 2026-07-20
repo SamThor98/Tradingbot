@@ -951,6 +951,38 @@ def _normalize_finnhub_stock_earnings(payload: Any) -> list[dict[str, Any]]:
     return rows_out
 
 
+def _merge_earnings_history_rows(
+    calendar_rows: list[dict[str, Any]],
+    stock_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Prefer announcement-date calendar rows; fill gaps from stock/earnings.
+
+    Calendar and stock rows that share the same (year, quarter) or the same
+    date collapse to one record. Calendar wins on conflicts because it uses
+    announcement dates (better for PEAD lookback windows).
+    """
+    merged: dict[str, dict[str, Any]] = {}
+
+    def _key(row: dict[str, Any]) -> str:
+        year = row.get("year")
+        quarter = row.get("quarter")
+        if year is not None and quarter is not None:
+            return f"yq:{year}-Q{quarter}"
+        return f"d:{row.get('date') or ''}"
+
+    for row in stock_rows:
+        if not isinstance(row, dict) or not row.get("date"):
+            continue
+        merged[_key(row)] = dict(row)
+    for row in calendar_rows:
+        if not isinstance(row, dict) or not row.get("date"):
+            continue
+        merged[_key(row)] = dict(row)  # calendar overwrites stock
+    out = list(merged.values())
+    out.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
+    return out
+
+
 def get_finnhub_earnings_history(
     ticker: str,
     *,
@@ -959,9 +991,9 @@ def get_finnhub_earnings_history(
 ) -> dict[str, Any]:
     """Fetch historical earnings rows for PEAD enrichment.
 
-    Primary source is ``calendar/earnings`` (announcement dates). When that
-    returns no rows, falls back to ``stock/earnings`` keyed by fiscal period
-    end (less precise for lookback windows).
+    Merges ``calendar/earnings`` (announcement dates) with ``stock/earnings``
+    (longer fiscal history). Free-tier calendar alone is often only a few
+    recent quarters and must not short-circuit the stock history merge.
     """
     sd = skill_dir or SKILL_DIR
     sym = _cache_key(ticker)
@@ -991,15 +1023,17 @@ def get_finnhub_earnings_history(
         label="earnings_history_calendar",
         errors=errors,
     )
-    rows = _normalize_finnhub_earnings_calendar(calendar_payload, symbol=sym)
-    if not rows:
-        stock_payload = client._get_json(
-            "stock/earnings",
-            {"symbol": sym, "limit": 40},
-            label="earnings_history_stock",
-            errors=errors,
-        )
-        rows = _normalize_finnhub_stock_earnings(stock_payload)
+    calendar_rows = _normalize_finnhub_earnings_calendar(calendar_payload, symbol=sym)
+    # Always merge stock/earnings: free-tier calendar often returns only a few
+    # recent quarters and previously short-circuited the longer fiscal history.
+    stock_payload = client._get_json(
+        "stock/earnings",
+        {"symbol": sym, "limit": 80},
+        label="earnings_history_stock",
+        errors=errors,
+    )
+    stock_rows = _normalize_finnhub_stock_earnings(stock_payload)
+    rows = _merge_earnings_history_rows(calendar_rows, stock_rows)
 
     ok = bool(rows)
     return {
@@ -1008,4 +1042,9 @@ def get_finnhub_earnings_history(
         "rows": rows,
         "errors": errors if not ok else [],
         "as_of": now.isoformat(),
+        "sources": {
+            "calendar_rows": len(calendar_rows),
+            "stock_rows": len(stock_rows),
+            "merged_rows": len(rows),
+        },
     }

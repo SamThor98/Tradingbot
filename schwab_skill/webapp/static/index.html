@@ -390,82 +390,89 @@
             </div>
           </details>
           <div class="scan-results-layout">
-            <div class="scan-list-header">
-              <div class="scan-list-title-wrap">
-                <h3 class="scan-list-title">Qualified breakouts</h3>
-                <small id="scanQualifiedMeta" class="muted">No scan yet.</small>
+            <div class="scan-list-pane">
+              <div class="scan-list-header">
+                <div class="scan-list-title-wrap">
+                  <h3 class="scan-list-title">Qualified breakouts</h3>
+                  <small id="scanQualifiedMeta" class="muted">No scan yet.</small>
+                </div>
+                <div
+                  id="scanStatusFilter"
+                  class="scan-status-filter"
+                  role="radiogroup"
+                  aria-label="Filter candidates by gate severity"
+                >
+                  <button type="button" class="scan-status-filter__btn is-active" data-scan-status-filter="pass" aria-pressed="true">Pass</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="review" aria-pressed="false">Review</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="blocked" aria-pressed="false">Blocked</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="info" aria-pressed="false">Info</button>
+                </div>
               </div>
-              <div class="scan-severity-legend" aria-label="Status severity legend">
-                <span class="pill good">Pass</span>
-                <span class="pill warn">Review</span>
-                <span class="pill bad">Blocked</span>
-                <span class="pill neutral">Info</span>
-              </div>
-            </div>
-            <div class="table-wrap qualified-table-wrap">
-              <table class="scan-candidates-table">
-                <caption class="visually-hidden">Signal candidates table</caption>
-                <thead>
-                  <tr>
-                    <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status">Status<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source quality">Source<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days Flagged<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="expected_return_40d" aria-sort="none" tabindex="0" role="button" title="Sort by prob-rank expected 40-day return (shadow/live score)">E[ret 40d]<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="scan-col-secondary sortable-th" data-sort-key="reason" aria-sort="none" tabindex="0" role="button" title="Sort by filter reason">Reason<span class="sort-indicator" aria-hidden="true"></span></th>
-                    <th class="sortable-th" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
-                  </tr>
-                </thead>
-                <tbody id="scanTableBody">
-                  <tr><td colspan="14" class="muted">Run a scan to load candidates.</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="scan-list-actions">
-              <button id="scanShowMoreBtn" class="btn small secondary hidden" type="button">Show more</button>
-            </div>
-            <details id="nearMissPanel" class="scan-near-miss-panel" aria-live="polite">
-              <summary>
-                Near-miss breakouts
-                <span id="nearMissSummaryCount" class="muted">(0)</span>
-              </summary>
-              <p class="muted scan-near-miss-copy">
-                Candidates that did not pass current mode thresholds. Top 10 shown with failure reasons.
-              </p>
-              <div class="table-wrap near-miss-table-wrap">
-                <table class="scan-candidates-table">
-                  <caption class="visually-hidden">Near-miss breakout candidates</caption>
+              <div class="table-wrap qualified-table-wrap">
+                <table class="scan-candidates-table scan-candidates-table--triage">
+                  <caption class="visually-hidden">Signal candidates table</caption>
+                  <colgroup>
+                    <col class="scan-triage-col-ticker" />
+                    <col class="scan-triage-col-gate" />
+                    <col class="scan-triage-col-price" />
+                    <col class="scan-triage-col-rank" />
+                    <col class="scan-triage-col-actions" />
+                    <col class="scan-triage-col-spacer" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by status">Status<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-secondary sortable-th" data-sort-key="source" aria-sort="none" tabindex="0" role="button" title="Sort by data source quality">Source<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="flagged_days" aria-sort="none" tabindex="0" role="button" title="Sort by days flagged">Days<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by top live strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="expected_return_40d" aria-sort="none" tabindex="0" role="button" title="Sort by prob-rank expected 40-day return (shadow/live score)">E[ret 40d]<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="reason" aria-sort="none" tabindex="0" role="button" title="Sort by filter reason">Reason<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by gate">Gate<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-th-spacer" aria-hidden="true"></th>
                     </tr>
                   </thead>
-                  <tbody id="nearMissTableBody">
-                    <tr><td colspan="14" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                  <tbody id="scanTableBody">
+                    <tr class="scan-row--empty"><td colspan="6" class="muted">Run a scan to load candidates.</td></tr>
                   </tbody>
                 </table>
               </div>
-            </details>
+              <div class="scan-list-actions">
+                <button id="scanShowMoreBtn" class="btn small secondary hidden" type="button">Show more</button>
+              </div>
+              <details id="nearMissPanel" class="scan-near-miss-panel" aria-live="polite">
+                <summary>
+                  Near-miss breakouts
+                  <span id="nearMissSummaryCount" class="muted">(0)</span>
+                </summary>
+                <p class="muted scan-near-miss-copy">
+                  Candidates that did not pass current mode thresholds. Top 10 shown with failure reasons.
+                </p>
+                <div class="table-wrap near-miss-table-wrap">
+                  <table class="scan-candidates-table scan-candidates-table--triage">
+                    <caption class="visually-hidden">Near-miss breakout candidates</caption>
+                    <colgroup>
+                      <col class="scan-triage-col-ticker" />
+                      <col class="scan-triage-col-gate" />
+                      <col class="scan-triage-col-price" />
+                      <col class="scan-triage-col-rank" />
+                      <col class="scan-triage-col-actions" />
+                      <col class="scan-triage-col-spacer" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by gate">Gate<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="scan-th-spacer" aria-hidden="true"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="nearMissTableBody">
+                      <tr class="scan-row--empty"><td colspan="6" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div>
           </div>
         </article>
 

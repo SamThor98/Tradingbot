@@ -327,6 +327,8 @@ def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[di
                 "data_provider": t.get("data_provider"),
                 "data_provider_primary": t.get("data_provider_primary"),
                 "used_fallback_data": t.get("used_fallback_data"),
+                "sector_etf": t.get("sector_etf"),
+                "regime_bucket": t.get("regime_bucket"),
                 **_score_projection_fields(t),
             }
             path = t.get("ohlc_path") or []
@@ -635,33 +637,66 @@ def _load_progress_if_any(run_tag: str | None = None) -> tuple[str, list[dict[st
     return run_id, completed, failed
 
 
-def _warm_earnings_cache_if_requested(ticker_limit: int | None = None) -> bool:
+def _warm_earnings_cache_if_requested(
+    ticker_limit: int | None = None,
+    *,
+    force: bool = False,
+) -> bool:
     """Optional preflight: warm Finnhub earnings cache before multi-era PEAD use."""
-    from earnings_signal import _resolve_pead_provider, earnings_cache_summary, warm_earnings_for_tickers
+    from earnings_signal import (
+        _resolve_pead_provider,
+        clear_earnings_cache_memo,
+        earnings_cache_summary,
+        warm_earnings_for_tickers,
+    )
 
-    if _resolve_pead_provider(_runtime_skill_dir()) == "off":
+    skill_dir = _runtime_skill_dir()
+    if _resolve_pead_provider(skill_dir) == "off":
         print("[multi-era] earnings warm skipped: PEAD provider off")
         return True
     watchlist = _load_universe_tickers()
     if ticker_limit and ticker_limit > 0:
         watchlist = watchlist[:ticker_limit]
-    summary_before = earnings_cache_summary(watchlist, skill_dir=_runtime_skill_dir())
-    if summary_before.get("missing") == 0:
+    clear_earnings_cache_memo(skill_dir)
+    summary_before = earnings_cache_summary(watchlist, skill_dir=skill_dir)
+    if not force and summary_before.get("missing") == 0:
         print(
             f"[multi-era] earnings cache already warm "
             f"({summary_before.get('fresh')}/{summary_before.get('total')})"
         )
         return True
     print(
-        f"[multi-era] warming earnings cache for {summary_before.get('missing')} tickers "
-        f"(fresh={summary_before.get('fresh')}/{summary_before.get('total')})"
+        f"[multi-era] warming earnings cache for {len(watchlist)} tickers "
+        f"(fresh={summary_before.get('fresh')}/{summary_before.get('total')}"
+        f"{', force=True' if force else ''})"
     )
-    result = warm_earnings_for_tickers(watchlist, skill_dir=_runtime_skill_dir(), force=False, resume=True)
+    result = warm_earnings_for_tickers(
+        watchlist,
+        skill_dir=skill_dir,
+        force=bool(force),
+        resume=not bool(force),
+    )
+    clear_earnings_cache_memo(skill_dir)
+    summary_after = earnings_cache_summary(watchlist, skill_dir=skill_dir)
+    print(
+        f"[multi-era] earnings warm verify: "
+        f"fresh={summary_after.get('fresh')}/{summary_after.get('total')} "
+        f"missing={summary_after.get('missing')} "
+        f"fetched={result.get('fetched')} stale_progress={result.get('progress_stale')}"
+    )
     if result.get("errors"):
         print(
             f"[multi-era] earnings warm finished with errors={result.get('errors')} "
             f"(failed={len(result.get('failed_tickers') or [])}); continuing with partial cache"
         )
+    missing = int(summary_after.get("missing") or 0)
+    total = int(summary_after.get("total") or 0)
+    if total > 0 and missing > max(5, int(0.05 * total)):
+        print(
+            f"[multi-era] ERROR: earnings cache still missing {missing}/{total} after warm; "
+            "refusing to launch PEAD chunks (progress file is not sufficient proof)"
+        )
+        return False
     return True
 
 
@@ -674,11 +709,16 @@ def _orchestrate(
     run_tag: str | None = None,
     ticker_limit: int | None = None,
     warm_earnings_cache: bool = False,
+    force_warm_earnings_cache: bool = False,
 ) -> int:
     if not _auth_preflight_ok():
         return RC_AUTH_PREFLIGHT_FAILED
-    if warm_earnings_cache:
-        _warm_earnings_cache_if_requested(ticker_limit)
+    if warm_earnings_cache or force_warm_earnings_cache:
+        if not _warm_earnings_cache_if_requested(
+            ticker_limit,
+            force=bool(force_warm_earnings_cache),
+        ):
+            return 4
     if run_tag:
         run_id = str(run_tag)
         # If a per-run-id progress file from a prior interrupted run exists,
@@ -850,11 +890,17 @@ def main() -> int:
         action="store_true",
         help="Pre-warm Finnhub earnings cache for the universe before era chunks (PEAD/confluence).",
     )
+    parser.add_argument(
+        "--force-warm-earnings-cache",
+        action="store_true",
+        help="Force re-fetch earnings history (ignores warm progress); implies --warm-earnings-cache.",
+    )
     args = parser.parse_args()
 
     if args.env_overrides:
         try:
-            overrides = json.loads(Path(args.env_overrides).read_text(encoding="utf-8"))
+            # utf-8-sig tolerates PowerShell/Windows BOM-prefixed JSON files.
+            overrides = json.loads(Path(args.env_overrides).read_text(encoding="utf-8-sig"))
             if isinstance(overrides, dict):
                 for k, v in overrides.items():
                     os.environ[str(k)] = str(v)
@@ -881,7 +927,8 @@ def main() -> int:
         max_workers=args.max_workers,
         run_tag=args.run_tag or None,
         ticker_limit=args.ticker_limit or None,
-        warm_earnings_cache=bool(args.warm_earnings_cache),
+        warm_earnings_cache=bool(args.warm_earnings_cache or args.force_warm_earnings_cache),
+        force_warm_earnings_cache=bool(args.force_warm_earnings_cache),
     )
 
 

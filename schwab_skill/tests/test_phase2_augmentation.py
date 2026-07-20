@@ -195,6 +195,8 @@ def _fat_trade(**overrides) -> dict:
         "pts_sma": 8.0,
         "pts_volume": 12.0,
         "pts_mirofish": 3.0,
+        "sector_etf": "XLK",
+        "regime_bucket": "bull",
     }
     base.update(overrides)
     return base
@@ -264,6 +266,8 @@ AUGMENTED_REQUIRED_KEYS = LEGACY_KEYS | {
     "exit_manager_partial_done",
     "rank_score",
     "pts_volume",
+    "sector_etf",
+    "regime_bucket",
 }
 
 
@@ -273,6 +277,14 @@ def test_augmented_projection_includes_all_replay_engine_fields() -> None:
     keys = set(rows[0].keys())
     missing = AUGMENTED_REQUIRED_KEYS - keys
     assert missing == set(), f"missing required augmented fields: {missing}"
+    assert rows[0]["sector_etf"] == "XLK"
+    assert rows[0]["regime_bucket"] == "bull"
+
+
+def test_augmented_projection_allows_null_sector_regime() -> None:
+    rows = _project_trades([_fat_trade(sector_etf=None, regime_bucket=None)], augmented=True)
+    assert rows[0]["sector_etf"] is None
+    assert rows[0]["regime_bucket"] is None
 
 
 def test_augmented_projection_includes_ohlc_path_only_when_present() -> None:

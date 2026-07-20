@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Feature Flags.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-07-17
 tags: [config, features, flags]
 ---
 
@@ -56,13 +56,29 @@ tags: [config, features, flags]
 | `FORENSIC_FILTER_MODE` | shadow | off/shadow/soft/hard |
 | `PEAD_ENABLED` | true | Enable PEAD scoring |
 
+## Probabilistic ranking (research)
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `PROB_RANK_MODE` | off | `off` / `shadow` / `live` — ML ranker; **KEEP SHADOW** locked 2026-07-18 (do not set live) |
+| `PROB_RANK_MODEL_DIR` | (empty) | Path to model dir; else newest under `research_store/models/` |
+| `PROB_RANK_TOP_N` | 5 | Keep count when mode=`live` |
+| `PROB_RANK_INCLUDE_SHAP` | false | Attach local SHAP contributors (slower) |
+| `PROB_RANK_SIZING_MODE` | equal | `equal` or `edge_vol` (edge×confidence/vol) |
+| `PROB_RANK_MAX_POSITION` | 0.25 | Max day-book weight per name (edge_vol) |
+| `PROB_RANK_MAX_SECTOR` | 0.40 | Max day-book weight per sector |
+| `PROB_RANK_KELLY_CAP` | 0.25 | Kelly-style size multiplier cap |
+
+See [[probabilistic-ranking-research-architecture]].
+
 ## Related Pages
 
 - [[scanner-tunables]] — scanner-specific tunables
 - [[plugin-modes-config]] — plugin env vars
 - [[guardrails]] — kill switches
 - [[signal-scanner]] — where flags take effect
+- [[probabilistic-ranking-research-architecture]] — research platform
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-07-17*

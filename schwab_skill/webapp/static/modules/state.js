@@ -90,6 +90,9 @@ export const state = {
   scanSort: { field: null, dir: "desc" },
   /** Active funnel-stage filter from diagnostics drill-down (null = show all). */
   scanFunnelFilter: null,
+  /** Triage severity filter for the scan candidates table:
+   *  pass | review | blocked | info (default pass = kept / tradeable). */
+  scanStatusFilter: "pass",
   /** Last full diagnostics dict from the most recent scan (for funnel re-render). */
   lastScanDiagnostics: null,
   /** Presentation mode for rank explainers in scan tables:

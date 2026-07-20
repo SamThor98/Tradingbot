@@ -186,4 +186,12 @@ export const DIAG_LABELS = {
   entry_shadow_would_filter_sma50_high: "Entry shadow (SMA50 extended)",
   entry_shadow_would_filter_breakout_buffer: "Entry shadow (breakout buffer)",
   entry_timing_shadow_mode: "Entry-timing shadow mode",
+  prob_rank_mode: "Prob-rank mode",
+  prob_rank_scored: "Prob-rank scored",
+  prob_rank_unscored: "Prob-rank unscored",
+  prob_rank_would_keep: "Prob-rank would keep",
+  prob_rank_would_drop: "Prob-rank would drop",
+  prob_rank_top_n: "Prob-rank top-N",
+  prob_rank_dropped: "Prob-rank dropped (live)",
+  prob_rank_shadow_evidence: "Prob-rank shadow evidence",
 };

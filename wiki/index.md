@@ -1,7 +1,7 @@
 ---
 source: n/a (wiki catalog)
 created: 2026-04-30
-updated: 2026-06-10
+updated: 2026-07-17
 tags: [wiki, index, catalog]
 ---
 
@@ -26,7 +26,8 @@ tags: [wiki, index, catalog]
 - [[agent-intelligence]] — Dynamic weighting, meta-policy, uncertainty throttling
 - [[meta-policy]] — Final-stage emit / suppress / downweight combiner
 - [[mirofish-engine]] — Multi-persona simulation backbone
-- [[feature-store]] — Append-only feature + outcome history
+- [[feature-store]] — Ops SQL feature logging + research Parquet warehouse split
+- [[probabilistic-ranking-research-architecture]] — Prob-rank research platform; **KEEP SHADOW** locked 2026-07-18
 - [[prediction-market]] — Polymarket overlay and provider abstraction
 - [[database-schema]] — SQLAlchemy tables and relationships
 - [[discord-integration]] — Webhook alerts and notification types
@@ -80,7 +81,7 @@ tags: [wiki, index, catalog]
 - [[canary-rollout]] — Controlled live testing process
 - [[signal-quality-rollout]] — Quality gate promotion plan
 - [[promotion-playbook]] — Signed off → shadow → live promotion process
-- [[backtest]] — Historical replay harness (live-parity rules)
+- [[backtest]] — Historical replay harness (live-parity rules); full results catalog in `schwab_skill/docs/BACKTEST_CATALOG.md`
 - [[backtest-intelligence-overlay]] — Historical attribution for shadow plugins
 - [[backup-restore]] — Backup strategy, restore drills, and DR targets
 - [[incident-response-saas]] — SaaS incident triage and escalation flow
