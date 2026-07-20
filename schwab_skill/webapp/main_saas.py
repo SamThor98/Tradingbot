@@ -50,6 +50,7 @@ from .route_helpers import (
 from .route_helpers import (
     simple_err as _shared_simple_err,
 )
+from .routes.tenant_book import router as tenant_book_router
 from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping, worker_busy_hint
 from .scan_payload import parse_scan_run_body
 from .schemas import (
@@ -203,6 +204,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(tenant_dashboard_router)
+app.include_router(tenant_book_router)
 
 
 @app.exception_handler(HTTPException)

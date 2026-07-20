@@ -83,8 +83,16 @@ function renderShell() {
           <button type="button" id="bookSegTax" class="tab-btn" role="tab" aria-selected="false">Tax</button>
           <button type="button" id="bookSegJournal" class="tab-btn" role="tab" aria-selected="false">Journal</button>
         </div>
-        <button type="button" id="bookCaptureSnapshotBtn" class="btn small secondary">Capture today</button>
+        <div class="book-export-toolbar">
+          <label class="book-field book-field--inline">
+            <span class="book-field-label">Export year</span>
+            <input type="number" id="bookExportYear" class="book-input book-input--year" min="2000" max="2100" value="${y}">
+          </label>
+          <button type="button" id="bookExportYtdBtn" class="btn small">Export YTD Excel</button>
+          <button type="button" id="bookCaptureSnapshotBtn" class="btn small secondary">Capture today</button>
+        </div>
       </div>
+      <div id="bookExportStatus" class="book-export-status" aria-live="polite"></div>
       <div id="bookPanelCalendar" class="book-panel" role="tabpanel">
         <div class="book-toolbar">
           <label class="book-field">
@@ -124,6 +132,8 @@ function wireShell(mount) {
   $("bookSegJournal")?.addEventListener("click", () => setBookSegment("journal"));
   $("bookCalRefresh")?.addEventListener("click", () => void loadCalendar({ force: true }));
   $("bookCaptureSnapshotBtn")?.addEventListener("click", () => void captureSnapshot());
+  $("bookExportYtdBtn")?.addEventListener("click", () => void exportYtdExcel());
+  void refreshExportStatus();
   mount.addEventListener("click", (e) => {
     const dayEl = e.target.closest?.("[data-book-day]");
     if (dayEl) {
@@ -141,6 +151,83 @@ function wireShell(mount) {
 function setStatus(msg) {
   const el = $("bookStatus");
   if (el) el.textContent = msg || "";
+}
+
+function formatExportStatusLine(data) {
+  if (!data || data.ok == null) {
+    return "Last export: none yet";
+  }
+  const when = data.finished_at ? String(data.finished_at).replace("T", " ").slice(0, 19) : "—";
+  const path = data.path ? String(data.path) : "";
+  const shortPath = path.length > 64 ? `…${path.slice(-61)}` : path;
+  if (data.ok) {
+    const n = data.closed_count != null ? `${data.closed_count} closed` : "ok";
+    return `Last export OK ${when} UTC · ${n}${shortPath ? ` · ${shortPath}` : ""}`;
+  }
+  return `Last export FAILED ${when} UTC · ${data.error || data.message || "error"}${shortPath ? ` · ${shortPath}` : ""}`;
+}
+
+async function refreshExportStatus() {
+  const el = $("bookExportStatus");
+  if (!el) return;
+  const out = await api.get("/api/book/export/status");
+  if (!out.ok) {
+    el.textContent = "Last export: status unavailable";
+    el.classList.remove("book-export-status--ok", "book-export-status--fail");
+    return;
+  }
+  el.textContent = formatExportStatusLine(out.data);
+  el.classList.toggle("book-export-status--ok", out.data?.ok === true);
+  el.classList.toggle("book-export-status--fail", out.data?.ok === false);
+}
+
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "book_ytd.xlsx";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportYtdExcel() {
+  const btn = $("bookExportYtdBtn");
+  const year = Number($("bookExportYear")?.value) || new Date().getFullYear();
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Exporting…";
+  }
+  setStatus(`Exporting YTD Excel for ${year}…`);
+  try {
+    const out = await api.download(`/api/book/export?tax_year=${year}`, { timeoutMs: 180000 });
+    if (!out.ok) {
+      let msg = out.user_message || out.error || "Export failed";
+      if (out.status === 404) {
+        msg =
+          "Export API not found (404). Restart/redeploy the dashboard so Book export routes are loaded, then hard-refresh the page.";
+      } else if (typeof msg === "object" && msg) {
+        msg = msg.error || msg.detail || JSON.stringify(msg);
+      }
+      setStatus(String(msg));
+      const statusEl = $("bookExportStatus");
+      if (statusEl) {
+        statusEl.textContent = `Last export FAILED · ${String(msg)}`;
+        statusEl.classList.remove("book-export-status--ok");
+        statusEl.classList.add("book-export-status--fail");
+      }
+      return;
+    }
+    triggerBlobDownload(out.data.blob, out.data.filename);
+    setStatus(`Downloaded ${safeText(out.data.filename)} (canonical file refreshed on disk)`);
+    await refreshExportStatus();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Export YTD Excel";
+    }
+  }
 }
 
 async function captureSnapshot() {

@@ -675,6 +675,7 @@ def run_scheduler() -> None:
                 log.warning("Challenger scan failed: %s", e)
 
     _last_book_snapshot_minute: int | None = None
+    _last_book_ytd_export_minute: int | None = None
 
     def _run_book_eod_snapshot_if_scheduled() -> None:
         """Post-close Book MTM snapshot (weekdays ~16:15 ET)."""
@@ -703,6 +704,63 @@ def run_scheduler() -> None:
         except Exception as e:
             log.warning("Book EOD snapshot failed: %s", e)
 
+    def _run_book_ytd_export_if_scheduled() -> None:
+        """Post-close Book YTD Excel refresh (weekdays, default 16:30 ET)."""
+        nonlocal _last_book_ytd_export_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if now.weekday() >= 5:
+            return
+        try:
+            from config import get_book_ytd_export_enabled, get_book_ytd_export_hhmm
+
+            if not get_book_ytd_export_enabled(SKILL_DIR):
+                return
+            hour, minute = get_book_ytd_export_hhmm(SKILL_DIR)
+        except Exception as e:
+            log.warning("Book YTD export schedule config failed: %s", e)
+            return
+        if not (now.hour == hour and now.minute == minute and key != _last_book_ytd_export_minute):
+            return
+        _last_book_ytd_export_minute = key
+        try:
+            from core.book_export import export_ytd_workbook
+
+            result = export_ytd_workbook(
+                skill_dir=SKILL_DIR,
+                tax_year=now.year,
+                source="eod",
+            )
+            ok = bool(result.get("ok"))
+            log.info(
+                "Book YTD export: ok=%s path=%s error=%s",
+                ok,
+                result.get("path"),
+                result.get("error"),
+            )
+            if ok:
+                send_alert(
+                    f"Book YTD Excel export OK ({result.get('tax_year')}): "
+                    f"{result.get('closed_count', 0)} closed · "
+                    f"{result.get('path')}",
+                    kind="self_study",
+                    env_path=SKILL_DIR / ".env",
+                )
+            else:
+                send_alert(
+                    f"Book YTD Excel export FAILED: {result.get('error') or 'unknown'} "
+                    f"(path={result.get('path')})",
+                    kind="self_study",
+                    env_path=SKILL_DIR / ".env",
+                )
+        except Exception as e:
+            log.warning("Book YTD export failed: %s", e)
+            send_alert(
+                f"Book YTD Excel export FAILED: {e}",
+                kind="self_study",
+                env_path=SKILL_DIR / ".env",
+            )
+
     schedule.every().minute.do(_run_morning_brief_if_scheduled)
     schedule.every().minute.do(_run_pead_warm_if_scheduled)
     schedule.every().minute.do(_run_signal_scan_if_scheduled)
@@ -713,6 +771,7 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_evolve_if_scheduled)
     schedule.every().minute.do(_run_challenger_if_scheduled)
     schedule.every().minute.do(_run_book_eod_snapshot_if_scheduled)
+    schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
     build_morning_brief()
 
     try:

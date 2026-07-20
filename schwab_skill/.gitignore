@@ -75,6 +75,7 @@ tokens_*.json
 artifacts/
 validation_artifacts/
 mirofish_sims/
+exports/
 
 # Editor/OS
 .DS_Store

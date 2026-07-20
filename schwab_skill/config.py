@@ -772,6 +772,58 @@ def get_portfolio_equity_snapshot_enabled(skill_dir: Path | None = None) -> bool
     return _get_bool("PORTFOLIO_EQUITY_SNAPSHOT_ENABLED", True, skill_dir)
 
 
+def get_book_ytd_export_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable post-close Book YTD Excel refresh in the local bot loop."""
+    return _get_bool("BOOK_YTD_EXPORT_ENABLED", True, skill_dir)
+
+
+def get_book_ytd_export_hhmm(skill_dir: Path | None = None) -> tuple[int, int]:
+    """Weekday ET time for Book YTD Excel EOD refresh (default 16:30)."""
+    env = _load_env(skill_dir)
+    raw = _env_value("BOOK_YTD_EXPORT_HHMM", env).strip()
+    if not raw:
+        return (16, 30)
+    text = raw.replace(".", ":")
+    try:
+        if ":" in text:
+            hh_s, mm_s = text.split(":", 1)
+            hour = int(hh_s)
+            minute = int(mm_s)
+        elif len(text) == 4 and text.isdigit():
+            hour = int(text[:2])
+            minute = int(text[2:])
+        else:
+            return (16, 30)
+    except (TypeError, ValueError):
+        return (16, 30)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return (16, 30)
+    return (hour, minute)
+
+
+def get_book_ytd_export_path(
+    skill_dir: Path | None = None,
+    *,
+    tax_year: int | None = None,
+) -> Path:
+    """Canonical Book YTD workbook path (supports ``{year}`` in env path)."""
+    from datetime import datetime, timezone
+
+    year = int(tax_year or datetime.now(timezone.utc).year)
+    env = _load_env(skill_dir)
+    raw = _env_value("BOOK_YTD_EXPORT_PATH", env).strip()
+    root = skill_dir or SKILL_DIR
+    if not raw:
+        return root / "exports" / f"book_ytd_{year}.xlsx"
+    expanded = raw.replace("{year}", str(year))
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = root / path
+    if path.suffix.lower() != ".xlsx":
+        path = path / f"book_ytd_{year}.xlsx"
+    return path
+
+
 def get_risk_limit_single_name_pct(skill_dir: Path | None = None) -> float:
     """Single-name weight (% of equity) display limit for dashboard breaches."""
     val = _get_float("RISK_LIMIT_SINGLE_NAME_PCT", 10.0, skill_dir)

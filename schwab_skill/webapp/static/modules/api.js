@@ -291,9 +291,9 @@ export const api = {
     delete fetchOptions.timeoutMs;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const headers = await this._authHeaders(fetchOptions.headers || {});
+    let headers = await this._authHeaders(fetchOptions.headers || {});
     try {
-      const res = await fetch(path, {
+      let res = await fetch(path, {
         ...fetchOptions,
         method: fetchOptions.method || "GET",
         credentials: fetchOptions.credentials ?? "same-origin",
@@ -301,17 +301,44 @@ export const api = {
         signal: controller.signal,
       });
       if (!res.ok) {
-        const text = await res.text();
+        let text = await res.text();
         let parsed;
         try {
           parsed = text ? JSON.parse(text) : null;
         } catch {
           parsed = null;
         }
-        const mapped = classifyApiError(res.status, parsed?.error || parsed?.detail || text || `HTTP ${res.status}`);
+        if (isApiKeyAuthFailure(res.status, parsed) && promptForApiKeyRefresh({ rejected: true })) {
+          headers = await this._authHeaders(fetchOptions.headers || {});
+          res = await fetch(path, {
+            ...fetchOptions,
+            method: fetchOptions.method || "GET",
+            credentials: fetchOptions.credentials ?? "same-origin",
+            headers,
+            signal: controller.signal,
+          });
+          if (res.ok) {
+            const dispositionOk = String(res.headers.get("content-disposition") || "");
+            const matchOk = dispositionOk.match(/filename="?([^";]+)"?/i);
+            const filenameOk = matchOk?.[1] || "download.bin";
+            const blobOk = await res.blob();
+            return {
+              ok: true,
+              data: { blob: blobOk, filename: filenameOk, contentType: res.headers.get("content-type") || "" },
+            };
+          }
+          text = await res.text();
+          try {
+            parsed = text ? JSON.parse(text) : null;
+          } catch {
+            parsed = null;
+          }
+        }
+        const rawError = parsed?.error || parsed?.detail || text || `HTTP ${res.status}`;
+        const mapped = classifyApiError(res.status, rawError);
         return {
           ok: false,
-          error: parsed?.error || parsed?.detail || text || `HTTP ${res.status}`,
+          error: typeof rawError === "string" ? rawError : JSON.stringify(rawError),
           user_message: mapped.userMessage,
           hint: mapped.hint,
           retryable: mapped.retryable,

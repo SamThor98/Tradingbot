@@ -57,6 +57,17 @@ class _Lot:
 
 
 @dataclass
+class OpenLot:
+    """Unmatched FIFO opening lot still open after processing the fetch window."""
+
+    symbol: str
+    qty: float
+    cost_total: float
+    open_day: date
+    asset_class: str = "equity"  # equity | option
+
+
+@dataclass
 class RealizedFill:
     activity_id: str | None
     symbol: str
@@ -71,11 +82,14 @@ class RealizedFill:
     fees: float
     open_day: date | None
     source: str = "schwab"
+    asset_class: str = "equity"  # equity | option
+    underlying: str | None = None
 
 
 @dataclass
 class LedgerResult:
     fills: list[RealizedFill] = field(default_factory=list)
+    open_lots: list[OpenLot] = field(default_factory=list)
     fees_by_day: dict[str, float] = field(default_factory=dict)
     opens_skipped: int = 0
     closes_unmatched: int = 0
@@ -213,7 +227,202 @@ def build_realized_ledger(raw_trades: list[dict[str, Any]]) -> LedgerResult:
             if remaining > 1e-6:
                 result.closes_unmatched += 1
 
+    for sym, queue in lots.items():
+        for lot in queue:
+            if lot.qty > 1e-9:
+                result.open_lots.append(
+                    OpenLot(
+                        symbol=sym,
+                        qty=lot.qty,
+                        cost_total=lot.cost_total,
+                        open_day=lot.open_day,
+                        asset_class="equity",
+                    )
+                )
+    result.open_lots.sort(key=lambda lot: (lot.symbol, lot.open_day.isoformat()))
     return result
+
+
+def _option_legs(tx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract OPTION transfer legs (single-leg matching only)."""
+    out: list[dict[str, Any]] = []
+    for item in tx.get("transferItems") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("feeType"):
+            continue
+        inst = item.get("instrument") or {}
+        if not isinstance(inst, dict):
+            continue
+        asset = str(inst.get("assetType") or "").upper()
+        if asset != "OPTION":
+            continue
+        sym = str(inst.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+        out.append(item)
+    return out
+
+
+def build_options_realized_ledger(raw_trades: list[dict[str, Any]]) -> LedgerResult:
+    """FIFO match single-leg OPTION OPENING → CLOSING fills.
+
+    Multi-leg spreads/rolls/assignments are not modeled; unmatched closes are
+    counted rather than inventing P/L.
+    """
+    result = LedgerResult(raw_trade_count=len(raw_trades))
+    lots: dict[str, list[_Lot]] = {}
+
+    def _sort_key(tx: dict[str, Any]) -> tuple[str, str]:
+        day = _parse_day(tx.get("tradeDate") or tx.get("time") or tx.get("settlementDate"))
+        return (day.isoformat() if day else "9999-99-99", str(tx.get("activityId") or ""))
+
+    ordered = sorted((t for t in raw_trades if isinstance(t, dict)), key=_sort_key)
+
+    for tx in ordered:
+        day = _parse_day(tx.get("tradeDate") or tx.get("time") or tx.get("settlementDate"))
+        if day is None:
+            continue
+        fees = _fee_total(tx)
+        if fees:
+            result.fees_by_day[day.isoformat()] = result.fees_by_day.get(day.isoformat(), 0.0) + fees
+        desc = str(tx.get("description") or "")
+        activity_id = str(tx.get("activityId")) if tx.get("activityId") is not None else None
+        option_legs = _option_legs(tx)
+        # Skip multi-leg option tickets (spreads) — leave for Exceptions later
+        if len(option_legs) > 1:
+            continue
+
+        for leg in option_legs:
+            inst = leg.get("instrument") or {}
+            symbol = str(inst.get("symbol") or "").upper().strip()
+            underlying = str(inst.get("underlyingSymbol") or "").upper().strip() or None
+            qty = abs(_f(leg.get("amount")) or 0.0)
+            price = _f(leg.get("price"))
+            cost = _f(leg.get("cost"))
+            effect = str(leg.get("positionEffect") or "").upper()
+            if qty <= 0 or not symbol:
+                continue
+
+            if effect not in ("OPENING", "CLOSING"):
+                net = _f(tx.get("netAmount"))
+                if net is not None and net < 0:
+                    effect = "OPENING"
+                elif net is not None and net > 0:
+                    effect = "CLOSING"
+                elif "BOUGHT" in desc.upper() or "BUY" in desc.upper():
+                    effect = "OPENING"
+                elif "SOLD" in desc.upper() or "SELL" in desc.upper():
+                    effect = "CLOSING"
+                else:
+                    continue
+
+            if effect == "OPENING":
+                cost_total = abs(cost) if cost is not None else (abs(price or 0.0) * qty * 100.0)
+                if cost_total <= 0:
+                    result.opens_skipped += 1
+                    continue
+                lots.setdefault(symbol, []).append(
+                    _Lot(symbol=symbol, qty=qty, cost_total=cost_total, open_day=day)
+                )
+                continue
+
+            proceeds = abs(cost) if cost is not None else (abs(price or 0.0) * qty * 100.0)
+            remaining = qty
+            queue = lots.setdefault(symbol, [])
+            while remaining > 1e-9 and queue:
+                lot = queue[0]
+                take = min(lot.qty, remaining)
+                frac = take / lot.qty if lot.qty > 0 else 0.0
+                lot_cost = lot.cost_total * frac
+                lot_proceeds = proceeds * (take / qty) if qty > 0 else 0.0
+                realized = lot_proceeds - lot_cost
+                holding = _holding_bucket(lot.open_day, day)
+                result.fills.append(
+                    RealizedFill(
+                        activity_id=activity_id,
+                        symbol=symbol,
+                        trade_date=day,
+                        qty=take,
+                        proceeds=lot_proceeds,
+                        cost_basis=lot_cost,
+                        realized_pl=realized,
+                        holding=holding,
+                        side="SELL",
+                        description=desc,
+                        fees=fees * (take / qty) if qty > 0 else 0.0,
+                        open_day=lot.open_day,
+                        asset_class="option",
+                        underlying=underlying,
+                    )
+                )
+                lot.qty -= take
+                lot.cost_total -= lot_cost
+                remaining -= take
+                if lot.qty <= 1e-9:
+                    queue.pop(0)
+
+            if remaining > 1e-6:
+                result.closes_unmatched += 1
+
+    for sym, queue in lots.items():
+        for lot in queue:
+            if lot.qty > 1e-9:
+                result.open_lots.append(
+                    OpenLot(
+                        symbol=sym,
+                        qty=lot.qty,
+                        cost_total=lot.cost_total,
+                        open_day=lot.open_day,
+                        asset_class="option",
+                    )
+                )
+    result.open_lots.sort(key=lambda lot: (lot.symbol, lot.open_day.isoformat()))
+    return result
+
+
+def trade_key_for_fill(fill: RealizedFill) -> str:
+    """Stable key for Notes sheet merge across regenerates."""
+    aid = fill.activity_id or "na"
+    open_s = fill.open_day.isoformat() if fill.open_day else "na"
+    close_s = fill.trade_date.isoformat()
+    qty_s = f"{fill.qty:.4f}".rstrip("0").rstrip(".")
+    return f"{aid}|{fill.symbol}|{open_s}|{close_s}|{qty_s}"
+
+
+def closed_row_analysis(fill: RealizedFill, *, tax_year: int) -> dict[str, Any]:
+    """Analysis-pack fields for a realized close (equity or option)."""
+    hold_days = 0
+    if fill.open_day is not None:
+        hold_days = max(0, (fill.trade_date - fill.open_day).days)
+    ret_pct = None
+    if fill.cost_basis and abs(fill.cost_basis) > 1e-9:
+        ret_pct = round(100.0 * fill.realized_pl / abs(fill.cost_basis), 4)
+    win = "win" if fill.realized_pl > 0 else ("loss" if fill.realized_pl < 0 else "flat")
+    in_year = fill.trade_date.year == tax_year
+    return {
+        "trade_key": trade_key_for_fill(fill),
+        "activity_id": fill.activity_id,
+        "symbol": fill.symbol,
+        "underlying": fill.underlying,
+        "asset_class": fill.asset_class,
+        "open_date": fill.open_day.isoformat() if fill.open_day else None,
+        "close_date": fill.trade_date.isoformat(),
+        "qty": round(fill.qty, 4),
+        "cost_basis": round(fill.cost_basis, 2),
+        "proceeds": round(fill.proceeds, 2),
+        "fees": round(fill.fees, 2),
+        "realized_pl": round(fill.realized_pl, 2),
+        "return_pct": ret_pct,
+        "hold_days": hold_days,
+        "holding": fill.holding,
+        "win_loss": win,
+        "close_month": fill.trade_date.month if in_year else None,
+        "close_weekday": fill.trade_date.strftime("%a") if in_year else None,
+        "in_tax_year": in_year,
+        "description": fill.description,
+        "source": fill.source,
+    }
 
 
 def aggregate_calendar(
