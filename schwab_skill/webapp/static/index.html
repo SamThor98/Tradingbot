@@ -21,7 +21,7 @@
             crossorigin="anonymous"
             referrerpolicy="no-referrer"></script>
   </head>
-  <body data-theme="editorial">
+  <body data-theme="editorial" data-density="comfortable" data-research-check-mode="brief">
     <a class="skip-link" href="#mainContent">Skip to main content</a>
     <div class="bg-blur bg1"></div>
     <div class="bg-blur bg2"></div>
@@ -141,10 +141,10 @@
             <a href="#scanSection" data-nav-screens="operations">Run scan</a>
             <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
             <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
+            <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
             <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
             <a href="#backtestSection" data-nav-screens="research">Backtest</a>
-            <a href="#reportSectionCard" data-nav-screens="research">Dossier</a>
-            <a href="#cockpitSection" data-nav-screens="research">Market context</a>
+            <a href="#reportSectionCard" data-nav-screens="research" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
             <a href="#healthRibbon" data-nav-screens="diagnostics">Health</a>
             <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Status</a>
             <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics">Quality</a>
@@ -415,6 +415,7 @@
                     <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
+                    <th class="scan-col-advanced sortable-th" data-sort-key="expected_return_40d" aria-sort="none" tabindex="0" role="button" title="Sort by prob-rank expected 40-day return (shadow/live score)">E[ret 40d]<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
                     <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
@@ -423,7 +424,7 @@
                   </tr>
                 </thead>
                 <tbody id="scanTableBody">
-                  <tr><td colspan="13" class="muted">Run a scan to load candidates.</td></tr>
+                  <tr><td colspan="14" class="muted">Run a scan to load candidates.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -451,6 +452,7 @@
                       <th class="scan-col-secondary sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="scan-col-advanced sortable-th" data-sort-key="p_up_10d" aria-sort="none" tabindex="0" role="button" title="Sort by advisory probability of being up over 10 days">P(up 10d)<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="scan-col-advanced sortable-th" data-sort-key="expected_return_40d" aria-sort="none" tabindex="0" role="button" title="Sort by prob-rank expected 40-day return (shadow/live score)">E[ret 40d]<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="confidence" aria-sort="none" tabindex="0" role="button" title="Sort by advisory confidence bucket">Confidence<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="scan-col-advanced sortable-th" data-sort-key="conviction" aria-sort="none" tabindex="0" role="button" title="Sort by MiroFish conviction score">Conviction<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="scan-col-advanced sortable-th" data-sort-key="sector" aria-sort="none" tabindex="0" role="button" title="Sort by sector ETF tag">Sector<span class="sort-indicator" aria-hidden="true"></span></th>
@@ -459,7 +461,7 @@
                     </tr>
                   </thead>
                   <tbody id="nearMissTableBody">
-                    <tr><td colspan="13" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                    <tr><td colspan="14" class="muted">Near-miss candidates will appear after scan.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -636,37 +638,62 @@
         </div>
       </section>
 
-      <nav id="researchTabNav" class="research-tab-nav" role="tablist" aria-label="Research sections">
-        <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="check" aria-selected="true">Quick check</button>
-        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">Backtest</button>
-        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="diligence" aria-selected="false" tabindex="-1">Diligence</button>
-        <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="portfolio" aria-selected="false" tabindex="-1">Portfolio</button>
-      </nav>
+      <div class="research-chrome-row research-surface">
+        <nav id="researchTabNav" class="research-tab-nav" role="tablist" aria-label="Research sections">
+          <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="portfolio" aria-selected="true">Portfolio</button>
+          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="check" aria-selected="false" tabindex="-1">Quick check</button>
+          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">Backtest</button>
+        </nav>
+        <div id="researchDensityControl" class="research-density-control" role="group" aria-label="Research density">
+          <button type="button" class="research-density-btn active" data-research-density-btn="comfortable" aria-pressed="true">Comfortable</button>
+          <button type="button" class="research-density-btn" data-research-density-btn="dense" aria-pressed="false">Dense</button>
+        </div>
+      </div>
+      <p class="research-shell-note muted">Diligence lives under Quick check → Deep (dossier &amp; SEC compare).</p>
 
-      <section id="researchSummaryLanding" class="card research-summary-landing section-advanced" aria-label="Research at a glance">
-        <div class="research-summary-grid">
+      <div id="researchCheckModeBar" class="research-check-mode-bar research-surface" hidden aria-hidden="true">
+        <span class="research-check-mode-label muted">Altitude</span>
+        <div class="research-check-mode-control" role="group" aria-label="Quick check mode">
+          <button type="button" class="research-check-mode-btn active" data-research-check-mode-btn="brief" aria-pressed="true">Brief</button>
+          <button type="button" class="research-check-mode-btn" data-research-check-mode-btn="deep" aria-pressed="false">Deep</button>
+        </div>
+      </div>
+
+      <section id="researchSummaryLanding" class="card research-summary-landing section-advanced research-surface" aria-label="Portfolio triage at a glance">
+        <div id="researchTriageStatus" class="research-status-strip" data-state="empty" aria-live="polite">
+          <span class="research-status-pill">Clear</span>
+          <strong id="researchTriageStatusTitle">No portfolio loaded.</strong>
+          <span id="researchTriageStatusDetail" class="muted">Open Portfolio or connect Schwab to triage holdings.</span>
+        </div>
+        <div class="research-summary-grid research-summary-grid--triage">
           <div class="research-summary-kpi">
-            <span class="research-summary-label">Quick check</span>
-            <strong id="researchSummaryTicker" class="research-summary-value">—</strong>
-            <small id="researchSummaryTickerHint" class="muted">enter a ticker below</small>
-          </div>
-          <div class="research-summary-kpi">
-            <span class="research-summary-label">Portfolio</span>
+            <span class="research-summary-label">Open risk</span>
             <strong id="researchSummaryPositions" class="research-summary-value mono-nums" data-unavailable="true">—</strong>
-            <small id="researchSummaryPositionsHint" class="muted">loads on Portfolio tab</small>
+            <small id="researchSummaryPositionsHint" class="muted">positions</small>
           </div>
           <div class="research-summary-kpi">
-            <span class="research-summary-label">Backtests</span>
-            <strong id="researchSummaryBacktests" class="research-summary-value mono-nums">—</strong>
-            <small id="researchSummaryBacktestsHint" class="muted">recent runs on Backtest tab</small>
+            <span class="research-summary-label">Top alert</span>
+            <strong id="researchSummaryAlert" class="research-summary-value">—</strong>
+            <small id="researchSummaryAlertHint" class="muted">concentration / flags</small>
+          </div>
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Book P/L</span>
+            <strong id="researchSummaryBook" class="research-summary-value mono-nums" data-unavailable="true">—</strong>
+            <small id="researchSummaryBookHint" class="muted">MTD when book loads</small>
+          </div>
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Next action</span>
+            <strong id="researchSummaryNext" class="research-summary-value">—</strong>
+            <small id="researchSummaryNextHint" class="muted">drill into Positions · Risk · Book</small>
           </div>
         </div>
         <nav class="research-summary-actions inline-form compact" aria-label="Research shortcuts">
+          <a class="btn small secondary" href="#portfolioSection" data-research-tab-link="portfolio">Positions</a>
+          <a class="btn small secondary" href="#portfolioPanelRisk" data-research-tab-link="portfolio">Risk</a>
+          <a class="btn small secondary" href="#portfolioPanelBook" data-research-tab-link="portfolio">Book</a>
+          <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Quick check</a>
+          <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
           <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Backtest</a>
-          <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="diligence">Dossier</a>
-          <a class="btn small secondary" href="#secCompareSection" data-research-tab-link="diligence">SEC compare</a>
-          <a class="btn small secondary" href="#cockpitSection" data-research-tab-link="portfolio">Market context</a>
-          <a class="btn small secondary" href="#researchAdvancedTools" data-research-tab-link="check">Advanced tools</a>
         </nav>
       </section>
 
@@ -674,34 +701,34 @@
         <div>
           <p class="workspace-eyebrow">Research</p>
           <h2>Validate before size</h2>
-          <p class="muted">Quick-check ideas, run scenario tests, and complete deep diligence before committing risk.</p>
+          <p class="muted">Triage portfolio first, then quick-check a name (Brief/Deep), then lab backtests.</p>
         </div>
         <div class="inline-form compact">
-          <a class="btn small secondary" href="#quickCheckSection">Quick check</a>
-          <a class="btn small secondary" href="#backtestSection">Backtest</a>
-          <a class="btn small secondary" href="#reportSectionCard">Full report</a>
+          <a class="btn small secondary" href="#portfolioSection" data-research-tab-link="portfolio">Portfolio</a>
+          <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Quick check</a>
+          <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Backtest</a>
         </div>
       </section>
       <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced workspace-intro--deprecated hidden" aria-hidden="true">
         <article class="research-lane">
-          <h3>Fast validation</h3>
-          <p class="muted">Confirm baseline signal quality on one symbol.</p>
+          <h3>Portfolio triage</h3>
+          <p class="muted">Holdings, risk, and book at a glance.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#quickCheckSection">Start quick check</a>
+            <a class="btn small secondary" href="#portfolioSection" data-research-tab-link="portfolio">Open portfolio</a>
           </div>
         </article>
         <article class="research-lane">
-          <h3>Scenario testing</h3>
-          <p class="muted">Backtest assumptions and capture reasoning in chat.</p>
+          <h3>Quick check</h3>
+          <p class="muted">Brief sniff or Deep dossier / SEC.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#backtestSection">Run backtest</a>
+            <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Start quick check</a>
           </div>
         </article>
         <article class="research-lane">
-          <h3>Deep diligence</h3>
-          <p class="muted">Run full report and filing compare before larger risk.</p>
+          <h3>Backtest lab</h3>
+          <p class="muted">Catalog, form, and compare runs.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="diligence">Open deep diligence</a>
+            <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Run backtest</a>
           </div>
         </article>
       </section>
@@ -746,7 +773,7 @@
           </div>
           <div id="sectorGrid" class="sector-grid"></div>
         </details>
-        <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure" data-lazy-api="movers">
+        <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure research-surface" data-lazy-api="movers">
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Market Movers</span>
             <span class="disclosure-hint muted">Top gainers, losers, and most active</span>
@@ -759,7 +786,7 @@
           <div id="moversGrid" data-async-state="idle"></div>
         </details>
 
-        <details id="researchAdvancedTools" class="card section-advanced panel-disclosure research-advanced-disclosure">
+        <details id="researchAdvancedTools" class="card section-advanced panel-disclosure research-advanced-disclosure research-surface">
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Advanced tools</span>
             <span class="disclosure-hint muted">Failure recovery and learning engine</span>
@@ -1357,10 +1384,10 @@
       </details>
 
       <section class="layout-2 section-advanced">
-        <article id="portfolioSection" class="card" data-lazy-api="portfolio">
+        <article id="portfolioSection" class="card portfolio-hub card--primary-task" data-lazy-api="portfolio">
           <div class="section-title">
-            <h2>Portfolio</h2>
-            <small id="portfolioMeta" class="muted">Loads automatically on Research or when you scroll here.</small>
+            <h2>Portfolio triage</h2>
+            <small id="portfolioMeta" class="muted">Positions · Risk (correlation) · Book — Research home.</small>
           </div>
           <div id="portfolioStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
             <span class="research-status-pill">Clear</span>

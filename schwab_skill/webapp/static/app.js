@@ -252,7 +252,11 @@ import {
   isScanSignalStageable,
   renderSignalProvenanceChip,
 } from "./modules/signalProvenance.js";
-import { initResearchTabs, applyResearchTab } from "./modules/researchTabs.js";
+import {
+  initResearchTabs,
+  applyResearchTab,
+  DEFAULT_RESEARCH_TAB,
+} from "./modules/researchTabs.js";
 import {
   applyScanDetailOverlays,
   renderChartOverlayLegend,
@@ -382,11 +386,11 @@ const SCREEN_CONTEXT = Object.freeze({
   },
   research: {
     title: "Research",
-    text: "Quick-check a ticker, backtest assumptions, run diligence, then review portfolio context — one workflow at a time.",
-    ctaLabel: "Quick check",
-    ctaHref: "#quickCheckSection",
-    altCtaLabel: "Open backtest",
-    altCtaHref: "#backtestSection",
+    text: "Triage holdings first, then dig into a name (Brief/Deep), then lab backtests — one focused surface at a time.",
+    ctaLabel: "Open portfolio",
+    ctaHref: "#portfolioSection",
+    altCtaLabel: "Quick check",
+    altCtaHref: "#quickCheckSection",
   },
   diagnostics: {
     title: "System",
@@ -668,12 +672,11 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   maybeShowScreenNudge(m);
   if (m === "research") {
     // Preserve a sub-tab already activated by a ?section= deep link (e.g.
-    // section=sec → Diligence) or by the user; only default to Quick check
-    // when nothing is active yet.
+    // section=sec → Quick check Deep) or by the user; default to Portfolio.
     const activeTab = document
       .querySelector("[data-research-tab-btn].active")
       ?.getAttribute("data-research-tab-btn");
-    applyResearchTab(activeTab || "check");
+    applyResearchTab(activeTab || DEFAULT_RESEARCH_TAB);
     updateResearchSummaryLanding();
   }
   if (m === "diagnostics") {
@@ -1456,18 +1459,18 @@ function updateSettingsSummaryLanding() {
 }
 
 function updateResearchSummaryLanding() {
-  const tickerEl = document.getElementById("researchSummaryTicker");
-  const tickerHint = document.getElementById("researchSummaryTickerHint");
   const posEl = document.getElementById("researchSummaryPositions");
   const posHint = document.getElementById("researchSummaryPositionsHint");
-  const btEl = document.getElementById("researchSummaryBacktests");
-  const btHint = document.getElementById("researchSummaryBacktestsHint");
-
-  const ticker = safeText(document.getElementById("tickerInput")?.value || "").trim().toUpperCase();
-  if (tickerEl) {
-    tickerEl.textContent = ticker || "—";
-    if (tickerHint) tickerHint.textContent = ticker ? "last symbol checked" : "enter a ticker below";
-  }
+  const alertEl = document.getElementById("researchSummaryAlert");
+  const alertHint = document.getElementById("researchSummaryAlertHint");
+  const bookEl = document.getElementById("researchSummaryBook");
+  const bookHint = document.getElementById("researchSummaryBookHint");
+  const nextEl = document.getElementById("researchSummaryNext");
+  const nextHint = document.getElementById("researchSummaryNextHint");
+  const statusStrip = document.getElementById("researchTriageStatus");
+  const statusTitle = document.getElementById("researchTriageStatusTitle");
+  const statusDetail = document.getElementById("researchTriageStatusDetail");
+  const statusPill = statusStrip?.querySelector(".research-status-pill");
 
   const portfolioBody = document.getElementById("portfolioBody");
   let positionCount = null;
@@ -1477,10 +1480,15 @@ function updateResearchSummaryLanding() {
   } else if (portfolioBody) {
     const rows = [...portfolioBody.querySelectorAll("tr")].filter((tr) => {
       const cell = tr.querySelector("td");
-      return cell && !cell.classList.contains("muted") && !/loading|open portfolio|not loaded|scroll here|no open positions/i.test(cell.textContent || "");
+      return (
+        cell &&
+        !cell.classList.contains("muted") &&
+        !/loading|open portfolio|not loaded|scroll here|no open positions/i.test(cell.textContent || "")
+      );
     });
     if (rows.length) positionCount = rows.length;
   }
+
   if (posEl) {
     if (positionCount === null) {
       markUnavailable(posEl, "portfolio not loaded");
@@ -1488,15 +1496,85 @@ function updateResearchSummaryLanding() {
     } else {
       clearUnavailable(posEl);
       posEl.textContent = formatCount(positionCount);
-      if (posHint) posHint.textContent = positionCount === 1 ? "open position" : "open positions";
+      if (posHint) posHint.textContent = positionCount === 1 ? "position · Schwab/manual" : "positions · Schwab/manual";
     }
   }
 
-  const btRuns = document.getElementById("btRunList");
-  const runCount = btRuns ? btRuns.querySelectorAll("li").length : 0;
-  if (btEl) {
-    btEl.textContent = runCount ? formatCount(runCount) : "—";
-    if (btHint) btHint.textContent = runCount ? "listed on Backtest tab" : "no runs queued yet";
+  const alertCount =
+    typeof pdata?.alert_count === "number"
+      ? pdata.alert_count
+      : Array.isArray(pdata?.alerts)
+        ? pdata.alerts.length
+        : null;
+  if (alertEl) {
+    if (positionCount === null) {
+      alertEl.textContent = "—";
+      if (alertHint) alertHint.textContent = "awaiting portfolio";
+    } else if (alertCount == null) {
+      alertEl.textContent = "None";
+      if (alertHint) alertHint.textContent = "no alert feed yet";
+    } else if (alertCount === 0) {
+      alertEl.textContent = "None";
+      if (alertHint) alertHint.textContent = "concentration OK";
+    } else {
+      alertEl.textContent = formatCount(alertCount);
+      if (alertHint) alertHint.textContent = alertCount === 1 ? "flag to review" : "flags to review";
+    }
+  }
+
+  const bookPnl =
+    typeof pdata?.book_mtd_pnl_pct === "number"
+      ? pdata.book_mtd_pnl_pct
+      : typeof pdata?.mtd_pnl_pct === "number"
+        ? pdata.mtd_pnl_pct
+        : null;
+  if (bookEl) {
+    if (bookPnl == null) {
+      markUnavailable(bookEl, "book not loaded");
+      if (bookHint) bookHint.textContent = "open Book tab";
+    } else {
+      clearUnavailable(bookEl);
+      const sign = bookPnl > 0 ? "+" : "";
+      bookEl.textContent = `${sign}${bookPnl.toFixed(1)}%`;
+      if (bookHint) bookHint.textContent = "MTD · journal";
+    }
+  }
+
+  if (nextEl) {
+    if (positionCount === null) {
+      nextEl.textContent = "Connect";
+      if (nextHint) nextHint.textContent = "link Schwab or add manual book";
+    } else if (alertCount > 0) {
+      nextEl.textContent = "Review";
+      if (nextHint) nextHint.textContent = "Risk tab · open flags";
+    } else if (bookPnl == null) {
+      nextEl.textContent = "Book";
+      if (nextHint) nextHint.textContent = "load calendar / journal";
+    } else {
+      nextEl.textContent = "Monitor";
+      if (nextHint) nextHint.textContent = "Positions · Risk · Book";
+    }
+  }
+
+  if (statusStrip && statusTitle && statusDetail) {
+    if (positionCount === null) {
+      statusStrip.dataset.state = "empty";
+      if (statusPill) statusPill.textContent = "Empty";
+      statusTitle.textContent = "No portfolio loaded.";
+      statusDetail.textContent = "Connect Schwab or add a manual portfolio to unlock Research home.";
+    } else if (alertCount > 0 || bookPnl == null) {
+      statusStrip.dataset.state = "partial";
+      if (statusPill) statusPill.textContent = "Partial";
+      statusTitle.textContent = "Portfolio loaded with gaps.";
+      statusDetail.textContent = `${formatCount(positionCount)} positions · ${
+        alertCount > 0 ? `${formatCount(alertCount)} alert(s)` : "no alerts"
+      } · ${bookPnl == null ? "book unavailable" : "book current"}.`;
+    } else {
+      statusStrip.dataset.state = "ready";
+      if (statusPill) statusPill.textContent = "Ready";
+      statusTitle.textContent = "Portfolio triage looks healthy.";
+      statusDetail.textContent = `${formatCount(positionCount)} positions · no concentration alert · book current.`;
+    }
   }
 }
 

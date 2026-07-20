@@ -164,6 +164,7 @@ function stopProgress() {
 function renderAnchorChips() {
   const anchors = [
     ["risk-sec-metrics", "Metrics"],
+    ["risk-sec-metrics", "Correlation"],
     ["risk-sec-contribution", "Contribution"],
     ["risk-sec-concentration", "Concentration"],
     ["risk-sec-stress", "Stress"],
@@ -273,13 +274,18 @@ function renderCorrelationHeatmap(correlation, positionsWeighted) {
     });
   });
   const breaches = (correlation?.breaches || []).length;
+  const scaleBuckets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
   return `
-    <div class="risk-corr-heatmap" style="grid-template-columns: auto repeat(${tickers.length}, minmax(0, 1fr))">${cells}</div>
+    <div class="risk-corr-heatmap" style="grid-template-columns: auto repeat(${tickers.length}, minmax(0, 1fr))" role="img" aria-label="Pairwise return correlation heatmap">${cells}</div>
     <div class="risk-corr-legend">
-      <span class="risk-corr-swatch risk-corr-swatch--neg"></span> diversifying (−1)
-      <span class="risk-corr-swatch risk-corr-swatch--pos"></span> correlated (+1)
+      <span class="risk-corr-swatch risk-corr-swatch--neg" aria-hidden="true"></span> diversifying (−1)
+      <span class="risk-corr-swatch risk-corr-swatch--pos" aria-hidden="true"></span> correlated (+1)
       <span>· avg pair ${metricValue(correlation?.avg_pair_corr, 2)} · ${breaches} breach(es) ≥ ${metricValue(correlation?.threshold, 2)}${truncated ? ` · top ${HEATMAP_MAX_TICKERS} by weight` : ""} · click a cell to trace its pair</span>
-    </div>`;
+    </div>
+    <div class="risk-corr-scale" aria-hidden="true">${scaleBuckets
+      .map((b) => `<span data-corr-bucket="${b}" class="risk-corr-cell"></span>`)
+      .join("")}</div>
+    <div class="risk-corr-scale-labels" aria-hidden="true"><span>−1</span><span>0</span><span>+1</span></div>`;
 }
 
 function wireHeatmap(mount) {
@@ -660,6 +666,7 @@ function renderDashboard(d) {
     <div class="risk-dashboard">
       ${renderConfidenceBanner(d)}
       <div class="risk-section-title" id="risk-sec-metrics">Metrics &amp; Correlation</div>
+      <p class="muted small risk-corr-shade-note">Heatmap shading: forest = diversifying (−), cream/neutral ≈ 0, red intensity rises with positive correlation (+). Strong fills use light text.</p>
       <div class="risk-two-col">
         <div>${renderMetricsTable(d.metrics, stress.tail_risk, d.data_quality)}</div>
         <div>${renderCorrelationHeatmap(d.correlation, d.positions_weighted)}</div>

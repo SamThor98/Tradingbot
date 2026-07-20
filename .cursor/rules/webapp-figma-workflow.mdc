@@ -96,13 +96,18 @@ Annotate each frame: DOM `#id`, `?section=` alias, API endpoint, key data fields
 
 ### Wave 3 — Research (P2)
 
+**Shell (R-Shell) 2026-07-20:** Figma `99:40` approved + coded — 3 tabs Portfolio→Quick check→Backtest, Diligence→QC Deep, density hooks.
+
+**Portfolio hub (R-Portfolio) 2026-07-20:** Figma `103:125` + Risk Success `70:40` corr shading fixed (bucket opacities). Code: hub chrome, Correlation anchor, heatmap scale + editorial `color-mix` buckets. Next: Quick check Brief/Deep polish, then Backtest hub.
+
 | Section id | Panel module | ?section alias | Status |
 |------------|--------------|----------------|--------|
-| quickCheckSection | quickCheck.js | — | Operator alert on error |
-| backtestSection | backtest.js, backtestCharts.js | backtest | setAsyncState |
-| reportSectionCard | report.js | — | Operator alert |
-| secCompareSection | sec.js | sec, seccompare | Operator alert empty/error |
-| portfolioSection | portfolio.js | — | Operator alert on error |
+| researchTabNav / summary | researchTabs.js | — | **Shell coded** (default portfolio) |
+| quickCheckSection | quickCheck.js | — | Operator alert on error; Deep hosts dossier/SEC |
+| backtestSection | backtest.js, backtestCharts.js | backtest | setAsyncState; hub wave pending |
+| reportSectionCard | report.js | — | Under Quick check Deep |
+| secCompareSection | sec.js | sec, seccompare | Under Quick check Deep |
+| portfolioSection | portfolio.js | — | Shell triage KPIs; hub wave next |
 | sectorsSection | sectors.js | sectors | setAsyncState |
 | moversSection | movers.js | movers | setAsyncState |
 | cockpitMergedPanel | cockpit.js | cockpit | setAsyncState |

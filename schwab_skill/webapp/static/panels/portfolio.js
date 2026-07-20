@@ -87,6 +87,7 @@ export async function refreshPortfolio() {
   const out = await api.get("/api/portfolio");
   if (!out.ok) {
     state.lastPortfolioData = null;
+    window.dispatchEvent(new CustomEvent("research_summary_refresh"));
     const reason = safeText(out.user_message || out.error || "fetch failed");
     // 401 → signed-out banner. 409 → "link Schwab in Settings". Other → generic.
     if (out.status === 401) {
@@ -144,6 +145,7 @@ export async function refreshPortfolio() {
   }
   const data = out.data || {};
   state.lastPortfolioData = data;
+  window.dispatchEvent(new CustomEvent("research_summary_refresh"));
   if (meta) {
     clearUnavailable(meta);
     meta.textContent = `${formatCount(data.positions_count, "0")} position(s) • ${formatMoney(data.total_market_value)}`;

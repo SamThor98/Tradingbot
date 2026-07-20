@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-07-16
+updated: 2026-07-20
 tags: [frontend, routing, deep-links, contract]
 ---
 
@@ -44,7 +44,7 @@ top-level tab via `SCREEN_ALIASES` in `app.js` (e.g. `cockpit` → `research`).
 | Order / shortcut | Screen mode | Tab label | Purpose |
 |------------------|-------------|-----------|---------|
 | 1 | `operations` | Today | Summary landing + scan → review → approve kanban |
-| 2 | `research` | Research | Sub-tabs: Quick check, Backtest, Diligence, Portfolio |
+| 2 | `research` | Research | Sub-tabs: Portfolio → Quick check → Backtest (default Portfolio; Diligence merged into Quick check Brief/Deep) |
 | 3 | `diagnostics` | System | Summary + health ribbon; collapsed status/decision/quality panels |
 | 4 | `settings` | Settings | Overview (live-order controls) + Connect + presets + account security |
 
@@ -63,7 +63,7 @@ Default landing: `operations` (Today).
 | `research` | `researchWorkspaceIntro` | research |
 | `backtest`, `backtests` | `backtestSection` | research |
 | `cockpit` | `cockpitWorkspaceIntro` | research (via alias) |
-| `sec`, `seccompare` | `secCompareSection` | research |
+| `sec`, `seccompare` | `secCompareSection` | research (opens Quick check → Deep) |
 | `portfolio` | `portfolioSection` | research |
 | `risk`, `portfoliorisk` | `portfolioPanelRisk` | research (opens Portfolio → Risk sub-tab) |
 | `book` | `portfolioPanelBook` | research (opens Portfolio → Book sub-tab) |

@@ -815,6 +815,7 @@ html, body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
+  align-items: start;
 }
 
 .section-title {
@@ -1024,12 +1025,16 @@ tbody tr:last-child td {
   flex-wrap: wrap;
 }
 input {
-  flex: 1 1 150px;
   border: 1px solid rgba(130, 153, 221, 0.35);
   background: rgba(8, 14, 31, 0.6);
   color: var(--text);
   border-radius: 10px;
   padding: 10px 12px;
+}
+/* Grow for width in row toolbars only — never as height in column labels. */
+.inline-form input {
+  flex: 1 1 150px;
+  min-width: 0;
 }
 select {
   border: 1px solid rgba(130, 153, 221, 0.35);
@@ -2619,6 +2624,23 @@ body.trade-drawer-open .trade-drawer-backdrop {
   padding: 0 16px 16px;
   display: grid;
   gap: 12px;
+  align-content: start;
+}
+#performanceSection,
+#cockpitMergedPanel {
+  align-self: start;
+  height: auto;
+  min-height: 0;
+}
+#cockpitMergedPanel:not([open]) {
+  /* Collapsed disclosure should not reserve a tall empty card body. */
+  padding-bottom: 0;
+}
+#cockpitMergedPanel:not([open]) .research-status-strip,
+#cockpitMergedPanel:not([open]) .research-panel-snapshot,
+#cockpitMergedPanel:not([open]) #cockpitSection,
+#cockpitMergedPanel:not([open]) #cockpitWorkspaceIntro {
+  display: none !important;
 }
 
 .performance-panel .panel-error {
@@ -3978,6 +4000,13 @@ body.ui-screen-diagnostics .settings-surface {
   display: none !important;
 }
 
+body.ui-screen-operations .research-surface,
+body.ui-screen-diagnostics .research-surface,
+body.ui-screen-settings .research-surface,
+body.ui-screen-cockpit .research-surface {
+  display: none !important;
+}
+
 /* ── Cockpit on Research (Portfolio sub-tab) ────────────────────────────── */
 body.ui-screen-operations #cockpitMergedPanel,
 body.ui-screen-operations #cockpitSection,
@@ -4116,28 +4145,90 @@ body.ui-screen-settings .cockpit-drawer {
   margin: 0 0 0.75rem;
   font-size: 0.82rem;
 }
+.research-chrome-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin: 0 0 0.35rem;
+}
 .research-tab-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 1rem;
+  margin: 0;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(26, 26, 26, 0.12);
+  background: rgba(255, 254, 251, 0.9);
 }
 .research-tab-btn {
-  border: 1px solid rgba(26, 26, 26, 0.14);
+  border: 1px solid transparent;
   background: transparent;
-  border-radius: 999px;
-  padding: 0.35rem 0.85rem;
+  border-radius: 10px;
+  padding: 0.5rem 1.1rem;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 .research-tab-btn.active {
-  background: rgba(26, 26, 26, 0.08);
+  background: var(--ol-accent, #1a3a2e);
+  color: var(--ol-bg, #f5f1e8);
   font-weight: 600;
 }
 .research-tab-hidden { display: none !important; }
 
+.research-density-control,
+.research-check-mode-control {
+  display: inline-flex;
+  gap: 0;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(26, 26, 26, 0.06);
+}
+.research-density-btn,
+.research-check-mode-btn {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted, #5a5a5a);
+}
+.research-density-btn.active,
+.research-check-mode-btn.active {
+  background: var(--ol-surface, #fffefb);
+  color: var(--ol-accent, #1a3a2e);
+  box-shadow: 0 0 0 1px rgba(26, 58, 46, 0.12);
+}
+.research-shell-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+}
+.research-check-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 0.75rem;
+}
+.research-check-mode-bar[hidden] {
+  display: none !important;
+}
+.research-check-mode-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .research-summary-landing {
   margin-bottom: 0.75rem;
+}
+
+.research-summary-landing .research-status-strip {
+  margin-bottom: 12px;
 }
 
 .research-summary-grid {
@@ -4145,6 +4236,10 @@ body.ui-screen-settings .cockpit-drawer {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px 16px;
   margin-bottom: 12px;
+}
+
+.research-summary-grid--triage {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .research-summary-kpi {
@@ -4180,10 +4275,40 @@ body.ui-screen-research .mode-header-kpis {
   display: none !important;
 }
 
+@media (max-width: 1100px) {
+  .research-summary-grid--triage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 640px) {
-  .research-summary-grid {
+  .research-summary-grid,
+  .research-summary-grid--triage {
     grid-template-columns: 1fr;
   }
+}
+
+/* Research density — dense packs tables / portfolio / backtest results */
+body[data-density="dense"] .research-surface .table-wrap,
+body[data-density="dense"] #portfolioSection,
+body[data-density="dense"] #backtestSection {
+  --research-row-pad: 0.28rem 0.45rem;
+}
+body[data-density="dense"] #portfolioSection table th,
+body[data-density="dense"] #portfolioSection table td,
+body[data-density="dense"] #backtestSection table th,
+body[data-density="dense"] #backtestSection table td {
+  padding: var(--research-row-pad, 0.28rem 0.45rem);
+  font-size: 0.84rem;
+}
+body[data-density="dense"] #portfolioSection .section-title,
+body[data-density="dense"] #backtestSection .section-title {
+  margin-bottom: 0.45rem;
+}
+body[data-density="dense"] #portfolioSection.card,
+body[data-density="dense"] #backtestSection.card {
+  padding-top: 0.85rem;
+  padding-bottom: 0.85rem;
 }
 
 .system-summary-landing {
@@ -4438,6 +4563,10 @@ body:not(.ui-screen-cockpit):not(.ui-screen-research) .cockpit-drawer {
 
 body.ui-screen-operations #onboardingSection,
 body.ui-screen-operations #settingsSection,
+body.ui-screen-operations #researchTabNav,
+body.ui-screen-operations #researchSummaryLanding,
+body.ui-screen-operations #moversSection,
+body.ui-screen-operations #researchAdvancedTools,
 body.ui-screen-operations #researchWorkflowStrip,
 body.ui-screen-operations #settingsWorkflowStrip,
 body.ui-screen-operations #diagnosticsWorkflowStrip,
@@ -4560,7 +4689,12 @@ body.ui-screen-research .research-cockpit-disclosure {
 }
 
 body.ui-screen-diagnostics .operations-surface,
+body.ui-screen-diagnostics #dashboardToday,
 body.ui-screen-diagnostics #workflowPrimary,
+body.ui-screen-diagnostics #researchTabNav,
+body.ui-screen-diagnostics #researchSummaryLanding,
+body.ui-screen-diagnostics #moversSection,
+body.ui-screen-diagnostics #researchAdvancedTools,
 body.ui-screen-diagnostics #researchWorkflowStrip,
 body.ui-screen-diagnostics #settingsWorkflowStrip,
 body.ui-screen-diagnostics #quickCheckSection,
@@ -4581,6 +4715,9 @@ body.ui-screen-diagnostics #activitySection {
 }
 body.ui-screen-settings #dashboardToday,
 body.ui-screen-settings #workflowPrimary,
+body.ui-screen-settings #researchTabNav,
+body.ui-screen-settings #researchSummaryLanding,
+body.ui-screen-settings #researchAdvancedTools,
 body.ui-screen-settings #researchWorkflowStrip,
 body.ui-screen-settings #diagnosticsWorkflowStrip,
 body.ui-screen-settings #quickCheckSection,
@@ -5538,6 +5675,21 @@ progress::-moz-progress-bar {
 .risk-metrics-table td.mono-nums,
 .risk-metrics-table td:last-child {
   font-variant-numeric: tabular-nums;
+}
+
+/* Portfolio triage hub */
+.portfolio-hub .portfolio-subtabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ol-surface, #fffefb);
+  padding: 0.35rem 0;
+  margin-bottom: 0.65rem;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.08);
+}
+body[data-density="dense"] .portfolio-hub .portfolio-subtabs {
+  padding: 0.2rem 0;
+  margin-bottom: 0.4rem;
 }
 
 /* Correlation heatmap grid */
@@ -6576,7 +6728,11 @@ body[data-theme="editorial"] .queue-scan-headline {
   border-radius: 8px;
   padding: 12px;
   background: var(--ol-surface, #fffefb);
-  min-height: 180px;
+  min-height: 0;
+}
+.cockpit-grid .lane [data-async-state="loading"],
+.cockpit-grid .lane [data-async-state="idle"] {
+  min-height: 4.5rem;
 }
 .cockpit-grid .lane h2 {
   font-family: "Fraunces", Georgia, serif;
@@ -6708,6 +6864,25 @@ body[data-theme="editorial"] .queue-scan-headline {
   flex-wrap: wrap;
   gap: 4px;
 }
+.book-export-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.book-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.book-export-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.book-export-status--ok { color: var(--good, #1f7a4d); }
+.book-export-status--fail { color: var(--bad, #b42318); }
 .book-panel {
   display: flex;
   flex-direction: column;
@@ -6743,9 +6918,16 @@ body[data-theme="editorial"] .queue-scan-headline {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   padding: 8px 10px;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
   min-height: 2.25rem;
+  height: 2.25rem;
+  box-sizing: border-box;
+  line-height: 1.25;
 }
 .book-textarea {
+  height: auto;
   min-height: 4.5rem;
   resize: vertical;
   line-height: 1.45;
@@ -6753,8 +6935,16 @@ body[data-theme="editorial"] .queue-scan-headline {
 }
 .book-input--year,
 .book-input--month,
-.book-input--rate { width: 100%; max-width: 7.5rem; }
+.book-input--rate {
+  width: 100%;
+  max-width: 7.5rem;
+}
 .book-input--month { max-width: 4.5rem; }
+select.book-input {
+  height: 2.25rem;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
 .book-meta,
 .book-status,
 .book-empty,
@@ -6793,15 +6983,15 @@ body[data-theme="editorial"] .queue-scan-headline {
   padding: 6px 0 2px;
 }
 .book-cal-cell {
-  min-height: 4.75rem;
+  min-height: 3.25rem;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--panel);
-  padding: 6px 8px;
+  padding: 5px 7px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 2px;
   cursor: pointer;
   font: inherit;
   color: inherit;
@@ -6881,10 +7071,10 @@ body[data-theme="editorial"] .queue-scan-headline {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 .book-kpi-label {
   font-size: 0.75rem;
@@ -6906,18 +7096,22 @@ body[data-theme="editorial"] .queue-scan-headline {
   line-height: 1.35;
 }
 .book-estimate-card {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   background: var(--panel);
-  padding: 16px 18px;
+  padding: 14px 16px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto auto;
   gap: var(--space-2) var(--space-4);
   align-items: end;
 }
 @media (max-width: 640px) {
-  .book-estimate-card { grid-template-columns: 1fr; }
+  .book-estimate-card {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
 }
 .book-estimate-total {
   font-size: 1.75rem;
@@ -6952,11 +7146,12 @@ body[data-theme="editorial"] .queue-scan-headline {
   border-color: color-mix(in srgb, var(--warn, #b8860b) 35%, var(--panel-border));
 }
 .book-rates-panel {
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   background: var(--panel);
-  padding: 16px 18px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -6967,8 +7162,11 @@ body[data-theme="editorial"] .queue-scan-headline {
   gap: var(--space-2) var(--space-3);
   align-items: end;
   margin: 0;
-  width: 100%;
+  width: auto;
   max-width: 44rem;
+}
+.book-tax-form .book-field {
+  align-self: end;
 }
 @media (max-width: 720px) {
   .book-tax-form {
@@ -7005,7 +7203,7 @@ body[data-theme="editorial"] .queue-scan-headline {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 32rem;
+  max-height: 22rem;
   overflow: auto;
   min-width: 0;
 }
@@ -7029,10 +7227,16 @@ body[data-theme="editorial"] .queue-scan-headline {
 }
 .book-journal-detail {
   min-width: 0;
+  min-height: 0;
+  height: auto;
+  align-self: start;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
   background: var(--panel);
   padding: var(--space-3);
+}
+.book-journal-detail:has(> .book-empty:only-child) {
+  padding: 12px 14px;
 }
 .book-journal-detail-inner {
   display: flex;

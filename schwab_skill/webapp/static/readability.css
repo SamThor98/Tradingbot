@@ -35,6 +35,17 @@ body[data-theme="editorial"] {
   --ol-warn: #8a5c1f;
   --ol-bad: #c94949; /* fills/borders/large text */
   --ol-bad-text: #a83636; /* AA-safe red for small text on cream/tinted chips */
+  /* Neutralize legacy overhaul dark-first aliases so leftover ink-* rules
+     cannot paint navy under dark body text (dark-on-dark). */
+  --ink: var(--ol-bg);
+  --ink-2: var(--ol-surface);
+  --ink-3: var(--ol-surface-soft);
+  --ink-line: var(--ol-border);
+  --ink-line-strong: var(--ol-border-strong);
+  --paper: var(--ol-text);
+  --paper-soft: var(--ol-text-soft);
+  --paper-warm: var(--ol-text);
+  --paper-mute: var(--ol-muted);
   /* Spacing scale (Figma 4/8/12/16/20/24) */
   --ol-space-1: 4px;
   --ol-space-2: 8px;
@@ -1750,13 +1761,13 @@ body[data-theme="editorial"] .mode-header-kpis .hero-kpi-value {
   letter-spacing: -0.01em !important;
 }
 
-/* Tab numerals: quiet, monospaced; gold on the active tab */
+/* Tab numerals: quiet, monospaced — never ol/gold as text (AA fail on cream) */
 body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-num {
   color: var(--ol-muted) !important;
   font-family: "IBM Plex Mono", ui-monospace, monospace !important;
 }
 body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
-  color: var(--ol-gold) !important;
+  color: var(--ol-on-accent) !important;
 }
 body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:not([aria-selected="true"]):hover {
   color: var(--ol-accent) !important;
@@ -2617,10 +2628,18 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
 
   body[data-theme="editorial"].ui-screen-research .layout-2 {
     grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr) !important;
+    align-items: start !important;
   }
 
   body[data-theme="editorial"].ui-screen-research .layout-2:has(> :only-child) {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body[data-theme="editorial"].ui-screen-research #performanceSection,
+  body[data-theme="editorial"].ui-screen-research #cockpitMergedPanel {
+    align-self: start !important;
+    min-height: 0 !important;
+    height: auto !important;
   }
 
   body[data-theme="editorial"] .ir-dossier-preview {
@@ -3859,7 +3878,12 @@ body[data-theme="editorial"] .risk-metrics-table th[data-risk-sort]:hover {
 }
 
 /* Correlation heatmap — colors owned here via data-corr-bucket.
-   Positive corr = bad red tints, negative = forest ok tints. */
+   Positive corr = ol/bad red tints (concentration risk).
+   Negative corr = ol/ok forest tints (diversifying).
+   Intensity steps must stay distinct — never flat full-red. */
+body[data-theme="editorial"] .risk-corr-heatmap {
+  gap: 2px;
+}
 body[data-theme="editorial"] .risk-corr-cell {
   min-width: 34px;
   padding: 4px 2px;
@@ -3867,29 +3891,61 @@ body[data-theme="editorial"] .risk-corr-cell {
   border-radius: 3px;
   color: var(--ol-text);
   cursor: pointer;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--ol-muted) 8%, transparent);
 }
 body[data-theme="editorial"] .risk-corr-label {
   font-size: 0.8rem;
   color: var(--ol-muted);
 }
-.risk-corr-cell[data-corr-bucket="5"]  { background: rgba(201, 73, 73, 0.85); color: #fffefb; }
-.risk-corr-cell[data-corr-bucket="4"]  { background: rgba(201, 73, 73, 0.62); }
-.risk-corr-cell[data-corr-bucket="3"]  { background: rgba(201, 73, 73, 0.44); }
-.risk-corr-cell[data-corr-bucket="2"]  { background: rgba(201, 73, 73, 0.28); }
-.risk-corr-cell[data-corr-bucket="1"]  { background: rgba(201, 73, 73, 0.14); }
-.risk-corr-cell[data-corr-bucket="0"]  { background: rgba(90, 90, 90, 0.08); }
-.risk-corr-cell[data-corr-bucket="-1"] { background: rgba(45, 90, 74, 0.14); }
-.risk-corr-cell[data-corr-bucket="-2"] { background: rgba(45, 90, 74, 0.28); }
-.risk-corr-cell[data-corr-bucket="-3"] { background: rgba(45, 90, 74, 0.44); }
-.risk-corr-cell[data-corr-bucket="-4"] { background: rgba(45, 90, 74, 0.62); }
-.risk-corr-cell[data-corr-bucket="-5"] { background: rgba(45, 90, 74, 0.85); color: #fffefb; }
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="5"] {
+  background: color-mix(in srgb, var(--ol-bad) 85%, transparent);
+  color: var(--ol-surface);
+  border-color: color-mix(in srgb, var(--ol-bad) 55%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="4"] {
+  background: color-mix(in srgb, var(--ol-bad) 62%, transparent);
+  color: var(--ol-surface);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="3"] {
+  background: color-mix(in srgb, var(--ol-bad) 44%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="2"] {
+  background: color-mix(in srgb, var(--ol-bad) 28%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="1"] {
+  background: color-mix(in srgb, var(--ol-bad) 14%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="0"] {
+  background: color-mix(in srgb, var(--ol-muted) 8%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="-1"] {
+  background: color-mix(in srgb, var(--ol-ok) 14%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="-2"] {
+  background: color-mix(in srgb, var(--ol-ok) 28%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="-3"] {
+  background: color-mix(in srgb, var(--ol-ok) 44%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="-4"] {
+  background: color-mix(in srgb, var(--ol-ok) 62%, transparent);
+  color: var(--ol-surface);
+}
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="-5"] {
+  background: color-mix(in srgb, var(--ol-ok) 85%, transparent);
+  color: var(--ol-surface);
+  border-color: color-mix(in srgb, var(--ol-ok) 55%, transparent);
+}
 body[data-theme="editorial"] .risk-corr-cell.corr-dim { opacity: 0.25; }
 body[data-theme="editorial"] .risk-corr-cell.corr-hilite {
   outline: 2px solid var(--ol-gold);
   outline-offset: -2px;
+  z-index: 1;
 }
 body[data-theme="editorial"] .risk-corr-legend {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 0.8125rem;
@@ -3902,8 +3958,32 @@ body[data-theme="editorial"] .risk-corr-swatch {
   height: 12px;
   border-radius: 2px;
 }
-body[data-theme="editorial"] .risk-corr-swatch--pos { background: rgba(201, 73, 73, 0.7); }
-body[data-theme="editorial"] .risk-corr-swatch--neg { background: rgba(45, 90, 74, 0.7); }
+body[data-theme="editorial"] .risk-corr-swatch--pos {
+  background: color-mix(in srgb, var(--ol-bad) 70%, transparent);
+}
+body[data-theme="editorial"] .risk-corr-swatch--neg {
+  background: color-mix(in srgb, var(--ol-ok) 70%, transparent);
+}
+/* Scale strip under heatmap — makes bucket intensity scannable */
+body[data-theme="editorial"] .risk-corr-scale {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 2px;
+  margin-top: 8px;
+  max-width: 320px;
+}
+body[data-theme="editorial"] .risk-corr-scale span {
+  height: 8px;
+  border-radius: 2px;
+}
+body[data-theme="editorial"] .risk-corr-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  max-width: 320px;
+  font-size: 0.72rem;
+  color: var(--ol-muted);
+  margin-top: 2px;
+}
 
 /* Weight vs risk chart */
 body[data-theme="editorial"] .risk-wr-bar-weight { background: var(--ol-accent); }
@@ -4417,6 +4497,27 @@ body[data-theme="editorial"] .near-miss-reason {
 ============================================================ */
 body[data-theme="editorial"] .field-label,
 body[data-theme="editorial"] .today-summary-label,
+body[data-theme="editorial"] .research-tab-nav {
+  border-color: var(--ol-border) !important;
+  background: var(--ol-surface) !important;
+}
+
+body[data-theme="editorial"] .research-tab-btn.active {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent, var(--ol-bg)) !important;
+}
+
+body[data-theme="editorial"] .research-density-control,
+body[data-theme="editorial"] .research-check-mode-control {
+  background: var(--ol-surface-soft) !important;
+}
+
+body[data-theme="editorial"] .research-density-btn.active,
+body[data-theme="editorial"] .research-check-mode-btn.active {
+  background: var(--ol-surface) !important;
+  color: var(--ol-accent) !important;
+}
+
 body[data-theme="editorial"] .research-summary-label,
 body[data-theme="editorial"] .system-summary-label,
 body[data-theme="editorial"] .settings-summary-label,
@@ -4529,6 +4630,27 @@ body[data-theme="editorial"] .book-input,
 body[data-theme="editorial"] .book-textarea {
   background: var(--ol-bg, var(--panel));
   border-color: var(--ol-border, var(--panel-border));
+  flex: 0 0 auto !important;
+}
+body[data-theme="editorial"] .book-input {
+  height: 2.25rem !important;
+  min-height: 2.25rem !important;
+  max-height: 2.25rem !important;
+  line-height: 1.25 !important;
+  box-sizing: border-box !important;
+}
+body[data-theme="editorial"] .book-textarea {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 4.5rem !important;
+}
+body[data-theme="editorial"] .book-rates-panel,
+body[data-theme="editorial"] .book-estimate-card {
+  width: fit-content;
+  max-width: 100%;
+}
+body[data-theme="editorial"] .book-cal-cell {
+  min-height: 3.25rem;
 }
 body[data-theme="editorial"] .book-banner--warn {
   background: color-mix(in srgb, var(--ol-warn, #c9a962) 16%, transparent);
@@ -4540,4 +4662,180 @@ body[data-theme="editorial"] .book-journal-layout {
 body[data-theme="editorial"] .book-cal-realized {
   font-size: 0.84rem;
 }
+
+/* Performance panel — remapped from dark cockpit leftovers to ol/* tokens (Wave 5) */
+body[data-theme="editorial"] .perf-bucket {
+  border: 1px solid var(--ol-border) !important;
+  background: var(--ol-surface) !important;
+  color: var(--ol-text) !important;
+}
+body[data-theme="editorial"] .perf-bucket h3 {
+  color: var(--ol-accent) !important;
+}
+body[data-theme="editorial"] .perf-bucket-note,
+body[data-theme="editorial"] .perf-bucket .perf-source {
+  color: var(--ol-muted) !important;
+}
+body[data-theme="editorial"] .performance-callout {
+  border: 1px solid color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border)) !important;
+  background: color-mix(in srgb, var(--ol-gold) 14%, var(--ol-surface)) !important;
+  color: var(--ol-text) !important;
+}
+body[data-theme="editorial"] .performance-outcomes-wrap,
+body[data-theme="editorial"] .perf-attribution-card {
+  border: 1px solid var(--ol-border) !important;
+  background: var(--ol-surface) !important;
+}
+body[data-theme="editorial"] .performance-outcomes-wrap h3,
+body[data-theme="editorial"] .perf-attribution-card h3,
+body[data-theme="editorial"] .perf-attribution-wrap h3 {
+  color: var(--ol-accent) !important;
+}
+body[data-theme="editorial"] .operator-alert--warn {
+  border-left: 3px solid var(--ol-gold);
+  background: color-mix(in srgb, var(--ol-gold) 12%, var(--ol-surface));
+}
+body[data-theme="editorial"] .operator-alert--warn .operator-alert__headline {
+  color: var(--ol-warn) !important;
+}
+
+/* ---- Dark-on-dark safety net (hardcoded navy leftovers) ---- */
+body[data-theme="editorial"] #healthRibbon,
+body[data-theme="editorial"] #healthRibbon .health-tile,
+body[data-theme="editorial"] #healthRibbon .system-status-strip,
+body[data-theme="editorial"] .system-status-strip,
+body[data-theme="editorial"] .operations-status-strip {
+  background: var(--ol-surface) !important;
+  background-image: none !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-label,
+body[data-theme="editorial"] #healthRibbon .health-value,
+body[data-theme="editorial"] #healthRibbon .muted,
+body[data-theme="editorial"] #healthRibbon p,
+body[data-theme="editorial"] #healthRibbon small,
+body[data-theme="editorial"] #healthRibbon strong,
+body[data-theme="editorial"] .system-status-strip,
+body[data-theme="editorial"] .system-status-strip .muted,
+body[data-theme="editorial"] .operations-status-strip,
+body[data-theme="editorial"] .operations-status-strip .muted {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .system-status-strip .muted,
+body[data-theme="editorial"] .operations-status-strip .muted,
+body[data-theme="editorial"] #healthRibbon .muted,
+body[data-theme="editorial"] #healthRibbon small {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .system-status-pill,
+body[data-theme="editorial"] .operations-status-pill {
+  background: color-mix(in srgb, var(--ol-ok) 14%, var(--ol-surface)) !important;
+  color: var(--ol-ok) !important;
+  border: 1px solid color-mix(in srgb, var(--ol-ok) 35%, transparent) !important;
+}
+
+/* Solid accent fills must keep light text (never inherit body ink) */
+body[data-theme="editorial"] .btn.primary,
+body[data-theme="editorial"] .btn.good,
+body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  color: var(--ol-on-accent) !important;
+  -webkit-text-fill-color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+  -webkit-text-fill-color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
+  color: var(--ol-on-accent) !important;
+  -webkit-text-fill-color: var(--ol-on-accent) !important;
+  background: transparent !important;
+}
+
+/* Nested research/decision panels that still ship navy fills from styles.css */
+body[data-theme="editorial"] #decisionAblationTopWrap,
+body[data-theme="editorial"] #validationRecentWrap,
+body[data-theme="editorial"] #scMessages,
+body[data-theme="editorial"] .chat-log-scroll,
+body[data-theme="editorial"] .chat-bubble,
+body[data-theme="editorial"] .chat-bubble-assistant,
+body[data-theme="editorial"] .chat-bubble-user,
+body[data-theme="editorial"] .chat-empty-hint,
+body[data-theme="editorial"] .tool-output-host,
+body[data-theme="editorial"] .decision-ablation-wrap,
+body[data-theme="editorial"] .validation-recent-wrap,
+body[data-theme="editorial"] .validation-steps,
+body[data-theme="editorial"] .onboarding-stepper li,
+body[data-theme="editorial"] .code-block,
+body[data-theme="editorial"] pre.code-block {
+  background: var(--ol-surface-soft) !important;
+  background-image: none !important;
+  color: var(--ol-text) !important;
+  border-color: var(--ol-border) !important;
+}
+
+body[data-theme="editorial"] .chat-bubble-user {
+  background: color-mix(in srgb, var(--ol-accent) 10%, var(--ol-surface)) !important;
+}
+
+body[data-theme="editorial"] .chat-empty-hint,
+body[data-theme="editorial"] #scMessages .muted,
+body[data-theme="editorial"] #decisionAblationTopWrap .muted,
+body[data-theme="editorial"] #validationRecentWrap .muted,
+body[data-theme="editorial"] .validation-steps summary {
+  color: var(--ol-muted) !important;
+}
+
+/* Broad navy-panel wipe: styles.css still ships many rgba(9,16,35) / zinc
+   fills that inherit dark body text under the editorial theme. */
+body[data-theme="editorial"] .preset-subsection,
+body[data-theme="editorial"] .scan-block,
+body[data-theme="editorial"] .scan-block--blockers,
+body[data-theme="editorial"] .report-claim-grid > div,
+body[data-theme="editorial"] .shadow-plugin-card,
+body[data-theme="editorial"] .plugin-shadow-card,
+body[data-theme="editorial"] .decision-gate-tile,
+body[data-theme="editorial"] .kpi-tile,
+body[data-theme="editorial"] .health-tile,
+body[data-theme="editorial"] .meter,
+body[data-theme="editorial"] .funnel-stage,
+body[data-theme="editorial"] .scan-funnel,
+body[data-theme="editorial"] .task-card,
+body[data-theme="editorial"] .near-miss-row,
+body[data-theme="editorial"] .priority-feed-item,
+body[data-theme="editorial"] .notif-item,
+body[data-theme="editorial"] .cockpit-card,
+body[data-theme="editorial"] .cockpit-panel,
+body[data-theme="editorial"] .exec-monitor,
+body[data-theme="editorial"] .risk-flag-list,
+body[data-theme="editorial"] .sector-card,
+body[data-theme="editorial"] #scanDetailChartContainer,
+body[data-theme="editorial"] #authDebugPanel,
+body[data-theme="editorial"] #onboardingHelp,
+body[data-theme="editorial"] .auth-debug-panel,
+body[data-theme="editorial"] .onboarding-help {
+  background: var(--ol-surface) !important;
+  background-image: none !important;
+  color: var(--ol-text) !important;
+  border-color: var(--ol-border) !important;
+}
+
+body[data-theme="editorial"] .preset-subsection h3,
+body[data-theme="editorial"] .scan-block h3,
+body[data-theme="editorial"] .health-tile .health-label,
+body[data-theme="editorial"] .health-tile .health-value {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .preset-subsection .muted,
+body[data-theme="editorial"] .scan-block .muted,
+body[data-theme="editorial"] .health-tile .muted {
+  color: var(--ol-muted) !important;
+}
+
 
