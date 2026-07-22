@@ -2244,23 +2244,20 @@ body[data-theme="editorial"] #scanSection .scan-list-pane:has(tr.scan-row--empty
 }
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(4),
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(4),
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-rank {
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-rank,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-rank {
+  width: auto !important;
   text-align: left !important;
   font-family: inherit !important;
 }
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-actions-cell,
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-th-actions {
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-th-actions,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-actions {
   width: 13.75rem !important;
   min-width: 13.75rem !important;
   max-width: 13.75rem !important;
   font-family: inherit !important;
   font-variant-numeric: normal !important;
-}
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th.scan-th-spacer,
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-spacer {
-  width: 100% !important;
-  padding: 0 !important;
-  border: none !important;
 }
 body[data-theme="editorial"] .scan-results-layout {
   display: flex !important;
@@ -4956,6 +4953,357 @@ body[data-theme="editorial"] .preset-subsection .muted,
 body[data-theme="editorial"] .scan-block .muted,
 body[data-theme="editorial"] .health-tile .muted {
   color: var(--ol-muted) !important;
+}
+
+/* ============================================================
+   Tab comprehension redesign — nav subtitles + landing frame
+   ============================================================ */
+body[data-theme="editorial"] .app-topbar-tabs {
+  align-items: stretch !important;
+  gap: 4px !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  display: inline-flex !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+  padding: 8px 12px 10px !important;
+  border-radius: 12px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--ol-muted) !important;
+  line-height: 1.2 !important;
+  position: relative;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-label {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: inherit;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-subtitle {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--ol-muted);
+  max-width: 11.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:hover {
+  background: color-mix(in srgb, var(--ol-surface-soft) 80%, var(--ol-accent) 8%) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: color-mix(in srgb, var(--ol-surface) 92%, var(--ol-accent) 8%) !important;
+  color: var(--ol-text) !important;
+  -webkit-text-fill-color: var(--ol-text) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ol-gold, #c9a962);
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
+  color: var(--ol-gold, #c9a962) !important;
+  -webkit-text-fill-color: var(--ol-gold, #c9a962) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-subtitle {
+  color: var(--ol-muted) !important;
+  opacity: 0.95;
+}
+
+body[data-theme="editorial"] .tab-landing-frame.mode-header {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
+  padding: 22px 24px !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 18px !important;
+  background: var(--ol-surface) !important;
+}
+
+body[data-theme="editorial"] .tab-landing-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+}
+
+body[data-theme="editorial"] .tab-landing-identity {
+  min-width: min(100%, 280px);
+  flex: 1 1 280px;
+}
+
+/* Title + job subtitle carry identity; hide redundant eyebrows in landing frame. */
+body[data-theme="editorial"] .tab-landing-frame .mode-eyebrow {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .tab-landing-subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .tab-landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+body[data-theme="editorial"] .tab-landing-actions #screenContextCta {
+  font-size: 0.9rem !important;
+  padding: 0.55rem 1.1rem !important;
+}
+
+body[data-theme="editorial"] .tab-landing-secondary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+}
+
+body[data-theme="editorial"] .tab-landing-link {
+  color: var(--ol-accent) !important;
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+body[data-theme="editorial"] .tab-landing-link:hover {
+  border-bottom-color: color-mix(in srgb, var(--ol-accent) 45%, transparent);
+}
+
+body[data-theme="editorial"] .tab-landing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .tab-landing-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--ol-border);
+  background: var(--ol-bg);
+  color: var(--ol-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+body[data-theme="editorial"] .tab-landing-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ol-muted);
+  flex: 0 0 auto;
+}
+
+body[data-theme="editorial"] .tab-landing-chip--healthy {
+  border-color: color-mix(in srgb, var(--ol-ok, #2f6b4f) 55%, var(--ol-border));
+}
+body[data-theme="editorial"] .tab-landing-chip--healthy .tab-landing-chip-dot {
+  background: var(--ol-ok, #2f6b4f);
+}
+body[data-theme="editorial"] .tab-landing-chip--attention {
+  border-color: color-mix(in srgb, var(--ol-warn, #8a5c1f) 55%, var(--ol-border));
+}
+body[data-theme="editorial"] .tab-landing-chip--attention .tab-landing-chip-dot {
+  background: var(--ol-warn, #8a5c1f);
+}
+body[data-theme="editorial"] .tab-landing-chip--blocked {
+  border-color: color-mix(in srgb, var(--ol-bad, #c94949) 55%, var(--ol-border));
+}
+body[data-theme="editorial"] .tab-landing-chip--blocked .tab-landing-chip-dot {
+  background: var(--ol-bad, #c94949);
+}
+
+body[data-theme="editorial"] .tab-landing-anchors.mode-header-anchors {
+  margin-top: 2px;
+  opacity: 0.85;
+}
+
+body[data-theme="editorial"] .research-mode-chips.research-tab-nav {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px !important;
+  padding: 10px !important;
+  width: 100%;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 14px !important;
+  background: var(--ol-surface) !important;
+  color: var(--ol-text) !important;
+  text-align: left;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-label {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-hint {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ol-muted);
+  line-height: 1.3;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent, #fdfaf4) !important;
+  border-color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active .research-tab-hint {
+  color: color-mix(in srgb, var(--ol-on-accent, #fff) 82%, transparent) !important;
+}
+
+body[data-theme="editorial"] .system-two-zone {
+  display: grid;
+  gap: 16px;
+}
+
+body[data-theme="editorial"] .system-zone {
+  border: 1px solid var(--ol-border);
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: var(--ol-bg);
+}
+
+body[data-theme="editorial"] .system-zone-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .system-zone-verdict {
+  display: block;
+  font-family: var(--serif, "Fraunces", Georgia, serif);
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 0.35rem;
+  color: var(--ol-text);
+}
+
+body[data-theme="editorial"] .system-summary-landing[data-system-state="healthy"] .system-zone--trade {
+  border-color: color-mix(in srgb, var(--ol-ok, #2f6b4f) 65%, var(--ol-border));
+}
+body[data-theme="editorial"] .system-summary-landing[data-system-state="healthy"] .system-zone-verdict {
+  color: var(--ol-ok, #2f6b4f);
+}
+body[data-theme="editorial"] .system-summary-landing[data-system-state="blocked"] .system-zone--trade {
+  border-color: color-mix(in srgb, var(--ol-bad, #c94949) 70%, var(--ol-border));
+  border-width: 2px;
+}
+body[data-theme="editorial"] .system-summary-landing[data-system-state="blocked"] .system-zone-verdict {
+  color: var(--ol-bad, #c94949);
+}
+
+body[data-theme="editorial"] .system-blocker-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .system-blocker-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--ol-surface);
+}
+
+body[data-theme="editorial"] .system-zone--calibrate {
+  opacity: 0.92;
+}
+
+body[data-theme="editorial"] .system-zone-secondary-title {
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+body[data-theme="editorial"] .system-zone-support {
+  margin-top: 0.85rem;
+}
+
+body[data-theme="editorial"] .settings-connect-priority {
+  border: 2px solid color-mix(in srgb, var(--ol-bad, #c94949) 65%, var(--ol-border));
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  background: color-mix(in srgb, var(--ol-surface) 92%, var(--ol-bad, #c94949) 8%);
+}
+
+body[data-theme="editorial"] .settings-summary-landing--attention .settings-summary-guardrails--secondary {
+  opacity: 0.88;
+}
+
+body[data-theme="editorial"] .settings-summary-landing--healthy .settings-connect-priority {
+  display: none !important;
+}
+
+@media (max-width: 1200px) {
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-subtitle {
+    max-width: 8.5rem;
+  }
+}
+
+@media (max-width: 900px) {
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-subtitle {
+    /* Keep visible (not hover-only); allow wrap on narrow desktop widths. */
+    white-space: normal;
+    max-width: 7.5rem;
+  }
+  body[data-theme="editorial"] .research-mode-chips.research-tab-nav {
+    grid-template-columns: 1fr;
+  }
 }
 
 
