@@ -378,38 +378,47 @@ const SCREEN_ALIASES = Object.freeze({
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
     title: "Today",
+    subtitle: "Scan → review → approve",
     text: "Scan, review candidates, and stage only tradeable setups — nothing else.",
-    ctaLabel: "Run a scan",
+    ctaLabel: "Run scan",
     ctaHref: "#scanSection",
-    altCtaLabel: "Review pending",
-    altCtaHref: "#pendingSection",
+    altCtaLabel: "Open scan table",
+    altCtaHref: "#scanSection",
   },
   research: {
     title: "Research",
+    subtitle: "Portfolio, diligence, backtests",
     text: "Triage holdings first, then dig into a name (Brief/Deep), then lab backtests — one focused surface at a time.",
-    ctaLabel: "Open portfolio",
+    ctaLabel: "Open Portfolio",
     ctaHref: "#portfolioSection",
     altCtaLabel: "Quick check",
     altCtaHref: "#quickCheckSection",
+    altCta2Label: "Backtest",
+    altCta2Href: "#backtestSection",
   },
   diagnostics: {
     title: "System",
+    subtitle: "Health, blockers, calibration",
     text: "Health, validation, and readiness — verify reliability before it impacts execution.",
-    ctaLabel: "Health tiles",
-    ctaHref: "#healthRibbon",
-    altCtaLabel: "Detailed status",
-    altCtaHref: "#statusDetailsPanel",
+    ctaLabel: "Health summary",
+    ctaHref: "#systemSummaryLanding",
+    altCtaLabel: "Calibration",
+    altCtaHref: "#calibrationSection",
   },
   settings: {
     title: "Settings",
+    subtitle: "Connect, live controls, account",
     text: "Link Schwab, control live orders from the overview, and adjust risk presets when you need finer tuning.",
-    ctaLabel: "Connect Schwab",
-    ctaHref: "#onboardingSection",
-    altCtaLabel: "Live order controls",
-    altCtaHref: "#settingsSummaryGuardrails",
+    ctaLabel: "Live-order controls",
+    ctaHref: "#settingsSummaryGuardrails",
+    altCtaLabel: "Presets",
+    altCtaHref: "#settingsSection",
+    altCta2Label: "Account",
+    altCta2Href: "#settingsAccountPanel",
   },
   cockpit: {
     title: "One glance, full picture.",
+    subtitle: "Portfolio, diligence, backtests",
     text: "Market regime, ranked opportunities, portfolio risk, and the execution blotter in a single view with provenance on every lane.",
     ctaLabel: "Opportunities",
     ctaHref: "#laneOpportunities",
@@ -417,6 +426,13 @@ const SCREEN_CONTEXT = Object.freeze({
     altCtaHref: "#laneBlotter",
   },
 });
+/** Latest health snapshot for landing-frame chips / System zone verdict. */
+let lastHealthSnapshot = {
+  authState: "unknown",
+  quoteOk: null,
+  errRate: null,
+  deepReachable: null,
+};
 const SCREEN_NUDGE_KEY_PREFIX = "tradingbot.ui.screen_seen.";
 const FEATURE_GUIDE_SEEN_KEY = "tradingbot.ui.feature_guide_seen";
 const SCREEN_SECTIONS = Object.freeze({
@@ -449,6 +465,7 @@ const SCREEN_SECTIONS = Object.freeze({
   diagnostics: [
     "systemAlertBanner",
     "systemSummaryLanding",
+    "systemZoneBlockers",
     "healthRibbon",
     "systemDecisionPanel",
     "decisionDashboardCard",
@@ -597,24 +614,232 @@ function refreshSectionNavForScreen(mode) {
   });
 }
 
+function settingsConnectNeedsAttention() {
+  if (shouldForceConnectFirst()) return true;
+  const auth = safeText(lastHealthSnapshot.authState).toLowerCase();
+  if (auth === "disconnected" || auth === "unverified") return true;
+  const connEl = document.getElementById("settingsSummaryConnection");
+  const conn = safeText(connEl?.textContent || "").toLowerCase();
+  if (conn.includes("not linked")) return true;
+  return false;
+}
+
+function collectSystemBlockers(health = lastHealthSnapshot) {
+  const blockers = [];
+  if (state.publicConfig?.platform_live_trading_kill_switch) {
+    blockers.push("Platform kill switch is active — new risk-increasing orders are blocked.");
+  }
+  if (state.accountMe?.trading_halted) {
+    blockers.push("Trading pause is on — clear it in Settings before approving live orders.");
+  }
+  const auth = safeText(health.authState).toLowerCase();
+  if (auth === "disconnected") {
+    blockers.push("Schwab auth disconnected — reconnect account and market sessions.");
+  } else if (auth === "unverified") {
+    blockers.push("Schwab auth unverified — confirm broker API reachability.");
+  }
+  if (health.quoteOk === false) {
+    blockers.push("Quote feed degraded — data quality may fail closed.");
+  }
+  if (typeof health.errRate === "number" && health.errRate >= 3.0) {
+    blockers.push(`API error rate elevated (${health.errRate.toFixed(1)}%).`);
+  }
+  if (health.deepReachable === false) {
+    blockers.push("Deep health probe unreachable.");
+  }
+  try {
+    const top = getTopPriorityItem();
+    if (top && (top.severity === "error" || top.severity === "warn") && blockers.length < 4) {
+      const msg = safeText(top.message || top.title);
+      if (msg && !blockers.some((b) => b.includes(msg.slice(0, 24)))) {
+        blockers.push(msg);
+      }
+    }
+  } catch {
+    /* priority feed may not be initialized yet during first paint */
+  }
+  return blockers;
+}
+
+function renderLandingChips(chips) {
+  const host = document.getElementById("screenContextChips");
+  if (!host) return;
+  const list = Array.isArray(chips) ? chips.filter((c) => c && c.label).slice(0, 3) : [];
+  if (!list.length) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = list
+    .map((chip) => {
+      const tone = ["healthy", "attention", "blocked", "neutral"].includes(chip.tone)
+        ? chip.tone
+        : "neutral";
+      return `<span class="tab-landing-chip tab-landing-chip--${tone}"><span class="tab-landing-chip-dot" aria-hidden="true"></span>${escapeHtml(chip.label)}</span>`;
+    })
+    .join("");
+}
+
+function resolveLandingFrameState(mode) {
+  const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
+  const pending =
+    state.lastPendingCount === null || state.lastPendingCount === undefined
+      ? null
+      : Number(state.lastPendingCount) || 0;
+
+  if (mode === "operations") {
+    const hasPending = pending !== null && pending > 0;
+    return {
+      subtitle: cfg.subtitle,
+      ctaLabel: hasPending ? "Review pending" : "Run scan",
+      ctaHref: hasPending ? "#pendingSection" : "#scanSection",
+      altCtaLabel: "Open scan table",
+      altCtaHref: "#scanSection",
+      altCta2Label: "",
+      altCta2Href: "",
+      chips: [
+        pending === null
+          ? { label: "Pending …", tone: "neutral" }
+          : hasPending
+            ? { label: `${pending} pending`, tone: "attention" }
+            : { label: "Queue clear", tone: "healthy" },
+        state.lastScanAt
+          ? { label: `Last scan ${formatRelativeScanTime(state.lastScanAt)}`, tone: "neutral" }
+          : { label: "No scan yet", tone: "neutral" },
+        {
+          label:
+            lastHealthSnapshot.authState === "connected"
+              ? "Regime / auth OK"
+              : lastHealthSnapshot.authState === "disconnected"
+                ? "Auth blocked"
+                : "Auth check",
+          tone:
+            lastHealthSnapshot.authState === "connected"
+              ? "healthy"
+              : lastHealthSnapshot.authState === "disconnected"
+                ? "blocked"
+                : "neutral",
+        },
+      ],
+    };
+  }
+
+  if (mode === "research") {
+    return {
+      subtitle: cfg.subtitle,
+      ctaLabel: "Open Portfolio",
+      ctaHref: "#portfolioSection",
+      altCtaLabel: "Quick check",
+      altCtaHref: "#quickCheckSection",
+      altCta2Label: "Backtest",
+      altCta2Href: "#backtestSection",
+      chips: [
+        { label: "Book / risk tools", tone: "neutral" },
+        { label: "Quick check ready", tone: "neutral" },
+        { label: "Backtest lab", tone: "healthy" },
+      ],
+    };
+  }
+
+  if (mode === "diagnostics") {
+    const blockers = collectSystemBlockers();
+    const blocked = blockers.length > 0;
+    return {
+      subtitle: cfg.subtitle,
+      ctaLabel: blocked ? "View blockers" : "Health summary",
+      ctaHref: blocked ? "#systemZoneBlockers" : "#systemSummaryLanding",
+      altCtaLabel: "Calibration",
+      altCtaHref: "#calibrationSection",
+      altCta2Label: "",
+      altCta2Href: "",
+      chips: [
+        blocked
+          ? { label: "Cannot trade", tone: "blocked" }
+          : { label: "Can trade", tone: "healthy" },
+        blocked
+          ? { label: `${blockers.length} blocker${blockers.length === 1 ? "" : "s"}`, tone: "attention" }
+          : { label: "0 blockers", tone: "neutral" },
+        lastHealthSnapshot.quoteOk === false
+          ? { label: "Data degraded", tone: "attention" }
+          : { label: "Stack check", tone: "neutral" },
+      ],
+    };
+  }
+
+  if (mode === "settings") {
+    const connectBad = settingsConnectNeedsAttention();
+    return {
+      subtitle: cfg.subtitle,
+      ctaLabel: connectBad ? "Connect / fix auth" : "Live-order controls",
+      ctaHref: connectBad ? "#onboardingSection" : "#settingsSummaryGuardrails",
+      altCtaLabel: "Presets",
+      altCtaHref: "#settingsSection",
+      altCta2Label: "Account",
+      altCta2Href: "#settingsAccountPanel",
+      chips: [
+        connectBad
+          ? { label: "Disconnected / auth risk", tone: "blocked" }
+          : { label: "Schwab connected", tone: "healthy" },
+        state.accountMe?.live_execution_enabled
+          ? { label: "Live ON", tone: "attention" }
+          : { label: "Live OFF", tone: "neutral" },
+        state.accountMe?.trading_halted
+          ? { label: "Paused", tone: "attention" }
+          : { label: "Controls ready", tone: "neutral" },
+      ],
+    };
+  }
+
+  return {
+    subtitle: cfg.subtitle || "",
+    ctaLabel: cfg.ctaLabel,
+    ctaHref: cfg.ctaHref,
+    altCtaLabel: cfg.altCtaLabel,
+    altCtaHref: cfg.altCtaHref,
+    altCta2Label: cfg.altCta2Label || "",
+    altCta2Href: cfg.altCta2Href || "",
+    chips: [],
+  };
+}
+
+function refreshLandingFrameState(mode = currentScreenMode) {
+  try {
+    const resolved = resolveLandingFrameState(mode);
+    const subtitleEl = document.getElementById("screenContextSubtitle");
+    const ctaEl = document.getElementById("screenContextCta");
+    const altCtaEl = document.getElementById("screenContextAltCta");
+    const altCta2El = document.getElementById("screenContextAltCta2");
+    if (subtitleEl) subtitleEl.textContent = resolved.subtitle || "";
+    if (ctaEl) {
+      ctaEl.textContent = resolved.ctaLabel;
+      ctaEl.setAttribute("href", resolved.ctaHref);
+    }
+    if (altCtaEl) {
+      altCtaEl.textContent = resolved.altCtaLabel;
+      altCtaEl.setAttribute("href", resolved.altCtaHref);
+      altCtaEl.classList.toggle("hidden", !resolved.altCtaLabel);
+    }
+    if (altCta2El) {
+      const show = Boolean(resolved.altCta2Label);
+      altCta2El.textContent = resolved.altCta2Label || "";
+      altCta2El.setAttribute("href", resolved.altCta2Href || "#");
+      altCta2El.classList.toggle("hidden", !show);
+      altCta2El.hidden = !show;
+    }
+    renderLandingChips(resolved.chips);
+  } catch (err) {
+    console.warn("refreshLandingFrameState failed", err);
+  }
+}
+
 function renderScreenContext(mode) {
   const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const titleEl = document.getElementById("screenContextTitle");
   const textEl = document.getElementById("screenContextText");
   const hintEl = document.getElementById("screenContextHint");
-  const ctaEl = document.getElementById("screenContextCta");
-  const altCtaEl = document.getElementById("screenContextAltCta");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
   if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Today, 2 Research, 3 System, 4 Settings.";
-  if (ctaEl) {
-    ctaEl.textContent = cfg.ctaLabel;
-    ctaEl.setAttribute("href", cfg.ctaHref);
-  }
-  if (altCtaEl) {
-    altCtaEl.textContent = cfg.altCtaLabel;
-    altCtaEl.setAttribute("href", cfg.altCtaHref);
-  }
+  refreshLandingFrameState(mode);
 }
 
 function maybePrimeScreenData(mode) {
@@ -1227,6 +1452,7 @@ function updateHeroInfographic() {
     unavailable: "scan to populate",
   });
   updateTodaySummaryLanding();
+  refreshLandingFrameState();
 }
 
 function prefillResearchTicker(ticker, { overwrite = false } = {}) {
@@ -1277,6 +1503,10 @@ function syncSystemSummaryKpi(summaryId, ribbonId, hintId, hintWhenOk) {
 function updateSystemSummaryLanding() {
   const statusLine = document.getElementById("systemSummaryStatusLine");
   const ribbonSummary = document.getElementById("healthRibbonSummary");
+  const landing = document.getElementById("systemSummaryLanding");
+  const verdictEl = document.getElementById("systemZoneVerdict");
+  const blockersEl = document.getElementById("systemZoneBlockers");
+  const blockers = collectSystemBlockers();
   if (statusLine) {
     const line = safeText(ribbonSummary?.textContent || "").trim();
     if (line && !ribbonSummary?.hasAttribute("data-unavailable")) {
@@ -1294,6 +1524,29 @@ function updateSystemSummaryLanding() {
     "systemSummaryValidationHint",
     "validation artifact",
   );
+  const systemState = blockers.length ? "blocked" : lastHealthSnapshot.authState === "unknown" ? "unknown" : "healthy";
+  if (landing) landing.setAttribute("data-system-state", systemState);
+  if (verdictEl) {
+    verdictEl.textContent = blockers.length
+      ? "Blocked — fix before trading"
+      : systemState === "unknown"
+        ? "Checking health…"
+        : "Healthy — you can trade";
+  }
+  if (blockersEl) {
+    if (!blockers.length) {
+      blockersEl.innerHTML = "";
+    } else {
+      blockersEl.innerHTML = blockers
+        .slice(0, 5)
+        .map(
+          (b) =>
+            `<li class="system-blocker-item"><span class="tab-landing-chip tab-landing-chip--blocked"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Blocker</span><span>${escapeHtml(b)}</span></li>`,
+        )
+        .join("");
+    }
+  }
+  if (currentScreenMode === "diagnostics") refreshLandingFrameState("diagnostics");
 }
 
 function hideSystemAlertBanner() {
@@ -1401,6 +1654,9 @@ function updateSettingsSummaryLanding() {
   const liveEl = document.getElementById("settingsSummaryLive");
   const liveHint = document.getElementById("settingsSummaryLiveHint");
   const guardrails = document.getElementById("settingsSummaryGuardrails");
+  const landing = document.getElementById("settingsSummaryLanding");
+  const connectPriority = document.getElementById("settingsConnectPriority");
+  const leadEl = document.getElementById("settingsSummaryLead");
 
   if (guardrails) {
     guardrails.classList.toggle("settings-summary-guardrails--blocked", shouldForceConnectFirst());
@@ -1415,10 +1671,11 @@ function updateSettingsSummaryLanding() {
 
   const onboardingMeta = document.getElementById("onboardingMeta");
   const metaText = safeText(onboardingMeta?.textContent || "").trim();
+  let linked = false;
   if (connEl) {
     if (metaText && !/loading/i.test(metaText)) {
       clearUnavailable(connEl);
-      const linked = /linked|connected|complete|done/i.test(metaText);
+      linked = /linked|connected|complete|done/i.test(metaText);
       connEl.textContent = linked ? "Linked" : "Not linked";
       if (connHint) {
         connHint.textContent = linked ? "Schwab is connected" : "Start Connect Schwab below";
@@ -1456,6 +1713,25 @@ function updateSettingsSummaryLanding() {
       }
     }
   }
+
+  const attention = settingsConnectNeedsAttention() || (Boolean(metaText) && !linked && !/loading/i.test(metaText));
+  if (landing) {
+    landing.setAttribute("data-settings-state", attention ? "attention" : linked || lastHealthSnapshot.authState === "connected" ? "healthy" : "unknown");
+    landing.classList.toggle("settings-summary-landing--attention", attention);
+    landing.classList.toggle("settings-summary-landing--healthy", !attention && (linked || lastHealthSnapshot.authState === "connected"));
+  }
+  if (connectPriority) {
+    connectPriority.classList.toggle("hidden", !attention);
+  }
+  if (guardrails) {
+    guardrails.classList.toggle("settings-summary-guardrails--secondary", attention);
+  }
+  if (leadEl) {
+    leadEl.textContent = attention
+      ? "Needs attention: fix Connect / auth first. Live-order controls stay visible but secondary."
+      : "Schwab looks healthy. Live-order controls are the primary action; Connect and account stay secondary.";
+  }
+  if (currentScreenMode === "settings") refreshLandingFrameState("settings");
 }
 
 function updateResearchSummaryLanding() {
@@ -3027,6 +3303,12 @@ async function refreshStatus() {
       `Auth ${authState} · quotes ${quoteOk ? "healthy" : "degraded"} · API errors ${errRate.toFixed(1)}%.`,
     ],
   });
+  lastHealthSnapshot = {
+    authState,
+    quoteOk,
+    errRate,
+    deepReachable: deepRes.ok,
+  };
   updateSystemSummaryLanding();
   refreshSystemAlertBanner({ authState, quoteOk, errRate });
   // Mark the ribbon container as success now that it has rendered real data.
@@ -3050,6 +3332,7 @@ async function refreshStatus() {
     });
   }
   updateHeroInfographic();
+  refreshLandingFrameState();
   void maybeResumeLocalScanPolling();
 }
 
@@ -4566,13 +4849,21 @@ function connectSSE() {
       return result instanceof Promise
         ? result.catch((err) => {
             console.error(`[init] ${label} failed`, err);
-            logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+            try {
+              logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+            } catch {
+              /* ignore */
+            }
             try { showToast(`Init step failed: ${label}. Some buttons may not work.`, "error", 6000); } catch { /* ignore */ }
           })
         : result;
     } catch (err) {
       console.error(`[init] ${label} failed`, err);
-      logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+      try {
+        logEvent({ kind: "system", severity: "error", message: `${label} failed: ${String(err?.message || err)}` });
+      } catch {
+        /* ignore */
+      }
       try { showToast(`Init step failed: ${label}. Some buttons may not work.`, "error", 6000); } catch { /* ignore */ }
       return undefined;
     }

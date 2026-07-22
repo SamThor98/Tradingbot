@@ -43,7 +43,11 @@
           aria-selected="true"
           aria-controls="scanSection"
         >
-          <span class="tab-num" aria-hidden="true">1</span>Today
+          <span class="tab-num" aria-hidden="true">1</span>
+          <span class="tab-copy">
+            <span class="tab-label">Today</span>
+            <span class="tab-subtitle">Scan → review → approve</span>
+          </span>
         </button>
         <button
           type="button"
@@ -53,7 +57,11 @@
           aria-selected="false"
           aria-controls="researchTabNav"
         >
-          <span class="tab-num" aria-hidden="true">2</span>Research
+          <span class="tab-num" aria-hidden="true">2</span>
+          <span class="tab-copy">
+            <span class="tab-label">Research</span>
+            <span class="tab-subtitle">Portfolio, diligence, backtests</span>
+          </span>
         </button>
         <button
           type="button"
@@ -63,7 +71,11 @@
           aria-selected="false"
           aria-controls="healthRibbon"
         >
-          <span class="tab-num" aria-hidden="true">3</span>System
+          <span class="tab-num" aria-hidden="true">3</span>
+          <span class="tab-copy">
+            <span class="tab-label">System</span>
+            <span class="tab-subtitle">Health, blockers, calibration</span>
+          </span>
         </button>
         <button
           type="button"
@@ -73,7 +85,11 @@
           aria-selected="false"
           aria-controls="onboardingSection"
         >
-          <span class="tab-num" aria-hidden="true">4</span>Settings
+          <span class="tab-num" aria-hidden="true">4</span>
+          <span class="tab-copy">
+            <span class="tab-label">Settings</span>
+            <span class="tab-subtitle">Connect, live controls, account</span>
+          </span>
         </button>
       </nav>
 
@@ -127,38 +143,50 @@
         </details>
       </div>
 
-      <header id="screenContextCard" class="mode-header" aria-live="polite">
-        <div class="mode-header-copy">
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Operations</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">Diagnostics</p>
-          <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Settings</p>
-          <h1 id="screenContextTitle" class="mode-header-title">Operations</h1>
-          <p id="screenContextText" class="muted mode-header-lead">
-            Run a scan, review candidates, and push only high-conviction setups into approvals.
-          </p>
-          <nav class="mode-header-anchors section-nav" aria-label="In-mode navigation">
-            <a href="#scanSection" data-nav-screens="operations">Run scan</a>
-            <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
-            <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
-            <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
-            <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
-            <a href="#backtestSection" data-nav-screens="research">Backtest</a>
-            <a href="#reportSectionCard" data-nav-screens="research" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
-            <a href="#healthRibbon" data-nav-screens="diagnostics">Health</a>
-            <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Status</a>
-            <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics">Quality</a>
-            <a href="#settingsSummaryLanding" data-nav-screens="settings">Overview</a>
-            <a href="#onboardingSection" data-nav-screens="settings">Connect</a>
-            <a href="#settingsSection" data-nav-screens="settings" class="settings-presets-nav">Risk presets</a>
-          </nav>
-          <div class="mode-header-actions">
-            <a id="screenContextCta" class="btn small primary" href="#workflowPrimary">Run a scan</a>
-            <a id="screenContextAltCta" class="btn small secondary" href="#pendingSection">Review pending</a>
+      <header id="screenContextCard" class="mode-header tab-landing-frame" aria-live="polite">
+        <div class="tab-landing-row">
+          <div class="tab-landing-identity">
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Today</p>
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">System</p>
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Settings</p>
+            <h1 id="screenContextTitle" class="mode-header-title">Today</h1>
+            <p id="screenContextSubtitle" class="tab-landing-subtitle">Scan → review → approve</p>
+            <p id="screenContextText" class="visually-hidden">
+              Run a scan, review candidates, and push only high-conviction setups into approvals.
+            </p>
+          </div>
+          <div class="tab-landing-actions mode-header-actions">
+            <a id="screenContextCta" class="btn primary" href="#scanSection">Run scan</a>
+            <span class="tab-landing-secondary">
+              <a id="screenContextAltCta" class="tab-landing-link" href="#scanSection">Open scan table</a>
+              <a id="screenContextAltCta2" class="tab-landing-link hidden" href="#backtestSection" hidden>Backtest</a>
+            </span>
             <small id="screenContextHint" class="muted mode-header-hint">Press Ctrl/Cmd + 1..4 to switch tabs.</small>
           </div>
         </div>
-        <aside class="mode-header-kpis" aria-label="Session snapshot">
+        <div id="screenContextChips" class="tab-landing-chips" aria-label="Live status">
+          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Pending …</span>
+          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>No scan yet</span>
+          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Auth check</span>
+        </div>
+        <nav class="mode-header-anchors section-nav tab-landing-anchors" aria-label="In-mode navigation">
+          <a href="#scanSection" data-nav-screens="operations">Run scan</a>
+          <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
+          <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
+          <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
+          <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
+          <a href="#backtestSection" data-nav-screens="research">Backtest</a>
+          <a href="#reportSectionCard" data-nav-screens="research" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
+          <a href="#healthRibbon" data-nav-screens="diagnostics">Health</a>
+          <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Status</a>
+          <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics">Quality</a>
+          <a href="#settingsSummaryLanding" data-nav-screens="settings">Overview</a>
+          <a href="#onboardingSection" data-nav-screens="settings">Connect</a>
+          <a href="#settingsSection" data-nav-screens="settings" class="settings-presets-nav">Risk presets</a>
+        </nav>
+        <!-- Hidden KPI nodes kept for existing freshness / summary sync. -->
+        <aside class="mode-header-kpis visually-hidden" aria-hidden="true">
           <div class="hero-kpi" data-kpi="signals">
             <span class="hero-kpi-label">Open signals</span>
             <strong id="heroKpiSignals" class="hero-kpi-value mono-nums" data-unavailable="true">—</strong>
@@ -417,7 +445,6 @@
                     <col class="scan-triage-col-price" />
                     <col class="scan-triage-col-rank" />
                     <col class="scan-triage-col-actions" />
-                    <col class="scan-triage-col-spacer" />
                   </colgroup>
                   <thead>
                     <tr>
@@ -426,11 +453,10 @@
                       <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="scan-th-spacer" aria-hidden="true"></th>
                     </tr>
                   </thead>
                   <tbody id="scanTableBody">
-                    <tr class="scan-row--empty"><td colspan="6" class="muted">Run a scan to load candidates.</td></tr>
+                    <tr class="scan-row--empty"><td colspan="5" class="muted">Run a scan to load candidates.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -454,7 +480,6 @@
                       <col class="scan-triage-col-price" />
                       <col class="scan-triage-col-rank" />
                       <col class="scan-triage-col-actions" />
-                      <col class="scan-triage-col-spacer" />
                     </colgroup>
                     <thead>
                       <tr>
@@ -463,11 +488,10 @@
                         <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
-                        <th class="scan-th-spacer" aria-hidden="true"></th>
                       </tr>
                     </thead>
                     <tbody id="nearMissTableBody">
-                      <tr class="scan-row--empty"><td colspan="6" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                      <tr class="scan-row--empty"><td colspan="5" class="muted">Near-miss candidates will appear after scan.</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -646,10 +670,19 @@
       </section>
 
       <div class="research-chrome-row research-surface">
-        <nav id="researchTabNav" class="research-tab-nav" role="tablist" aria-label="Research sections">
-          <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="portfolio" aria-selected="true">Portfolio</button>
-          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="check" aria-selected="false" tabindex="-1">Quick check</button>
-          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">Backtest</button>
+        <nav id="researchTabNav" class="research-tab-nav research-mode-chips" role="tablist" aria-label="Research sections">
+          <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="portfolio" aria-selected="true">
+            <span class="research-tab-label">Portfolio</span>
+            <span class="research-tab-hint">Book, risk, and positions</span>
+          </button>
+          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="check" aria-selected="false" tabindex="-1">
+            <span class="research-tab-label">Quick check</span>
+            <span class="research-tab-hint">Brief or deep diligence on a ticker</span>
+          </button>
+          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">
+            <span class="research-tab-label">Backtest</span>
+            <span class="research-tab-hint">Replay signal edge and exits</span>
+          </button>
         </nav>
         <div id="researchDensityControl" class="research-density-control" role="group" aria-label="Research density">
           <button type="button" class="research-density-btn active" data-research-density-btn="comfortable" aria-pressed="true">Comfortable</button>
@@ -839,10 +872,19 @@
         </details>
       </div>
 
-      <section id="settingsSummaryLanding" class="card settings-summary-landing settings-surface" aria-label="Settings overview">
+      <section id="settingsSummaryLanding" class="card settings-summary-landing settings-surface" aria-label="Settings overview" data-settings-state="unknown">
         <p id="settingsSummaryLead" class="settings-summary-lead muted">
           Link Schwab first. Then use the controls below to turn live orders on or off and pause trading when you need to.
         </p>
+        <div id="settingsConnectPriority" class="settings-connect-priority hidden" aria-live="polite">
+          <strong>Connect / fix auth</strong>
+          <p class="muted small" style="margin: 0.35rem 0 0">
+            Schwab is disconnected or auth is unhealthy. Fix this before relying on live-order controls.
+          </p>
+          <div class="inline-form compact" style="margin-top: 0.5rem">
+            <a class="btn small primary" href="#onboardingSection">Connect Schwab</a>
+          </div>
+        </div>
         <div class="settings-summary-grid settings-summary-grid--pair">
           <div class="settings-summary-kpi">
             <span class="settings-summary-label">Schwab link</span>
@@ -1143,30 +1185,44 @@
         </div>
       </section>
 
-      <section id="systemSummaryLanding" class="card system-summary-landing diagnostics-surface" aria-label="System at a glance">
-        <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
-        <div class="system-summary-grid">
-          <div class="system-summary-kpi">
-            <span class="system-summary-label">Auth</span>
-            <strong id="systemSummaryAuth" class="system-summary-value" data-unavailable="true">—</strong>
-            <small id="systemSummaryAuthHint" class="muted">broker connection</small>
+      <section id="systemSummaryLanding" class="card system-summary-landing diagnostics-surface system-two-zone" aria-label="System at a glance" data-system-state="unknown">
+        <div class="system-zone system-zone--trade">
+          <p class="system-zone-label">Zone 1 · Can I trade?</p>
+          <strong id="systemZoneVerdict" class="system-zone-verdict">Checking health…</strong>
+          <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
+          <ul id="systemZoneBlockers" class="system-blocker-list" aria-label="Actionable blockers"></ul>
+          <div class="system-summary-grid system-zone-support">
+            <div class="system-summary-kpi">
+              <span class="system-summary-label">Auth</span>
+              <strong id="systemSummaryAuth" class="system-summary-value" data-unavailable="true">—</strong>
+              <small id="systemSummaryAuthHint" class="muted">broker connection</small>
+            </div>
+            <div class="system-summary-kpi">
+              <span class="system-summary-label">Quotes</span>
+              <strong id="systemSummaryQuotes" class="system-summary-value" data-unavailable="true">—</strong>
+              <small id="systemSummaryQuotesHint" class="muted">market data probe</small>
+            </div>
+            <div class="system-summary-kpi">
+              <span class="system-summary-label">Validation</span>
+              <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
+              <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
+            </div>
           </div>
-          <div class="system-summary-kpi">
-            <span class="system-summary-label">Quotes</span>
-            <strong id="systemSummaryQuotes" class="system-summary-value" data-unavailable="true">—</strong>
-            <small id="systemSummaryQuotesHint" class="muted">market data probe</small>
-          </div>
-          <div class="system-summary-kpi">
-            <span class="system-summary-label">Validation</span>
-            <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
-            <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
-          </div>
+          <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
+            <a class="btn small secondary" href="#healthRibbon">Health tiles</a>
+            <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
+          </nav>
         </div>
-        <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
-          <a class="btn small secondary" href="#healthRibbon">Health tiles</a>
-          <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
-          <a class="btn small secondary" href="#systemQualityDiagnostics">Calibration &amp; scoreboard</a>
-        </nav>
+        <div class="system-zone system-zone--calibrate">
+          <p class="system-zone-label">Zone 2 · Why / calibrate</p>
+          <strong class="system-zone-secondary-title">Diagnostics depth · funnels · calibration · provenance</strong>
+          <p class="muted small">Secondary to trading readiness — use this after blockers are clear.</p>
+          <nav class="system-summary-actions inline-form compact" aria-label="Calibration shortcuts">
+            <a class="btn small secondary" href="#systemQualityDiagnostics">Calibration &amp; scoreboard</a>
+            <a class="btn small secondary" href="#calibrationSection">Calibration</a>
+            <a class="btn small secondary" href="#statusDetailsPanel">Provenance / status</a>
+          </nav>
+        </div>
       </section>
 
       <p id="systemStatusCompact" class="card system-status-compact diagnostics-surface hidden muted" aria-hidden="true" aria-live="polite"></p>
