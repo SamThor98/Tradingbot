@@ -28,8 +28,11 @@ def main() -> int:
     compare = load_validation_artifact(SKILL_DIR, f"live_entry_shadow_compare_{run_id}.json")
     if compare is None:
         errors.append(f"missing live_entry_shadow_compare_{run_id}.json")
-    elif (compare.get("comparison") or {}).get("verdict") != "pass":
-        errors.append("latest live compare verdict is not pass")
+    else:
+        verdict = (compare.get("comparison") or {}).get("verdict")
+        # warn = soft near-band / thin-sample concerns; fail/skip/stale block Stage 2b.
+        if verdict not in {"pass", "warn"}:
+            errors.append(f"latest live compare verdict is not pass/warn ({verdict!r})")
 
     log = load_entry_timing_evidence_log(SKILL_DIR, run_id)
     stage2b = log.get("stage2b")

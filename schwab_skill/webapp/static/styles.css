@@ -6257,10 +6257,12 @@ html, body {
 }
 
 /*
-  Production triage (Figma: full-bleed):
-  - Table + wrap = 100% lane width (same as Near-miss).
-  - fixed layout: Ticker/Gate/Price/Actions sized; Rank absorbs leftover.
-  - Rank stays left-aligned so scores don't float into the Actions gutter.
+  SCAN TRIAGE WIDTH INVARIANT (do not regress):
+  - Table + wrap = 100% lane width.
+  - Exactly 5 columns. NO trailing spacer col/th/td.
+  - Ticker/Gate/Price/Actions are fixed; Rank (col 4) absorbs leftover width.
+  - Actions stay pinned to the right edge of the table.
+  Guarded by tests/test_scan_triage_table_width_contract.py.
 */
 #scanSection .scan-candidates-table--triage {
   table-layout: fixed;
@@ -6294,14 +6296,16 @@ html, body {
   width: 6.5rem;
   text-align: right;
 }
+/* Rank absorbs leftover lane width (must stay width:auto — never fixed/max-width). */
 #scanSection .scan-candidates-table--triage .scan-triage-col-rank,
 #scanSection .scan-candidates-table--triage th:nth-child(4),
 #scanSection .scan-candidates-table--triage td:nth-child(4),
 #scanSection .scan-candidates-table--triage .scan-col-rank {
-  width: 5rem;
+  width: auto;
   text-align: left;
   font-family: inherit;
 }
+/* Actions pinned right — fixed width only; never add a spacer after this column. */
 #scanSection .scan-candidates-table--triage .scan-triage-col-actions,
 #scanSection .scan-candidates-table--triage th:nth-child(5),
 #scanSection .scan-candidates-table--triage td:nth-child(5),
@@ -6314,19 +6318,6 @@ html, body {
   text-align: right;
   font-family: inherit;
   font-variant-numeric: normal;
-}
-/* Trailing spacer absorbs leftover width so Actions stay next to Rank (full-bleed frame). */
-#scanSection .scan-candidates-table--triage .scan-triage-col-spacer,
-#scanSection .scan-candidates-table--triage th.scan-th-spacer,
-#scanSection .scan-candidates-table--triage td.scan-col-spacer {
-  width: 100%;
-  padding: 0;
-  border: none;
-  pointer-events: none;
-}
-/* Keep header/row chrome continuous across the spacer so the table reads full-bleed. */
-#scanSection .scan-candidates-table--triage th.scan-th-spacer {
-  background: inherit;
 }
 
 /* Empty qualified state: fill the allotted table shell and center the message. */

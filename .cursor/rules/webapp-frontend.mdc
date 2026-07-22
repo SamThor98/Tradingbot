@@ -56,3 +56,15 @@ state.publicConfig = cfg.data;
 ## Figma / UI redesign
 
 For Figma-first dashboard work (8182, Old Logan DS, MCP workflow), follow `.cursor/rules/webapp-figma-workflow.mdc`.
+
+## Scan triage table width (HARD INVARIANT)
+
+Qualified + Near-miss tables in `#scanSection`:
+
+- Exactly **5 columns**: Ticker, Gate, Price, Rank, Actions
+- **Never** add a trailing spacer (`scan-triage-col-spacer` / `scan-th-spacer` / `scan-col-spacer`)
+- `table-layout: fixed; width: 100%`
+- Rank (`nth-child(4)`) uses `width: auto` and **absorbs leftover** lane width
+- Actions stay **fixed** at `13.75rem` and flush to the **right** edge
+
+A spacer makes Actions sit mid-row with a dead beige shelf — users reject this as “table width messed up.” Enforced by `tests/test_scan_triage_table_width_contract.py`.

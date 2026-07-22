@@ -2,7 +2,7 @@
 
 > Clean summary of Schwab-only multi-era backtests, counterfactuals, and
 > promotion decisions. Numbers are taken from `validation_artifacts/` as of
-> **2026-07-17**. Profit factor (PF) is net of costs unless noted.
+> **2026-07-22**. Profit factor (PF) is net of costs unless noted.
 
 ---
 
@@ -14,8 +14,10 @@
 | Pre-cap bare (historical) | `stage2_only_aug` — PF mean **1.162**, worst-era **1.032** (`iterate_with_caution`) |
 | Promotion gates | PF mean ≥ **1.20**, worst-era PF ≥ **1.00** |
 | Bare signal clears gates? | **Yes** with live `PTS_52W_CAP_MODE` (blocks lifted for bare gate; keep PROB_RANK shadow) |
-| Promoted offline stack | Exit grace 15/40 + 1% breakout buffer → PF mean **1.212**, worst **1.037** |
-| Optional trim on stack | Rank-v2 p75 → PF mean **1.249**, worst **1.120** (25% retention) |
+| Promoted offline stack (pre-cap) | Exit grace 15/40 + 1% breakout buffer → PF mean **1.212**, worst **1.037** |
+| Post-cap stack (pts_52w≤37) | Buffer book PF mean **1.283**, worst **1.058**; **p75 fails** worst-era — **p76** is `re_live_candidate` |
+| PF 1.50 peer (Track B) | **`pead_primary_aug_fixed_full_c40`** clears — PF mean **1.550**, worst **1.167**; pullback full **rejects** (worst 0.959) |
+| Optional trim on stack (pre-cap) | Rank-v2 p75 → PF mean **1.249**, worst **1.120** (25% retention) |
 | Canonical baseline run | `control_legacy_aug` (16,433 trades, 5 eras) |
 | Canonical bare run (pre-cap) | `stage2_only_aug` (16,423 trades, 5 eras) |
 | Canonical bare run (post-cap) | `stage2_pts52w_cap37` (15,994 trades, 5 eras) |
@@ -262,10 +264,15 @@ Use `portfolio_summary` / portfolio returns for deployability; use **PF** for pr
 | 2026-07-17 | Re-audit still `iterate_with_caution` | Phase 2 edge audit |
 | 2026-07-18 | Promote `PTS_52W_CAP_MODE=live` (max 37); bare clears gates | `stage2_pts52w_cap37` PF mean 1.214 / worst 1.105 |
 | 2026-07-18 | Start PF 1.50 dual-track (A early-stop + B peer generators) | See §11 |
+| 2026-07-18 | Stack CF under pts_52w≤37: buffer book still passes; p75 fails worst-era | `signal_stack_counterfactual_control_legacy_aug_pts52w_cap37` |
+| 2026-07-19 | Full-universe pullback bare completes; fails worst-era | `pullback_only_aug_full` PF mean 1.211 / worst **0.959** |
+| 2026-07-20 | Rank-v2 under pts_52w≤37: **p76** first clear (re-live candidate) | `sweep_cf_rank_under_pts52w_cap37_control_legacy_aug` |
+| 2026-07-21 | Full-universe PEAD primary clears strict PF 1.50 | `pead_primary_aug_fixed_full_c40` PF mean **1.550** / worst **1.167** |
+| 2026-07-22 | PEAD exit-grace transfer keeps 1.50; pullback pts_52w CF no lift | peer stack-transfer + `pts52w_cap_cf_pullback_*` |
 
 ---
 
-## 11. PF 1.50 dual-track (2026-07-18)
+## 11. PF 1.50 dual-track (2026-07-18 → 2026-07-22)
 
 Strict target: five-era equal-weight net PF mean ≥ **1.50**, worst-era ≥ **1.00**.
 
@@ -282,34 +289,74 @@ Strict target: five-era equal-weight net PF mean ≥ **1.50**, worst-era ≥ **1
 
 | Profile | Env overrides | Status |
 |---|---|---|
-| `pullback_only_aug` | `research/env_overrides/pullback_only_aug.json` (`BACKTEST_ENTRY_FAMILY=pullback`) | **Smoke** (`--ticker-limit 40`): PF mean **1.492** / worst **1.062** / 1,215 trades — clears 1.20, **misses 1.50 by 0.008**. Full-universe run still required for promotion-grade evidence. |
-| `pead_primary_aug` | `research/env_overrides/pead_primary_aug.json` (`BACKTEST_ENTRY_FAMILY=pead_primary`) | **Data fix 2026-07-18:** Finnhub free tier only ~4 quarters; shallow caches rejected; merge calendar+`stock/earnings`; yfinance `get_earnings_dates(limit=100)` backfill (AAPL → 91 rows to 2005). Alpha Vantage provider wired (`ALPHA_VANTAGE_API_KEY`). Smoke re-run in progress after force-warm of 80 tickers. |
+| `pullback_only_aug` (smoke) | `research/env_overrides/pullback_only_aug.json` | 40 tickers: PF mean **1.492** / worst **1.062** — optimistic vs full universe |
+| `pullback_only_aug_full` | same | **Complete** (2026-07-19): PF mean **1.211** / worst **0.959** / 17,183 trades — clears PF mean, **fails worst-era** (`recent_current` 0.959). Reject as 1.50 peer. |
+| `pead_primary_aug_fixed_full_c40` | `research/env_overrides/pead_primary_aug.json` | **Complete** (2026-07-21): PF mean **1.550** / worst **1.167** / 27,422 trades / universe 1505 — **clears strict 1.50**. Portfolio equity path is capacity-saturated (ignore portfolio return for PF gates). |
 
-#### Pullback smoke per-era (`pullback_only_aug`, 40 tickers)
+#### Pullback full per-era (`pullback_only_aug_full`)
 
 | Era | Trades | PF |
 |---|---:|---:|
-| `late_bull` | 338 | 1.978 |
-| `crash_recovery` | 217 | 1.811 |
-| `bear_rates` | 177 | 1.326 |
-| `volatility_chop` | 186 | 1.283 |
-| `recent_current` | 297 | 1.062 |
+| `crash_recovery` | 2,818 | **1.502** |
+| `late_bull` | 4,832 | **1.344** |
+| `volatility_chop` | 2,699 | 1.151 |
+| `bear_rates` | 2,748 | 1.099 |
+| `recent_current` | 4,086 | **0.959** |
+
+#### PEAD full per-era (`pead_primary_aug_fixed_full_c40`)
+
+| Era | Trades | PF |
+|---|---:|---:|
+| `crash_recovery` | 4,397 | **2.004** |
+| `late_bull` | 6,266 | **1.833** |
+| `bear_rates` | 4,341 | **1.384** |
+| `recent_current` | 8,397 | **1.362** |
+| `volatility_chop` | 4,021 | **1.167** |
 
 #### Stack transfer (exit-grace-only; no entry-timing cache)
 
-`peer_generator_stack_transfer_pullback_only_aug.json`: bare PF mean 1.492 → exit-grace `t15_h40` **1.455** / action `pass_pf_120_exit_grace_ready_for_full_universe` (does not clear 1.50).
+| Artifact | Bare PF mean | Exit-grace t15/h40 | Action |
+|---|---:|---:|---|
+| `peer_generator_stack_transfer_pullback_only_aug.json` (smoke) | 1.492 | 1.455 | `pass_pf_120_…_ready_for_full_universe` (stale vs full) |
+| `peer_generator_stack_transfer_pullback_only_aug_full.json` | 1.274\* | 1.260 | Passes 1.20 on **4 eras** (missing `recent_current` chunks on disk) |
+| `peer_generator_stack_transfer_pead_primary_aug_fixed_full_c40.json` | **1.550** | **1.549** | **`pass_strict_pf_150_exit_grace`** |
+
+\*Chunk-only baseline omits `recent_current` (0 chunks under `multi_era_chunks/pullback_only_aug_full/recent_current` even though the summary JSON includes that era). Prefer the five-era summary for gate calls.
+
+#### Pullback × pts_52w≤37 offline CF
+
+`pts52w_cap_cf_pullback_only_aug_full_cap37.json`: retention **99.3%**, PF mean lift **+0.003** → `keep_shadow_only` (cap is nearly a no-op on the pullback book).
+
+### Post-cap stack fidelity (control entry cache ∩ pts_52w≤37)
+
+Sources: `signal_stack_counterfactual_control_legacy_aug_pts52w_cap37.json`, `sweep_cf_rank_under_pts52w_cap37_control_legacy_aug.json`.
+
+| Scenario | Trades | Retention† | PF mean | Worst-era | Gates |
+|---|---:|---:|---:|---:|---|
+| `cap_only_bare` | 8,773 | 53.5% vs uncapped | 1.260 | 1.062 | Pass |
+| `exit_grace_t15_h40` | 8,773 | 100% | 1.249 | 1.079 | Pass |
+| **`exit_grace_breakout_buffer_0.010`** (selected) | **3,559** | **40.6%** | **1.283** | **1.058** | **Pass** |
+| `…_rank_v2_p75` (current live trim) | 890 | 25.0% | 1.299 | **0.955** | **Fail worst-era** |
+| `…_rank_v2_p76` (sweep pick) | 859 | 24.1% | **1.323** | **1.034** | **Pass** (`re_live_candidate`) |
+
+†Retention for buffer row is vs capped book; rank rows vs buffer-filtered capped book.
+
+**Operator note:** live rank-v2 p75 is **misaligned** with the post-cap stack — under pts_52w≤37, p75 breaks `late_bull`. Next stack decision is p76 re-live (or drop rank trim and keep buffer-only).
 
 ---
 
 ## 9. What is still open
 
 1. ~~Bare-signal PF mean ≥ 1.20~~ — cleared via live `pts_52w≤37` (`stage2_pts52w_cap37`).  
-2. Collect live-enforced evidence for the Stage 2c–2d stack + pts_52w cap (filter diagnostics).  
-3. Re-run stack counterfactual with pts_52w cap on `control_legacy_aug` (or a new control+cap run).  
-4. Do **not** re-enable hard breakout-volume or confluence Stage A gates without a fresh five-era pass.  
-5. **PROB_RANK** stays **KEEP SHADOW** — do not set `PROB_RANK_MODE=live`.  
-6. Regime v2 / Correlation Guard LIVE still require operator promotion + shadow evidence (bare gate no longer blocks).  
-7. **PF 1.50 dual-track:** finish full-universe `pullback_only_aug` / `pead_primary_aug` five-era bare runs; keep `EARLY_STOP_GATE_MODE=shadow`.
+2. ~~Stack CF with pts_52w cap~~ — done; buffer book passes; **decide p76 re-live vs buffer-only**.  
+3. ~~Track B full-universe bare runs~~ — pullback **reject** (worst 0.959); PEAD **clears 1.50**.  
+4. Collect **live-enforced** evidence for Stage 2c–2d stack + pts_52w cap (filter diagnostics / one trading week).  
+5. Build `entry_timing_replay_cache_pead_primary_aug_fixed_full_c40` so PEAD can take the 1% buffer (± rank) stack arms (currently exit-grace-only).  
+6. Repair `pullback_only_aug_full` `recent_current` chunks if any further pullback CFs are needed (summary has era; chunk dir empty).  
+7. Do **not** re-enable hard breakout-volume or confluence Stage A gates without a fresh five-era pass.  
+8. **PROB_RANK** stays **KEEP SHADOW** — do not set `PROB_RANK_MODE=live`.  
+9. Regime v2 / Correlation Guard LIVE still require operator promotion + shadow evidence.  
+10. Track A: keep `EARLY_STOP_GATE_MODE=shadow`.
 
 ---
 
@@ -322,7 +369,11 @@ python scripts/run_multi_era_backtest_schwab_only.py --run-tag <id>
 # Peer generator bare (Track B)
 python scripts/run_multi_era_backtest_schwab_only.py \
   --env-overrides research/env_overrides/pullback_only_aug.json \
-  --run-tag pullback_only_aug --no-resume
+  --run-tag pullback_only_aug_full --no-resume
+python scripts/run_multi_era_backtest_schwab_only.py \
+  --env-overrides research/env_overrides/pead_primary_aug.json \
+  --run-tag pead_primary_aug_fixed_full_c40 --chunk-size 40 --max-workers 1 \
+  --warm-earnings-cache
 
 # Early-stop oracle + pre-entry CF (Track A)
 python scripts/analyze_early_stopout_cohorts.py --run-id control_legacy_aug
@@ -331,9 +382,10 @@ python scripts/analyze_early_stop_preentry_counterfactual.py --run-id control_le
 # Phase 2 bare vs control audit
 python scripts/phase2_edge_audit.py
 
-# Stack counterfactual (exit grace + buffer ± rank)
-python scripts/analyze_signal_edge_shadow_counterfactual.py  # see script --help
-python scripts/analyze_peer_generator_stack_transfer.py --run-id pullback_only_aug
+# Stack / peer transfer
+python scripts/analyze_signal_stack_counterfactual.py  # see script --help
+python scripts/analyze_peer_generator_stack_transfer.py --run-id pead_primary_aug_fixed_full_c40
+python scripts/sweep_rank_v2_under_pts52w_cap.py --run-id control_legacy_aug --cap 37
 
 # Apply live operating stack
 python scripts/apply_signal_stack_enforced_env.py
@@ -353,4 +405,4 @@ python scripts/validate_signal_stack_enforced_env.py
 
 ---
 
-*Catalog compiled 2026-07-17 from `validation_artifacts/`. Re-generate after major multi-era or audit runs.*
+*Catalog compiled 2026-07-22 from `validation_artifacts/`. Re-generate after major multi-era or audit runs.*

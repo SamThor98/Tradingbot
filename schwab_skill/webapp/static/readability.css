@@ -2242,14 +2242,14 @@ body[data-theme="editorial"] #scanSection .scan-near-miss-panel {
 body[data-theme="editorial"] #scanSection .scan-list-pane:has(tr.scan-row--empty) .scan-near-miss-panel {
   margin-top: auto !important;
 }
+/* Rank absorbs leftover width; Actions pin right. Never reintroduce a spacer column. */
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(4),
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(4),
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-rank,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-rank {
-  /* Keep Rank sized; leftover lane width goes to the trailing spacer col. */
-  width: 5rem !important;
-  min-width: 5rem !important;
-  max-width: 5rem !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
   text-align: left !important;
   font-family: inherit !important;
 }
@@ -2261,18 +2261,6 @@ body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-t
   max-width: 13.75rem !important;
   font-family: inherit !important;
   font-variant-numeric: normal !important;
-}
-/* Trailing spacer absorbs leftover lane width so Actions stay next to Rank (full-bleed). */
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-spacer,
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th.scan-th-spacer,
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-spacer {
-  width: 100% !important;
-  padding: 0 !important;
-  border: none !important;
-  pointer-events: none !important;
-}
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th.scan-th-spacer {
-  background: inherit !important;
 }
 body[data-theme="editorial"] .scan-results-layout {
   display: flex !important;

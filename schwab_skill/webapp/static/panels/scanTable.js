@@ -64,7 +64,7 @@ import { normalizeScanSignal } from "../modules/scanSignals.js";
 const QUALIFIED_ROWS_DEFAULT_LIMIT = 20;
 const NEAR_MISS_DEFAULT_LIMIT = 10;
 const RANK_EXPLAIN_MODE_KEY = "tradingbot.scan.rank_explain_mode";
-const TRIAGE_COLSPAN = 6;
+const TRIAGE_COLSPAN = 5;
 const SCAN_STATUS_FILTERS = Object.freeze(["pass", "review", "blocked", "info"]);
 
 /** Cross-panel callbacks injected by app.js at boot (see module docstring). */
@@ -399,7 +399,6 @@ function buildTriageRowHtml({ sig, row, idx, isKept, viewKey = "data-scan-view" 
     <td class="scan-col-price mono-nums">${renderPriceCell(row)}</td>
     <td class="scan-col-rank">${renderRankScoreCell(row, { triage: true })}</td>
     <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept, viewKey })}</td>
-    <td class="scan-col-spacer" aria-hidden="true"></td>
   `;
 }
 

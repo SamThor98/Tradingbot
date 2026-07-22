@@ -116,11 +116,17 @@ def _install_solo_scan_deadline(seconds: int) -> bool:
 
         from celery.exceptions import SoftTimeLimitExceeded
 
+        sigalrm = getattr(signal, "SIGALRM", None)
+        alarm = getattr(signal, "alarm", None)
+        if sigalrm is None or alarm is None:
+            # Windows (and some hosts) lack SIGALRM; solo deadline is best-effort.
+            return False
+
         def _on_alarm(_signum: int, _frame: Any) -> None:
             raise SoftTimeLimitExceeded()
 
-        signal.signal(signal.SIGALRM, _on_alarm)
-        signal.alarm(max(30, int(seconds)))
+        signal.signal(sigalrm, _on_alarm)
+        alarm(max(30, int(seconds)))
         return True
     except Exception:
         return False
@@ -130,7 +136,10 @@ def _clear_solo_scan_deadline() -> None:
     try:
         import signal
 
-        signal.alarm(0)
+        alarm = getattr(signal, "alarm", None)
+        if alarm is None:
+            return
+        alarm(0)
     except Exception:
         return
 
