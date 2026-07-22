@@ -1506,8 +1506,9 @@
 
             <div id="manualPortfolioEditor" class="hidden">
               <p class="muted small">
-                Enter tickers and share counts (long-only, up to 15 names). The book is stored only in this
-                browser — nothing is saved on the server.
+                Enter tickers, shares, ownership start date, and avg cost (long-only, up to 15 names).
+                The book is stored only in this browser — nothing is saved on the server. Risk ratios
+                use each row’s acquired date through today (capped by the Risk lookback).
               </p>
               <div class="table-wrap">
                 <table>
@@ -1516,6 +1517,8 @@
                     <tr>
                       <th>Ticker</th>
                       <th>Shares</th>
+                      <th>Acquired</th>
+                      <th>Avg cost</th>
                       <th aria-label="Remove"></th>
                     </tr>
                   </thead>
@@ -1537,9 +1540,12 @@
                     <tr>
                       <th>Symbol</th>
                       <th>Qty</th>
+                      <th>Avg cost</th>
                       <th>Last</th>
                       <th>Market Value</th>
+                      <th>P/L %</th>
                       <th>Weight %</th>
+                      <th>Acquired</th>
                     </tr>
                   </thead>
                   <tbody id="manualPortfolioBody"></tbody>

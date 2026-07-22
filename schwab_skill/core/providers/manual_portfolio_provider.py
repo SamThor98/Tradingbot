@@ -6,12 +6,14 @@ row from daily history (Schwab primary, yfinance fallback via
 cannot be priced, and emits both the typed risk state and the
 ``build_portfolio_summary``-shaped dict that the static risk analytics
 (`webapp._shared.build_portfolio_risk_analytics`) expect. Long-only:
-negative or zero share counts are rejected.
+negative or zero share counts are rejected. Each row requires an ownership
+start date and avg cost so P/L % and ownership-period risk metrics are real.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ _PRICE_LOOKBACK_DAYS = 10
 # Equity-style symbols only (covers class shares like BRK.B and BF-B).
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,16}$")
 
+_ACQUIRED_FLOOR = date(1990, 1, 1)
+
 
 class ManualPortfolioError(ValueError):
     """Raised when a manual book cannot be built (fail-closed on bad input)."""
@@ -38,9 +42,41 @@ class ManualPortfolioError(ValueError):
         self.unpriced = list(unpriced or [])
 
 
-def _clean_rows(rows: list[dict[str, Any]]) -> list[tuple[str, float]]:
-    """Validate and dedupe (ticker, qty) rows; duplicate tickers merge qty."""
-    merged: dict[str, float] = {}
+def _parse_acquired_at(raw: Any, *, ticker: str) -> date:
+    if raw is None or raw == "":
+        raise ManualPortfolioError(f"Ownership start date is required for {ticker}.")
+    if isinstance(raw, datetime):
+        value = raw.date()
+    elif isinstance(raw, date):
+        value = raw
+    else:
+        try:
+            value = date.fromisoformat(str(raw)[:10])
+        except ValueError as exc:
+            raise ManualPortfolioError(
+                f"Ownership start date for {ticker} must be YYYY-MM-DD."
+            ) from exc
+    today = datetime.now(timezone.utc).date()
+    if value < _ACQUIRED_FLOOR:
+        raise ManualPortfolioError(f"Ownership start date for {ticker} must be on or after 1990-01-01.")
+    if value > today:
+        raise ManualPortfolioError(f"Ownership start date for {ticker} cannot be in the future.")
+    return value
+
+
+def _parse_avg_cost(raw: Any, *, ticker: str) -> float:
+    try:
+        cost = float(raw)
+    except (TypeError, ValueError):
+        raise ManualPortfolioError(f"Avg cost for {ticker} is not a number.") from None
+    if cost <= 0 or cost != cost:  # NaN check
+        raise ManualPortfolioError(f"Avg cost for {ticker} must be positive.")
+    return cost
+
+
+def _clean_rows(rows: list[dict[str, Any]]) -> list[tuple[str, float, date, float]]:
+    """Validate and dedupe rows; duplicate tickers merge qty (weighted cost, earliest date)."""
+    merged: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for row in rows or []:
         ticker = str(row.get("ticker") or "").upper().strip()
@@ -54,14 +90,31 @@ def _clean_rows(rows: list[dict[str, Any]]) -> list[tuple[str, float]]:
             raise ManualPortfolioError(f"Share count for {ticker} is not a number.") from None
         if qty <= 0:
             raise ManualPortfolioError(f"Share count for {ticker} must be positive (long-only).")
+        acquired_at = _parse_acquired_at(row.get("acquired_at"), ticker=ticker)
+        avg_cost = _parse_avg_cost(row.get("avg_cost"), ticker=ticker)
         if ticker not in merged:
             order.append(ticker)
-        merged[ticker] = merged.get(ticker, 0.0) + qty
+            merged[ticker] = {
+                "qty": qty,
+                "acquired_at": acquired_at,
+                "avg_cost": avg_cost,
+                "cost_basis": avg_cost * qty,
+            }
+        else:
+            prev = merged[ticker]
+            new_qty = float(prev["qty"]) + qty
+            prev["cost_basis"] = float(prev["cost_basis"]) + avg_cost * qty
+            prev["qty"] = new_qty
+            prev["avg_cost"] = float(prev["cost_basis"]) / new_qty if new_qty else avg_cost
+            prev["acquired_at"] = min(prev["acquired_at"], acquired_at)
     if not merged:
         raise ManualPortfolioError("At least one position is required.")
     if len(merged) > MAX_MANUAL_POSITIONS:
         raise ManualPortfolioError(f"Manual portfolios are capped at {MAX_MANUAL_POSITIONS} distinct tickers.")
-    return [(ticker, merged[ticker]) for ticker in order]
+    return [
+        (ticker, float(merged[ticker]["qty"]), merged[ticker]["acquired_at"], float(merged[ticker]["avg_cost"]))
+        for ticker in order
+    ]
 
 
 class ManualPortfolioProvider:
@@ -74,7 +127,7 @@ class ManualPortfolioProvider:
         skill_dir: Path | str | None = None,
         auth: Any = None,
     ) -> list[dict[str, Any]]:
-        """Fetch a recent close for each row and derive market value.
+        """Fetch a recent close for each row and derive market value / P/L.
 
         Fail-closed: if any ticker cannot be priced the whole book is
         rejected (``ManualPortfolioError.unpriced`` lists the offenders) —
@@ -85,7 +138,7 @@ class ManualPortfolioProvider:
         cleaned = _clean_rows(rows)
         priced: list[dict[str, Any]] = []
         unpriced: list[str] = []
-        for ticker, qty in cleaned:
+        for ticker, qty, acquired_at, avg_cost in cleaned:
             last: float | None = None
             meta: dict[str, Any] = {}
             try:
@@ -103,12 +156,18 @@ class ManualPortfolioProvider:
             if last is None:
                 unpriced.append(ticker)
                 continue
+            pl_pct = ((last - avg_cost) / avg_cost) * 100.0
+            unrealized_pnl = (last - avg_cost) * qty
             priced.append(
                 {
                     "symbol": ticker,
                     "qty": qty,
                     "last": round(last, 4),
                     "market_value": round(last * qty, 2),
+                    "avg_cost": round(avg_cost, 4),
+                    "pl_pct": round(pl_pct, 4),
+                    "unrealized_pnl": round(unrealized_pnl, 2),
+                    "acquired_at": acquired_at,
                     "price_provider": meta.get("provider"),
                 }
             )
@@ -132,8 +191,7 @@ class ManualPortfolioProvider:
 
         The summary dict matches ``webapp._shared.build_portfolio_summary``
         output so ``build_portfolio_risk_analytics`` and
-        ``build_portfolio_risk_dashboard`` consume it unchanged. Manual books
-        have no broker day-P/L or cost basis, so those fields are zeroed.
+        ``build_portfolio_risk_dashboard`` consume it unchanged.
         """
         priced = ManualPortfolioProvider.price_rows(rows, skill_dir=skill_dir, auth=auth)
         cash_value = max(0.0, float(cash or 0.0))
@@ -153,10 +211,12 @@ class ManualPortfolioProvider:
                 Position(
                     ticker=p["symbol"],
                     qty=p["qty"],
-                    avg_price=p["last"],
+                    avg_price=p["avg_cost"],
                     market_value=p["market_value"],
+                    unrealized_pnl=p["unrealized_pnl"],
                     sector_etf=sector_etf,
                     weight_pct=round(weight * 100, 4) if weight is not None else None,
+                    acquired_at=p["acquired_at"],
                 )
             )
 
@@ -182,9 +242,11 @@ class ManualPortfolioProvider:
                     "qty": int(p["qty"]) if float(p["qty"]).is_integer() else p["qty"],
                     "market_value": p["market_value"],
                     "day_pl": 0.0,
-                    "avg_cost": p["last"],
+                    "avg_cost": p["avg_cost"],
                     "last": p["last"],
-                    "pl_pct": 0.0,
+                    "pl_pct": p["pl_pct"],
+                    "unrealized_pnl": p["unrealized_pnl"],
+                    "acquired_at": p["acquired_at"].isoformat(),
                 }
                 for p in sorted(priced, key=lambda r: r["market_value"], reverse=True)
             ],

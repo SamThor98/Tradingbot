@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ class Position(BaseModel):
     unrealized_pnl: float | None = None
     sector_etf: str | None = None
     weight_pct: float | None = None  # market_value / equity
+    acquired_at: date | None = None  # manual books: ownership start for period returns
 
 
 class ExposureBreakdown(BaseModel):

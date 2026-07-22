@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -104,10 +105,22 @@ class AnalyticsEventPayload(BaseModel):
 
 
 class ManualPositionRow(BaseModel):
-    """One user-entered holding: ticker + share count (long-only)."""
+    """One user-entered holding: ticker, shares, ownership start, and avg cost."""
 
     ticker: str = Field(min_length=1, max_length=16)
     qty: float = Field(gt=0)
+    acquired_at: date
+    avg_cost: float = Field(gt=0)
+
+    @field_validator("acquired_at")
+    @classmethod
+    def _acquired_at_bounds(cls, value: date) -> date:
+        if value < date(1990, 1, 1):
+            raise ValueError("acquired_at must be on or after 1990-01-01")
+        today = datetime.now(timezone.utc).date()
+        if value > today:
+            raise ValueError("acquired_at cannot be in the future")
+        return value
 
 
 class ManualPortfolioBody(BaseModel):

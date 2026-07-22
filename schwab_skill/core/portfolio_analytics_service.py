@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ from core.portfolio_analytics import (
     correlation_summary,
     daily_returns_from_prices,
     drawdown_stats,
+    ownership_weighted_portfolio_returns,
     sharpe_ratio,
     sortino_ratio,
     trade_performance_pack,
@@ -75,9 +77,9 @@ def _synthetic_equity_curve(returns: pd.Series, *, starting_equity: float | None
         return []
     equity = float(starting_equity or 100_000.0)
     curve: list[dict[str, Any]] = []
-    for date, ret in returns.items():
+    for ts, ret in returns.items():
         equity *= 1.0 + float(ret)
-        curve.append({"date": pd.Timestamp(date).date().isoformat(), "equity": round(equity, 2)})
+        curve.append({"date": pd.Timestamp(ts).date().isoformat(), "equity": round(equity, 2)})
     return curve
 
 
@@ -105,6 +107,24 @@ def _load_closed_trade_metrics(skill_dir: Path | None, *, limit: int = 500) -> C
 # portfolio return series inner-join on dates, so one gappy series would
 # silently collapse the whole sample (observed: 27 obs from a 252d lookback).
 MIN_HISTORY_COVERAGE_RATIO = 0.6
+MIN_OWNERSHIP_OBS = 20
+
+
+def _ownership_starts_from_state(state: PortfolioRiskState) -> dict[str, date]:
+    starts: dict[str, date] = {}
+    for pos in state.positions:
+        ticker = str(pos.ticker or "").upper().strip()
+        if not ticker or pos.acquired_at is None:
+            continue
+        starts[ticker] = pos.acquired_at
+    return starts
+
+
+def _effective_history_start(acquired: date, lookback_days: int) -> date:
+    """Ownership start capped by the Risk lookback window ending today."""
+    today = datetime.now(timezone.utc).date()
+    lookback_floor = today - timedelta(days=max(1, int(lookback_days)))
+    return max(acquired, lookback_floor)
 
 
 def _load_ticker_returns(
@@ -115,34 +135,48 @@ def _load_ticker_returns(
     skill_dir: Path | None,
     auth: Any,
     data_quality: dict[str, Any],
+    ownership_starts: dict[str, date] | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Fetch daily history for weighted tickers + benchmark; returns (returns_df, benchmark_returns).
 
     Option contracts and low-coverage tickers are excluded from the return
     matrix (recorded in ``data_quality``) so a single short/gappy series
     cannot shrink the aligned observation window for every metric.
+
+    When ``ownership_starts`` is provided, each ticker is fetched from
+    ``max(acquired_at, today - lookback)`` and the relative coverage floor is
+    skipped (short ownership windows are allowed once ≥ ``MIN_OWNERSHIP_OBS``).
     """
     ticker_returns: dict[str, pd.Series] = {}
+    ownership = {str(k).upper(): v for k, v in (ownership_starts or {}).items()}
+    ownership_mode = bool(ownership)
     if weights:
         from core.portfolio_analytics import is_option_symbol
         from market_data import get_daily_history_with_meta
 
+        effective_starts: dict[str, str] = {}
         for ticker in sorted(weights):
             if is_option_symbol(ticker):
                 data_quality.setdefault("excluded_options", []).append(ticker)
                 continue
-            df, meta = get_daily_history_with_meta(ticker, days=lookback_days, auth=auth, skill_dir=skill_dir)
+            fetch_kwargs: dict[str, Any] = {"days": lookback_days, "auth": auth, "skill_dir": skill_dir}
+            if ownership_mode and ticker in ownership:
+                start = _effective_history_start(ownership[ticker], lookback_days)
+                fetch_kwargs["start_date"] = start
+                effective_starts[ticker] = start.isoformat()
+            df, meta = get_daily_history_with_meta(ticker, **fetch_kwargs)
             data_quality["provider_meta"][ticker] = meta
             returns = daily_returns_from_prices(df)
             if returns.empty:
                 data_quality["missing_tickers"].append(ticker)
                 continue
-            if len(returns) < 20:
+            min_obs = MIN_OWNERSHIP_OBS if ownership_mode else 20
+            if len(returns) < min_obs:
                 data_quality["insufficient_history"].append(ticker)
                 continue
             ticker_returns[ticker] = returns
 
-        if ticker_returns:
+        if ticker_returns and not ownership_mode:
             max_rows = max(len(s) for s in ticker_returns.values())
             floor = max(20, int(max_rows * MIN_HISTORY_COVERAGE_RATIO))
             low_coverage = sorted(t for t, s in ticker_returns.items() if len(s) < floor)
@@ -152,7 +186,15 @@ def _load_ticker_returns(
             if low_coverage:
                 data_quality["low_coverage_dropped"] = low_coverage
 
-        df, meta = get_daily_history_with_meta(benchmark, days=lookback_days, auth=auth, skill_dir=skill_dir)
+        if ownership_mode:
+            data_quality["ownership_mode"] = "per_position_acquired_at"
+            data_quality["ownership_effective_starts"] = effective_starts
+
+        bench_kwargs: dict[str, Any] = {"days": lookback_days, "auth": auth, "skill_dir": skill_dir}
+        if ownership_mode and effective_starts:
+            earliest = min(date.fromisoformat(v) for v in effective_starts.values())
+            bench_kwargs["start_date"] = earliest
+        df, meta = get_daily_history_with_meta(benchmark, **bench_kwargs)
         data_quality["provider_meta"][benchmark] = meta
         benchmark_returns = daily_returns_from_prices(df)
     else:
@@ -165,7 +207,10 @@ def _load_ticker_returns(
     if total_weight:
         data_quality["excluded_weight_pct"] = round(max(total_weight - available_weight, 0.0) / total_weight * 100.0, 4)
     if not returns_df.empty:
-        data_quality["aligned_observations"] = int(len(returns_df.dropna(how="any")))
+        if ownership_mode:
+            data_quality["aligned_observations"] = int(len(returns_df.dropna(how="all")))
+        else:
+            data_quality["aligned_observations"] = int(len(returns_df.dropna(how="any")))
     return returns_df, benchmark_returns
 
 
@@ -288,6 +333,8 @@ def build_portfolio_risk_dashboard(
     }
     weights = _weights_from_state(state)
     equity = state.equity or float(summary.get("total_market_value") or 0.0) or None
+    ownership_starts = _ownership_starts_from_state(state)
+    ownership_mode = bool(ownership_starts)
 
     returns_df, benchmark_returns = _load_ticker_returns(
         weights,
@@ -296,8 +343,24 @@ def build_portfolio_risk_dashboard(
         skill_dir=skill_dir,
         auth=auth,
         data_quality=data_quality,
+        ownership_starts=ownership_starts if ownership_mode else None,
     )
-    portfolio_returns = weighted_portfolio_returns(weights, returns_df) if not returns_df.empty else pd.Series(dtype=float)
+    if ownership_mode and not returns_df.empty:
+        cash_value = float(state.cash or 0.0)
+        stock_mv = float(summary.get("total_market_value") or 0.0)
+        cash_weight = (cash_value / equity) if equity and equity > 0 else 0.0
+        if stock_mv <= 0 and cash_value > 0:
+            cash_weight = 1.0
+        portfolio_returns = ownership_weighted_portfolio_returns(
+            weights,
+            returns_df,
+            ownership_starts,
+            cash_weight=cash_weight,
+        )
+    else:
+        portfolio_returns = (
+            weighted_portfolio_returns(weights, returns_df) if not returns_df.empty else pd.Series(dtype=float)
+        )
 
     # --- Metrics table + correlation --------------------------------------
     metrics = None
@@ -310,7 +373,11 @@ def build_portfolio_risk_dashboard(
         corr = CorrelationSummary(**correlation_summary(returns_df, threshold=corr_threshold))
         drawdown_source = equity_curve or _synthetic_equity_curve(portfolio_returns, starting_equity=state.equity)
         drawdown = drawdown_stats(drawdown_source)
-        data_quality["drawdown_source"] = "snapshots" if equity_curve else "current_weight_backfill"
+        data_quality["drawdown_source"] = (
+            "snapshots"
+            if equity_curve
+            else ("ownership_weight_backfill" if ownership_mode else "current_weight_backfill")
+        )
         beta = beta_vs_benchmark(portfolio_returns, benchmark_returns)
         model_vol = annualized_volatility(portfolio_returns)
         metrics = RiskMetricsTable(

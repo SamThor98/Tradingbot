@@ -9,6 +9,7 @@ from core.portfolio_analytics import (
     correlation_summary,
     daily_returns_from_prices,
     drawdown_stats,
+    ownership_weighted_portfolio_returns,
     sharpe_ratio,
     trade_performance_pack,
     weighted_portfolio_returns,
@@ -29,6 +30,33 @@ def test_daily_returns_from_prices_and_weighted_portfolio_returns() -> None:
     portfolio = weighted_portfolio_returns({"AAA": 60.0, "BBB": 40.0}, returns)
 
     assert list(portfolio.round(4)) == [0.1, 0.06, 0.1]
+
+
+def test_ownership_weighted_portfolio_returns_masks_pre_ownership() -> None:
+    """AAA owned from day 1; BBB from day 50 — early days weight only AAA (+ cash drag)."""
+    dates = pd.date_range("2026-01-01", periods=60, freq="D")
+    returns = pd.DataFrame(
+        {
+            "AAA": [0.01] * 60,
+            "BBB": [0.02] * 60,
+        },
+        index=dates,
+    )
+    # Equal stock weights in current book; 20% cash → stock_frac = 0.8
+    out = ownership_weighted_portfolio_returns(
+        {"AAA": 50.0, "BBB": 50.0},
+        returns,
+        {"AAA": "2026-01-01", "BBB": "2026-02-19"},  # day index 49 (0-based) ≈ Feb 19
+        cash_weight=0.2,
+    )
+    # Days before BBB ownership: only AAA → 0.8 * 0.01
+    early = out.loc[: pd.Timestamp("2026-02-18")]
+    assert len(early) > 0
+    assert all(abs(v - 0.008) < 1e-9 for v in early)
+    # After both owned: equal renormalize of 50/50 → 0.015, then * 0.8 = 0.012
+    late = out.loc[pd.Timestamp("2026-02-19") :]
+    assert len(late) > 0
+    assert all(abs(v - 0.012) < 1e-9 for v in late)
 
 
 def test_risk_metrics_handle_benchmark_alignment() -> None:

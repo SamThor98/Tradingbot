@@ -101,6 +101,75 @@ def weighted_portfolio_returns(
     return out.astype(float)
 
 
+def ownership_weighted_portfolio_returns(
+    position_weights: dict[str, float],
+    ticker_returns_df: pd.DataFrame,
+    ownership_starts: dict[str, Any],
+    *,
+    cash_weight: float = 0.0,
+) -> pd.Series:
+    """Weight returns by day using only names owned on that calendar day.
+
+    Pre-ownership days are excluded for each ticker. Among names held that day,
+    relative equity weights are renormalized; ``cash_weight`` (fraction of total
+    equity) is applied as a constant zero-return drag.
+    """
+    if ticker_returns_df is None or ticker_returns_df.empty:
+        return pd.Series(dtype=float)
+    weights = normalize_weights(position_weights, renormalize=True)
+    starts: dict[str, pd.Timestamp] = {}
+    for ticker, raw in (ownership_starts or {}).items():
+        symbol = str(ticker or "").upper().strip()
+        start = _date(raw)
+        if symbol and start is not None:
+            starts[symbol] = start
+    if not weights or not starts:
+        return pd.Series(dtype=float)
+
+    try:
+        cash_frac = max(0.0, min(1.0, float(cash_weight)))
+    except (TypeError, ValueError):
+        cash_frac = 0.0
+    stock_frac = 1.0 - cash_frac
+
+    cols = [c for c in ticker_returns_df.columns if str(c).upper() in weights and str(c).upper() in starts]
+    if not cols:
+        return pd.Series(dtype=float)
+    frame = ticker_returns_df[cols].apply(pd.to_numeric, errors="coerce")
+    if frame.empty:
+        return pd.Series(dtype=float)
+
+    daily: list[tuple[pd.Timestamp, float]] = []
+    for ts, row in frame.iterrows():
+        day = pd.Timestamp(ts).normalize()
+        active: list[tuple[str, float, float]] = []  # (col, weight, ret)
+        for col in cols:
+            symbol = str(col).upper()
+            if day < starts[symbol]:
+                continue
+            ret = row[col]
+            try:
+                ret_f = float(ret)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(ret_f):
+                continue
+            active.append((col, weights[symbol], ret_f))
+        if not active:
+            continue
+        total_w = sum(w for _, w, _ in active)
+        if total_w <= 0:
+            continue
+        day_ret = sum((w / total_w) * ret for _, w, ret in active)
+        daily.append((day, stock_frac * day_ret))
+
+    if not daily:
+        return pd.Series(dtype=float)
+    out = pd.Series({d: r for d, r in daily}, dtype=float)
+    out.name = "portfolio_return"
+    return out.sort_index()
+
+
 def annualized_variance(returns: pd.Series, *, periods: int = 252) -> float | None:
     clean = pd.to_numeric(returns, errors="coerce").dropna()
     if len(clean) < 2:

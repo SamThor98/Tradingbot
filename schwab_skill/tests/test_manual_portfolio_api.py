@@ -13,9 +13,10 @@ import sector_strength
 from webapp import main
 
 PRICES = {"AAPL": 200.0, "MSFT": 400.0}
+ACQUIRED = "2024-06-01"
 
 
-def _fake_history(ticker: str, days: int = 10, auth: Any = None, skill_dir: Any = None):
+def _fake_history(ticker: str, days: int = 10, auth: Any = None, skill_dir: Any = None, **kwargs: Any):
     price = PRICES.get(ticker)
     if price is None:
         return pd.DataFrame(), {"provider": "test", "reason": "no_data"}
@@ -32,8 +33,14 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
     main._manual_risk_cache.update({"key": None, "at": 0.0, "payload": None})
 
 
+def _pos(ticker: str, qty: float, *, avg_cost: float = 100.0, acquired_at: str = ACQUIRED) -> dict[str, Any]:
+    return {"ticker": ticker, "qty": qty, "acquired_at": acquired_at, "avg_cost": avg_cost}
+
+
 def _body(**overrides: Any) -> dict[str, Any]:
-    body: dict[str, Any] = {"positions": [{"ticker": "AAPL", "qty": 10}, {"ticker": "MSFT", "qty": 5}]}
+    body: dict[str, Any] = {
+        "positions": [_pos("AAPL", 10, avg_cost=150.0), _pos("MSFT", 5, avg_cost=350.0)],
+    }
     body.update(overrides)
     return body
 
@@ -50,13 +57,17 @@ def test_manual_positions_snapshot_ok() -> None:
     assert data["source"] == "manual"
     weights = {p["symbol"]: p["weight_pct"] for p in data["positions"]}
     assert weights["AAPL"] == pytest.approx(40.0, abs=0.1)
+    aapl = next(p for p in data["positions"] if p["symbol"] == "AAPL")
+    assert aapl["avg_cost"] == 150.0
+    assert aapl["pl_pct"] == pytest.approx((200.0 - 150.0) / 150.0 * 100.0)
+    assert aapl["acquired_at"] == ACQUIRED
 
 
 def test_manual_positions_fail_closed_on_unpriced() -> None:
     with TestClient(main.app) as client:
         resp = client.post(
             "/api/portfolio/manual/positions",
-            json={"positions": [{"ticker": "AAPL", "qty": 1}, {"ticker": "ZZZFAKE", "qty": 1}]},
+            json={"positions": [_pos("AAPL", 1), _pos("ZZZFAKE", 1)]},
         )
     payload = resp.json()
     assert payload["ok"] is False
@@ -66,15 +77,42 @@ def test_manual_positions_fail_closed_on_unpriced() -> None:
 
 def test_manual_positions_validation_422() -> None:
     with TestClient(main.app) as client:
-        bad_qty = client.post("/api/portfolio/manual/positions", json={"positions": [{"ticker": "AAPL", "qty": 0}]})
+        bad_qty = client.post("/api/portfolio/manual/positions", json={"positions": [_pos("AAPL", 0)]})
         too_many = client.post(
             "/api/portfolio/manual/positions",
-            json={"positions": [{"ticker": f"T{i}", "qty": 1} for i in range(16)]},
+            json={"positions": [_pos(f"T{i}", 1) for i in range(16)]},
         )
         empty = client.post("/api/portfolio/manual/positions", json={"positions": []})
+        missing_date = client.post(
+            "/api/portfolio/manual/positions",
+            json={"positions": [{"ticker": "AAPL", "qty": 1, "avg_cost": 10.0}]},
+        )
+        future_date = client.post(
+            "/api/portfolio/manual/positions",
+            json={"positions": [_pos("AAPL", 1, acquired_at="2099-01-01")]},
+        )
+        bad_cost = client.post(
+            "/api/portfolio/manual/positions",
+            json={"positions": [{"ticker": "AAPL", "qty": 1, "acquired_at": ACQUIRED, "avg_cost": 0}]},
+        )
     assert bad_qty.status_code == 422
     assert too_many.status_code == 422
     assert empty.status_code == 422
+    assert missing_date.status_code == 422
+    assert future_date.status_code == 422
+    assert bad_cost.status_code == 422
+
+
+def test_manual_cache_key_includes_acquired_and_cost() -> None:
+    from webapp.schemas import ManualPortfolioBody
+
+    a = ManualPortfolioBody.model_validate(_body())
+    b = ManualPortfolioBody.model_validate(_body(positions=[_pos("AAPL", 10, avg_cost=151.0), _pos("MSFT", 5, avg_cost=350.0)]))
+    c = ManualPortfolioBody.model_validate(
+        _body(positions=[_pos("AAPL", 10, avg_cost=150.0, acquired_at="2023-01-01"), _pos("MSFT", 5, avg_cost=350.0)])
+    )
+    assert main._manual_cache_key(a) != main._manual_cache_key(b)
+    assert main._manual_cache_key(a) != main._manual_cache_key(c)
 
 
 def test_manual_risk_dashboard_build_cache_and_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +157,7 @@ def test_manual_risk_dashboard_fail_closed_on_unpriced() -> None:
     with TestClient(main.app) as client:
         resp = client.post(
             "/api/portfolio/risk-dashboard/manual",
-            json={"positions": [{"ticker": "ZZZFAKE", "qty": 3}]},
+            json={"positions": [_pos("ZZZFAKE", 3)]},
         )
     payload = resp.json()
     assert payload["ok"] is False

@@ -2658,7 +2658,15 @@ def _shared_auth_or_none() -> DualSchwabAuth | None:
 
 
 def _manual_cache_key(body: ManualPortfolioBody) -> str:
-    rows = sorted((r.ticker.upper().strip(), float(r.qty)) for r in body.positions)
+    rows = sorted(
+        (
+            r.ticker.upper().strip(),
+            float(r.qty),
+            r.acquired_at.isoformat(),
+            round(float(r.avg_cost), 6),
+        )
+        for r in body.positions
+    )
     return json.dumps({"rows": rows, "cash": body.cash, "lookback": body.lookback_days})
 
 

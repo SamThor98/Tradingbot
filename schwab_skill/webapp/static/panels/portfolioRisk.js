@@ -219,6 +219,17 @@ function renderMetricsTable(metrics, tail, dq) {
     <div class="muted small">${formatCount(obs, "0")} aligned daily observations · hover a row for methodology</div>`;
 }
 
+function renderOwnershipNote(d) {
+  const dq = d.data_quality || {};
+  if (dq.ownership_mode !== "per_position_acquired_at") return "";
+  const lookback = d.lookback_days != null ? `${d.lookback_days}d lookback` : "lookback";
+  return `
+    <div class="muted small" style="margin-bottom: 0.5rem">
+      Ownership mode: ratios use each position’s acquired date through today (capped by ${safeText(lookback)}).
+      Pre-ownership days are excluded; cash is zero-return drag.
+    </div>`;
+}
+
 function renderConfidenceBanner(d) {
   const dq = d.data_quality || {};
   const obs = Number(d.metrics?.observations) || 0;
@@ -652,6 +663,8 @@ function renderDataQuality(dq, provenance) {
   if (Number(dq?.excluded_weight_pct || 0) > 0) warnings.push(`${metricValue(dq.excluded_weight_pct, 1, "%")} of weight excluded from return analytics`);
   if ((dq?.country_unresolved || []).length) warnings.push(`No country profile: ${(dq.country_unresolved || []).map(safeText).join(", ")}`);
   if (dq?.drawdown_source === "current_weight_backfill") warnings.push("Drawdown curve backfilled with current weights (snapshots not yet accumulated)");
+  if (dq?.drawdown_source === "ownership_weight_backfill") warnings.push("Drawdown curve from ownership-period returns (current weights among names held each day)");
+  if (dq?.ownership_mode === "per_position_acquired_at") warnings.push("Ownership-period return series active");
   const conf = provenance?.confidence ? ` · confidence: ${safeText(provenance.confidence)}` : "";
   if (!warnings.length) return `<div class="muted small">Data quality: clean${conf}</div>`;
   return `<div class="muted small" style="color:var(--warn)">Data quality: ${warnings.join(" · ")}${conf}</div>`;
@@ -664,6 +677,7 @@ function renderDashboard(d) {
     ${renderToolbar(d)}
     ${renderAnchorChips()}
     <div class="risk-dashboard">
+      ${renderOwnershipNote(d)}
       ${renderConfidenceBanner(d)}
       <div class="risk-section-title" id="risk-sec-metrics">Metrics &amp; Correlation</div>
       <p class="muted small risk-corr-shade-note">Heatmap shading: forest = diversifying (−), cream/neutral ≈ 0, red intensity rises with positive correlation (+). Strong fills use light text.</p>
@@ -753,14 +767,14 @@ export async function loadPortfolioRiskDashboard(options = {}) {
     setRiskPanelState("empty");
     mount.innerHTML = `
       <div class="empty-state-cell" style="padding:2rem 0;text-align:center">
-        <div style="font-weight:700;font-size:1rem">Manual book is empty</div>
-        <div class="muted" style="max-width:420px;margin:0.5rem auto 0.75rem">Add tickers and share counts on the Positions tab, then reopen Risk to build the dashboard.</div>
+        <div style="font-weight:700;font-size:1rem">Manual book is incomplete</div>
+        <div class="muted" style="max-width:420px;margin:0.5rem auto 0.75rem">Add tickers with shares, acquired date, and avg cost on the Positions tab, then reopen Risk to build the dashboard.</div>
         <button type="button" class="btn small secondary" id="riskGoManualPositionsBtn">Open Positions</button>
       </div>`;
     mount.querySelector("#riskGoManualPositionsBtn")?.addEventListener("click", () => {
       document.getElementById("portfolioTabPositions")?.click();
     });
-    paintRiskSurface("empty", "Manual book is empty.", "Add tickers on the Positions tab to build risk analytics.", {
+    paintRiskSurface("empty", "Manual book is incomplete.", "Add acquired date and avg cost on the Positions tab.", {
       output: { value: "None", sub: "manual book" },
       data: { value: "Local", sub: "this browser" },
       action: { value: "Add", sub: "tickers" },

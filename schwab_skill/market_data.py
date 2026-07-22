@@ -9,11 +9,13 @@ Yahoo history honors ``HISTORY_YFINANCE_ADJUSTED`` (default true) so fallback ba
 stay on a split/dividend-adjusted basis comparable to typical TA workflows.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -226,14 +228,53 @@ def _maybe_polygon_quote_fallback(ticker: str) -> tuple[dict | None, dict[str, A
     return _get_polygon_quote_fallback(ticker)
 
 
-def _get_daily_history_yfinance(ticker: str, days: int, skill_dir: Path | None = None) -> pd.DataFrame:
+def _coerce_history_bound(value: date | datetime | str | None) -> datetime | None:
+    """Normalize optional absolute history bounds to timezone-aware UTC datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        ts = value
+    elif isinstance(value, date):
+        ts = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    else:
+        try:
+            parsed = pd.Timestamp(value)
+        except Exception:
+            return None
+        if pd.isna(parsed):
+            return None
+        ts = parsed.to_pydatetime()
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+def _get_daily_history_yfinance(
+    ticker: str,
+    days: int,
+    skill_dir: Path | None = None,
+    *,
+    start_date: date | datetime | str | None = None,
+    end_date: date | datetime | str | None = None,
+) -> pd.DataFrame:
     """Fallback when Schwab fails (401, etc.). Returns same format as get_daily_history."""
-    df, _reason = _get_daily_history_yfinance_with_reason(ticker, days, skill_dir=skill_dir)
+    df, _reason = _get_daily_history_yfinance_with_reason(
+        ticker,
+        days,
+        skill_dir=skill_dir,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return df
 
 
 def _get_daily_history_yfinance_with_reason(
-    ticker: str, days: int, *, skill_dir: Path | None = None
+    ticker: str,
+    days: int,
+    *,
+    skill_dir: Path | None = None,
+    start_date: date | datetime | str | None = None,
+    end_date: date | datetime | str | None = None,
 ) -> tuple[pd.DataFrame, str]:
     """Like _get_daily_history_yfinance, but returns explicit reason for empty/missing output."""
     try:
@@ -241,13 +282,24 @@ def _get_daily_history_yfinance_with_reason(
 
         from _io_utils import yfinance_call
 
+        start_dt = _coerce_history_bound(start_date)
+        end_dt = _coerce_history_bound(end_date)
         with yfinance_call():
             t = yf.Ticker(ticker.upper())
-            period = "2y" if days > 365 else "1y"
             from config import get_history_yfinance_adjusted
 
             auto_adj = bool(get_history_yfinance_adjusted(skill_dir))
-            raw = t.history(period=period, auto_adjust=auto_adj)
+            if start_dt is not None:
+                # yfinance end is exclusive; nudge forward one day to include end_dt.
+                yf_end = (end_dt or datetime.now(timezone.utc)) + timedelta(days=1)
+                raw = t.history(
+                    start=start_dt.date().isoformat(),
+                    end=yf_end.date().isoformat(),
+                    auto_adjust=auto_adj,
+                )
+            else:
+                period = "2y" if days > 365 else "1y"
+                raw = t.history(period=period, auto_adjust=auto_adj)
         if raw is None:
             return _empty_ohlcv(), "yfinance_history_none"
         if not isinstance(raw, pd.DataFrame):
@@ -314,9 +366,15 @@ def get_daily_history_with_meta(
     days: int = 300,
     auth: DualSchwabAuth | None = None,
     skill_dir: Path | str | None = None,
+    *,
+    start_date: date | datetime | str | None = None,
+    end_date: date | datetime | str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Fetch daily OHLCV and return provider lineage metadata.
+
+    When ``start_date`` / ``end_date`` are set they define an absolute window
+    (UTC); otherwise the window is ``now - days`` through now.
 
     Metadata fields:
     - provider: "schwab" or "yfinance"
@@ -329,8 +387,10 @@ def get_daily_history_with_meta(
     auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
     ticker = ticker.upper().strip()
     skill_dir = Path(skill_dir or SKILL_DIR)
-    end_dt = datetime.now(timezone.utc)
-    start_dt = end_dt - timedelta(days=days)
+    end_dt = _coerce_history_bound(end_date) or datetime.now(timezone.utc)
+    start_dt = _coerce_history_bound(start_date) or (end_dt - timedelta(days=days))
+    if start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
 
@@ -347,6 +407,8 @@ def get_daily_history_with_meta(
         "used_fallback": False,
         "fallback_reason": None,
         "rows": 0,
+        "start_date": start_dt.date().isoformat(),
+        "end_date": end_dt.date().isoformat(),
     }
 
     try:
@@ -407,7 +469,13 @@ def get_daily_history_with_meta(
                 LOG.warning("Schwab data failed for %s (%s), using yfinance fallback", ticker, e)
         except ImportError:
             pass
-        out, yf_reason = _get_daily_history_yfinance_with_reason(ticker, days, skill_dir=skill_dir)
+        out, yf_reason = _get_daily_history_yfinance_with_reason(
+            ticker,
+            days,
+            skill_dir=skill_dir,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
         meta["rows"] = int(len(out))
         meta["fallback_reason"] = f"{meta['fallback_reason']}|{yf_reason}"
         meta["history_price_basis"] = (
@@ -422,6 +490,9 @@ def get_daily_history(
     days: int = 300,
     auth: DualSchwabAuth | None = None,
     skill_dir: Path | str | None = None,
+    *,
+    start_date: date | datetime | str | None = None,
+    end_date: date | datetime | str | None = None,
 ) -> pd.DataFrame:
     """
     Fetch daily OHLCV using Schwab Market Session. Falls back to yfinance on 401/errors.
@@ -433,6 +504,8 @@ def get_daily_history(
         days=days,
         auth=auth,
         skill_dir=skill_dir,
+        start_date=start_date,
+        end_date=end_date,
     )
     return df
 
