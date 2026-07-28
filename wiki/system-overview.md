@@ -47,6 +47,7 @@ Market Data → Signal Scanner → Advisory Model → Guardrails → Execution �
 ## Related Pages
 
 - [[project-overview]] — high-level project summary
+- [[multi-sleeve-trading-system-constitution]] — target multi-sleeve portfolio architecture
 - [[database-schema]] — all tables and relationships
 - [[deployment]] — how to deploy
 

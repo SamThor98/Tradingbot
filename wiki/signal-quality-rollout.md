@@ -23,6 +23,7 @@ tags: [runbook, quality]
 - [[quality-gates]] — modes and thresholds
 - [[signal-scanner]] — where gates are applied
 - [[validation]] — validation pipeline
+- [[multi-sleeve-trading-system-constitution]] — S0 live stack as core sleeve in target multi-sleeve system
 
 ---
 

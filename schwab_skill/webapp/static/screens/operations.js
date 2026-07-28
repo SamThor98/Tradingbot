@@ -21,7 +21,6 @@ export function createOperationsController(ctx) {
     updateScanModeHelperText,
     renderScanRows,
     bindScanSortHandlers,
-    fillScanOptionsFromLatestBacktest,
     closeQueueScanDialog,
     confirmQueueScanDialog,
     submitManualPendingTrade,
@@ -62,12 +61,6 @@ export function createOperationsController(ctx) {
       renderScanRows(Array.isArray(rows) ? rows : []);
     });
     bindScanSortHandlers();
-    document.getElementById("scanApplyBacktestSpecBtn")?.addEventListener("click", () => void fillScanOptionsFromLatestBacktest());
-    document.getElementById("scanClearOptionsBtn")?.addEventListener("click", () => {
-      const ta = document.getElementById("scanOptionsJson");
-      if (ta) ta.value = "";
-      state.scanRunOptions = null;
-    });
     bindEvent("pendingFilter", "change", refreshPending);
     bindEvent("pendingSort", "change", refreshPending);
     document.getElementById("clearPendingBtn")?.addEventListener("click", async () => {
@@ -156,6 +149,7 @@ export function createOperationsController(ctx) {
 
   function prime() {
     void ctx.refreshScanDeltas?.();
+    void ctx.refreshShadowWorkbenchTeaser?.();
   }
 
   return { id: "operations", init, prime };

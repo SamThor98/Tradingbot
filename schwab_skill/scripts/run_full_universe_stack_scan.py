@@ -101,7 +101,9 @@ def main() -> int:
         get_schwab_only_data,
     )
     from core.env_local import (
+        MULTI_SLEEVE_RTH_SHADOW_ENV,
         SIGNAL_STACK_ENFORCED_ENV,
+        multi_sleeve_rth_shadow_file_readiness,
         reload_env_file_into_process,
         restore_process_env,
         signal_stack_enforced_file_readiness,
@@ -120,18 +122,32 @@ def main() -> int:
     if rank_mode not in {"shadow", "live"}:
         print(f"FAIL: RANK_FILTER_V2_MODE must be shadow or live (got {rank_mode!r})")
         return 1
+    multi_sleeve_readiness = multi_sleeve_rth_shadow_file_readiness(env_path)
+    if not multi_sleeve_readiness.get("ready"):
+        print("WARN: multi-sleeve RTH shadow env not fully ready (continuing)")
+        for item in multi_sleeve_readiness.get("missing_env") or []:
+            print(f"- {item}")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     label = f"_{args.label}" if args.label else ""
     out_path = SKILL_DIR / "validation_artifacts" / f"full_universe_stack_scan_{stamp}{label}.json"
 
-    saved = reload_env_file_into_process(env_path, keys=list(SIGNAL_STACK_ENFORCED_ENV.keys()))
+    env_keys = list(
+        dict.fromkeys(
+            list(SIGNAL_STACK_ENFORCED_ENV.keys()) + list(MULTI_SLEEVE_RTH_SHADOW_ENV.keys())
+        )
+    )
+    saved = reload_env_file_into_process(env_path, keys=env_keys)
     try:
+        from config import get_allocator_mode
+
         process_modes = {
             "entry_timing": get_entry_timing_shadow_mode(SKILL_DIR),
             "exit_manager": get_exit_manager_mode(SKILL_DIR),
             "rank_filter_v2": get_rank_filter_v2_mode(SKILL_DIR),
             "schwab_only_data": get_schwab_only_data(SKILL_DIR),
+            "allocator_mode": get_allocator_mode(SKILL_DIR),
+            "multi_sleeve_rth_shadow_ready": bool(multi_sleeve_readiness.get("ready")),
         }
         if process_modes["rank_filter_v2"] not in {"shadow", "live"}:
             print(
@@ -144,7 +160,8 @@ def main() -> int:
         print(
             f"Running full-universe scan on {len(watchlist)} tickers "
             f"(entry={process_modes['entry_timing']} exit={process_modes['exit_manager']} "
-            f"rank_v2={process_modes['rank_filter_v2']}; no orders)…",
+            f"rank_v2={process_modes['rank_filter_v2']} allocator={process_modes['allocator_mode']}; "
+            f"no orders)…",
             flush=True,
         )
         scan_out = run_scan(skill_dir=SKILL_DIR, watchlist_override=watchlist)

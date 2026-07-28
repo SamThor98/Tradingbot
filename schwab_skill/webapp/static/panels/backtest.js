@@ -10,7 +10,8 @@
  *   - syncBtUniverseRow / applyBacktestPresetYears: form interactions.
  *   - collectBacktestSpecFromForm / collectBacktestOverrides: build the
  *     payload sent to `/api/backtest-runs`. `collectBacktestSpecFromForm`
- *     is also reused by the scan panel via `scanBodyFromBacktestSpec`.
+ *     was previously reused by the scan panel via `scanBodyFromBacktestSpec`
+ *     (advanced scan JSON UI has been removed from the dashboard).
  *   - renderBacktestResultSummary / renderBacktestResultRaw /
  *     backtestSpecSummaryLine: shared by the panel itself and the
  *     scan-from-latest-backtest helper.

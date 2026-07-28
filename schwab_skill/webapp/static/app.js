@@ -120,7 +120,7 @@ import {
   refreshCalibration,
   submitTradingHaltSave as _submitTradingHaltSavePanel,
 } from "./panels/calibration.js";
-import { refreshShadowScoreboard } from "./panels/shadowScoreboard.js";
+import { refreshShadowScoreboard, refreshShadowWorkbenchTeaser } from "./panels/shadowScoreboard.js";
 import { refreshReviewLoop, runReviewBackfill } from "./panels/reviewLoop.js";
 import {
   mapRecovery,
@@ -221,6 +221,12 @@ import {
 import { renderOperationsPanelSnapshot } from "./modules/operationsPanelSnapshot.js";
 import { paintSystemPanelSnapshot } from "./modules/systemPanelContract.js";
 import {
+  applySystemLane,
+  getSystemLaneFromUrl,
+  wireSystemLaneNav,
+  buildSystemNextDecision,
+} from "./modules/systemLanes.js";
+import {
   setHealthRibbonUnavailable,
   setHealthRibbonTiles,
   renderHealthRibbonSummary,
@@ -273,6 +279,8 @@ import { createResearchController } from "./screens/research.js";
 import { createCockpitController } from "./screens/cockpit.js";
 import { createDiagnosticsController } from "./screens/diagnostics.js";
 import { createSettingsController } from "./screens/settings.js";
+import { createPositionIntelController } from "./screens/positionIntel.js";
+import { initPositionIntelPanel, primePositionIntelPanel } from "./panels/positionIntel.js";
 
 // Thin wrappers preserve the call signatures used by `wireEvents`,
 // `connectSSE`, `runLazyApi`, etc. without leaking the panel-module
@@ -369,11 +377,13 @@ const SCREEN_LAZY_KEYS = Object.freeze({
 let _ablationCyclePollTimer = null;
 let _lastAblationRunStatus = "idle";
 
-const SCREEN_MODES = Object.freeze(["operations", "research", "diagnostics", "settings"]);
+const SCREEN_MODES = Object.freeze(["operations", "research", "intel", "diagnostics"]);
 const SCREEN_ALIASES = Object.freeze({
   cockpit: "research",
   today: "operations",
   system: "diagnostics",
+  // Settings merged into the System screen; old ?screen=settings deep links keep working.
+  settings: "diagnostics",
 });
 const SCREEN_CONTEXT = Object.freeze({
   operations: {
@@ -396,25 +406,25 @@ const SCREEN_CONTEXT = Object.freeze({
     altCta2Label: "Backtest",
     altCta2Href: "#backtestSection",
   },
+  intel: {
+    title: "Intel",
+    subtitle: "Conviction, volatility, options",
+    text: "Quant read on every open position — conviction scorecard, GARCH volatility signals, and the best long-call and covered-call setups.",
+    ctaLabel: "Refresh tables",
+    ctaHref: "#positionIntelSection",
+    altCtaLabel: "Open Intel",
+    altCtaHref: "#positionIntelSection",
+  },
   diagnostics: {
     title: "System",
-    subtitle: "Health, blockers, calibration",
-    text: "Health, validation, and readiness — verify reliability before it impacts execution.",
+    subtitle: "Health, calibration, settings",
+    text: "Health, validation, and readiness — plus connectivity, live-order controls, and account settings in one place.",
     ctaLabel: "Health summary",
     ctaHref: "#systemSummaryLanding",
     altCtaLabel: "Calibration",
     altCtaHref: "#calibrationSection",
-  },
-  settings: {
-    title: "Settings",
-    subtitle: "Connect, live controls, account",
-    text: "Link Schwab, control live orders from the overview, and adjust risk presets when you need finer tuning.",
-    ctaLabel: "Live-order controls",
-    ctaHref: "#settingsSummaryGuardrails",
-    altCtaLabel: "Presets",
-    altCtaHref: "#settingsSection",
-    altCta2Label: "Account",
-    altCta2Href: "#settingsAccountPanel",
+    altCta2Label: "Settings",
+    altCta2Href: "#settingsSummaryLanding",
   },
   cockpit: {
     title: "One glance, full picture.",
@@ -462,6 +472,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "recoverySection",
     "learningSection",
   ],
+  intel: ["positionIntelSection"],
   diagnostics: [
     "systemAlertBanner",
     "systemSummaryLanding",
@@ -474,8 +485,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "calibrationSection",
     "shadowScoreboardSection",
     "reviewLoopSection",
-  ],
-  settings: [
+    // Settings sections re-homed under System (merge, not redesign).
     "settingsSummaryLanding",
     "onboardingSection",
     "settingsSection",
@@ -765,30 +775,6 @@ function resolveLandingFrameState(mode) {
     };
   }
 
-  if (mode === "settings") {
-    const connectBad = settingsConnectNeedsAttention();
-    return {
-      subtitle: cfg.subtitle,
-      ctaLabel: connectBad ? "Connect / fix auth" : "Live-order controls",
-      ctaHref: connectBad ? "#onboardingSection" : "#settingsSummaryGuardrails",
-      altCtaLabel: "Presets",
-      altCtaHref: "#settingsSection",
-      altCta2Label: "Account",
-      altCta2Href: "#settingsAccountPanel",
-      chips: [
-        connectBad
-          ? { label: "Disconnected / auth risk", tone: "blocked" }
-          : { label: "Schwab connected", tone: "healthy" },
-        state.accountMe?.live_execution_enabled
-          ? { label: "Live ON", tone: "attention" }
-          : { label: "Live OFF", tone: "neutral" },
-        state.accountMe?.trading_halted
-          ? { label: "Paused", tone: "attention" }
-          : { label: "Controls ready", tone: "neutral" },
-      ],
-    };
-  }
-
   return {
     subtitle: cfg.subtitle || "",
     ctaLabel: cfg.ctaLabel,
@@ -838,13 +824,15 @@ function renderScreenContext(mode) {
   const hintEl = document.getElementById("screenContextHint");
   if (titleEl) titleEl.textContent = cfg.title;
   if (textEl) textEl.textContent = cfg.text;
-  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Today, 2 Research, 3 System, 4 Settings.";
+  if (hintEl) hintEl.textContent = "Press Ctrl/Cmd + 1 Today, 2 Research, 3 Intel, 4 System.";
   refreshLandingFrameState(mode);
 }
 
 function maybePrimeScreenData(mode) {
   const controller = screenControllers[mode];
   if (controller) controller.prime();
+  // Settings sections are re-homed on the System screen; prime them together.
+  if (mode === "diagnostics") screenControllers.settings?.prime();
 }
 
 function maybeShowScreenNudge(mode) {
@@ -858,9 +846,9 @@ function maybeShowScreenNudge(mode) {
   }
   const cfg = SCREEN_CONTEXT[mode] || SCREEN_CONTEXT.operations;
   const nudgeMap = {
-    settings: "Finish connectivity and profile settings once, then return to Operations.",
     research: "Use quick check, backtests, SEC compare, and dossiers to validate each setup.",
-    diagnostics: "Use this screen to validate reliability and troubleshoot blockers without interrupting operations.",
+    intel: "Conviction, volatility, and options tables for your open positions — hit Refresh to recompute.",
+    diagnostics: "Validate reliability, troubleshoot blockers, and manage connectivity + account settings here.",
     cockpit: "Click any opportunity row for the decision card and order-intent preview.",
   };
   const hint = nudgeMap[mode] || "Use the context actions to jump into this screen.";
@@ -885,6 +873,7 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   document.body.classList.remove(
     "ui-screen-operations",
     "ui-screen-research",
+    "ui-screen-intel",
     "ui-screen-diagnostics",
     "ui-screen-settings",
     "ui-screen-cockpit",
@@ -907,10 +896,11 @@ function applyScreenMode(mode, { updateUrl = false } = {}) {
   if (m === "diagnostics") {
     updateSystemSummaryLanding();
     refreshSystemAlertBanner();
-  }
-  if (m === "settings") {
+    // Settings lives on this screen after the merge.
     updateSettingsSummaryLanding();
     scrollToConnectSchwabIfNeeded();
+    wireSystemLaneNav();
+    applySystemLane(state.systemLane || getSystemLaneFromUrl(), { updateUrl: false });
   }
   if (updateUrl) writeScreenModeToUrl(m);
 }
@@ -978,10 +968,8 @@ function applyDisplayMode(mode) {
   if (sel) sel.value = m;
   const pro = m === "pro";
   const scanDiag = document.getElementById("scanDiagnosticsPanel");
-  const scanAdvanced = document.getElementById("scanAdvancedOptionsPanel");
   const secDerived = document.getElementById("secCompareDerivedPanel");
   if (scanDiag) scanDiag.open = pro;
-  if (scanAdvanced) scanAdvanced.open = pro;
   if (secDerived) secDerived.open = pro;
   const perfRaw = document.getElementById("performanceRawDetails");
   if (perfRaw && !pro) perfRaw.open = false;
@@ -1528,23 +1516,41 @@ function updateSystemSummaryLanding() {
   if (landing) landing.setAttribute("data-system-state", systemState);
   if (verdictEl) {
     verdictEl.textContent = blockers.length
-      ? "Blocked — fix before trading"
+      ? "FIX BLOCKERS"
       : systemState === "unknown"
-        ? "Checking health…"
-        : "Healthy — you can trade";
+        ? "CHECKING…"
+        : "TRADE READY";
   }
   if (blockersEl) {
     if (!blockers.length) {
-      blockersEl.innerHTML = "";
+      blockersEl.innerHTML = `<li class="system-blocker-item system-blocker-item--clear"><span class="muted">No actionable blockers.</span></li>`;
     } else {
       blockersEl.innerHTML = blockers
-        .slice(0, 5)
+        .slice(0, 3)
         .map(
-          (b) =>
-            `<li class="system-blocker-item"><span class="tab-landing-chip tab-landing-chip--blocked"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Blocker</span><span>${escapeHtml(b)}</span></li>`,
+          (b, idx) =>
+            `<li class="system-blocker-item"><span class="tab-landing-chip tab-landing-chip--blocked"><span class="tab-landing-chip-dot" aria-hidden="true"></span>${idx + 1}</span><span>${escapeHtml(b)}</span></li>`,
         )
         .join("");
     }
+  }
+  const nextCard = document.getElementById("systemNextDecision");
+  const nextTitle = document.getElementById("systemNextDecisionTitle");
+  const nextWhy = document.getElementById("systemNextDecisionWhy");
+  const nextCta = document.getElementById("systemNextDecisionCta");
+  const next = buildSystemNextDecision({
+    blockers,
+    authState: lastHealthSnapshot.authState,
+    quoteOk: lastHealthSnapshot.quoteOk,
+    systemState,
+  });
+  if (nextCard) nextCard.setAttribute("data-decision", next.decision || "hold");
+  if (nextTitle) nextTitle.textContent = next.title;
+  if (nextWhy) nextWhy.textContent = next.why;
+  if (nextCta) {
+    nextCta.textContent = next.ctaLabel;
+    nextCta.href = next.ctaHref;
+    if (next.ctaLane) nextCta.setAttribute("data-system-lane-jump", next.ctaLane);
   }
   if (currentScreenMode === "diagnostics") refreshLandingFrameState("diagnostics");
 }
@@ -3571,78 +3577,11 @@ const SCAN_START_META = "Scanning S&P 1500 candidates…";
 let localScanPollActive = false;
 let resumedLocalScanJobId = null;
 
-function scanBodyFromBacktestSpec(spec) {
-  if (!spec || typeof spec !== "object") return {};
-  const out = {};
-  if (spec.overrides && typeof spec.overrides === "object" && Object.keys(spec.overrides).length) {
-    out.strategy_overrides = spec.overrides;
-  }
-  const um = safeText(spec.universe_mode || "").toLowerCase();
-  // Scan defaults to server-side SP1500; only carry explicit ticker overrides.
-  if (um === "tickers") out.universe_mode = um;
-  if (um === "tickers" && Array.isArray(spec.tickers)) out.tickers = spec.tickers;
-  return out;
-}
-
 function readScanOptionsFromForm() {
-  const ta = document.getElementById("scanOptionsJson");
-  if (!ta) {
-    state.scanRunOptions = null;
-    return true;
-  }
-  const raw = ta.value.trim();
-  if (!raw) {
-    state.scanRunOptions = null;
-    return true;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Scan options must be a JSON object.");
-    }
-    state.scanRunOptions = parsed;
-    return true;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logEvent({ kind: "scan", severity: "error", message: `Invalid scan options JSON: ${msg}` });
-    updateActionCenter({ title: "Scan options", message: msg, severity: "error" });
-    return false;
-  }
-}
-
-async function fillScanOptionsFromLatestBacktest() {
-  const ta = document.getElementById("scanOptionsJson");
-  if (!ta) return;
-  // `/api/backtest-runs` is SaaS-only; locally this would 404.
-  if (!state.publicConfig?.saas_mode) {
-    updateActionCenter({
-      title: "Backtests",
-      message: "Hosted backtest history is SaaS-only. Paste scan options manually, or run python backtest.py locally.",
-      severity: "info",
-    });
-    return;
-  }
-  const out = await api.get("/api/backtest-runs?limit=1");
-  if (!out.ok) {
-    logEvent({ kind: "scan", severity: "error", message: `Backtest list failed: ${out.error}` });
-    updateActionCenter({ title: "Backtests", message: safeText(out.error), severity: "error" });
-    return;
-  }
-  const rows = Array.isArray(out.data) ? out.data : [];
-  if (!rows.length) {
-    updateActionCenter({ title: "Backtests", message: "No backtest runs yet.", severity: "info" });
-    return;
-  }
-  const spec = rows[0].spec;
-  const body = scanBodyFromBacktestSpec(spec);
-  ta.value = JSON.stringify(body, null, 2);
-  readScanOptionsFromForm();
-  logEvent({ kind: "scan", severity: "info", message: "Scan options filled from latest backtest." });
-  updateActionCenter({
-    title: "Scan options",
-    message: "Filled from your most recent backtest. Edit JSON if needed, then Run Scan.",
-    severity: "info",
-  });
+  // Advanced JSON scan options were removed from the dashboard UI.
+  // Scans always use server defaults (S&P 1500) unless another path sets state.scanRunOptions.
+  state.scanRunOptions = null;
+  return true;
 }
 
 function strategySummaryFromSignals(signals) {
@@ -4573,7 +4512,6 @@ function buildScreenControllers() {
     updateScanModeHelperText,
     renderScanRows,
     bindScanSortHandlers,
-    fillScanOptionsFromLatestBacktest,
     closeQueueScanDialog,
     confirmQueueScanDialog,
     submitManualPendingTrade,
@@ -4636,7 +4574,11 @@ function buildScreenControllers() {
     // Cockpit
     initCockpitPanel,
     primeCockpitPanel,
+    // Position Intel
+    initPositionIntelPanel,
+    primePositionIntelPanel,
     refreshScanDeltas,
+    refreshShadowWorkbenchTeaser,
     updateResearchSummaryLanding,
     openResearchForTicker,
   };
@@ -4646,7 +4588,34 @@ function buildScreenControllers() {
     settings: createSettingsController(ctx),
     diagnostics: createDiagnosticsController(ctx),
     cockpit: createCockpitController(ctx),
+    intel: createPositionIntelController(ctx),
   };
+}
+
+/**
+ * Settings sections are re-homed on the System screen (Settings tab removed).
+ * The markup stays where it always was in index.html; this one-time DOM move
+ * places them after the System quality diagnostics so the merged screen reads
+ * health-first, settings-second. Listeners and deep links survive the move.
+ */
+function rehomeSettingsSectionsUnderSystem() {
+  const anchor = document.getElementById("systemQualityDiagnostics");
+  if (!anchor || !anchor.parentElement) return;
+  const ids = ["settingsSummaryLanding", "settingsWorkspaceIntro", "settingsWorkflowStrip"];
+  const movable = ids
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+  // The onboarding/presets/account markup lives inside the .settings-workspace
+  // wrapper and the settingsAccountPanel disclosure; move those wholesale.
+  const workspace = document.querySelector("section.settings-workspace");
+  if (workspace) movable.push(workspace);
+  const accountPanel = document.getElementById("settingsAccountPanel");
+  if (accountPanel && (!workspace || !workspace.contains(accountPanel))) movable.push(accountPanel);
+  let after = anchor;
+  movable.forEach((el) => {
+    after.insertAdjacentElement("afterend", el);
+    after = el;
+  });
 }
 
 function wireFeatureGuideChrome() {
@@ -4872,6 +4841,7 @@ function connectSSE() {
   safeInit("initFeatureFlags", () => {
     initFeatureFlags();
   });
+  safeInit("rehomeSettingsSectionsUnderSystem", rehomeSettingsSectionsUnderSystem);
   safeInit("applyResearchSlimDefault", () => {
     ["sectorsSection", "moversSection", "cockpitMergedPanel", "researchAdvancedTools"].forEach((id) => {
       const el = document.getElementById(id);
@@ -4940,6 +4910,14 @@ function connectSSE() {
   safeInit("setupCommandPalette", () =>
     setupCommandPalette({ runLazyApi, applyDisplayMode, applyScreenMode, openTradeDrawer }),
   );
+  safeInit("shadowWorkbenchJump", () => {
+    window.addEventListener("shadow_workbench_open", () => {
+      applyScreenMode("diagnostics", { updateUrl: true });
+      applySystemLane("shadow", { updateUrl: true });
+      void runLazyApi("shadowScoreboard");
+      document.getElementById("shadowScoreboardSection")?.scrollIntoView({ behavior: "smooth" });
+    });
+  });
   safeInit("setupKeyboardShortcuts", () =>
     setupKeyboardShortcuts({
       openCommandPalette,
@@ -4962,6 +4940,22 @@ function connectSSE() {
   });
   safeInit("applyDisplayMode", () => applyDisplayMode(consumeDisplayModeFromUrl() || getDisplayMode()));
   safeInit("applyScreenMode", () => applyScreenMode(getScreenModeFromUrl(), { updateUrl: true }));
+  safeInit("applySystemLaneFromUrl", () => {
+    if (document.body.classList.contains("ui-screen-diagnostics")) {
+      wireSystemLaneNav();
+      applySystemLane(getSystemLaneFromUrl(), { updateUrl: false });
+    }
+  });
+  safeInit("wireSystemLaneJumpLinks", () => {
+    document.addEventListener("click", (e) => {
+      const a = e.target?.closest?.("[data-system-lane-jump]");
+      if (!a) return;
+      const lane = a.getAttribute("data-system-lane-jump");
+      if (!lane) return;
+      applyScreenMode("diagnostics", { updateUrl: true });
+      applySystemLane(lane, { updateUrl: true });
+    });
+  });
   safeInit("applyReportViewMode", applyReportViewMode);
   safeInit("applySecCompareMode", applySecCompareMode);
   safeInit("updateScanModeHelperText", updateScanModeHelperText);

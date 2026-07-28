@@ -7,7 +7,7 @@ the same contract):
 * ``?section=<alias>`` deep links — rewritten to the canonical ``#id``
   hash by ``modules/router.js`` (``applyQuerySectionDeepLink``).
 * ``?screen=<mode>`` workspace deep links — activate one of the four
-  topbar tabs (operations/research/diagnostics/settings).
+  topbar tabs (operations/research/intel/diagnostics).
 * Keyboard shortcuts — Ctrl/Cmd+1..4 screen switch and Ctrl+K palette
   (``modules/shortcuts.js``).
 
@@ -34,11 +34,13 @@ from playwright.sync_api import Page, expect  # noqa: E402
 
 BASE_URL = os.environ.get("E2E_BASE_URL", "https://127.0.0.1:8182").rstrip("/")
 
-SCREEN_MODES = ["operations", "research", "diagnostics", "settings"]
+SCREEN_MODES = ["operations", "research", "intel", "diagnostics"]
 
 # Legacy ?screen= aliases normalize to a topbar tab (see SCREEN_ALIASES in app.js).
 SCREEN_MODE_ALIASES = [
     ("cockpit", "research"),
+    # Settings merged into System (2026-07-27); old links keep working.
+    ("settings", "diagnostics"),
 ]
 
 # alias -> canonical DOM id (must stay in sync with SECTION_ALIASES in
@@ -146,8 +148,8 @@ def test_hash_change_reopens_collapsed_details(page: Page) -> None:
     [
         ("Control+1", "operations"),
         ("Control+2", "research"),
-        ("Control+3", "diagnostics"),
-        ("Control+4", "settings"),
+        ("Control+3", "intel"),
+        ("Control+4", "diagnostics"),
     ],
 )
 def test_keyboard_screen_shortcuts(page: Page, key: str, mode: str) -> None:

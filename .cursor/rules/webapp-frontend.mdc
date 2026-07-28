@@ -61,10 +61,11 @@ For Figma-first dashboard work (8182, Old Logan DS, MCP workflow), follow `.curs
 
 Qualified + Near-miss tables in `#scanSection`:
 
-- Exactly **5 columns**: Ticker, Gate, Price, Rank, Actions
-- **Never** add a trailing spacer (`scan-triage-col-spacer` / `scan-th-spacer` / `scan-col-spacer`)
+- Columns: **Ticker · Gate · Strategy · Vol · Price · Rank · Stop · Actions**
+- Exactly **8 columns** — **never** add a trailing spacer (`scan-triage-col-spacer` / `scan-th-spacer` / `scan-col-spacer`)
 - `table-layout: fixed; width: 100%`
-- Rank (`nth-child(4)`) uses `width: auto` and **absorbs leftover** lane width
+- Ticker (`nth-child(1)`) uses `width: auto` and **absorbs leftover** lane width
 - Actions stay **fixed** at `13.75rem` and flush to the **right** edge
+- Rich ticker / Strategy / Vol / Stop column content stays; leftover must not sit after Actions
 
 A spacer makes Actions sit mid-row with a dead beige shelf — users reject this as “table width messed up.” Enforced by `tests/test_scan_triage_table_width_contract.py`.

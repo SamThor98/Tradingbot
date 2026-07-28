@@ -66,29 +66,29 @@
         <button
           type="button"
           class="screen-switch-btn"
-          data-screen-mode="diagnostics"
+          data-screen-mode="intel"
           role="tab"
           aria-selected="false"
-          aria-controls="healthRibbon"
+          aria-controls="positionIntelSection"
         >
           <span class="tab-num" aria-hidden="true">3</span>
           <span class="tab-copy">
-            <span class="tab-label">System</span>
-            <span class="tab-subtitle">Health, blockers, calibration</span>
+            <span class="tab-label">Intel</span>
+            <span class="tab-subtitle">Conviction, volatility, options</span>
           </span>
         </button>
         <button
           type="button"
           class="screen-switch-btn"
-          data-screen-mode="settings"
+          data-screen-mode="diagnostics"
           role="tab"
           aria-selected="false"
-          aria-controls="onboardingSection"
+          aria-controls="healthRibbon"
         >
           <span class="tab-num" aria-hidden="true">4</span>
           <span class="tab-copy">
-            <span class="tab-label">Settings</span>
-            <span class="tab-subtitle">Connect, live controls, account</span>
+            <span class="tab-label">System</span>
+            <span class="tab-subtitle">Health, calibration, settings</span>
           </span>
         </button>
       </nav>
@@ -351,10 +351,10 @@
                 id="scanBlockersChip"
                 class="chip scan-blockers-chip hidden"
                 aria-expanded="false"
-                title="Open diagnostics to see why symbols were filtered"
+                title="Open scan funnel to see where symbols dropped out"
               >
                 <span aria-hidden="true">&#9888;</span>
-                <span id="scanBlockersChipCount">0</span> blockers
+                <span id="scanBlockersChipCount">0</span> drop-offs
               </button>
             </div>
           </div>
@@ -365,56 +365,46 @@
           </div>
           <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
+          <div id="shadowWorkbenchTeaser" class="shadow-workbench-teaser hidden" aria-live="polite"></div>
+          <section id="peadCanarySection" class="pead-canary-card operations-surface" aria-label="PEAD canary sleeve" data-state="empty">
+            <div class="pead-canary-head">
+              <div>
+                <h3 class="pead-canary-title">PEAD canary sleeve</h3>
+                <small class="muted">Paper top-5 by edge score — not executable. Stage2 still owns live entries.</small>
+              </div>
+              <span id="peadCanaryMeta" class="muted small mono-nums" aria-live="polite"></span>
+            </div>
+            <div id="peadCanaryBody">
+              <p class="muted small">Waiting for last scan diagnostics — run a scan (or refresh status) to load the paper top-5.</p>
+            </div>
+          </section>
           <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
           <div id="scanFunnelFilterBanner" class="scan-funnel-filter-host hidden" aria-live="polite"></div>
           <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
             <progress id="scanJobProgress" max="100" value="0"></progress>
             <span id="scanJobProgressLabel" class="muted"></span>
           </div>
-          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced">
+          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced scan-funnel-disclosure">
             <summary class="panel-disclosure-summary">
-              Diagnostics and funnel
-              <span class="disclosure-hint muted">why symbols were filtered out</span>
+              <span class="ops-disclosure-title">Scan funnel</span>
+              <span id="scanFunnelSummaryStrip" class="decision-summary-strip scan-funnel-summary-strip" aria-live="polite"></span>
+              <span class="disclosure-hint muted">where symbols drop out of the pipeline</span>
             </summary>
-            <div class="scan-insights">
+            <div class="scan-insights scan-insights--funnel">
+              <div class="scan-block scan-block--funnel">
+                <h3 class="scan-funnel-board-title">Pass funnel</h3>
+                <p class="muted scan-block-hint">Each row is how many symbols still pass at that step. Click a row to filter near-misses.</p>
+                <div id="scanFunnel" class="scan-funnel-rows" role="list"></div>
+              </div>
               <div class="scan-block scan-block--blockers">
-                <h3>Top Blockers <span class="muted scan-block-hint">low priority context</span></h3>
+                <h3 class="scan-funnel-board-title">Top drop-offs</h3>
+                <p class="muted scan-block-hint">Largest filter removals from this scan</p>
                 <ul id="scanBlockers" class="blocker-chips"></ul>
               </div>
-              <div class="scan-block scan-block--funnel">
-                <h3>
-                  Pass Funnel
-                  <span class="muted scan-block-hint">each bar is the PASS count at that stage &middot; hover for details</span>
-                </h3>
-                <div id="scanFunnel" class="funnel-grid"></div>
+              <div class="scan-diagnostics-meta">
+                <div class="scan-funnel-board-title">Scan health</div>
+                <div id="scanDiagnostics" class="calibration-ledger-sources scan-health-pills" aria-label="Scan health"></div>
               </div>
-            </div>
-            <div class="scan-diagnostics-meta">
-              <div class="scan-diagnostics-label">Scan health</div>
-              <div id="scanDiagnostics" class="chip-row" aria-label="Pipeline metadata"></div>
-            </div>
-          </details>
-          <details id="scanAdvancedOptionsPanel" class="panel-disclosure panel-disclosure--advanced nav-advanced">
-            <summary class="panel-disclosure-summary">
-              Advanced scan options
-              <span class="disclosure-hint muted">optional advanced settings (JSON)</span>
-            </summary>
-            <p class="muted small" style="margin: 0.5rem 0">
-              By default the scan covers the S&amp;P 1500. Leave blank for defaults, or paste JSON to limit tickers or adjust scanner settings.
-            </p>
-            <textarea
-              id="scanOptionsJson"
-              class="input-like"
-              rows="5"
-              style="width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem"
-              placeholder="Optional JSON settings (leave blank for defaults)"
-              spellcheck="false"
-            ></textarea>
-            <div class="inline-form compact" style="margin-top: 0.5rem">
-              <button type="button" id="scanApplyBacktestSpecBtn" class="btn small secondary">
-                Fill from latest backtest
-              </button>
-              <button type="button" id="scanClearOptionsBtn" class="btn small secondary">Clear</button>
             </div>
           </details>
           <div class="scan-results-layout">
@@ -442,21 +432,27 @@
                   <colgroup>
                     <col class="scan-triage-col-ticker" />
                     <col class="scan-triage-col-gate" />
+                    <col class="scan-triage-col-strategy" />
+                    <col class="scan-triage-col-vol" />
                     <col class="scan-triage-col-price" />
                     <col class="scan-triage-col-rank" />
+                    <col class="scan-triage-col-stop" />
                     <col class="scan-triage-col-actions" />
                   </colgroup>
                   <thead>
                     <tr>
                       <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by gate">Gate<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="volume_ratio" aria-sort="none" tabindex="0" role="button" title="Sort by relative volume">Vol<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="stop" aria-sort="none" tabindex="0" role="button" title="Advisory stop (matches Brief)">Stop<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                     </tr>
                   </thead>
                   <tbody id="scanTableBody">
-                    <tr class="scan-row--empty"><td colspan="5" class="muted">Run a scan to load candidates.</td></tr>
+                    <tr class="scan-row--empty"><td colspan="8" class="muted">Run a scan to load candidates.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -469,7 +465,7 @@
                   <span id="nearMissSummaryCount" class="muted">(0)</span>
                 </summary>
                 <p class="muted scan-near-miss-copy">
-                  Candidates that did not pass current mode thresholds. Top 10 shown with failure reasons.
+                  Candidates that did not pass current mode thresholds. Top 10 shown — Why under each ticker lists the failure reason(s).
                 </p>
                 <div class="table-wrap near-miss-table-wrap">
                   <table class="scan-candidates-table scan-candidates-table--triage">
@@ -477,21 +473,27 @@
                     <colgroup>
                       <col class="scan-triage-col-ticker" />
                       <col class="scan-triage-col-gate" />
+                      <col class="scan-triage-col-strategy" />
+                      <col class="scan-triage-col-vol" />
                       <col class="scan-triage-col-price" />
                       <col class="scan-triage-col-rank" />
+                      <col class="scan-triage-col-stop" />
                       <col class="scan-triage-col-actions" />
                     </colgroup>
                     <thead>
                       <tr>
                         <th class="sortable-th" data-sort-key="ticker" aria-sort="none" tabindex="0" role="button" title="Sort by ticker">Ticker<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="status" aria-sort="none" tabindex="0" role="button" title="Sort by gate">Gate<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="volume_ratio" aria-sort="none" tabindex="0" role="button" title="Sort by relative volume">Vol<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="stop" aria-sort="none" tabindex="0" role="button" title="Advisory stop (matches Brief)">Stop<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                       </tr>
                     </thead>
                     <tbody id="nearMissTableBody">
-                      <tr class="scan-row--empty"><td colspan="5" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                      <tr class="scan-row--empty"><td colspan="8" class="muted">Near-miss candidates will appear after scan.</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -872,6 +874,31 @@
         </details>
       </div>
 
+      <section id="positionIntelSection" class="card intel-surface" aria-label="Position intelligence">
+        <div class="section-title">
+          <h2>Position Intelligence</h2>
+          <small class="muted">Conviction scorecard, GARCH volatility, and options setups for open positions.</small>
+        </div>
+        <div class="inline-form compact intel-toolbar">
+          <label class="field-label intel-lookup-label" for="intelTickerInput">Look up ticker</label>
+          <input
+            id="intelTickerInput"
+            type="text"
+            class="intel-ticker-input"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="10"
+            placeholder="e.g. AAPL"
+            aria-label="Ticker to look up"
+          />
+          <button id="intelLookupBtn" type="button" class="btn small primary">Look up</button>
+          <span id="intelMeta" class="muted small mono-nums" aria-live="polite"></span>
+          <button id="intelRefreshBtn" type="button" class="btn small secondary">Refresh</button>
+        </div>
+        <div id="intelDataQuality" class="intel-data-quality hidden" aria-live="polite"></div>
+        <div id="intelBody" data-async-state="idle"></div>
+      </section>
+
       <section id="settingsSummaryLanding" class="card settings-summary-landing settings-surface" aria-label="Settings overview" data-settings-state="unknown">
         <p id="settingsSummaryLead" class="settings-summary-lead muted">
           Link Schwab first. Then use the controls below to turn live orders on or off and pause trading when you need to.
@@ -1185,45 +1212,57 @@
         </div>
       </section>
 
-      <section id="systemSummaryLanding" class="card system-summary-landing diagnostics-surface system-two-zone" aria-label="System at a glance" data-system-state="unknown">
-        <div class="system-zone system-zone--trade">
-          <p class="system-zone-label">Zone 1 · Can I trade?</p>
-          <strong id="systemZoneVerdict" class="system-zone-verdict">Checking health…</strong>
-          <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
-          <ul id="systemZoneBlockers" class="system-blocker-list" aria-label="Actionable blockers"></ul>
-          <div class="system-summary-grid system-zone-support">
-            <div class="system-summary-kpi">
-              <span class="system-summary-label">Auth</span>
-              <strong id="systemSummaryAuth" class="system-summary-value" data-unavailable="true">—</strong>
-              <small id="systemSummaryAuthHint" class="muted">broker connection</small>
-            </div>
-            <div class="system-summary-kpi">
-              <span class="system-summary-label">Quotes</span>
-              <strong id="systemSummaryQuotes" class="system-summary-value" data-unavailable="true">—</strong>
-              <small id="systemSummaryQuotesHint" class="muted">market data probe</small>
-            </div>
-            <div class="system-summary-kpi">
-              <span class="system-summary-label">Validation</span>
-              <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
-              <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
-            </div>
+      <section id="systemSummaryLanding" class="card system-summary-landing diagnostics-surface system-command-strip" aria-label="System at a glance" data-system-state="unknown">
+        <p class="system-zone-label">System · Can I trade?</p>
+        <strong id="systemZoneVerdict" class="system-zone-verdict">Checking health…</strong>
+        <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
+        <ul id="systemZoneBlockers" class="system-blocker-list" aria-label="Actionable blockers"></ul>
+        <div class="system-summary-grid system-zone-support">
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Auth</span>
+            <strong id="systemSummaryAuth" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryAuthHint" class="muted">broker connection</small>
           </div>
-          <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
-            <a class="btn small secondary" href="#healthRibbon">Health tiles</a>
-            <a class="btn small secondary" href="#statusDetailsPanel">Detailed status</a>
-          </nav>
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Quotes</span>
+            <strong id="systemSummaryQuotes" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryQuotesHint" class="muted">market data probe</small>
+          </div>
+          <div class="system-summary-kpi">
+            <span class="system-summary-label">Validation</span>
+            <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
+            <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
+          </div>
         </div>
-        <div class="system-zone system-zone--calibrate">
-          <p class="system-zone-label">Zone 2 · Why / calibrate</p>
-          <strong class="system-zone-secondary-title">Diagnostics depth · funnels · calibration · provenance</strong>
-          <p class="muted small">Secondary to trading readiness — use this after blockers are clear.</p>
-          <nav class="system-summary-actions inline-form compact" aria-label="Calibration shortcuts">
-            <a class="btn small secondary" href="#systemQualityDiagnostics">Calibration &amp; scoreboard</a>
-            <a class="btn small secondary" href="#calibrationSection">Calibration</a>
-            <a class="btn small secondary" href="#statusDetailsPanel">Provenance / status</a>
-          </nav>
-        </div>
+        <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
+          <a class="btn small secondary" href="#healthRibbon" data-system-lane-jump="ready">Health tiles</a>
+          <a class="btn small secondary" href="#systemDecisionPanel" data-system-lane-jump="decide">Decide</a>
+          <a class="btn small secondary" href="#settingsSummaryLanding" data-system-lane-jump="connect">Connect</a>
+        </nav>
+        <aside id="systemNextDecision" class="system-next-decision" data-decision="hold" aria-live="polite">
+          <p class="system-next-decision__eyebrow">Next decision</p>
+          <strong id="systemNextDecisionTitle" class="system-next-decision__title">Waiting on health…</strong>
+          <p id="systemNextDecisionWhy" class="system-next-decision__why muted">Run or refresh health to unlock the next action.</p>
+          <div class="system-next-decision__actions inline-form compact">
+            <a id="systemNextDecisionCta" class="btn small secondary" href="#healthRibbon">Refresh path</a>
+          </div>
+        </aside>
       </section>
+
+      <nav
+        id="systemLaneNav"
+        class="system-lane-nav diagnostics-surface"
+        role="tablist"
+        aria-label="System lanes"
+      >
+        <button type="button" class="system-lane-nav__btn is-active" data-system-lane="ready" role="tab" aria-pressed="true">Ready</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="decide" role="tab" aria-pressed="false">Decide</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="calibrate" role="tab" aria-pressed="false">Calibrate</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="shadow" role="tab" aria-pressed="false">Shadow</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="review" role="tab" aria-pressed="false">Review</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="connect" role="tab" aria-pressed="false">Connect</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="advanced" role="tab" aria-pressed="false">Advanced</button>
+      </nav>
 
       <p id="systemStatusCompact" class="card system-status-compact diagnostics-surface hidden muted" aria-hidden="true" aria-live="polite"></p>
 
@@ -1283,11 +1322,11 @@
         </div>
       </section>
 
-      <details id="systemDecisionPanel" class="card section-advanced panel-disclosure diagnostics-surface system-decision-disclosure">
+      <details id="systemDecisionPanel" class="card section-advanced panel-disclosure diagnostics-surface system-decision-disclosure" open>
         <summary class="panel-disclosure-summary">
-          <span class="ops-disclosure-title">Decision dashboard</span>
+          <span class="ops-disclosure-title">Decide · promotion &amp; signal edge</span>
           <span id="decisionDashboardSummaryStrip" class="decision-summary-strip" aria-live="polite"></span>
-          <span class="disclosure-hint muted">Reliability, readiness, strategy comparison</span>
+          <span class="disclosure-hint muted">PF floors · fidelity · strategy compare</span>
         </summary>
       <section
         id="decisionDashboardCard"
@@ -1390,10 +1429,10 @@
           </div>
         </article>
       </section>
-      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced diagnostics-surface status-details-wrap">
+      <details id="statusDetailsPanel" class="panel-disclosure panel-disclosure--advanced card section-advanced diagnostics-surface status-details-wrap" open>
         <summary class="panel-disclosure-summary">
-          Detailed system status
-          <span class="disclosure-hint muted">tokens, last scan, quotes, validation</span>
+          Advanced · raw system status
+          <span class="disclosure-hint muted">tokens, last scan, quotes, validation steps</span>
         </summary>
           <div id="statusDetailsStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
             <span class="system-status-pill">Clear</span>
@@ -1897,11 +1936,11 @@
           </div>
         </article>
       </section>
-      <details id="systemQualityDiagnostics" class="card section-advanced panel-disclosure diagnostics-surface system-quality-disclosure">
+      <details id="systemQualityDiagnostics" class="card section-advanced panel-disclosure diagnostics-surface system-quality-disclosure" open>
         <summary class="panel-disclosure-summary">
-          <span class="ops-disclosure-title">Calibration &amp; plugin quality</span>
+          <span class="ops-disclosure-title" id="systemQualityLaneTitle">Calibration &amp; plugin quality</span>
           <span id="calibrationSummaryStrip" class="decision-summary-strip calibration-summary-strip" aria-live="polite"></span>
-          <span class="disclosure-hint muted">Self-study, shadow scoreboard, trade review loop</span>
+          <span class="disclosure-hint muted" id="systemQualityLaneHint">Self-study, shadow scoreboard, trade review loop</span>
         </summary>
       <section class="section-advanced">
         <article id="calibrationSection" class="card system-quality-nested" data-lazy-api="calibration">
@@ -1922,8 +1961,8 @@
       <section class="section-advanced">
         <article id="shadowScoreboardSection" class="card system-quality-nested" data-lazy-api="shadowScoreboard">
           <div class="section-title">
-            <h2>Trial-run scoreboard</h2>
-            <small class="muted">What each trial rule would have done (last scan + past 7 days of trades)</small>
+            <h2>Shadow workbench</h2>
+            <small class="muted">Each guardrail shows last-scan would-haves, evidence sessions, and offline backtest when available</small>
           </div>
           <div id="shadowScoreboardStatusStrip" class="system-status-strip" data-state="empty" aria-live="polite">
             <span class="system-status-pill">Clear</span>
@@ -2251,6 +2290,18 @@
       <button type="button" class="btn primary" data-forward-click="scanBtn">Run Scan</button>
       <a class="btn secondary" href="#pendingSection">Approvals</a>
     </nav>
+
+    <dialog id="intelLookupDialog" class="modal intel-lookup-modal" aria-labelledby="intelLookupTitle">
+      <div class="modal-stack">
+        <div class="intel-lookup-header">
+          <h3 id="intelLookupTitle">Ticker intel</h3>
+          <button id="intelLookupCloseBtn" type="button" class="btn small secondary" aria-label="Close ticker intel">Close</button>
+        </div>
+        <p id="intelLookupSub" class="muted small" aria-live="polite"></p>
+        <div id="intelLookupQuality" class="intel-data-quality hidden" aria-live="polite"></div>
+        <div id="intelLookupBody" data-async-state="idle"></div>
+      </div>
+    </dialog>
 
     <dialog id="approveDialog" class="modal">
       <form method="dialog">

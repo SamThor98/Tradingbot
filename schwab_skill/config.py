@@ -261,16 +261,17 @@ def get_rank_filter_shadow_min_percentile_composite(skill_dir: Path | None = Non
 
 
 def get_rank_filter_shadow_min_percentile_rank_v2(skill_dir: Path | None = None) -> int:
-    """Min score percentile for rank_score_v2 shadow filter (default p75 per stack counterfactual)."""
-    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", 75, skill_dir)))
+    """Min score percentile for rank_score_v2 filter (default p76 post-cap retune)."""
+    return max(0, min(95, _get_int("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", 76, skill_dir)))
 
 
 def get_rank_filter_v2_mode(skill_dir: Path | None = None) -> str:
     """Rank-v2 percentile trim mode (OFF|SHADOW|LIVE).
 
-    Default promoted to ``live`` at p75 after Stage 2d shadow evidence
-    (ledger seq 15). Live drops below the percentile threshold; keep
-    ``SCAN_LIVE_SORT_KEY=signal_score`` until a separate sort-key promotion.
+    Default promoted to ``live`` at p75 (ledger seq 15), retuned to p76
+    under pts_52w≤37 (ledger seq after 2026-07-22). Live drops below the
+    percentile threshold; keep ``SCAN_LIVE_SORT_KEY=signal_score`` until a
+    separate sort-key promotion.
     """
     return _get_mode("RANK_FILTER_V2_MODE", PLUGIN_MODE_VALUES, "live", skill_dir)
 
@@ -1182,6 +1183,89 @@ def get_regime_v2_mode(skill_dir: Path | None = None) -> str:
 def get_strategy_pullback_mode(skill_dir: Path | None = None) -> str:
     """Pullback strategy plugin mode (OFF|SHADOW|LIVE)."""
     return _get_mode("STRATEGY_PULLBACK_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_strategy_pead_primary_mode(skill_dir: Path | None = None) -> str:
+    """PEAD-primary dual-admit mode (OFF|SHADOW|LIVE).
+
+    Default ``off`` — Stage A stays Stage-2-only until operators opt into
+    shadow dual-admit. ``live`` is not executable yet; use
+    :func:`get_strategy_pead_primary_effective_mode` in the scanner.
+    """
+    return _get_mode("STRATEGY_PEAD_PRIMARY_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_strategy_pead_primary_allow_live(skill_dir: Path | None = None) -> bool:
+    """Explicit allow for ``STRATEGY_PEAD_PRIMARY_MODE=live`` (still non-executable)."""
+    return _get_bool("STRATEGY_PEAD_PRIMARY_ALLOW_LIVE", False, skill_dir)
+
+
+def get_strategy_pead_primary_effective_mode(skill_dir: Path | None = None) -> str:
+    """Scanner-facing PEAD-primary mode.
+
+    ``live`` without ``STRATEGY_PEAD_PRIMARY_ALLOW_LIVE`` coerces to ``shadow``.
+    Even when allowed, PEAD-only names remain non-executable in this release;
+    effective mode may report ``live`` for diagnostics only.
+    """
+    mode = get_strategy_pead_primary_mode(skill_dir)
+    if mode != "live":
+        return mode
+    if get_strategy_pead_primary_allow_live(skill_dir):
+        return "live"
+    return "shadow"
+
+
+def get_pead_primary_shadow_max_names(skill_dir: Path | None = None) -> int:
+    """Soft cap for PEAD-only shadow names retained in diagnostics (default 50).
+
+    ``0`` keeps counters but omits the shadow name list. Unlike ``_get_int``,
+    zero is allowed here. Sort key for the capped list: Stage-A ``edge_score``
+    proxy desc, then ticker asc (diagnostics only — Stage-2 remains the
+    trading control). Capacity selection uses
+    :func:`get_pead_primary_shadow_rank_top_n`.
+    """
+    env = _load_env(skill_dir)
+    v = _env_value("PEAD_PRIMARY_SHADOW_MAX_NAMES", env)
+    if not v:
+        return 50
+    try:
+        return max(0, int(float(v)))
+    except (ValueError, TypeError):
+        return 50
+
+
+def get_pead_primary_shadow_rank_top_n(skill_dir: Path | None = None) -> int:
+    """PEAD-native capacity rank N for shadow diagnostics (default 5).
+
+    Matches capacity CF arm ``top5_by_edge_score``. Diagnostics/provenance only —
+    never gates executable Stage-2 shortlists. ``0`` disables the capacity
+    top-N annotation while still sorting the soft-capped shadow list by
+    edge_score.
+    """
+    env = _load_env(skill_dir)
+    v = _env_value("PEAD_PRIMARY_SHADOW_RANK_TOP_N", env)
+    if not v:
+        return 5
+    try:
+        return max(0, int(float(v)))
+    except (ValueError, TypeError):
+        return 5
+
+
+def get_pead_primary_lookback_days(skill_dir: Path | None = None) -> int:
+    """Earnings lookback for PEAD-primary admit (default: ``PEAD_LOOKBACK_DAYS``).
+
+    Prefer ``PEAD_PRIMARY_LOOKBACK_DAYS`` when set so dual-admit can match
+    backtest pead_primary without changing enrichment lookback.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("PEAD_PRIMARY_LOOKBACK_DAYS", env).strip()
+    if raw:
+        try:
+            return max(1, int(float(raw)))
+        except (ValueError, TypeError):
+            pass
+    return get_pead_lookback_days(skill_dir)
 
 
 def get_strategy_regime_router_mode(skill_dir: Path | None = None) -> str:
@@ -2222,3 +2306,49 @@ def get_risk_max_gross_exposure_pct(skill_dir: Path | None = None) -> float:
     """Max gross exposure (% of equity) before an exposure drift flag."""
     val = _get_float("RISK_MAX_GROSS_EXPOSURE_PCT", 150.0, skill_dir)
     return max(10.0, min(1000.0, val))
+
+
+# --- Multi-sleeve allocator / R7 (constitution 2026-07-27; default off) ---
+
+
+def get_allocator_mode(skill_dir: Path | None = None) -> str:
+    """Multi-sleeve allocator mode (OFF|SHADOW|LIVE). Default off until Phase 2 promote."""
+    return _get_mode("ALLOCATOR_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_s1_live_enabled(skill_dir: Path | None = None) -> bool:
+    """When true, S1 PEAD desired weights may enter the live net book (Phase 7)."""
+    return _get_bool("MULTI_SLEEVE_S1_LIVE", False, skill_dir)
+
+
+def get_s1_promoted_cap(skill_dir: Path | None = None) -> bool:
+    """When true, S1 cap rises from 15% to 25% (explicit promotion only)."""
+    return _get_bool("MULTI_SLEEVE_S1_PROMOTED_CAP", False, skill_dir)
+
+
+def get_allocator_hysteresis_abs(skill_dir: Path | None = None) -> float:
+    """Absolute weight band before rebalance trades (|Δw|)."""
+    val = _get_float("ALLOCATOR_HYSTERESIS_ABS", 0.01, skill_dir)
+    return max(0.0, min(0.10, val))
+
+
+def get_r7_min_n(skill_dir: Path | None = None) -> int:
+    """Minimum sleeve-local scored hypothesis rows before R7 promote."""
+    return max(1, _get_int("R7_PROMOTION_MIN_N", 40, skill_dir))
+
+
+def get_r7_primary_horizon(skill_dir: Path | None = None) -> str:
+    """Primary horizon key for R7 expectancy (default T+5)."""
+    env = _load_env(skill_dir)
+    raw = _env_value("R7_PRIMARY_HORIZON", env).strip() or "5"
+    return raw
+
+
+def get_r3_capacity_shadow(skill_dir: Path | None = None) -> bool:
+    """Annotate S0 rows with capacity-adjusted scores (R3 shadow)."""
+    return _get_bool("R3_CAPACITY_SHADOW", False, skill_dir)
+
+
+def get_r6_vol_damper_enabled(skill_dir: Path | None = None) -> bool:
+    """Shrink sleeve caps when book vol spikes (allocator research chip)."""
+    return _get_bool("R6_VOL_DAMPER_ENABLED", False, skill_dir)

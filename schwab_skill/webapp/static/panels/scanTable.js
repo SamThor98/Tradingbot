@@ -64,7 +64,9 @@ import { normalizeScanSignal } from "../modules/scanSignals.js";
 const QUALIFIED_ROWS_DEFAULT_LIMIT = 20;
 const NEAR_MISS_DEFAULT_LIMIT = 10;
 const RANK_EXPLAIN_MODE_KEY = "tradingbot.scan.rank_explain_mode";
-const TRIAGE_COLSPAN = 5;
+const TRIAGE_COLSPAN = 8;
+/** Matches Brief advisory stop band in webapp/main.py decision brief. */
+const ADVISORY_STOP_PCT = 0.07;
 const SCAN_STATUS_FILTERS = Object.freeze(["pass", "review", "blocked", "info"]);
 
 /** Cross-panel callbacks injected by app.js at boot (see module docstring). */
@@ -232,8 +234,10 @@ const SCAN_SORT_DEFAULT_DIRECTION = {
   source: "desc",
   flagged_days: "desc",
   strategy: "desc",
+  volume_ratio: "desc",
   price: "desc",
   score: "desc",
+  stop: "desc",
   p_up_10d: "desc",
   expected_return_40d: "desc",
   confidence: "desc",
@@ -291,6 +295,25 @@ function formatBreakoutAboveLabel(row = {}) {
   return `${(buf * 100).toFixed(1)}% above pivot`;
 }
 
+/** Compact meta for rich ticker line: "XLY · +1.8% pivot" (vol is its own column). */
+function formatTickerMetaLine(row = {}) {
+  const bits = [];
+  const sector = safeText(row.sector_etf || "").toUpperCase();
+  if (sector) bits.push(sector);
+  const buf = getBreakoutAbovePct(row);
+  if (buf !== null) {
+    const sign = buf >= 0 ? "+" : "";
+    bits.push(`${sign}${(buf * 100).toFixed(1)}% pivot`);
+  }
+  return bits.join(" · ");
+}
+
+function getAdvisoryStopPrice(row = {}) {
+  const price = optionalNum(row.price || row.current_price);
+  if (price === null || price <= 0) return null;
+  return price * (1 - ADVISORY_STOP_PCT);
+}
+
 function renderStagePill(row = {}) {
   if (row.breakout_confirmed) {
     return `<span class="scan-stage-pill" title="Stage 2 breakout confirmed">S2</span>`;
@@ -300,11 +323,17 @@ function renderStagePill(row = {}) {
 
 function buildQualifiedReasonText(row = {}, rawSig = {}) {
   const parts = [];
+  const family = safeText(row.entry_family || rawSig?.entry_family || "").toLowerCase();
+  if (family === "pead_primary" || family === "both") {
+    parts.push(family === "both" ? "Stage2 + PEAD" : "PEAD primary");
+  } else {
+    parts.push("Stage2 / VCP pass");
+  }
   const bufLabel = formatBreakoutAboveLabel(row);
   if (bufLabel) parts.push(bufLabel);
   if (row.breakout_confirmed) parts.push("Breakout confirmed");
   const vol = optionalNum(row.volume_ratio);
-  if (vol !== null && vol >= 1.05) parts.push(`${vol.toFixed(1)}x volume`);
+  if (vol !== null && vol >= 1.05) parts.push(`${vol.toFixed(1)}× volume`);
   const flagged = optionalNum(row.flagged_days ?? row.days_flagged);
   if (flagged !== null && flagged > 0) parts.push(`${flagged}d flagged`);
   const topLive = formatStrategyLabel(row?.strategy_attribution?.top_live || "");
@@ -314,6 +343,18 @@ function buildQualifiedReasonText(row = {}, rawSig = {}) {
   const filterReasons = getScanReasonText(rawSig);
   if (filterReasons) parts.push(filterReasons);
   return parts.length ? parts.join(" · ") : "Qualified breakout";
+}
+
+/** Plain-English why this row appears (pass thesis or near-miss failure). */
+function buildRowWhyText(row = {}, rawSig = {}) {
+  const status = safeText(rawSig?._filter_status || "kept").toLowerCase() || "kept";
+  if (status !== "kept") {
+    const reasons = Array.isArray(rawSig?._filter_reasons) ? rawSig._filter_reasons : [];
+    const human = formatFilterReasons(reasons);
+    if (human.length) return human.join(" · ");
+    return formatNearMissSummary(status, reasons);
+  }
+  return buildQualifiedReasonText(row, rawSig);
 }
 
 function renderPriceCell(row = {}) {
@@ -331,9 +372,38 @@ function renderGateChip(sig = {}) {
   return `<span class="scan-gate-chip scan-gate-chip--${escapeHtml(bucket)}" title="${escapeHtml(badge.title)}">${escapeHtml(label)}</span>`;
 }
 
-function renderTickerCell(row = {}) {
+function renderTickerCell(row = {}, rawSig = {}) {
   const ticker = safeText(row.ticker || row.symbol || "?");
-  return `<span class="scan-ticker-wrap"><strong class="scan-ticker">${ticker}</strong>${renderStagePill(row)}</span>`;
+  const company = safeText(row.company_name || "").trim();
+  const meta = formatTickerMetaLine(row);
+  const why = buildRowWhyText(row, rawSig);
+  const companyHtml = company
+    ? `<span class="scan-company-name" title="${escapeHtml(company)}">${escapeHtml(company)}</span>`
+    : "";
+  const metaHtml = meta ? `<span class="scan-ticker-meta">${escapeHtml(meta)}</span>` : "";
+  const whyHtml = why
+    ? `<span class="scan-row-why" title="${escapeHtml(why)}">${escapeHtml(why)}</span>`
+    : "";
+  return `<span class="scan-ticker-stack"><span class="scan-ticker-wrap"><strong class="scan-ticker">${escapeHtml(ticker)}</strong>${renderStagePill(row)}</span>${companyHtml}${metaHtml}${whyHtml}</span>`;
+}
+
+function renderStrategyCell(row = {}) {
+  const label = formatStrategyLabel(row?.strategy_attribution?.top_live || "");
+  if (!label || label === "—") return `<span class="muted">—</span>`;
+  return `<span class="scan-strategy-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+}
+
+function renderVolCell(row = {}) {
+  const vol = optionalNum(row.volume_ratio);
+  if (vol === null) return `<span class="muted">—</span>`;
+  return `<span class="mono-nums">${vol.toFixed(1)}×</span>`;
+}
+
+function renderStopCell(row = {}) {
+  const stop = getAdvisoryStopPrice(row);
+  if (stop === null) return `<span class="muted">—</span>`;
+  const pctLabel = `−${(ADVISORY_STOP_PCT * 100).toFixed(1)}%`;
+  return `<span class="scan-stop-cell" title="Brief advisory invalidation (${pctLabel} from price)"><span class="scan-stop-price mono-nums">${formatMoney(stop)}</span><span class="scan-stop-pct muted">${pctLabel}</span></span>`;
 }
 
 function renderScanRowActions({ idx, ticker, isKept, viewKey = "data-scan-view" }) {
@@ -394,10 +464,13 @@ function wireScanStatusFilterOnce() {
 function buildTriageRowHtml({ sig, row, idx, isKept, viewKey = "data-scan-view" }) {
   const ticker = row.ticker || row.symbol || "?";
   return `
-    <td class="scan-col-ticker">${renderTickerCell(row)}</td>
+    <td class="scan-col-ticker">${renderTickerCell(row, sig)}</td>
     <td class="scan-col-gate">${renderGateChip(sig)}</td>
+    <td class="scan-col-strategy">${renderStrategyCell(row)}</td>
+    <td class="scan-col-vol">${renderVolCell(row)}</td>
     <td class="scan-col-price mono-nums">${renderPriceCell(row)}</td>
     <td class="scan-col-rank">${renderRankScoreCell(row, { triage: true })}</td>
+    <td class="scan-col-stop">${renderStopCell(row)}</td>
     <td class="scan-actions-cell">${renderScanRowActions({ idx, ticker, isKept, viewKey })}</td>
   `;
 }
@@ -424,10 +497,14 @@ function getScanSortValue(rawSig, field) {
       return optionalNum(row.flagged_days ?? row.days_flagged);
     case "strategy":
       return safeText(formatStrategyLabel(row?.strategy_attribution?.top_live || "")).toLowerCase() || null;
+    case "volume_ratio":
+      return optionalNum(row.volume_ratio);
     case "price":
       return optionalNum(row.price ?? row.current_price);
     case "score":
       return getCompositeScore(row);
+    case "stop":
+      return getAdvisoryStopPrice(row);
     case "p_up_10d": {
       const p = getCalibratedPUp(row);
       return p === null ? null : p;

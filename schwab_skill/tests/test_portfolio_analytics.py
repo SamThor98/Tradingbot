@@ -86,6 +86,21 @@ def test_correlation_summary_reports_max_pair_and_breaches() -> None:
     assert "AAA" in summary["matrix"]
 
 
+def test_correlation_summary_single_name_identity_matrix() -> None:
+    """One-ticker books must still label the holding on the Risk heatmap."""
+    dates = pd.date_range("2026-01-01", periods=5, freq="D")
+    returns = pd.DataFrame({"RRX": [0.01, -0.02, 0.015, 0.0, 0.01]}, index=dates)
+    summary = correlation_summary(returns, threshold=0.9)
+    assert summary["matrix"] == {"RRX": {"RRX": 1.0}}
+    assert summary["max_pair"] is None
+    assert summary["breaches"] == []
+
+    # Constant series: pandas corr diagonal is NaN — still expose the ticker.
+    flat = pd.DataFrame({"RRX": [0.01] * 5}, index=dates)
+    flat_summary = correlation_summary(flat)
+    assert flat_summary["matrix"] == {"RRX": {"RRX": 1.0}}
+
+
 def test_drawdown_stats_from_equity_curve() -> None:
     stats = drawdown_stats(
         [

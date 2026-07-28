@@ -2079,6 +2079,7 @@ def tenant_cockpit_shadow_scoreboard(
                 skill_dir=skill_dir,
                 diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
                 scan_at=scan_at,
+                writes_enabled=False,
             )
         return _ok(payload)
     except Exception as exc:

@@ -38,13 +38,15 @@ SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
 }
 
 # Promoted operating stack: live 1% breakout buffer + live exit grace (15/40)
-# + live rank-v2 p75 trim + live pts_52w≤37 Stage A cap.
+# + live rank-v2 p76 trim + live pts_52w≤37 Stage A cap.
+# p76 retune (2026-07-22): under pts_52w≤37, p75 fails late_bull worst-era;
+# p76 is first clear (sweep_cf_rank_under_pts52w_cap37_control_legacy_aug).
 # Does not demote EVENT_RISK / EXEC_QUALITY. Does not enable PROB_RANK live.
 SIGNAL_STACK_ENFORCED_ENV: dict[str, str] = {
     **ENTRY_TIMING_LIVE_ENV,
     "EXIT_MANAGER_MODE": "live",
     "RANK_FILTER_V2_MODE": "live",
-    "RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2": "75",
+    "RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2": "76",
     "PTS_52W_CAP_MODE": "live",
     "PTS_52W_CAP_MAX": "37",
     "EXIT_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
@@ -53,6 +55,20 @@ SIGNAL_STACK_ENFORCED_ENV: dict[str, str] = {
     "BACKTEST_HOLD_DAYS": "40",
     "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
     "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "true",
+    "COUNTERFACTUAL_LOGGING_ENABLED": "true",
+}
+
+# Multi-sleeve Phase 2 shadow + R7 ledger collection for RTH sessions.
+# Does NOT enable ALLOCATOR live or S1 live capital.
+MULTI_SLEEVE_RTH_SHADOW_ENV: dict[str, str] = {
+    "ALLOCATOR_MODE": "shadow",
+    "MULTI_SLEEVE_S1_LIVE": "false",
+    "MULTI_SLEEVE_S1_PROMOTED_CAP": "false",
+    "HYPOTHESIS_LEDGER_ENABLED": "true",
+    "HYPOTHESIS_SELF_STUDY_MERGE": "true",
+    "HYPOTHESIS_SCORE_HORIZONS": "1,5,20",
+    "R7_PROMOTION_MIN_N": "40",
+    "R7_PRIMARY_HORIZON": "5",
     "COUNTERFACTUAL_LOGGING_ENABLED": "true",
 }
 
@@ -216,7 +232,7 @@ def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[
     rank_filter_mode = str(values.get("RANK_FILTER_V2_MODE", "live")).strip().lower()
     rank_filter_percentile = max(
         0,
-        min(95, int(_env_float(values.get("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"), 75))),
+        min(95, int(_env_float(values.get("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"), 76))),
     )
     pts_52w_mode = str(values.get("PTS_52W_CAP_MODE", "live")).strip().lower()
     pts_52w_max = max(0.0, min(40.0, _env_float(values.get("PTS_52W_CAP_MAX"), 37.0)))
@@ -244,8 +260,8 @@ def signal_stack_enforced_readiness_from_values(values: dict[str, str]) -> dict[
         missing.append("EXIT_MANAGER_MODE=live")
     if rank_filter_mode != "live":
         missing.append("RANK_FILTER_V2_MODE=live")
-    if rank_filter_percentile != 75:
-        missing.append("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2=75")
+    if rank_filter_percentile != 76:
+        missing.append("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2=76")
     if pts_52w_mode != "live":
         missing.append("PTS_52W_CAP_MODE=live")
     if abs(pts_52w_max - 37.0) > 1e-9:
@@ -290,6 +306,56 @@ def signal_stack_enforced_file_readiness(env_path: Path) -> dict[str, Any]:
 def apply_signal_stack_enforced_env(env_path: Path) -> list[str]:
     """Enable live 1% breakout buffer + live exit-grace stack in a local .env file."""
     return upsert_env_file(env_path, SIGNAL_STACK_ENFORCED_ENV)
+
+
+def multi_sleeve_rth_shadow_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
+    """Ready when allocator is shadow, ledger on, and S1 live capital stays off."""
+    alloc = str(values.get("ALLOCATOR_MODE", "off")).strip().lower()
+    s1_live = _env_bool(values.get("MULTI_SLEEVE_S1_LIVE"), False)
+    s1_promoted = _env_bool(values.get("MULTI_SLEEVE_S1_PROMOTED_CAP"), False)
+    ledger = _env_bool(values.get("HYPOTHESIS_LEDGER_ENABLED"), False)
+    horizons = str(values.get("HYPOTHESIS_SCORE_HORIZONS", "")).strip()
+    r7_n = max(1, int(_env_float(values.get("R7_PROMOTION_MIN_N"), 40)))
+    r7_h = str(values.get("R7_PRIMARY_HORIZON", "5")).strip() or "5"
+    cf_log = _env_bool(values.get("COUNTERFACTUAL_LOGGING_ENABLED"), True)
+
+    missing: list[str] = []
+    if alloc != "shadow":
+        missing.append("ALLOCATOR_MODE=shadow")
+    if s1_live:
+        missing.append("MULTI_SLEEVE_S1_LIVE=false")
+    if s1_promoted:
+        missing.append("MULTI_SLEEVE_S1_PROMOTED_CAP=false")
+    if not ledger:
+        missing.append("HYPOTHESIS_LEDGER_ENABLED=true")
+    if "5" not in {p.strip() for p in horizons.replace(";", ",").split(",") if p.strip()}:
+        missing.append("HYPOTHESIS_SCORE_HORIZONS includes 5")
+    if r7_n < 40:
+        missing.append("R7_PROMOTION_MIN_N>=40")
+    if r7_h != "5":
+        missing.append("R7_PRIMARY_HORIZON=5")
+    if not cf_log:
+        missing.append("COUNTERFACTUAL_LOGGING_ENABLED=true")
+
+    return {
+        "ready": not missing,
+        "allocator_mode": alloc,
+        "hypothesis_ledger_enabled": ledger,
+        "s1_live": s1_live,
+        "r7_min_n": r7_n,
+        "r7_primary_horizon": r7_h,
+        "missing_env": missing,
+        "recommended_env": dict(MULTI_SLEEVE_RTH_SHADOW_ENV),
+    }
+
+
+def multi_sleeve_rth_shadow_file_readiness(env_path: Path) -> dict[str, Any]:
+    return multi_sleeve_rth_shadow_readiness_from_values(parse_env_file(env_path))
+
+
+def apply_multi_sleeve_rth_shadow_env(env_path: Path) -> list[str]:
+    """Enable allocator shadow + hypothesis ledger for RTH evidence collection."""
+    return upsert_env_file(env_path, MULTI_SLEEVE_RTH_SHADOW_ENV)
 
 
 def reload_env_file_into_process(env_path: Path, keys: list[str] | None = None) -> dict[str, str | None]:

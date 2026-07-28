@@ -426,9 +426,10 @@ Plugins may stay in shadow; promote LIVE only once PF mean >= 1.20 and
 worst-era PF >= 1.00.
 
 P0 operating stack (Stages 2c–2d): live 1% breakout buffer + live exit grace
-+ live rank-v2 p75 trim
++ live rank-v2 p76 trim + live pts_52w≤37
 (`python scripts/apply_signal_stack_enforced_env.py`). Offline combined stack
-clears PF gates. Rank filter promoted 2026-07-16 (ledger seq 15); keep
+clears PF gates under the cap (p76; p75 fails `late_bull`). Rank filter
+promoted 2026-07-16 (ledger seq 15) and retuned to p76 2026-07-22; keep
 `SCAN_LIVE_SORT_KEY=signal_score` until a separate sort-key promotion.
 
 Promote one plugin at a time, hold for at least one full market week, then proceed.

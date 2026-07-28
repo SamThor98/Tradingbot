@@ -53,6 +53,17 @@ class EnableLiveTradingRequest(BaseModel):
     typed_phrase: str = Field(min_length=1, max_length=32)
 
 
+class PluginModeWriteRequest(BaseModel):
+    """Local dashboard: set a plugin OFF/SHADOW/LIVE (or quality soft/hard)."""
+
+    plugin_id: str = Field(min_length=1, max_length=64)
+    mode: str = Field(min_length=1, max_length=16)
+    reason: str = Field(default="", max_length=500)
+    confirm_phrase: str | None = Field(default=None, max_length=64)
+    api_key: str | None = Field(default=None, max_length=256)
+    confirm_demote: bool = False
+
+
 class UpdateTradingHaltRequest(BaseModel):
     """Pause all live orders for this account (exits still allowed unless platform blocks exits)."""
 

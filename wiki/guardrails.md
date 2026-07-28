@@ -39,6 +39,7 @@ Checks quote staleness (`DATA_QUOTE_MAX_AGE_SEC`), bar freshness (`DATA_BAR_MAX_
 - [[adaptive-stops]] — stop sizing within guardrails
 - [[feature-flags]] — kill switches and data quality flags
 - [[system-overview]] — pipeline context
+- [[multi-sleeve-trading-system-constitution]] — target allocator caps, DD staircase, crash mode
 
 ---
 

@@ -166,6 +166,8 @@ export const DIAG_LABELS = {
   too_few_candles: "Insufficient data",
   df_empty: "No price data",
   exceptions: "Processing errors",
+  stage_a_pruned: "Shortlist trimmed",
+  bars_stale: "Stale price bars",
   weak_mirofish_alignment: "Weak sentiment alignment",
   low_breakout_volume: "Low breakout volume",
   self_study_filtered: "Filtered by self-study",

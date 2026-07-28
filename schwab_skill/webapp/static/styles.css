@@ -4013,20 +4013,61 @@ body.ui-simple .nav-advanced {
 }
 body.ui-screen-operations .diagnostics-surface,
 body.ui-screen-research .diagnostics-surface,
+body.ui-screen-intel .diagnostics-surface,
 body.ui-screen-settings .diagnostics-surface {
   display: none !important;
 }
 
+/* Settings is merged into the System (diagnostics) screen — settings-surface
+   sections stay visible there and hide everywhere else. */
 body.ui-screen-operations .settings-surface,
 body.ui-screen-research .settings-surface,
-body.ui-screen-diagnostics .settings-surface {
+body.ui-screen-intel .settings-surface,
+body.ui-screen-cockpit .settings-surface {
   display: none !important;
 }
 
 body.ui-screen-operations .research-surface,
 body.ui-screen-diagnostics .research-surface,
+body.ui-screen-intel .research-surface,
 body.ui-screen-settings .research-surface,
 body.ui-screen-cockpit .research-surface {
+  display: none !important;
+}
+
+/* Position Intel screen: its card shows only on ?screen=intel. */
+body.ui-screen-operations .intel-surface,
+body.ui-screen-research .intel-surface,
+body.ui-screen-diagnostics .intel-surface,
+body.ui-screen-settings .intel-surface,
+body.ui-screen-cockpit .intel-surface {
+  display: none !important;
+}
+
+body.ui-screen-intel .operations-surface,
+body.ui-screen-intel #dashboardToday,
+body.ui-screen-intel #workflowPrimary,
+body.ui-screen-intel #scanSection,
+body.ui-screen-intel #scanDetailPanel,
+body.ui-screen-intel #pendingSection,
+body.ui-screen-intel #researchTabNav,
+body.ui-screen-intel #researchWorkflowStrip,
+body.ui-screen-intel #quickCheckSection,
+body.ui-screen-intel #toolsSection,
+body.ui-screen-intel #decisionSection,
+body.ui-screen-intel #sectorsSection,
+body.ui-screen-intel #portfolioSection,
+body.ui-screen-intel #performanceSection,
+body.ui-screen-intel #backtestSection,
+body.ui-screen-intel #reportSectionCard,
+body.ui-screen-intel #secCompareSection,
+body.ui-screen-intel #activitySection,
+body.ui-screen-intel #cockpitMergedPanel,
+body.ui-screen-intel #cockpitSection,
+body.ui-screen-intel #systemAlertBanner,
+body.ui-screen-intel #healthRibbon,
+body.ui-screen-intel #decisionDashboardCard,
+body.ui-screen-intel #onboardingSection {
   display: none !important;
 }
 
@@ -4072,6 +4113,45 @@ body.ui-screen-settings .cockpit-drawer {
   color: #7f1d1d;
   font-weight: 600;
 }
+
+/* PEAD canary sleeve (paper top-N beside Stage2 scan results) */
+.pead-canary-card {
+  margin: 0.55rem 0 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--panel-border, rgba(130, 153, 221, 0.35));
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.28);
+}
+.pead-canary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 0.45rem;
+}
+.pead-canary-title {
+  margin: 0;
+  font-size: 0.92rem;
+}
+.pead-canary-table-wrap {
+  padding: 0;
+}
+.pead-canary-table-wrap th.num,
+.pead-canary-table-wrap td.num {
+  text-align: right;
+}
+.pead-canary-table-wrap th.ctr,
+.pead-canary-table-wrap td.ctr {
+  text-align: center;
+}
+.pead-canary-footnote {
+  margin: 0.45rem 0 0;
+}
+.pead-canary-card[data-state="off"] {
+  opacity: 0.92;
+}
+
 .scan-row-actions {
   display: inline-flex;
   align-items: center;
@@ -4611,7 +4691,10 @@ body.ui-screen-settings .mode-header-kpis {
 
 body.ui-simple.ui-screen-settings #settingsSection,
 body.ui-simple.ui-screen-settings .settings-summary-presets-link,
-body.ui-simple.ui-screen-settings .settings-presets-nav {
+body.ui-simple.ui-screen-settings .settings-presets-nav,
+body.ui-simple.ui-screen-diagnostics #settingsSection,
+body.ui-simple.ui-screen-diagnostics .settings-summary-presets-link,
+body.ui-simple.ui-screen-diagnostics .settings-presets-nav {
   display: none !important;
 }
 
@@ -4831,8 +4914,6 @@ body.ui-screen-diagnostics #quickCheckSection,
 body.ui-screen-diagnostics #toolsSection,
 body.ui-screen-diagnostics #decisionSection,
 body.ui-screen-diagnostics #recoverySection,
-body.ui-screen-diagnostics #onboardingSection,
-body.ui-screen-diagnostics #settingsSection,
 body.ui-screen-diagnostics #portfolioSection,
 body.ui-screen-diagnostics #sectorsSection,
 body.ui-screen-diagnostics #performanceSection,
@@ -4903,9 +4984,10 @@ body.ui-standard .scan-col-advanced {
 body.ui-simple .layout-onboarding-presets {
   grid-template-columns: 1fr;
 }
-/* Keep onboarding visible in Simple view, but only on its Settings home so it
-   does not leak onto Operations/Research/Diagnostics. */
-body.ui-simple.ui-screen-settings #onboardingSection {
+/* Keep onboarding visible in Simple view, but only on its System (merged
+   settings) home so it does not leak onto Operations/Research/Intel. */
+body.ui-simple.ui-screen-settings #onboardingSection,
+body.ui-simple.ui-screen-diagnostics #onboardingSection {
   display: block !important;
 }
 
@@ -5774,6 +5856,31 @@ progress::-moz-progress-bar {
   flex-direction: column;
   gap: 6px;
 }
+.risk-holdings-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.risk-holdings-label {
+  margin-right: 2px;
+}
+.risk-holding-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(99, 120, 200, 0.22);
+  border-radius: 6px;
+  background: rgba(99, 120, 200, 0.06);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.risk-holding-chip .mono-nums {
+  font-weight: 500;
+  color: var(--muted);
+}
 .risk-two-col {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr);
@@ -6258,10 +6365,10 @@ html, body {
 
 /*
   SCAN TRIAGE WIDTH INVARIANT (do not regress):
-  - Table + wrap = 100% lane width.
-  - Exactly 5 columns. NO trailing spacer col/th/td.
-  - Ticker/Gate/Price/Actions are fixed; Rank (col 4) absorbs leftover width.
-  - Actions stay pinned to the right edge of the table.
+  - Columns: Ticker · Gate · Strategy · Vol · Price · Rank · Stop · Actions
+  - Exactly 8 columns. NO spacer col/th/td (dead beige shelf after Actions).
+  - Gate/Strategy/Vol/Price/Rank/Stop fixed; Ticker (col 1) absorbs leftover.
+  - Actions fixed 13.75rem and flush to the right edge of the table.
   Guarded by tests/test_scan_triage_table_width_contract.py.
 */
 #scanSection .scan-candidates-table--triage {
@@ -6278,37 +6385,65 @@ html, body {
   vertical-align: middle;
 }
 
+/* Ticker absorbs leftover lane width (must stay width:auto — never fixed/max-width). */
 #scanSection .scan-candidates-table--triage .scan-triage-col-ticker,
 #scanSection .scan-candidates-table--triage th:nth-child(1),
-#scanSection .scan-candidates-table--triage td:nth-child(1) {
-  width: 9rem;
+#scanSection .scan-candidates-table--triage td:nth-child(1),
+#scanSection .scan-candidates-table--triage .scan-col-ticker {
+  width: auto;
+  min-width: 14rem;
 }
 #scanSection .scan-candidates-table--triage .scan-triage-col-gate,
 #scanSection .scan-candidates-table--triage th:nth-child(2),
-#scanSection .scan-candidates-table--triage td:nth-child(2) {
-  width: 6.5rem;
+#scanSection .scan-candidates-table--triage td:nth-child(2),
+#scanSection .scan-candidates-table--triage .scan-col-gate {
+  width: 5.25rem;
   text-align: left;
   font-family: inherit;
 }
-#scanSection .scan-candidates-table--triage .scan-triage-col-price,
+#scanSection .scan-candidates-table--triage .scan-triage-col-strategy,
 #scanSection .scan-candidates-table--triage th:nth-child(3),
-#scanSection .scan-candidates-table--triage td:nth-child(3) {
-  width: 6.5rem;
-  text-align: right;
+#scanSection .scan-candidates-table--triage td:nth-child(3),
+#scanSection .scan-candidates-table--triage .scan-col-strategy {
+  width: 10rem;
+  text-align: left;
+  font-family: inherit;
 }
-/* Rank absorbs leftover lane width (must stay width:auto — never fixed/max-width). */
-#scanSection .scan-candidates-table--triage .scan-triage-col-rank,
+#scanSection .scan-candidates-table--triage .scan-triage-col-vol,
 #scanSection .scan-candidates-table--triage th:nth-child(4),
 #scanSection .scan-candidates-table--triage td:nth-child(4),
+#scanSection .scan-candidates-table--triage .scan-col-vol {
+  width: 4.5rem;
+  text-align: right;
+  font-family: inherit;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-price,
+#scanSection .scan-candidates-table--triage th:nth-child(5),
+#scanSection .scan-candidates-table--triage td:nth-child(5),
+#scanSection .scan-candidates-table--triage .scan-col-price {
+  width: 6rem;
+  text-align: right;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-rank,
+#scanSection .scan-candidates-table--triage th:nth-child(6),
+#scanSection .scan-candidates-table--triage td:nth-child(6),
 #scanSection .scan-candidates-table--triage .scan-col-rank {
-  width: auto;
-  text-align: left;
+  width: 4rem;
+  text-align: right;
+  font-family: inherit;
+}
+#scanSection .scan-candidates-table--triage .scan-triage-col-stop,
+#scanSection .scan-candidates-table--triage th:nth-child(7),
+#scanSection .scan-candidates-table--triage td:nth-child(7),
+#scanSection .scan-candidates-table--triage .scan-col-stop {
+  width: 6.75rem;
+  text-align: right;
   font-family: inherit;
 }
 /* Actions pinned right — fixed width only; never add a spacer after this column. */
 #scanSection .scan-candidates-table--triage .scan-triage-col-actions,
-#scanSection .scan-candidates-table--triage th:nth-child(5),
-#scanSection .scan-candidates-table--triage td:nth-child(5),
+#scanSection .scan-candidates-table--triage th:nth-child(8),
+#scanSection .scan-candidates-table--triage td:nth-child(8),
 #scanSection .scan-candidates-table--triage .scan-actions-cell,
 #scanSection .scan-candidates-table--triage .scan-th-actions {
   width: 13.75rem;
@@ -6318,6 +6453,65 @@ html, body {
   text-align: right;
   font-family: inherit;
   font-variant-numeric: normal;
+}
+
+#scanSection .scan-candidates-table--triage .scan-ticker-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+#scanSection .scan-candidates-table--triage .scan-ticker-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#scanSection .scan-candidates-table--triage .scan-company-name,
+#scanSection .scan-candidates-table--triage .scan-ticker-meta,
+#scanSection .scan-candidates-table--triage .scan-row-why,
+#scanSection .scan-candidates-table--triage .scan-strategy-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ol-muted, #5a5a5a);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+#scanSection .scan-candidates-table--triage .scan-row-why {
+  color: var(--ol-ink-secondary, #3d3d3d);
+  font-size: 0.7rem;
+  line-height: 1.25;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#scanSection .scan-candidates-table--triage .scan-ticker-meta {
+  font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace);
+  font-size: 0.68rem;
+}
+#scanSection .scan-candidates-table--triage .scan-strategy-label {
+  font-size: 0.75rem;
+}
+#scanSection .scan-candidates-table--triage .scan-stop-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.2;
+}
+#scanSection .scan-candidates-table--triage .scan-stop-pct {
+  font-size: 0.68rem;
+  font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace);
+}
+#scanSection .scan-candidates-table--triage td.scan-col-ticker,
+#scanSection .scan-candidates-table--triage td.scan-col-stop {
+  white-space: normal;
 }
 
 /* Empty qualified state: fill the allotted table shell and center the message. */
@@ -6345,7 +6539,7 @@ html, body {
   text-overflow: ellipsis;
 }
 
-#scanSection .scan-candidates-table td:not(.scan-actions-cell) {
+#scanSection .scan-candidates-table td:not(.scan-actions-cell):not(.scan-col-ticker):not(.scan-col-stop) {
   white-space: nowrap;
 }
 
@@ -7499,4 +7693,197 @@ select.book-input {
   white-space: pre-wrap;
   margin: 0;
   opacity: 0.85;
+}
+
+/* ── Position Intel (Intel screen) ─────────────────────────────────────────
+   Net-new primitives only: summary strip, table cards, vote dots, and the
+   centered-origin signed bars. Everything else reuses .card/.pill/.table-wrap
+   and the existing theme tokens. */
+.intel-toolbar {
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.intel-lookup-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.intel-ticker-input {
+  width: 7.5rem;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.intel-ticker-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(148, 163, 184, 0.45);
+  text-underline-offset: 2px;
+}
+
+.intel-ticker-btn:hover,
+.intel-ticker-btn:focus-visible {
+  color: var(--good, #34d399);
+  text-decoration-color: currentColor;
+  outline: none;
+}
+
+.intel-lookup-modal {
+  width: min(920px, 94vw);
+  max-height: min(88vh, 920px);
+  overflow: auto;
+}
+
+.intel-lookup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.intel-lookup-header h3 {
+  margin: 0;
+}
+
+.intel-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.intel-summary-kpi {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.intel-summary-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+}
+
+.intel-table-card {
+  margin-bottom: 18px;
+}
+
+.intel-table-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.intel-table-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.intel-table-wrap {
+  padding: 0;
+}
+
+.intel-table-wrap th.num,
+.intel-table-wrap td.num {
+  text-align: right;
+}
+
+.intel-table-wrap th.ctr,
+.intel-table-wrap td.ctr {
+  text-align: center;
+}
+
+.intel-ticker {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.intel-good { color: var(--good, #34d399); }
+.intel-bad { color: var(--bad, #f87171); }
+
+.intel-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.intel-dot--good { background: var(--good, #34d399); }
+.intel-dot--bad { background: var(--bad, #f87171); }
+.intel-dot--flat {
+  background: transparent;
+  border: 1.5px solid rgba(148, 163, 184, 0.6);
+}
+
+.intel-bar-td { min-width: 170px; }
+
+.intel-bar-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.intel-bar-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.16);
+  overflow: hidden;
+}
+
+/* Center origin marker */
+.intel-bar-track::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(148, 163, 184, 0.45);
+}
+
+.intel-bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+}
+
+.intel-bar-fill--good { background: var(--good, #34d399); }
+.intel-bar-fill--bad { background: var(--bad, #f87171); }
+
+.intel-data-quality { margin-bottom: 12px; }
+
+.intel-dq-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+}
+
+.intel-footnote {
+  margin: 4px 0 0;
+  opacity: 0.8;
 }

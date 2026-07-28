@@ -121,23 +121,38 @@ def _approver() -> str:
         return os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
 
 
-def cmd_append(args: argparse.Namespace) -> int:
-    path = default_ledger_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_lines(path)
+def append_entry(
+    target: str,
+    reason: str = "",
+    *,
+    path: Path | None = None,
+    approver: str | None = None,
+) -> dict[str, Any]:
+    """Append one signed ledger row. Returns the written payload.
+
+    Used by the CLI and by the local dashboard LIVE mint path.
+    """
+    target_path = path or default_ledger_path()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _read_lines(target_path)
     seq = (existing[-1]["seq"] + 1) if existing else 1
     prev_sig = existing[-1]["sig"] if existing else ""
     payload = {
         "seq": seq,
         "ts": datetime.now(timezone.utc).isoformat(),
-        "target": str(args.target),
-        "reason": str(args.reason or ""),
-        "approver": _approver(),
+        "target": str(target),
+        "reason": str(reason or ""),
+        "approver": str(approver).strip() if approver else _approver(),
         "prev_sig": prev_sig,
     }
     payload["sig"] = _digest(prev_sig, payload)
-    with path.open("a", encoding="utf-8") as f:
+    with target_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, sort_keys=True) + "\n")
+    return payload
+
+
+def cmd_append(args: argparse.Namespace) -> int:
+    payload = append_entry(str(args.target), str(args.reason or ""))
     print(json.dumps(payload, indent=2))
     return 0
 

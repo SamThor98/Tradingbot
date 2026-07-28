@@ -98,6 +98,7 @@ from .route_helpers import (
 )
 from .routes.book import router as book_router
 from .routes.learning import router as learning_router
+from .routes.position_intel import router as position_intel_router
 from .routes.research import router as research_router
 from .scan_payload import parse_scan_run_body, scan_runtime_kwargs
 from .schemas import (
@@ -105,6 +106,7 @@ from .schemas import (
     ApproveTradeRequest,
     CreatePendingTrade,
     ManualPortfolioBody,
+    PluginModeWriteRequest,
     QueueUserBacktestRequest,
 )
 from .security_headers import SecurityHeadersMiddleware
@@ -374,6 +376,7 @@ app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(research_router)
 app.include_router(learning_router)
 app.include_router(book_router)
+app.include_router(position_intel_router)
 
 
 @app.exception_handler(HTTPException)
@@ -1809,6 +1812,7 @@ def public_config() -> ApiResponse:
         "manual_jwt_entry_enabled": _manual_jwt_entry_enabled(default=True),
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
+        "plugin_mode_writes_enabled": True,
     }
     if account_callback:
         data["schwab_account_callback_url"] = account_callback
@@ -3010,7 +3014,7 @@ def cockpit_execution_quality(db: Session = Depends(get_db)) -> ApiResponse:
 
 @app.get("/api/cockpit/shadow-scoreboard", response_model=ApiResponse)
 def cockpit_shadow_scoreboard(db: Session = Depends(get_db)) -> ApiResponse:
-    """Would-have counters for every shadow-mode plugin (scan + execution)."""
+    """Would-have counters + plugin mode workbench (roster, gaps, write flags)."""
     try:
         snapshot = _scan_snapshot()
         diagnostics = snapshot.get("diagnostics")
@@ -3024,10 +3028,43 @@ def cockpit_shadow_scoreboard(db: Session = Depends(get_db)) -> ApiResponse:
             skill_dir=SKILL_DIR,
             diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
             scan_at=scan_at,
+            writes_enabled=True,
         )
         return _ok(payload)
     except Exception as e:
         return _err("cockpit_shadow_scoreboard", e)
+
+
+@app.post("/api/cockpit/shadow-scoreboard/mode", response_model=ApiResponse)
+def cockpit_shadow_scoreboard_set_mode(
+    body: PluginModeWriteRequest,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Local-only: upsert plugin mode in .env, soft-reload, verify; LIVE mints ledger."""
+    try:
+        from core.plugin_mode_workbench import set_plugin_mode
+
+        result = set_plugin_mode(
+            skill_dir=SKILL_DIR,
+            plugin_id=body.plugin_id,
+            mode=body.mode,
+            reason=body.reason,
+            confirm_phrase=body.confirm_phrase,
+            api_key=body.api_key,
+            confirm_demote=bool(body.confirm_demote),
+            writes_enabled=True,
+        )
+        return _ok(result)
+    except PermissionError as e:
+        return ApiResponse(ok=False, data=None, error=str(e))
+    except KeyError as e:
+        return ApiResponse(ok=False, data=None, error=str(e))
+    except ValueError as e:
+        return ApiResponse(ok=False, data=None, error=str(e))
+    except RuntimeError as e:
+        return ApiResponse(ok=False, data=None, error=str(e))
+    except Exception as e:
+        return _err("cockpit_shadow_scoreboard_set_mode", e)
 
 
 @app.get("/api/cockpit/deltas", response_model=ApiResponse)

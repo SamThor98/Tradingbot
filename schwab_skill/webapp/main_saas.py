@@ -725,6 +725,7 @@ def public_config() -> ApiResponse:
         "manual_jwt_entry_enabled": _shared_manual_jwt(default=False),
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
+        "plugin_mode_writes_enabled": False,
         # Helps hosted dashboards explain “works locally, not on Render” without exposing secrets.
         "auth_setup": {
             "supabase_sign_in_available": bool(url and anon),

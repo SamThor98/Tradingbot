@@ -10,7 +10,7 @@
 
 import { state } from "../modules/state.js";
 import { safeText, safeNum, escapeHtml } from "../modules/format.js";
-import { statusClass, DIAG_LABELS } from "../modules/logger.js";
+import { DIAG_LABELS } from "../modules/logger.js";
 import { formatGateModeLabel } from "../modules/filterReasons.js";
 import { setOperationsStatusStrip } from "../modules/operationsStatus.js";
 import { syncScanSectionState } from "../modules/operationsPanelState.js";
@@ -20,6 +20,7 @@ import {
 } from "../modules/operationsPanelSnapshot.js";
 import { getExecutionScore, getReliabilityScore } from "../modules/signalScores.js";
 import { applyFreshness } from "../modules/freshness.js";
+import { renderPeadCanarySleeve } from "./peadCanary.js";
 
 export function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
@@ -176,20 +177,28 @@ const DIAGNOSTIC_FLAG_KEYS = new Set([
   "regime_data_unavailable",
 ]);
 
+/** Keys that represent real filter drop-offs (not timing, prices, or provider counts). */
+const DROP_OFF_KEY_RE =
+  /(^stage2_fail$|^vcp_fail$|not_confirmed|not_winning|no_sector|too_few|df_empty|exceptions|timeouts|_filtered$|_pruned$|insufficient|no_price|stale)/i;
+const DROP_OFF_EXCLUDE_RE =
+  /(_ms$|^spy_|provider_|advisory_|watchlist|shadow|mode$|would_|headline|scan_id|scan_blocked)/i;
+
+function isDropOffDiagnosticKey(key) {
+  const k = safeText(key || "");
+  if (!k || SIGNAL_EDGE_SHADOW_BLOCKER_KEYS.has(k) || DIAGNOSTIC_FLAG_KEYS.has(k)) return false;
+  if (DROP_OFF_EXCLUDE_RE.test(k)) return false;
+  if (DIAG_LABELS[k] && DROP_OFF_KEY_RE.test(k)) return true;
+  return DROP_OFF_KEY_RE.test(k);
+}
+
 export function buildDiagnosticsSummary(diag = {}) {
   const blockers = Object.entries(diag)
-    .filter(
-      ([k, v]) =>
-        safeNum(v, 0) > 0 &&
-        !["watchlist_size"].includes(k) &&
-        !SIGNAL_EDGE_SHADOW_BLOCKER_KEYS.has(k) &&
-        !DIAGNOSTIC_FLAG_KEYS.has(k),
-    )
+    .filter(([k, v]) => safeNum(v, 0) > 0 && isDropOffDiagnosticKey(k))
     .map(([k, v]) => ({
       key: k,
       label: DIAG_LABELS[k] || k.replaceAll("_", " "),
       value: safeNum(v, 0),
-      severity: ["exceptions", "df_empty"].includes(k) ? "error" : "warn",
+      severity: ["exceptions", "df_empty", "stage_b_exceptions"].includes(k) ? "error" : "warn",
     }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
@@ -317,9 +326,29 @@ function diagnosticChipClass(key, value) {
 
 function appendDiagnosticChip(chipWrap, label, value, className) {
   const chip = document.createElement("span");
-  chip.className = `chip ${className || "neutral"}`;
+  chip.className = `calibration-ledger-pill scan-health-pill chip ${className || "neutral"}`;
   chip.textContent = `${label}: ${formatDiagnosticValue(value)}`;
   chipWrap.appendChild(chip);
+}
+
+function renderScanFunnelSummaryStrip(diag = {}, summary = {}) {
+  const el = document.getElementById("scanFunnelSummaryStrip");
+  if (!el) return;
+  const watch = safeNum(summary?.funnel?.watchlist, 0);
+  const finalCount = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
+  const dq = safeText(diag.data_quality || "ok").trim() || "ok";
+  const top = Array.isArray(summary.blockers) && summary.blockers.length ? summary.blockers[0] : null;
+  const parts = [];
+  if (watch > 0) parts.push(`${watch} → ${finalCount} kept`);
+  else if (finalCount > 0 || safeNum(diag.scan_blocked, 0) > 0) parts.push(`${finalCount} kept`);
+  else {
+    el.textContent = "Run a scan to see the funnel";
+    return;
+  }
+  parts.push(`Data ${dq}`);
+  if (top) parts.push(`Top drop: ${top.label} (${top.value})`);
+  else parts.push("No major drop-offs");
+  el.textContent = parts.join(" · ");
 }
 
 export function buildFunnelStages(diag, watchlistOverride, finalCount) {
@@ -434,7 +463,7 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
     {
       key: "stage2",
-      label: "Passed uptrend check",
+      label: "Uptrend check",
       value: nStage2,
       filtered: stage2Fail,
       shadow_filtered: signalEdgeShadowMode === "shadow" ? stage2ShadowWouldFilter : 0,
@@ -444,7 +473,7 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
     {
       key: "vcp",
-      label: "Passed volatility pattern",
+      label: "Volatility pattern",
       value: nVcp,
       filtered: vcpFail,
       shadow_filtered: vcpWouldFilter,
@@ -464,7 +493,7 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
     {
       key: "stage_a",
-      label: "Passed quick filter",
+      label: "Quick filter",
       value: nStageA,
       filtered: Math.max(0, nSector - nStageA),
       tooltip:
@@ -472,7 +501,7 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
     },
     {
       key: "shortlist",
-      label: "Shortlist (top scored)",
+      label: "Shortlist",
       value: nShortlist,
       filtered: Math.max(0, nStageA - nShortlist),
       mode: primaryProviderMode,
@@ -694,7 +723,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   const detailParts = [
     `Data ${dq || "ok"}`,
     screened > 0 ? `${finalCount} kept / ${screened} screened` : `${finalCount} kept`,
-    blockerCount > 0 ? `${blockerCount} blocker group${blockerCount === 1 ? "" : "s"}` : "no major blockers",
+    blockerCount > 0 ? `${blockerCount} drop-off group${blockerCount === 1 ? "" : "s"}` : "no major drop-offs",
   ];
   setScanStatusStrip(stateName, title, detailParts.join(" · "));
   const signals = Array.isArray(state.latestSignals) ? state.latestSignals : [];
@@ -718,7 +747,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
         tone: finalCount > 0 ? "success" : stateName === "empty" ? "neutral" : dqTone,
       },
       {
-        label: "BLOCKERS",
+        label: "DROP-OFFS",
         sub: "filter groups",
         value: blockerCount,
         tone: blockerCount > 0 ? "warn" : "success",
@@ -748,17 +777,20 @@ export function renderDiagnostics(diag = {}, deps = {}) {
       panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
+  renderScanFunnelSummaryStrip(diag, summary);
+
   if (!summary.blockers.length) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = "No major blockers detected.";
+    empty.textContent = "No major drop-offs detected.";
     blockersEl.appendChild(empty);
     if (headerChip) headerChip.classList.add("hidden");
     if (headerChipCount) headerChipCount.textContent = "0";
   } else {
     summary.blockers.forEach((b) => {
       const li = document.createElement("li");
-      li.innerHTML = `${b.label}: <strong>${b.value}</strong> <span class="${statusClass(b.severity)}">${b.severity}</span>`;
+      li.className = "scan-dropoff-pill";
+      li.innerHTML = `<span class="scan-dropoff-label">${escapeHtml(b.label)}</span><strong class="mono-nums">${b.value}</strong>`;
       blockersEl.appendChild(li);
     });
     if (headerChip) headerChip.classList.remove("hidden");
@@ -768,30 +800,32 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   const stages = Array.isArray(summary.funnel.stages) ? summary.funnel.stages : [];
   const funnelVals = stages.map((s) => safeNum(s.value, 0));
   const funnelMax = Math.max(1, ...funnelVals);
-  const hueStep = stages.length > 1 ? 132 / (stages.length - 1) : 0;
 
   stages.forEach((stage, i) => {
     const n = safeNum(stage.value, 0);
     const pct = Math.round((n / funnelMax) * 100);
-    const hue = Math.round(200 - i * hueStep);
     const filtered = safeNum(stage.filtered, 0);
     const shadowFiltered = safeNum(stage.shadow_filtered, 0);
     const mode = safeText(stage.mode || "").toLowerCase();
     const tooltip = safeText(stage.tooltip || "");
     const stageKey = safeText(stage.key || "");
-    const showShadowBadge = shadowFiltered > 0 && (mode === "shadow" || mode === "soft" || mode === "off" || !mode);
+    const showShadowBadge =
+      shadowFiltered > 0 && (mode === "shadow" || mode === "soft" || mode === "off" || !mode);
     const node = document.createElement("button");
     node.type = "button";
-    node.className = "funnel-node";
+    node.className = "scan-funnel-row funnel-node";
+    node.setAttribute("role", "listitem");
     if (mode) node.dataset.gateMode = mode;
     if (stageKey) node.dataset.funnelStage = stageKey;
-    if (activeFunnelStage && stageKey === activeFunnelStage) node.classList.add("funnel-node--active");
+    if (activeFunnelStage && stageKey === activeFunnelStage) {
+      node.classList.add("funnel-node--active", "scan-funnel-row--active");
+    }
     if (tooltip) node.title = `${tooltip} Click to filter near-miss rows.`;
     else node.title = "Click to filter near-miss rows by this funnel stage.";
-    const filteredLine =
+    const droppedLine =
       i === 0 || filtered <= 0
         ? ""
-        : `<div class="funnel-node-filtered" title="Removed at this step">&minus;${filtered}</div>`;
+        : `<div class="scan-funnel-row-foot">Dropped ${filtered} at this step</div>`;
     const shadowCompare =
       showShadowBadge && shadowFiltered > 0
         ? `<div class="funnel-shadow-compare" aria-hidden="true">
@@ -802,20 +836,17 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     const shadowBadge = showShadowBadge
       ? `<span class="funnel-shadow-badge" title="${escapeHtml(
           `Gate is in ${mode || "shadow"} mode. Would have filtered ${shadowFiltered} more in hard mode.`,
-        )}">${escapeHtml(mode || "shadow")} &middot; would-filter ${shadowFiltered}</span>`
+        )}">${escapeHtml(mode || "shadow")} · would-filter ${shadowFiltered}</span>`
       : "";
     node.innerHTML = `
-      <div class="funnel-node-head">
+      <div class="scan-funnel-row-head">
         <span class="label">${escapeHtml(stage.label || stage.key || "")}</span>
-        <span class="funnel-node-pct mono-nums">${pct}%</span>
+        <span class="value mono-nums">${n} pass · ${pct}%</span>
       </div>
-      <div class="funnel-bar-track" aria-hidden="true">
-        <div class="funnel-bar-fill" style="width:${pct}%;--funnel-hue:${hue}"></div>
+      <div class="scan-funnel-bar-track funnel-bar-track" aria-hidden="true">
+        <div class="scan-funnel-bar-fill funnel-bar-fill" style="width:${pct}%"></div>
       </div>
-      <div class="funnel-node-foot">
-        <span class="value mono-nums" aria-label="pass count">${n}</span>
-        ${filteredLine}
-      </div>
+      ${droppedLine}
       ${shadowCompare}
       ${shadowBadge}
     `;
@@ -833,6 +864,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     surface: "scan_results",
   });
   renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);
+  renderPeadCanarySleeve(diag);
   renderScanGateModesToolbar(diag);
   assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
   if (typeof updateHeroInfographic === "function") updateHeroInfographic();

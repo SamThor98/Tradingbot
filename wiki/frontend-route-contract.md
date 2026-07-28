@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/modules/router.js, schwab_skill/webapp/static/app.js
 created: 2026-06-10
-updated: 2026-07-20
+updated: 2026-07-27
 tags: [frontend, routing, deep-links, contract]
 ---
 
@@ -14,7 +14,9 @@ tags: [frontend, routing, deep-links, contract]
 ## Contract
 
 The dashboard is a single HTML page with **four top-level tabs** (Today /
-Research / System / Settings). Three URL surfaces exist, each with one job:
+Research / Intel / System). Settings merged into System on 2026-07-27; all
+old `?screen=settings` links normalize to the System screen via
+`SCREEN_ALIASES`. Three URL surfaces exist, each with one job:
 
 | Surface | Job | Owner |
 |---------|-----|-------|
@@ -36,17 +38,18 @@ Rules:
 5. Keyboard shortcuts Ctrl/Cmd+1..4 map to the screen order below and must not
    be reassigned.
 
-Legacy screen modes (`cockpit`, `system`, `health`) normalize to a
-top-level tab via `SCREEN_ALIASES` in `app.js` (e.g. `cockpit` → `research`).
+Legacy screen modes (`cockpit`, `system`, `health`, `settings`) normalize to a
+top-level tab via `SCREEN_ALIASES` in `app.js` (e.g. `cockpit` → `research`,
+`settings` → `diagnostics`).
 
-## Screen map (locked 2026-06-26)
+## Screen map (updated 2026-07-27)
 
 | Order / shortcut | Screen mode | Tab label | Purpose |
 |------------------|-------------|-----------|---------|
 | 1 | `operations` | Today | Summary landing + scan → review → approve kanban |
 | 2 | `research` | Research | Sub-tabs: Portfolio → Quick check → Backtest (default Portfolio; Diligence merged into Quick check Brief/Deep) |
-| 3 | `diagnostics` | System | Summary + health ribbon; collapsed status/decision/quality panels |
-| 4 | `settings` | Settings | Overview (live-order controls) + Connect + presets + account security |
+| 3 | `intel` | Intel | Position Intelligence: conviction scorecard, GARCH volatility signals, long-call and covered-call tables (`/api/position-intel`) |
+| 4 | `diagnostics` | System | Summary + health ribbon; collapsed status/decision/quality panels; settings sections re-homed below (overview, connect, presets, account security) |
 
 Default landing: `operations` (Today).
 
@@ -55,6 +58,7 @@ Default landing: `operations` (Today).
 | Alias | Canonical id | Screen |
 |-------|--------------|--------|
 | `scan`, `candidates` | `scanSection` | operations |
+| `peadcanary`, `canary`, `pead-canary` | `peadCanarySection` | operations |
 | `pending`, `queue`, `approvals`, `trades` | `pendingSection` | operations |
 | `workflow` | `workflowPrimary` | operations |
 | `operations` | `operationsWorkspaceIntro` | operations |
@@ -70,8 +74,9 @@ Default landing: `operations` (Today).
 | `book-calendar`, `book-tax`, `book-journal` | matching deeplink anchors | research (Book → Calendar / Tax / Journal) |
 | `calibration` | `calibrationSection` | diagnostics |
 | `diagnostics`, `health` | `healthRibbon` | diagnostics |
-| `connect`, `onboarding`, `setup` | `onboardingSection` | settings |
-| `settings` | `settingsWorkspaceIntro` | settings |
+| `intel`, `positionintel` | `positionIntelSection` | intel |
+| `connect`, `onboarding`, `setup` | `onboardingSection` | diagnostics (settings merged) |
+| `settings` | `settingsWorkspaceIntro` | diagnostics (settings merged) |
 
 Deprecated intro sections (`*WorkspaceIntro`) remain in the DOM for alias
 compatibility; they are hidden. Prefer canonical section ids in new links.
@@ -94,4 +99,4 @@ compatibility; they are hidden. Prefer canonical section ids in new links.
 
 ---
 
-*Last compiled: 2026-07-07*
+*Last compiled: 2026-07-27*

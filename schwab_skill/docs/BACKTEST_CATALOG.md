@@ -15,8 +15,9 @@
 | Promotion gates | PF mean ≥ **1.20**, worst-era PF ≥ **1.00** |
 | Bare signal clears gates? | **Yes** with live `PTS_52W_CAP_MODE` (blocks lifted for bare gate; keep PROB_RANK shadow) |
 | Promoted offline stack (pre-cap) | Exit grace 15/40 + 1% breakout buffer → PF mean **1.212**, worst **1.037** |
-| Post-cap stack (pts_52w≤37) | Buffer book PF mean **1.283**, worst **1.058**; **p75 fails** worst-era — **p76** is `re_live_candidate` |
+| Post-cap stack (pts_52w≤37) | Buffer book PF mean **1.283**, worst **1.058**; **p75 fails** worst-era — **p76 live** (PF mean **1.323**, worst **1.034**) |
 | PF 1.50 peer (Track B) | **`pead_primary_aug_fixed_full_c40`** clears — PF mean **1.550**, worst **1.167**; pullback full **rejects** (worst 0.959) |
+| PEAD × Stage2 buffer? | **No** — 1% breakout buffer fails worst-era (**0.922**); keep **exit-grace-only** on PEAD |
 | Optional trim on stack (pre-cap) | Rank-v2 p75 → PF mean **1.249**, worst **1.120** (25% retention) |
 | Canonical baseline run | `control_legacy_aug` (16,433 trades, 5 eras) |
 | Canonical bare run (pre-cap) | `stage2_only_aug` (16,423 trades, 5 eras) |
@@ -129,7 +130,7 @@ Offline replay on `control_legacy_aug` with exit profile `exit_grace_t15_h40`.
 |---|---|
 | Entry timing | `ENTRY_TIMING_SHADOW_MODE=live`, 1% breakout buffer, SMA50 filters disabled |
 | Exit manager | `EXIT_MANAGER_MODE=live`, min hold 15d, max hold 40d |
-| Rank-v2 | p75 trim (live after 2026-07-16 promotion) |
+| Rank-v2 | p76 trim (live; retuned 2026-07-22 under pts_52w≤37) |
 | Apply helper | `python scripts/apply_signal_stack_enforced_env.py` |
 
 Bare-signal PF (unfiltered Stage 2) still sits below 1.20 — stack filters improve the *selected* book, they do not rewrite the bare-signal audit.
@@ -269,10 +270,24 @@ Use `portfolio_summary` / portfolio returns for deployability; use **PF** for pr
 | 2026-07-20 | Rank-v2 under pts_52w≤37: **p76** first clear (re-live candidate) | `sweep_cf_rank_under_pts52w_cap37_control_legacy_aug` |
 | 2026-07-21 | Full-universe PEAD primary clears strict PF 1.50 | `pead_primary_aug_fixed_full_c40` PF mean **1.550** / worst **1.167** |
 | 2026-07-22 | PEAD exit-grace transfer keeps 1.50; pullback pts_52w CF no lift | peer stack-transfer + `pts52w_cap_cf_pullback_*` |
+| 2026-07-22 | Built PEAD entry-timing cache (100%); Stage2 1% buffer **rejects** on PEAD | `entry_timing_replay_cache_pead_primary_aug_fixed_full_c40` + full stack CF |
+| 2026-07-22 | Retune live rank-v2 **p75 → p76** under pts_52w≤37 | `sweep_cf_rank_under_pts52w_cap37_*` → `SIGNAL_STACK_ENFORCED_ENV` |
+| 2026-07-22 | Restored PEAD dual-admit runtime; full-scan compare **pass** | `pead_primary_shadow_compare_20260722T103711Z` (eval 1492 / admit 1) |
+| 2026-07-22 | Full SP1500 PEAD shadow post-restore **pass** (admit 8) | `pead_primary_shadow_scan_*_full_sp1500_post_restore` + compare `…111606Z` |
+| 2026-07-22 | First post-p76 live retention session **qualifies** (24.0%) | `rank_filter_v2_live_session_*_post_p76_from_pead_full` |
+| 2026-07-22 | PEAD capacity-aware CF: prefer `top5_by_edge_score` shadow; buffer still reject | `pead_primary_capacity_cf_pead_primary_aug_fixed_full_c40` |
+| 2026-07-22 | Wired shadow-only PEAD rank to Stage-A `edge_score` + capacity top-5; dual-admit **pass** | `pead_primary_shadow_scan_*_full_sp1500_rth_edge_top5_20260722` + compare `…205237Z` |
+| 2026-07-23 | Second post-wire dual-admit compare **pass** (capacity top-5); dq=stale | `pead_primary_shadow_scan_*_full_sp1500_post_p76_20260723` + compare `…043035Z` |
+| 2026-07-23 | Drafted PEAD non-executable canary sleeve design (no enablement) | `docs/PEAD_CANARY_SLEEVE_DESIGN.md` |
+| 2026-07-23 | Wired canary sleeve block into compare + shadow ledger + summarize script | `canary_sleeve` on compare; `summarize_pead_dual_admit_sessions.py` |
+| 2026-07-23 | last_scan dual-admit compare **pass** (dq=ok; partial eval) | `pead_primary_shadow_compare_20260724T005632Z` |
+| 2026-07-27 | Fresh bare edge audit: verdict unchanged `iterate_with_caution` (PF mean 1.162 / worst 1.032; overlays neutral) | `phase2_edge_audit.json` (2026-07-28T00:09Z) |
+| 2026-07-27 | Two dual-admit compare **pass** sessions (last_scan dq=ok eval 608; full post-close dq=stale eval 1392, admit 33, 0 leak) | compares `…001634Z` + `…004926Z` |
+| 2026-07-27 | Post-close p76 retention 25.0% in band but dq=stale — not a qualifying session | `rank_filter_v2_live_session_20260728T004926Z_post_p76_postclose_20260727` |
 
 ---
 
-## 11. PF 1.50 dual-track (2026-07-18 → 2026-07-22)
+## 11. PF 1.50 dual-track (2026-07-18 → 2026-07-23)
 
 Strict target: five-era equal-weight net PF mean ≥ **1.50**, worst-era ≥ **1.00**.
 
@@ -313,15 +328,79 @@ Strict target: five-era equal-weight net PF mean ≥ **1.50**, worst-era ≥ **1
 | `recent_current` | 8,397 | **1.362** |
 | `volatility_chop` | 4,021 | **1.167** |
 
-#### Stack transfer (exit-grace-only; no entry-timing cache)
+#### Stack transfer
 
-| Artifact | Bare PF mean | Exit-grace t15/h40 | Action |
-|---|---:|---:|---|
-| `peer_generator_stack_transfer_pullback_only_aug.json` (smoke) | 1.492 | 1.455 | `pass_pf_120_…_ready_for_full_universe` (stale vs full) |
-| `peer_generator_stack_transfer_pullback_only_aug_full.json` | 1.274\* | 1.260 | Passes 1.20 on **4 eras** (missing `recent_current` chunks on disk) |
-| `peer_generator_stack_transfer_pead_primary_aug_fixed_full_c40.json` | **1.550** | **1.549** | **`pass_strict_pf_150_exit_grace`** |
+| Artifact | Bare PF mean | Exit-grace t15/h40 | Buffer 1.0% | Action |
+|---|---:|---:|---:|---|
+| `peer_generator_stack_transfer_pullback_only_aug.json` (smoke) | 1.492 | 1.455 | — | `pass_pf_120_…_ready_for_full_universe` (stale vs full) |
+| `peer_generator_stack_transfer_pullback_only_aug_full.json` | 1.274\* | 1.260 | — | Passes 1.20 on **4 eras** (missing `recent_current` chunks on disk) |
+| `peer_generator_stack_transfer_pead_primary_aug_fixed_full_c40.json` | **1.550** | **1.549** / worst **1.191** | **1.361** / worst **0.922** | **`reject_breakout_buffer_keep_exit_grace_only`** |
 
 \*Chunk-only baseline omits `recent_current` (0 chunks under `multi_era_chunks/pullback_only_aug_full/recent_current` even though the summary JSON includes that era). Prefer the five-era summary for gate calls.
+
+**PEAD full stack (2026-07-22):** cache `entry_timing_replay_cache_pead_primary_aug_fixed_full_c40` (27,422 / 27,422). Source: `signal_stack_counterfactual_pead_primary_aug_fixed_full_c40.json`, buffer sweep `pead_buffer_sweep_under_exit_grace_pead_primary_aug_fixed_full_c40.json`.
+
+| Scenario | Trades | Retention | PF mean | Worst-era | Strict 1.50 |
+|---|---:|---:|---:|---:|---|
+| bare / exit-grace | 27,422 | 100% | **1.549–1.550** | **1.167–1.191** | **Pass** |
+| + breakout buffer ≥1.0% | 5,570 | 20.3% | 1.361 | **0.922** (`volatility_chop`) | **Fail** |
+| + buffer + rank-v2 p76 | 3,096 | 55.6%† | 1.395 | **0.815** | **Fail** |
+
+†Retention vs buffer-filtered book.
+
+PEAD entries are **not** Stage2 breakouts: median `breakout_buffer_pct` ≈ **-1.1%** (67% negative). Any buffer floor ≥0.1% drops retention to ~31% and breaks worst-era. **Do not** transfer the Stage2 1% buffer arm onto `pead_primary`.
+
+#### PEAD capacity-aware CF (2026-07-22)
+
+Artifact: `pead_primary_capacity_cf_pead_primary_aug_fixed_full_c40.json` (+ `.md`). Source book: `pead_primary_aug_fixed_full_c40` + entry-timing cache (27,422). Exit-grace caches: `pead_primary_exit_grace_replay_*_{t15_h40,t10_h40,t15_h30}.json`.
+
+Gates: five-era equal-weight net PF mean ≥ **1.50**, worst-era ≥ **1.00**, no thin eras (<50). Portfolio metrics are **capacity notes only** (bare book is capacity-saturated).
+
+| Arm | N | Ret% | PF mean | Worst | Cap.filt (max10) | Port.ret% | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `bare_full_book` | 27,422 | 100 | **1.550** | **1.167** | 25,390 | −99.99 | **Pass** (saturated) |
+| `exit_grace_t15_h40_full_book` | 27,422 | 100 | **1.549** | **1.191** | 25,390 | −99.99 | **Pass** |
+| `exit_grace_t15_h30_full_book` | 27,422 | 100 | **1.549** | **1.191** | 25,390 | −99.99 | **Pass** (≈ t15/h40 on this book) |
+| `exit_grace_t10_h40_full_book` | 27,422 | 100 | 1.462 | 1.239 | 25,390 | −99.99 | **Fail** PF mean |
+| `top5_by_edge_score` (**selected**) | 7,268 | 26.5 | **1.511** | **1.291** | 5,789 | −60.4 | **Pass** |
+| `top8_by_edge_score` | 10,400 | 37.9 | **1.565** | **1.379** | 8,799 | −93.5 | **Pass** |
+| `edge_score_p70` | 8,227 | 30.0 | **1.599** | **1.143** | 7,026 | −81.1 | **Pass** |
+| `top10_by_composite_score` | 12,170 | 44.4 | **1.501** | **1.288** | 10,492 | −97.4 | **Pass** |
+| `top3_by_edge_score` | 4,724 | 17.2 | 1.492 | 1.189 | 3,311 | **+36.8** | **Fail** PF mean (near-miss; best port.ret) |
+| `top*_by_signal_score` / `signal_score_p*` | — | — | ≤1.47 | mixed | — | — | **Fail** |
+| `transfer_breakout_buffer_ge_0.010` | 5,570 | 20.3 | 1.355 | **0.907** | 4,289 | −66.8 | **Reject** |
+| `transfer_pts_52w_cap_37` | 25,403 | 92.6 | **1.582** | **1.171** | 23,400 | −99.99 | Clears gates but **not** PEAD-native default |
+| `transfer_rank_v2_p76` | 6,590 | 24.0 | **1.622** | **1.065** | 5,538 | −60.4 | Clears gates but **not** PEAD-native default |
+
+**Operating stack for continued shadow (not live):**
+
+| Layer | Choice |
+|---|---|
+| Executable entries | Stage2 only |
+| PEAD mode | `STRATEGY_PEAD_PRIMARY_MODE=shadow`, `ALLOW_LIVE=false` |
+| PEAD entry | beat + liquidity (dual-admit shadow) |
+| PEAD exit | `exit_grace_t15_h40` (t15/h30 tied; **reject** t10/h40) |
+| PEAD rank / capacity | **`top5_by_edge_score`** (PEAD-native); runtime: `PEAD_PRIMARY_SHADOW_RANK_TOP_N=5`, sort `edge_score_desc,ticker_asc` (diagnostics only) |
+| PEAD sizing note | max-positions + risk-per-trade with score-priority fill |
+| Do **not** default | Stage2 1% breakout buffer; do not promote pts_52w / rank-v2 as PEAD policy even though they clear offline |
+
+Dual-admit leak check on this run: **pass** (`pead_only_is_executable=false`, `ALLOW_LIVE=false`). Lookback sweeps (`PEAD_LOOKBACK_DAYS` ∈ {10,15,20,30}) **deferred** — need new full-universe entry books.
+
+#### Dual-admit sessions after edge_score top-5 wire
+
+| Artifact | eval | admit | overlap | leak | capacity_top_n | dq | verdict |
+|---|---:|---:|---:|---:|---:|---|---|
+| `pead_primary_shadow_scan_20260722T205228Z_full_sp1500_rth_edge_top5_20260722` + compare `…205237Z` | **1363** | **9** | **1** | **0** | **5** | ok | **pass** |
+| `pead_primary_shadow_scan_20260723T043023Z_full_sp1500_post_p76_20260723` + compare `…043035Z` | **940** | **13** | **2** | **0** | **5** | **stale** | **pass** |
+| Dashboard `last_scan` 2026-07-23T21:43Z + compare `…005632Z` | **349** | **8** | **2** | **0** | fallback top5† | **ok** | **pass** |
+| Dashboard `last_scan` 2026-07-27T22:06Z + compare `…001634Z` | **608** | **19** | **4** | **0** | **5** | **ok** | **pass** |
+| `pead_primary_shadow_scan_20260728T004857Z_full_sp1500_postclose_20260727` + compare `…004926Z` | **1392** | **33** | **11** | **0** | **5** | **stale** | **pass** |
+
+†Partial PEAD eval (349/1505); shadow rows lacked `capacity_top_n` / edge sort (process likely pre-wire). Canary tickers via first-5 fallback: CME, GM, LMT, NEM, NOC. Still Stage2-only executable.
+
+Both wired sessions + this last_scan: `executable_stage2_only=True`. Soft list cap remains `PEAD_PRIMARY_SHADOW_MAX_NAMES=50`.
+
+**Canary sleeve:** design + compare `canary_sleeve` reporting wired (`docs/PEAD_CANARY_SLEEVE_DESIGN.md`). Still **no** PEAD live / `ALLOW_LIVE`. Prefer ≥1 more **RTH-hours** full dual-admit with **current** edge top-5 diagnostics (`capacity_rank_arm` set, eval coverage healthy) before enablement talk.
 
 #### Pullback × pts_52w≤37 offline CF
 
@@ -336,27 +415,36 @@ Sources: `signal_stack_counterfactual_control_legacy_aug_pts52w_cap37.json`, `sw
 | `cap_only_bare` | 8,773 | 53.5% vs uncapped | 1.260 | 1.062 | Pass |
 | `exit_grace_t15_h40` | 8,773 | 100% | 1.249 | 1.079 | Pass |
 | **`exit_grace_breakout_buffer_0.010`** (selected) | **3,559** | **40.6%** | **1.283** | **1.058** | **Pass** |
-| `…_rank_v2_p75` (current live trim) | 890 | 25.0% | 1.299 | **0.955** | **Fail worst-era** |
-| `…_rank_v2_p76` (sweep pick) | 859 | 24.1% | **1.323** | **1.034** | **Pass** (`re_live_candidate`) |
+| `…_rank_v2_p75` (pre-retune live) | 890 | 25.0% | 1.299 | **0.955** | **Fail worst-era** |
+| `…_rank_v2_p76` (**live** post 2026-07-22) | 859 | 24.1% | **1.323** | **1.034** | **Pass** |
 
 †Retention for buffer row is vs capped book; rank rows vs buffer-filtered capped book.
 
-**Operator note:** live rank-v2 p75 is **misaligned** with the post-cap stack — under pts_52w≤37, p75 breaks `late_bull`. Next stack decision is p76 re-live (or drop rank trim and keep buffer-only).
+**Operator note:** live rank-v2 retuned **p75 → p76** so the post-cap stack clears worst-era (`late_bull`). Buffer-only remains a valid fallback (PF mean 1.283 / worst 1.058) if p76 retention drifts outside ~22–35%.
 
 ---
 
 ## 9. What is still open
 
 1. ~~Bare-signal PF mean ≥ 1.20~~ — cleared via live `pts_52w≤37` (`stage2_pts52w_cap37`).  
-2. ~~Stack CF with pts_52w cap~~ — done; buffer book passes; **decide p76 re-live vs buffer-only**.  
+2. ~~Stack CF with pts_52w cap~~ — done; buffer book passes; **p76 live** (p75 retired under cap).  
 3. ~~Track B full-universe bare runs~~ — pullback **reject** (worst 0.959); PEAD **clears 1.50**.  
-4. Collect **live-enforced** evidence for Stage 2c–2d stack + pts_52w cap (filter diagnostics / one trading week).  
-5. Build `entry_timing_replay_cache_pead_primary_aug_fixed_full_c40` so PEAD can take the 1% buffer (± rank) stack arms (currently exit-grace-only).  
+4. Collect **live-enforced** evidence for Stage 2c–2d stack + pts_52w cap + **p76** (filter diagnostics / 1–2 RTH weeks).  
+5. ~~PEAD entry-timing cache + full stack CF~~ — done; **reject Stage2 buffer on PEAD**; keep exit-grace-only for the 1.50 peer.  
 6. Repair `pullback_only_aug_full` `recent_current` chunks if any further pullback CFs are needed (summary has era; chunk dir empty).  
 7. Do **not** re-enable hard breakout-volume or confluence Stage A gates without a fresh five-era pass.  
 8. **PROB_RANK** stays **KEEP SHADOW** — do not set `PROB_RANK_MODE=live`.  
 9. Regime v2 / Correlation Guard LIVE still require operator promotion + shadow evidence.  
-10. Track A: keep `EARLY_STOP_GATE_MODE=shadow`.
+10. Track A: keep `EARLY_STOP_GATE_MODE=shadow`.  
+11. ~~Stage2 post-cap p76 vs buffer-only~~ — **p76 selected** (higher PF mean than buffer-only; clears gates).  
+12. ~~PEAD dual-admit runtime~~ — restored 2026-07-22; full SP1500 post-restore shadow **pass** (eval **1493** / admit **8** / overlap **1** / 0 leak). Collect more RTH sessions; do **not** make PEAD-only executable.  
+13. Stage2 **p76** live retention: first post-retune qualifying session **pass** (eval **25** / ret **24.0%** / dq=ok) via `record_rank_v2_live_session.py`. Need ≥1 more distinct RTH/`ok` session.  
+14. ~~PEAD capacity-aware CF~~ — done 2026-07-22 (`pead_primary_capacity_cf_*`): prefer **`top5_by_edge_score`** + exit-grace t15/h40 in shadow; **reject** Stage2 buffer; pts_52w/rank-v2 clear offline but stay non-default. Still **no** PEAD live / canary sleeve.  
+15. Optional: new full-universe PEAD books for `PEAD_LOOKBACK_DAYS` soft sweep {10,15,20,30}.  
+16. ~~Dual-admit evidence after edge top-5 wire (≥2 sessions)~~ — **2/2 compare-pass** (`…205237Z` dq=ok; `…043035Z` dq=stale). **Go for canary sleeve design discussion only**; still no enablement / `ALLOW_LIVE`. Prefer ≥1 more RTH-hours `dq=ok` before any enablement talk.  
+17. ~~PEAD non-executable canary sleeve design~~ — drafted `docs/PEAD_CANARY_SLEEVE_DESIGN.md`; compare/ledger now emit `canary_sleeve` (still **no enablement**).  
+18. ~~Optional: dashboard surface of `canary_sleeve` names~~ — Today scan lane `#peadCanarySection` (2026-07-27).  
+19. Next evidence: ≥1 **RTH-hours** full dual-admit via `run_pead_primary_shadow_scan.py` on **current** code (`capacity_rank_arm=top5_by_edge_score`, healthy `pead_primary_evaluated`) with `dq=ok` + compare pass — then operator review before any enablement talk.
 
 ---
 
@@ -383,8 +471,11 @@ python scripts/analyze_early_stop_preentry_counterfactual.py --run-id control_le
 python scripts/phase2_edge_audit.py
 
 # Stack / peer transfer
+python scripts/build_entry_timing_replay_cache.py --run-id pead_primary_aug_fixed_full_c40
 python scripts/analyze_signal_stack_counterfactual.py  # see script --help
 python scripts/analyze_peer_generator_stack_transfer.py --run-id pead_primary_aug_fixed_full_c40
+python scripts/analyze_pead_primary_capacity_counterfactual.py  # PEAD-native capacity CF
+python scripts/summarize_pead_dual_admit_sessions.py            # canary dual-admit session table
 python scripts/sweep_rank_v2_under_pts52w_cap.py --run-id control_legacy_aug --cap 37
 
 # Apply live operating stack
@@ -396,6 +487,7 @@ python scripts/validate_signal_stack_enforced_env.py
 
 ## Related docs
 
+- `PEAD_CANARY_SLEEVE_DESIGN.md` — non-executable PEAD canary sleeve design draft (no enablement)  
 - `PROBABILISTIC_RANKING_RESEARCH_ARCHITECTURE.md` — design for continuous features + probabilistic ranking (no code until approved)  
 - `../SIGNAL_QUALITY_ROLLOUT.md` — staged live rollout for the stack  
 - `../README.md` — Recommended Rollout Sequence  
@@ -405,4 +497,4 @@ python scripts/validate_signal_stack_enforced_env.py
 
 ---
 
-*Catalog compiled 2026-07-22 from `validation_artifacts/`. Re-generate after major multi-era or audit runs.*
+*Catalog compiled 2026-07-23 (PEAD canary design draft) from `validation_artifacts/`. Re-generate after major multi-era or audit runs.*

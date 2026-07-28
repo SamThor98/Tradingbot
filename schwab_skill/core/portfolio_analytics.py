@@ -232,14 +232,26 @@ def correlation_summary(
     threshold: float | None = None,
 ) -> dict[str, Any]:
     clean = ticker_returns_df.apply(pd.to_numeric, errors="coerce").dropna(how="any")
-    if clean.empty or len(clean.columns) < 2:
+    # Single-name books still get a 1×1 identity matrix so the Risk tab can
+    # label the holding; pairwise stats stay empty until a second name appears.
+    if clean.empty or len(clean.columns) < 1:
         return {"matrix": {}, "max_pair": None, "avg_pair_corr": None, "threshold": threshold, "breaches": []}
 
     corr = clean.corr()
     matrix = {
-        str(row): {str(col): round(float(corr.loc[row, col]), 4) for col in corr.columns if pd.notna(corr.loc[row, col])}
+        str(row): {
+            str(col): round(float(corr.loc[row, col]), 4)
+            for col in corr.columns
+            if pd.notna(corr.loc[row, col])
+        }
         for row in corr.index
     }
+    # Flat single-series corr() can yield NaN on the diagonal; still label the name.
+    for col in corr.columns:
+        key = str(col)
+        matrix.setdefault(key, {})
+        if key not in matrix[key]:
+            matrix[key][key] = 1.0
     pairs: list[tuple[str, str, float]] = []
     cols = [str(c) for c in corr.columns]
     for idx, left in enumerate(cols):

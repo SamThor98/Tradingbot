@@ -189,8 +189,10 @@ def _run_ablation_cycle_async() -> None:
 
 
 def _get_validation_status() -> dict[str, Any]:
-    from ..main import _latest_validation_status
-    return _latest_validation_status()
+    # Import the service directly — avoid main.py (circular) and pass skill_dir.
+    from ..decision_dashboard_service import latest_validation_status
+
+    return latest_validation_status(SKILL_DIR)
 
 
 def _get_data_provider_singleton() -> Any:
@@ -221,49 +223,52 @@ def _get_challenger_summary() -> dict[str, Any]:
 
 @router.get("/api/performance", response_model=ApiResponse)
 def performance() -> ApiResponse:
-    backtest = _read_json_file(BACKTEST_RESULTS_PATH, {})
-    outcomes = _read_json_file(TRADE_OUTCOMES_PATH, [])
-    metrics = _read_json_file(EXECUTION_METRICS_PATH, {"days": {}})
-    days = metrics.get("days", {}) if isinstance(metrics, dict) else {}
+    try:
+        backtest = _read_json_file(BACKTEST_RESULTS_PATH, {})
+        outcomes = _read_json_file(TRADE_OUTCOMES_PATH, [])
+        metrics = _read_json_file(EXECUTION_METRICS_PATH, {"days": {}})
+        days = metrics.get("days", {}) if isinstance(metrics, dict) else {}
 
-    shadow_actions = 0
-    live_actions = 0
-    for bucket in days.values() if isinstance(days, dict) else []:
-        events = (bucket or {}).get("events", {}) if isinstance(bucket, dict) else {}
-        shadow_actions += int(events.get("action_shadow", 0) or 0)
-        live_actions += int(events.get("action_live", 0) or 0)
+        shadow_actions = 0
+        live_actions = 0
+        for bucket in days.values() if isinstance(days, dict) else []:
+            events = (bucket or {}).get("events", {}) if isinstance(bucket, dict) else {}
+            shadow_actions += int(events.get("action_shadow", 0) or 0)
+            live_actions += int(events.get("action_live", 0) or 0)
 
-    total_outcomes = len(outcomes) if isinstance(outcomes, list) else 0
-    return _ok({
-        "backtest": {
-            "source": str(BACKTEST_RESULTS_PATH.name),
-            "run_at": backtest.get("run_at") if isinstance(backtest, dict) else None,
-            "total_trades": backtest.get("total_trades") if isinstance(backtest, dict) else None,
-            "win_rate": backtest.get("win_rate_net") if isinstance(backtest, dict) else None,
-            "avg_return_pct": backtest.get("avg_return_net_pct") if isinstance(backtest, dict) else None,
-            "max_drawdown_pct": backtest.get("max_drawdown_net_pct") if isinstance(backtest, dict) else None,
-        },
-        "shadow_paper": {
-            "source": "execution_safety_metrics.json",
-            "shadow_actions": shadow_actions,
-            "notes": "Derived from shadow execution event counters.",
-        },
-        "live": {
-            "source": ".trade_outcomes.json",
-            "live_actions": live_actions,
-            "recorded_outcomes": total_outcomes,
-            "latest_outcomes": (outcomes[-5:] if isinstance(outcomes, list) else []),
-        },
-        "validation": {
-            "status": _get_validation_status(),
-            "artifacts_present": VALIDATION_ARTIFACT_DIR.exists(),
-        },
-        "separation_guard": {
-            "commingled_metric_allowed": False,
-            "message": "Backtest, shadow/paper, and live are reported as separate buckets only.",
-        },
-        "challenger": _get_challenger_summary(),
-    })
+        total_outcomes = len(outcomes) if isinstance(outcomes, list) else 0
+        return _ok({
+            "backtest": {
+                "source": str(BACKTEST_RESULTS_PATH.name),
+                "run_at": backtest.get("run_at") if isinstance(backtest, dict) else None,
+                "total_trades": backtest.get("total_trades") if isinstance(backtest, dict) else None,
+                "win_rate": backtest.get("win_rate_net") if isinstance(backtest, dict) else None,
+                "avg_return_pct": backtest.get("avg_return_net_pct") if isinstance(backtest, dict) else None,
+                "max_drawdown_pct": backtest.get("max_drawdown_net_pct") if isinstance(backtest, dict) else None,
+            },
+            "shadow_paper": {
+                "source": "execution_safety_metrics.json",
+                "shadow_actions": shadow_actions,
+                "notes": "Derived from shadow execution event counters.",
+            },
+            "live": {
+                "source": ".trade_outcomes.json",
+                "live_actions": live_actions,
+                "recorded_outcomes": total_outcomes,
+                "latest_outcomes": (outcomes[-5:] if isinstance(outcomes, list) else []),
+            },
+            "validation": {
+                "status": _get_validation_status(),
+                "artifacts_present": VALIDATION_ARTIFACT_DIR.exists(),
+            },
+            "separation_guard": {
+                "commingled_metric_allowed": False,
+                "message": "Backtest, shadow/paper, and live are reported as separate buckets only.",
+            },
+            "challenger": _get_challenger_summary(),
+        })
+    except Exception as exc:
+        return _err_response("performance", exc)
 
 
 @router.get("/api/calibration/summary", response_model=ApiResponse)

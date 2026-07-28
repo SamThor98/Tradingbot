@@ -11,6 +11,7 @@ Usage (from schwab_skill):
   python scripts/start_local_dashboard.py
   python scripts/start_local_dashboard.py --port 8182 --no-sync-env
   python scripts/start_local_dashboard.py --signal-stack-enforced
+  python scripts/start_local_dashboard.py --signal-stack-enforced --multi-sleeve-rth-shadow
   python scripts/start_local_dashboard.py --entry-timing-experiment
   python scripts/start_local_dashboard.py --entry-timing-live
 """
@@ -100,6 +101,11 @@ def main() -> int:
         action="store_true",
         help="Upsert P0 entry-timing LIVE vars (1%% breakout buffer) into .env before starting",
     )
+    parser.add_argument(
+        "--multi-sleeve-rth-shadow",
+        action="store_true",
+        help="Upsert allocator SHADOW + hypothesis ledger vars for RTH evidence weeks",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(SKILL_DIR))
@@ -135,6 +141,15 @@ def main() -> int:
             print(f"Entry-timing experiment env updated in {ENV_PATH}: {', '.join(changed)}")
         else:
             print(f"Entry-timing experiment env already set in {ENV_PATH}")
+
+    if args.multi_sleeve_rth_shadow:
+        from core.env_local import apply_multi_sleeve_rth_shadow_env
+
+        changed = apply_multi_sleeve_rth_shadow_env(ENV_PATH)
+        if changed:
+            print(f"Multi-sleeve RTH shadow env updated in {ENV_PATH}: {', '.join(changed)}")
+        else:
+            print(f"Multi-sleeve RTH shadow env already set in {ENV_PATH}")
 
     from run_dual_auth_browser import _make_cert
 

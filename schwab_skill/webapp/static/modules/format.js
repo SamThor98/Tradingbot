@@ -224,15 +224,26 @@ export function unknown() {
 }
 
 /**
- * Title-case a strategy id ("stage2_vcp" → "Stage2 Vcp"; "—" and empty pass
- * through as the em-dash). Shared by the scan table and scan detail views.
+ * Humanize a strategy id for triage display.
+ * "momentum_stage2" → "Momentum stage 2"; "vcp_breakout" → "VCP breakout".
+ * Em-dash / empty pass through as "—".
  */
 export function formatStrategyLabel(value) {
   const raw = safeText(value || "").trim();
   if (!raw || raw === "—") return "—";
-  return raw
+  const spaced = raw
     .replace(/[_-]+/g, " ")
+    .replace(/([A-Za-z])(\d+)/g, "$1 $2")
     .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+    .trim();
+  const acronyms = new Set(["vcp", "sma", "atr", "pead", "rs", "etf"]);
+  return spaced
+    .split(" ")
+    .map((word, idx) => {
+      const lower = word.toLowerCase();
+      if (acronyms.has(lower)) return lower.toUpperCase();
+      if (idx === 0) return lower.charAt(0).toUpperCase() + lower.slice(1);
+      return lower;
+    })
+    .join(" ");
 }

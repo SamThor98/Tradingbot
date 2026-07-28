@@ -14,6 +14,7 @@ EMPTY_ENV_SKILL_DIR = SKILL_DIR / "__validation_empty_env__"
 sys.path.insert(0, str(SKILL_DIR))
 
 from config import (  # noqa: E402
+    get_allocator_mode,
     get_correlation_guard_max_pair_corr,
     get_correlation_guard_mode,
     get_event_action,
@@ -53,6 +54,7 @@ MODE_GETTERS = {
     "REGIME_V2_MODE": get_regime_v2_mode,
     "RANK_SCORE_V2_MODE": get_rank_score_v2_mode,
     "RANK_FILTER_V2_MODE": get_rank_filter_v2_mode,
+    "ALLOCATOR_MODE": get_allocator_mode,
 }
 
 # Promoted defaults (2026-Q2): see docs/RELEASE_NOTES_PLUGIN_PROMOTIONS.md

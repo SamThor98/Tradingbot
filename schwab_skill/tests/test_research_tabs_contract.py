@@ -33,6 +33,18 @@ def test_correlation_heatmap_shading_contract() -> None:
     assert "function corrBucket" in risk_js
 
 
+def test_manual_risk_reloads_when_book_changes() -> None:
+    """Risk cache must key on the manual book so newly added tickers appear."""
+    risk_js = (STATIC / "panels" / "portfolioRisk.js").read_text(encoding="utf-8")
+    manual_js = (STATIC / "panels" / "portfolioManual.js").read_text(encoding="utf-8")
+    assert "function manualBookFingerprint" in risk_js
+    assert "cached._bookKey === bookKey" in risk_js
+    assert "persistManualEditor" in risk_js
+    assert "renderHoldingsStrip" in risk_js
+    assert "export function persistManualEditor" in manual_js
+    assert 'input.addEventListener("input", persistEditor)' in manual_js
+
+
 def test_index_research_tab_order_and_no_diligence_tab() -> None:
     html = INDEX.read_text(encoding="utf-8")
     assert 'data-research-tab-btn="portfolio"' in html

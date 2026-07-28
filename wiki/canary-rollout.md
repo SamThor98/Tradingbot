@@ -39,6 +39,7 @@ Enable for full production, monitor an additional week.
 - [[plugin-modes]] — plugins to canary
 - [[validation]] — validation pipeline
 - [[execution-engine]] — execution metrics
+- [[multi-sleeve-phased-build-plan]] — S1 canary sits in Phase 5–7 of the multi-sleeve roadmap
 
 ---
 

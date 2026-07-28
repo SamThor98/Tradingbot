@@ -167,15 +167,47 @@ def main() -> int:
             str(args.rank_v2_percentile),
         ]
         rc = int(_stack_main())
+        stack_path = ART / f"signal_stack_counterfactual_{args.run_id}.json"
+        scenarios: dict[str, Any] = {}
+        recommendation: dict[str, Any] = {}
+        if stack_path.exists():
+            try:
+                stack_payload = json.loads(stack_path.read_text(encoding="utf-8"))
+                scenarios = dict(stack_payload.get("scenarios") or {})
+                recommendation = dict(stack_payload.get("recommendation") or {})
+            except Exception:
+                scenarios = {}
+                recommendation = {}
+        buffer = scenarios.get("exit_grace_breakout_buffer_0.010") or {}
+        grace = scenarios.get("exit_grace_all") or {}
+        if rc != 0:
+            action = "stack_cf_failed"
+        elif float(buffer.get("pf_mean") or 0) >= PF_MEAN_TARGET and float(
+            buffer.get("worst_era_pf") or 0
+        ) >= PROMOTION_WORST_ERA_PF:
+            action = "pass_strict_pf_150_full_stack"
+        elif float(grace.get("pf_mean") or 0) >= PF_MEAN_TARGET and float(
+            grace.get("worst_era_pf") or 0
+        ) >= PROMOTION_WORST_ERA_PF:
+            action = "reject_breakout_buffer_keep_exit_grace_only"
+        else:
+            action = str(recommendation.get("action") or "stack_cf_complete")
         report = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": args.run_id,
             "mode": "full_stack_cf",
             "stack_rc": rc,
-            "action": "stack_cf_complete" if rc == 0 else "stack_cf_failed",
+            "action": action,
+            "recommendation": recommendation,
+            "baseline": scenarios.get("legacy_baseline"),
+            "exit_grace": grace,
+            "breakout_buffer": buffer,
+            "stack_artifact": stack_path.name,
+            "entry_cache": entry_cache.name,
         }
-        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
         print(f"Wrote {out}")
+        print(f"action={action}")
         return rc
 
     report = {

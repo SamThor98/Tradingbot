@@ -32,7 +32,7 @@ import {
   compactMoney,
   renderEquitySparkline,
 } from "../modules/portfolioFormat.js";
-import { getPortfolioSource, getManualPayload, wirePortfolioSource } from "./portfolioManual.js";
+import { getPortfolioSource, getManualPayload, persistManualEditor, wirePortfolioSource } from "./portfolioManual.js";
 import { refreshPortfolio } from "./portfolio.js";
 import { loadBook, resolveBookHash } from "./portfolioBook.js";
 
@@ -44,6 +44,18 @@ const LOOKBACK_OPTIONS = [
 ];
 
 let progressTimer = null;
+
+/** Stable key so Risk reloads when the manual book changes (not just source/lookback). */
+function manualBookFingerprint(payload) {
+  if (!payload || !Array.isArray(payload.positions)) return "empty";
+  const rows = payload.positions.map((p) => [
+    String(p.ticker || "").toUpperCase(),
+    Number(p.qty),
+    String(p.acquired_at || ""),
+    Number(p.avg_cost),
+  ]);
+  return JSON.stringify({ rows, cash: payload.cash ?? null });
+}
 
 function paintRiskSurface(stateName, title, detail, extras = {}) {
   return setResearchPanelStatus({
@@ -262,7 +274,13 @@ function renderCorrelationHeatmap(correlation, positionsWeighted) {
   const matrix = correlation?.matrix || {};
   let tickers = Object.keys(matrix);
   if (!tickers.length) {
-    return `<div class="muted small">Correlation matrix unavailable — needs aligned price history for 2+ positions.</div>`;
+    const held = (positionsWeighted || [])
+      .map((p) => String(p.symbol || "").toUpperCase())
+      .filter(Boolean);
+    const heldNote = held.length
+      ? ` Holdings in book: ${held.map(safeText).join(", ")}.`
+      : "";
+    return `<div class="muted small">Correlation matrix unavailable — needs aligned daily price history for each holding.${heldNote}</div>`;
   }
   const weightOrder = new Map(
     (positionsWeighted || []).map((p, idx) => [String(p.symbol || "").toUpperCase(), idx]),
@@ -286,8 +304,12 @@ function renderCorrelationHeatmap(correlation, positionsWeighted) {
   });
   const breaches = (correlation?.breaches || []).length;
   const scaleBuckets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
+  const singleNote = tickers.length === 1
+    ? `<div class="muted small">Single-name book — diagonal is 1.00; add a second ticker for pairwise correlation.</div>`
+    : "";
   return `
     <div class="risk-corr-heatmap" style="grid-template-columns: auto repeat(${tickers.length}, minmax(0, 1fr))" role="img" aria-label="Pairwise return correlation heatmap">${cells}</div>
+    ${singleNote}
     <div class="risk-corr-legend">
       <span class="risk-corr-swatch risk-corr-swatch--neg" aria-hidden="true"></span> diversifying (−1)
       <span class="risk-corr-swatch risk-corr-swatch--pos" aria-hidden="true"></span> correlated (+1)
@@ -655,6 +677,25 @@ function renderClosedTrades(closed) {
     </div>`;
 }
 
+function renderHoldingsStrip(positionsWeighted) {
+  const rows = Array.isArray(positionsWeighted) ? positionsWeighted : [];
+  if (!rows.length) return "";
+  const chips = rows
+    .slice(0, 20)
+    .map((p) => {
+      const sym = safeText(String(p.symbol || "").toUpperCase());
+      const w = metricValue(p.weight_pct, 1, "%");
+      const sector = p.sector ? ` · ${safeText(p.sector)}` : "";
+      return `<span class="risk-holding-chip" title="${sym}${sector}">${sym} <span class="mono-nums">${w}</span></span>`;
+    })
+    .join("");
+  return `
+    <div class="risk-holdings-strip" aria-label="Holdings in risk book">
+      <span class="risk-holdings-label muted small">Holdings</span>
+      ${chips}
+    </div>`;
+}
+
 function renderDataQuality(dq, provenance) {
   const warnings = [];
   if ((dq?.missing_tickers || []).length) warnings.push(`Missing history: ${(dq.missing_tickers || []).map(safeText).join(", ")}`);
@@ -679,6 +720,7 @@ function renderDashboard(d) {
     <div class="risk-dashboard">
       ${renderOwnershipNote(d)}
       ${renderConfidenceBanner(d)}
+      ${renderHoldingsStrip(d.positions_weighted)}
       <div class="risk-section-title" id="risk-sec-metrics">Metrics &amp; Correlation</div>
       <p class="muted small risk-corr-shade-note">Heatmap shading: forest = diversifying (−), cream/neutral ≈ 0, red intensity rises with positive correlation (+). Strong fills use light text.</p>
       <div class="risk-two-col">
@@ -755,13 +797,25 @@ export async function loadPortfolioRiskDashboard(options = {}) {
   if (!mount) return;
   const lookback = state.riskDashboardLookback || 252;
   const source = getPortfolioSource();
+
+  // Flush unsaved editor keystrokes before reading the book / checking cache.
+  if (source === "manual") persistManualEditor();
+  const manualPayload = source === "manual" ? getManualPayload() : null;
+  const bookKey = source === "manual" ? manualBookFingerprint(manualPayload) : "schwab";
+
   const cached = state.lastPortfolioRiskDashboard;
-  if (!options.force && !options.reload && cached && cached._lookback === lookback && cached._source === source) {
-    return; // rendered this session at this lookback+source; instant tab re-entry
+  if (
+    !options.force &&
+    !options.reload &&
+    cached &&
+    cached._lookback === lookback &&
+    cached._source === source &&
+    cached._bookKey === bookKey
+  ) {
+    return; // same book + lookback already rendered this session
   }
 
   // Manual source with an empty book: prompt instead of hitting the API.
-  const manualPayload = source === "manual" ? getManualPayload() : null;
   if (source === "manual" && !manualPayload) {
     state.lastPortfolioRiskDashboard = null;
     setRiskPanelState("empty");
@@ -783,7 +837,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
     return;
   }
   setRiskPanelState("loading");
-  renderLoadingSkeleton(mount, state.lastPortfolioData?.positions_count);
+  renderLoadingSkeleton(mount, state.lastPortfolioData?.positions_count || manualPayload?.positions?.length);
   paintRiskSurface(
     "loading",
     "Building risk dashboard.",
@@ -844,6 +898,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
   const d = out.data || {};
   d._lookback = lookback;
   d._source = source;
+  d._bookKey = bookKey;
   state.lastPortfolioRiskDashboard = d;
   if (!d.position_count) {
     setRiskPanelState("empty");

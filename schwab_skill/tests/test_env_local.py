@@ -47,7 +47,7 @@ def test_apply_signal_stack_enforced_env_ready(tmp_path: Path) -> None:
     assert readiness["entry_timing_mode"] == "live"
     assert readiness["exit_manager_mode"] == "live"
     assert readiness["rank_filter_v2_mode"] == "live"
-    assert readiness["rank_filter_v2_min_percentile"] == 75
+    assert readiness["rank_filter_v2_min_percentile"] == 76
     assert readiness["pts_52w_cap_mode"] == "live"
     assert readiness["pts_52w_cap_max"] == 37.0
 
@@ -74,3 +74,34 @@ def test_signal_stack_enforced_readiness_rejects_shadow_rank_filter() -> None:
     readiness = signal_stack_enforced_readiness_from_values(values)
     assert readiness["ready"] is False
     assert "RANK_FILTER_V2_MODE=live" in readiness["missing_env"]
+def test_apply_multi_sleeve_rth_shadow_env_ready(tmp_path: Path) -> None:
+    from core.env_local import (
+        MULTI_SLEEVE_RTH_SHADOW_ENV,
+        apply_multi_sleeve_rth_shadow_env,
+        multi_sleeve_rth_shadow_readiness_from_values,
+    )
+
+    env_path = tmp_path / ".env"
+    changed = apply_multi_sleeve_rth_shadow_env(env_path)
+    assert len(changed) == len(MULTI_SLEEVE_RTH_SHADOW_ENV)
+    assert apply_multi_sleeve_rth_shadow_env(env_path) == []
+    values = {
+        k: v
+        for line in env_path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+        for k, v in [line.split("=", 1)]
+    }
+    readiness = multi_sleeve_rth_shadow_readiness_from_values(values)
+    assert readiness["ready"] is True
+    assert readiness["allocator_mode"] == "shadow"
+    assert readiness["s1_live"] is False
+
+
+def test_multi_sleeve_rth_shadow_rejects_s1_live() -> None:
+    from core.env_local import MULTI_SLEEVE_RTH_SHADOW_ENV, multi_sleeve_rth_shadow_readiness_from_values
+
+    values = dict(MULTI_SLEEVE_RTH_SHADOW_ENV)
+    values["MULTI_SLEEVE_S1_LIVE"] = "true"
+    readiness = multi_sleeve_rth_shadow_readiness_from_values(values)
+    assert readiness["ready"] is False
+    assert "MULTI_SLEEVE_S1_LIVE=false" in readiness["missing_env"]

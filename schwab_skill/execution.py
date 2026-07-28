@@ -1544,6 +1544,25 @@ def place_order(
         send_alert(msg, kind="guardrail", env_path=skill_dir / ".env")
         return msg
 
+    # Multi-sleeve allocator (constitution): block new risk when live mode says so.
+    try:
+        from config import get_allocator_mode
+        from core.portfolio_allocator import evaluate_allocator
+
+        alloc_mode = str(get_allocator_mode(skill_dir) or "off").strip().lower()
+        if alloc_mode in ("shadow", "live") and wrapper._increases_position(primary):
+            decision = evaluate_allocator(mode=alloc_mode, data_quality="ok")
+            if alloc_mode == "live" and not decision.allow_new_risk:
+                _record_execution_metric(skill_dir, "allocator_block_new_risk")
+                msg = (
+                    "ALLOCATOR: New risk blocked by multi-sleeve constitution "
+                    f"({', '.join(decision.reasons) or 'policy'}). No order was sent."
+                )
+                send_alert(msg, kind="guardrail", env_path=skill_dir / ".env")
+                return msg
+    except Exception as alloc_exc:
+        LOG.debug("allocator check skipped: %s", alloc_exc)
+
     err = wrapper._check_guardrails(ticker_n, int(qty), primary, order_value)
     if err:
         _record_execution_metric(skill_dir, "guardrail_blocked_order")

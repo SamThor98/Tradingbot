@@ -26,6 +26,7 @@ P&L conflates signal quality with execution, sizing, and timing. The ledger isol
 - [[signal-scanner]] — source of predictions
 - [[self-study]] — complementary analysis
 - [[feature-flags]] — hypothesis env vars
+- [[multi-sleeve-trading-system-constitution]] — R7 closed-loop promotion contract (sleeve-local N, veto rules)
 
 ---
 

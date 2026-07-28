@@ -76,6 +76,8 @@ const ROLLOUT_MODE_LABELS = {
   off: "Off",
   shadow: "Observe only",
   live: "Enforced",
+  soft: "Soft enforce",
+  hard: "Hard enforce",
 };
 
 const SCAN_STAGE_LABELS = {

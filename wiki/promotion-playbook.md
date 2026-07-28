@@ -92,6 +92,7 @@ To revert a `live` flag:
 - [[hypothesis-ledger]] — Gate 4 source
 - [[canary-rollout]] — Pre-live live-trading sanity steps
 - [[backtest-intelligence-overlay]] — Generates the historical PnL evidence the gates require
+- [[multi-sleeve-trading-system-constitution]] — Portfolio-level Pareto floors + R7 sleeve promotion contract
 
 ---
 *Last compiled: 2026-04-17*

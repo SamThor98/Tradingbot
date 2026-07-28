@@ -35,8 +35,8 @@ export function setupKeyboardShortcuts({
       const screenMap = {
         "1": "operations",
         "2": "research",
-        "3": "diagnostics",
-        "4": "settings",
+        "3": "intel",
+        "4": "diagnostics",
       };
       const mode = screenMap[e.key];
       if (mode) {

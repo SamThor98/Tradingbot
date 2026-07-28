@@ -1,7 +1,7 @@
 ---
 source: n/a (wiki catalog)
 created: 2026-04-30
-updated: 2026-07-17
+updated: 2026-07-27
 tags: [wiki, index, catalog]
 ---
 
@@ -18,6 +18,8 @@ tags: [wiki, index, catalog]
 ## Architecture & Design
 
 - [[system-overview]] — End-to-end pipeline diagram and component map
+- [[multi-sleeve-trading-system-constitution]] — Locked multi-sleeve target architecture (Pareto, allocator, net book, research wave)
+- [[multi-sleeve-phased-build-plan]] — Phased build roadmap (thin slice → S1 LIVE → research wave)
 - [[schwab-auth]] — Dual OAuth2 sessions (market + account)
 - [[signal-scanner]] — Two-stage scan pipeline (Stage A + Stage B)
 - [[execution-engine]] — Order placement, guardrails, plugin hooks
@@ -80,6 +82,7 @@ tags: [wiki, index, catalog]
 - [[validation]] — Validation pipeline and matrix
 - [[canary-rollout]] — Controlled live testing process
 - [[signal-quality-rollout]] — Quality gate promotion plan
+- [[multi-sleeve-phased-build-plan]] — Multi-sleeve platform + research phase roadmap
 - [[promotion-playbook]] — Signed off → shadow → live promotion process
 - [[backtest]] — Historical replay harness (live-parity rules); full results catalog in `schwab_skill/docs/BACKTEST_CATALOG.md`
 - [[backtest-intelligence-overlay]] — Historical attribution for shadow plugins

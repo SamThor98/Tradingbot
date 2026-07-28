@@ -552,28 +552,21 @@ def build_shadow_scoreboard_payload(
     skill_dir: Path,
     diagnostics: dict[str, Any],
     scan_at: str | None = None,
+    writes_enabled: bool = False,
 ) -> dict[str, Any]:
-    from config import (
-        get_confluence_gate_mode,
-        get_correlation_guard_mode,
-        get_exit_manager_mode,
-        get_management_integrity_mode,
-        get_regime_v2_mode,
-    )
-    from core import cockpit_service
+    """Shadow scoreboard + plugin mode workbench (roster, gaps, write flags).
+
+    ``writes_enabled`` is True only for the local dashboard; SaaS stays read-only
+    but shares the same payload shape for a future tenant override store.
+    """
+    from core.plugin_mode_workbench import build_workbench_payload
     from execution_persistence import get_execution_safety_summary
 
     summary = get_execution_safety_summary(skill_dir=skill_dir, days=7)
-    modes = {
-        "confluence_gate": get_confluence_gate_mode(skill_dir),
-        "correlation_guard": get_correlation_guard_mode(skill_dir),
-        "regime_v2": get_regime_v2_mode(skill_dir),
-        "management_integrity": get_management_integrity_mode(skill_dir),
-        "exit_manager": get_exit_manager_mode(skill_dir),
-    }
-    return cockpit_service.build_shadow_scoreboard(
-        diagnostics if isinstance(diagnostics, dict) else {},
-        summary,
-        modes=modes,
+    return build_workbench_payload(
+        skill_dir=skill_dir,
+        diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
+        execution_summary=summary,
         scan_at=scan_at,
+        writes_enabled=writes_enabled,
     )

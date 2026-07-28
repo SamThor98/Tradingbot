@@ -89,6 +89,7 @@ def record_from_signal(
     signal: dict[str, Any],
     skill_dir: Path | str | None = None,
     strategy_or_model_id: str | None = None,
+    sleeve_id: str | None = None,
 ) -> dict[str, Any]:
     """Build a hypothesis dict from a scanner signal row."""
     skill_dir = Path(skill_dir or SKILL_DIR)
@@ -131,9 +132,11 @@ def record_from_signal(
             "confidence_bucket": advisory.get("confidence_bucket"),
         }
 
+    sid = str(sleeve_id or signal.get("sleeve_id") or "S0").upper()
     return {
         "ticker": tkr,
         "source": "signal_scanner",
+        "sleeve_id": sid,
         "strategy_or_model_id": model_id,
         "input_fingerprint": fp,
         "prediction": prediction,
@@ -203,42 +206,53 @@ def record_from_report_conclusion(
 
 
 def summarize_scored_hypotheses(skill_dir: Path | str | None = None) -> dict[str, Any]:
-    """Aggregate hit rates / mean returns by source for self-study merge."""
+    """Aggregate hit rates / mean returns by source (and by sleeve_id) for self-study merge."""
     skill_dir = Path(skill_dir or SKILL_DIR)
     data = _load_ledger(skill_dir)
     records = [r for r in (data.get("records") or []) if isinstance(r, dict)]
     by_source: dict[str, dict[str, Any]] = {}
+    by_sleeve: dict[str, dict[str, Any]] = {}
     for r in records:
         src = str(r.get("source") or "unknown")
+        sleeve = str(r.get("sleeve_id") or "S0").upper()
         out = r.get("outcomes") if isinstance(r.get("outcomes"), dict) else {}
         if not out:
             continue
-        bucket = by_source.setdefault(src, {"n": 0, "hits": 0, "returns": []})
-        for _h, metrics in out.items():
-            if not isinstance(metrics, dict):
-                continue
-            if "thesis_hit" not in metrics and "return_pct" not in metrics:
-                continue
-            bucket["n"] += 1
-            if metrics.get("thesis_hit") is True:
-                bucket["hits"] += 1
-            rp = metrics.get("return_pct")
-            if rp is not None:
-                try:
-                    bucket["returns"].append(float(rp))
-                except (TypeError, ValueError):
-                    pass
-    summary: dict[str, Any] = {}
-    for src, b in by_source.items():
-        n = int(b["n"])
-        hits = int(b["hits"])
-        rets = b["returns"]
-        summary[src] = {
-            "scored_samples": n,
-            "hit_rate": round(hits / n, 4) if n else None,
-            "mean_return_pct": round(sum(rets) / len(rets), 4) if rets else None,
-        }
-    return {"by_source": summary, "ledger_records": len(records)}
+        for bucket_map, key in ((by_source, src), (by_sleeve, sleeve)):
+            bucket = bucket_map.setdefault(key, {"n": 0, "hits": 0, "returns": []})
+            for _h, metrics in out.items():
+                if not isinstance(metrics, dict):
+                    continue
+                if "thesis_hit" not in metrics and "return_pct" not in metrics:
+                    continue
+                bucket["n"] += 1
+                if metrics.get("thesis_hit") is True:
+                    bucket["hits"] += 1
+                rp = metrics.get("return_pct")
+                if rp is not None:
+                    try:
+                        bucket["returns"].append(float(rp))
+                    except (TypeError, ValueError):
+                        pass
+    def _finalize(raw: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key, b in raw.items():
+            n = int(b["n"])
+            hits = int(b["hits"])
+            rets = b["returns"]
+            summary[key] = {
+                "scored_samples": n,
+                "hit_rate": round(hits / n, 4) if n else None,
+                "mean_return_pct": round(sum(rets) / len(rets), 4) if rets else None,
+                "expectancy": round(sum(rets) / len(rets), 6) if rets else None,
+            }
+        return summary
+
+    return {
+        "by_source": _finalize(by_source),
+        "by_sleeve": _finalize(by_sleeve),
+        "ledger_records": len(records),
+    }
 
 
 def promotion_guard_reasons(skill_dir: Path | str | None = None) -> list[str]:
@@ -282,3 +296,36 @@ def promotion_guard_reasons(skill_dir: Path | str | None = None) -> list[str]:
             f"hypothesis_promotion_guard_low_hit_rate:{float(avg_hr):.4f}<{min_hr:.4f}_n={combined_n}"
         ]
     return []
+
+
+def r7_sleeve_promotion_reasons(
+    skill_dir: Path | str | None = None,
+    *,
+    sleeve_id: str = "S0",
+    offline_floors_ok: bool = True,
+    one_change: bool = True,
+) -> list[str]:
+    """R7 constitution gates: sleeve-local N + expectancy veto (+ offline floors)."""
+    skill_dir = Path(skill_dir or SKILL_DIR)
+    try:
+        from config import get_r7_min_n, get_r7_primary_horizon
+        from core.r7_promotion import r7_promotion_reasons
+
+        min_n = int(get_r7_min_n(skill_dir))
+        horizon = str(get_r7_primary_horizon(skill_dir))
+    except Exception:
+        from core.r7_promotion import r7_promotion_reasons
+
+        min_n = 40
+        horizon = "5"
+
+    data = _load_ledger(skill_dir)
+    records = [r for r in (data.get("records") or []) if isinstance(r, dict)]
+    return r7_promotion_reasons(
+        records,
+        sleeve_id=sleeve_id,
+        offline_floors_ok=offline_floors_ok,
+        min_n=min_n,
+        horizon=horizon,
+        one_change=one_change,
+    )

@@ -27,6 +27,7 @@ Academic research shows stocks drift in the direction of their earnings surprise
 
 - [[signal-ranking]] — PEAD adjustments modify composite score
 - [[signal-scanner]] — applied during Stage B enrichment
+- [[multi-sleeve-trading-system-constitution]] — S1 PEAD-primary canary sleeve in target architecture
 
 ---
 

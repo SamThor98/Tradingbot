@@ -93,6 +93,7 @@ export const state = {
   /** Triage severity filter for the scan candidates table:
    *  pass | review | blocked | info (default pass = kept / tradeable). */
   scanStatusFilter: "pass",
+  systemLane: "ready",
   /** Last full diagnostics dict from the most recent scan (for funnel re-render). */
   lastScanDiagnostics: null,
   /** Presentation mode for rank explainers in scan tables:

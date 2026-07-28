@@ -794,6 +794,173 @@ def _compute_stage_a_shortlist_limit(
     return max(1, min(total_candidates, widened))
 
 
+def _pead_primary_is_executable(entry_family: str | None) -> bool:
+    """PEAD-only never enters the executable Stage B / order path."""
+    return str(entry_family or "") in {"stage2", "both"}
+
+
+def _executable_stage_a_sort_key(cand: dict[str, Any]) -> tuple[float, str]:
+    """Executable Stage A shortlist: stage_a_score desc, ticker asc (Stage2 control)."""
+    score = float(cand.get("stage_a_score") or 0.0)
+    ticker = str(cand.get("ticker") or "").upper()
+    return (-score, ticker)
+
+
+def _pead_shadow_sort_key(cand: dict[str, Any]) -> tuple[float, str]:
+    """PEAD shadow list sort: edge_score desc (fallback stage_a_score), ticker asc."""
+    raw = cand.get("edge_score")
+    if raw is None:
+        raw = cand.get("stage_a_score")
+    score = float(raw or 0.0)
+    ticker = str(cand.get("ticker") or "").upper()
+    return (-score, ticker)
+
+
+def _stage_a_edge_score_proxy(
+    *,
+    stage_a_score: float,
+    components: dict[str, Any] | None,
+    price: float | None,
+    sma_200: float | None,
+    latest_volume: float | None,
+    avg_vol_50: float | None,
+    skill_dir: Path | None = None,
+) -> float:
+    """Cheap Stage-A edge_score for PEAD shadow ranking (no Stage B enrichment).
+
+    Uses the same edge blend as the live score stack with calibrated p_up=0.5;
+    default ``edge_pup_weight`` is 0 so this is effectively the edge_signal term.
+    Diagnostics only — never used to admit PEAD-only into the executable path.
+    """
+    from config import get_score_edge_exclude_52w
+    from core.scoring_composite import (
+        composite_quality_weights_from_config,
+        compute_edge_score,
+        normalized_component_scores,
+        resolve_rank_volume_points,
+    )
+
+    comps = components if isinstance(components, dict) else {}
+    pts_52w = float(comps.get("pts_52w") or 0.0)
+    pts_volume = float(comps.get("pts_volume") or 0.0)
+    pts_mirofish = float(comps.get("pts_mirofish") or 0.0)
+    rank_pts_volume = resolve_rank_volume_points(
+        pts_volume,
+        latest_volume=float(latest_volume or 0.0),
+        avg_vol_50=float(avg_vol_50 or 0.0),
+    )
+    close_vs = 0.0
+    try:
+        px = float(price or 0.0)
+        sma = float(sma_200 or 0.0)
+        if px > 0 and sma > 0:
+            close_vs = max(0.0, (px / sma) - 1.0)
+    except (TypeError, ValueError):
+        close_vs = 0.0
+    weights = composite_quality_weights_from_config(skill_dir)
+    edge_signal, _, _, _ = normalized_component_scores(
+        signal_score=float(stage_a_score or 0.0),
+        pts_52w=pts_52w,
+        pts_volume=rank_pts_volume,
+        pts_mirofish=pts_mirofish,
+        close_vs_sma200_pct=close_vs,
+        exclude_52w=bool(get_score_edge_exclude_52w(skill_dir)),
+    )
+    return round(
+        float(
+            compute_edge_score(
+                edge_signal=edge_signal,
+                p_up_calibrated=0.5,
+                weights=weights,
+            )
+        ),
+        2,
+    )
+
+
+def _partition_stage_a_by_entry_family(
+    candidates: list[dict[str, Any]],
+    *,
+    top_n: int,
+    pead_shadow_max: int,
+    pead_capacity_top_n: int = 5,
+) -> dict[str, Any]:
+    """Split Stage A admits into executable shortlist vs PEAD-only shadow.
+
+    PEAD-only names are diagnostics/provenance only; they never join Stage B.
+    Executable shortlist sort: ``stage_a_score`` (Stage2 trading control).
+    PEAD shadow sort: Stage-A ``edge_score`` proxy (capacity CF ``top5_by_edge_score``).
+    """
+    executable: list[dict[str, Any]] = []
+    pead_only: list[dict[str, Any]] = []
+    overlap = 0
+    pead_admitted = 0
+    for cand in candidates:
+        family = str(cand.get("entry_family") or "stage2")
+        if family in {"pead_primary", "both"}:
+            pead_admitted += 1
+        if family == "both":
+            overlap += 1
+        if _pead_primary_is_executable(family):
+            executable.append(cand)
+        elif family == "pead_primary":
+            pead_only.append(cand)
+
+    # Never reorder executable Stage2 shortlist by PEAD edge_score.
+    executable.sort(key=_executable_stage_a_sort_key)
+    pead_only.sort(key=_pead_shadow_sort_key)
+
+    # Counterfactual vs Stage2 top_n (stage_a_score mixed book) — unchanged semantics.
+    combined = sorted(list(candidates), key=_executable_stage_a_sort_key)
+    rank_n = int(top_n) if int(top_n) > 0 else len(combined)
+    top_slice = combined[:rank_n] if rank_n > 0 else []
+    would_rank = sum(
+        1
+        for c in top_slice
+        if str(c.get("entry_family") or "") in {"pead_primary", "both"}
+    )
+
+    # PEAD-native capacity arm: top-N by edge_score among PEAD-only admits.
+    capacity_n = max(0, int(pead_capacity_top_n))
+    capacity_slice = pead_only[:capacity_n] if capacity_n > 0 else []
+    capacity_tickers = {str(c.get("ticker") or "").upper() for c in capacity_slice}
+
+    shadow_cap = max(0, int(pead_shadow_max))
+    if shadow_cap > 0:
+        shadow_names = pead_only[:shadow_cap]
+        truncated = max(0, len(pead_only) - len(shadow_names))
+    else:
+        shadow_names = []
+        truncated = len(pead_only)
+    return {
+        "executable": executable,
+        "pead_only": pead_only,
+        "pead_primary_admitted": pead_admitted,
+        "overlap_with_stage2": overlap,
+        "pead_primary_would_rank_top_n": would_rank,
+        "pead_primary_would_rank_capacity_top_n": len(capacity_slice),
+        "pead_primary_capacity_rank_arm": (
+            "top5_by_edge_score" if capacity_n == 5 else f"top{capacity_n}_by_edge_score"
+        ),
+        "pead_primary_capacity_rank_top_n": capacity_n,
+        "pead_primary_shadow_truncated": truncated,
+        "pead_primary_shadow_sort_key": "edge_score_desc,ticker_asc",
+        "pead_primary_shadow_names": [
+            {
+                "ticker": str(c.get("ticker") or ""),
+                "entry_family": "pead_primary",
+                "stage_a_score": c.get("stage_a_score"),
+                "edge_score": c.get("edge_score"),
+                "pead_beat": c.get("pead_beat"),
+                "pead_surprise_pct": c.get("pead_surprise_pct"),
+                "capacity_top_n": str(c.get("ticker") or "").upper() in capacity_tickers,
+                "executable": False,
+            }
+            for c in shadow_names
+        ],
+    }
+
+
 def _shutdown_executor_safe(executor: Any, *, wait: bool, cancel_futures: bool) -> None:
     """Best-effort executor shutdown for real and monkeypatched executors."""
     shutdown = getattr(executor, "shutdown", None)
@@ -847,7 +1014,9 @@ def _scan_stage_a_one(
         add_indicators,
         check_vcp_volume,
         compute_signal_components,
+        evaluate_pead_primary_entry,
         is_stage_2,
+        tag_entry_family,
     )
 
     try:
@@ -899,14 +1068,47 @@ def _scan_stage_a_one(
         except Exception as _e:
             LOG.debug("Stale-bar gate check failed for %s: %s", ticker, _e)
         df = add_indicators(df)
-        if not is_stage_2(df, skill_dir):
+        stage2_ok = bool(is_stage_2(df, skill_dir))
+
+        pead_mode_eff = "off"
+        pead_configured = "off"
+        pead_eval: dict[str, Any] | None = None
+        pead_ok = False
+        try:
+            from config import (
+                get_strategy_pead_primary_effective_mode,
+                get_strategy_pead_primary_mode,
+            )
+
+            pead_configured = get_strategy_pead_primary_mode(skill_dir)
+            pead_mode_eff = get_strategy_pead_primary_effective_mode(skill_dir)
+            if pead_mode_eff != "off":
+                pead_eval = evaluate_pead_primary_entry(ticker, df, skill_dir=skill_dir)
+                pead_ok = bool(pead_eval.get("admitted"))
+        except Exception as _e:
+            LOG.debug("PEAD-primary Stage A eval skipped for %s: %s", ticker, _e)
+            pead_eval = None
+            pead_ok = False
+
+        if not stage2_ok and not pead_ok:
+            # Preserve legacy stage2_fail counter; PEAD miss is tracked separately.
             return {
                 "ok": False,
                 "reason": "stage2_fail",
                 "provider": provider,
                 "used_fallback": used_fallback,
                 "fallback_reason": history_meta.get("fallback_reason"),
+                "pead_primary_evaluated": pead_mode_eff != "off",
+                "pead_primary_fail": pead_mode_eff != "off",
+                "pead_primary_eval": pead_eval,
+                "strategy_pead_primary_mode": pead_configured,
+                "strategy_pead_primary_effective_mode": pead_mode_eff,
             }
+
+        entry_family = tag_entry_family(stage2_ok=stage2_ok, pead_ok=pead_ok) or (
+            "stage2" if stage2_ok else "pead_primary"
+        )
+        pead_only_admit = entry_family == "pead_primary"
 
         entry_timing_at_stage2 = None
         try:
@@ -921,10 +1123,16 @@ def _scan_stage_a_one(
         def _with_stage2_shadow(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(entry_timing_at_stage2, dict):
                 payload["entry_timing_at_stage2"] = entry_timing_at_stage2
+            payload["pead_primary_evaluated"] = pead_mode_eff != "off"
+            if pead_eval is not None:
+                payload["pead_primary_eval"] = pead_eval
+            payload["strategy_pead_primary_mode"] = pead_configured
+            payload["strategy_pead_primary_effective_mode"] = pead_mode_eff
             return payload
 
         vcp_ok = bool(check_vcp_volume(df, skill_dir))
-        if not vcp_ok and vcp_gate_mode == "hard":
+        # Match backtest: VCP hard gate applies only to Stage-2 family admits.
+        if not vcp_ok and vcp_gate_mode == "hard" and not pead_only_admit:
             return _with_stage2_shadow(
                 {
                     "ok": False,
@@ -966,7 +1174,9 @@ def _scan_stage_a_one(
         # materially reduces Schwab 429 pressure. Use the strict live-only
         # extractor so a stale `closePrice` substitution cannot anchor a fresh
         # breakout decision (would compare today's high against yesterday's close).
-        if breakout_enabled:
+        # PEAD-only admits skip breakout (backtest disables breakout for pead_primary).
+        apply_breakout = bool(breakout_enabled) and not pead_only_admit
+        if apply_breakout:
             quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
             live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
             if live is not None:
@@ -979,7 +1189,7 @@ def _scan_stage_a_one(
             if len(df) >= 1
             else price
         )
-        if breakout_enabled:
+        if apply_breakout:
             from datetime import datetime
             from zoneinfo import ZoneInfo
 
@@ -1154,22 +1364,45 @@ def _scan_stage_a_one(
             LOG.debug("early_stop gate skipped for %s: %s", ticker, _e)
             candidate_early_stop_gate = None
         stage_a_score = max(0.0, stage_a_score)
+        latest_volume = float(df["volume"].iloc[-1]) if "volume" in df.columns else None
+        avg_vol_50 = float(df["avg_vol_50"].iloc[-1]) if "avg_vol_50" in df.columns else None
+        sma_200 = round(float(df["sma_200"].iloc[-1]), 2)
+        # Stage-A edge proxy for PEAD shadow capacity ranking only; Stage B overwrites
+        # edge_score on executable shortlist names during enrichment.
+        try:
+            stage_a_edge = _stage_a_edge_score_proxy(
+                stage_a_score=stage_a_score,
+                components=components if isinstance(components, dict) else None,
+                price=price,
+                sma_200=sma_200,
+                latest_volume=latest_volume,
+                avg_vol_50=avg_vol_50,
+                skill_dir=skill_dir,
+            )
+        except Exception as _e:
+            LOG.debug("Stage A edge_score proxy skipped for %s: %s", ticker, _e)
+            stage_a_edge = None
         candidate = {
             "ticker": ticker,
             "df": df,
             "price": price,
             "sector_etf": sector_etf,
             "breakout_confirmed": bool(price >= prior_high),
-            "latest_volume": float(df["volume"].iloc[-1]) if "volume" in df.columns else None,
-            "avg_vol_50": float(df["avg_vol_50"].iloc[-1]) if "avg_vol_50" in df.columns else None,
+            "latest_volume": latest_volume,
+            "avg_vol_50": avg_vol_50,
             "sma_50": round(float(df["sma_50"].iloc[-1]), 2),
-            "sma_200": round(float(df["sma_200"].iloc[-1]), 2),
+            "sma_200": sma_200,
             "stage_a_score": stage_a_score,
+            "edge_score": stage_a_edge,
             "score_components_stage_a": components,
             "stage_a_penalties": stage_a_penalties,
             "entry_timing_shadow": candidate_entry_shadow,
             "pts_52w_cap": candidate_pts_52w_cap,
             "early_stop_gate": candidate_early_stop_gate,
+            "entry_family": entry_family,
+            "executable": _pead_primary_is_executable(entry_family),
+            "pead_beat": (pead_eval or {}).get("pead_beat") if pead_eval else None,
+            "pead_surprise_pct": (pead_eval or {}).get("pead_surprise_pct") if pead_eval else None,
             "data_provider": provider,
             "data_provider_primary": provider == "schwab",
             "used_fallback_data": used_fallback,
@@ -1509,6 +1742,12 @@ def _scan_stage_b_enrich(
             "guidance_signal": guidance_signal,
             "guidance_score_delta": guidance_score_delta,
             "breakout_confirmed": bool(candidate.get("breakout_confirmed")),
+            "entry_family": candidate.get("entry_family") or "stage2",
+            "executable": bool(
+                candidate["executable"]
+                if "executable" in candidate
+                else _pead_primary_is_executable(candidate.get("entry_family") or "stage2")
+            ),
             "data_provider": candidate.get("data_provider"),
             "data_provider_primary": bool(candidate.get("data_provider_primary")),
             "used_fallback_data": bool(candidate.get("used_fallback_data")),
@@ -2512,6 +2751,21 @@ def scan_for_signals_detailed(
         "early_stop_gate_mode": None,
         "early_stop_gate_would_filter": 0,
         "early_stop_gate_blocked": 0,
+        "strategy_pead_primary_mode": "off",
+        "strategy_pead_primary_effective_mode": "off",
+        "pead_primary_live_coerced_to_shadow": 0,
+        "pead_primary_evaluated": 0,
+        "pead_primary_admitted": 0,
+        "overlap_with_stage2": 0,
+        "pead_primary_would_rank_top_n": 0,
+        "pead_primary_would_rank_capacity_top_n": 0,
+        "pead_primary_capacity_rank_arm": "top5_by_edge_score",
+        "pead_primary_capacity_rank_top_n": 5,
+        "pead_primary_shadow_truncated": 0,
+        "pead_primary_shadow_sort_key": "edge_score_desc,ticker_asc",
+        "pead_primary_shadow_names": [],
+        "pead_primary_fail": 0,
+        "pead_primary_lookback_days": None,
         "rank_filter_would_drop_composite": 0,
         "rank_filter_would_drop_rank_v2": 0,
         "rank_filter_would_drop_signal": 0,
@@ -2781,6 +3035,8 @@ def scan_for_signals_detailed(
         get_meta_policy_mode,
         get_pead_enabled,
         get_pead_lookback_days,
+        get_pead_primary_shadow_max_names,
+        get_pead_primary_shadow_rank_top_n,
         get_pead_score_boost,
         get_pead_score_boost_large,
         get_pead_score_penalty,
@@ -2808,6 +3064,8 @@ def scan_for_signals_detailed(
         get_sec_shadow_mode,
         get_sec_tagging_enabled,
         get_signal_top_n,
+        get_strategy_pead_primary_effective_mode,
+        get_strategy_pead_primary_mode,
         get_strategy_pullback_mode,
         get_uncertainty_mode,
     )
@@ -2971,6 +3229,21 @@ def scan_for_signals_detailed(
         diagnostics["early_stop_gate_mode"] = get_early_stop_gate_mode(skill_dir)
     except Exception:
         diagnostics["early_stop_gate_mode"] = "off"
+    try:
+        pead_cfg_mode = get_strategy_pead_primary_mode(skill_dir)
+        pead_eff_mode = get_strategy_pead_primary_effective_mode(skill_dir)
+        diagnostics["strategy_pead_primary_mode"] = pead_cfg_mode
+        diagnostics["strategy_pead_primary_effective_mode"] = pead_eff_mode
+        if pead_cfg_mode == "live" and pead_eff_mode == "shadow":
+            diagnostics["pead_primary_live_coerced_to_shadow"] = 1
+            LOG.warning(
+                "STRATEGY_PEAD_PRIMARY_MODE=live coerced to shadow "
+                "(set STRATEGY_PEAD_PRIMARY_ALLOW_LIVE=1 to acknowledge; "
+                "PEAD-only remains non-executable)"
+            )
+    except Exception:
+        diagnostics["strategy_pead_primary_mode"] = "off"
+        diagnostics["strategy_pead_primary_effective_mode"] = "off"
 
     # Optional composite regime diagnostics/gate.
     regime_v2_snapshot: dict[str, Any] | None = None
@@ -3047,6 +3320,14 @@ def scan_for_signals_detailed(
                     out = fut.result()
                     _accumulate_provider_fallback_diagnostics(diagnostics, out)
                     _accumulate_entry_shadow_stage2_diagnostics(diagnostics, out)
+                    if out.get("pead_primary_evaluated"):
+                        diagnostics["pead_primary_evaluated"] = int(
+                            diagnostics.get("pead_primary_evaluated", 0) or 0
+                        ) + 1
+                    if out.get("pead_primary_fail"):
+                        diagnostics["pead_primary_fail"] = int(
+                            diagnostics.get("pead_primary_fail", 0) or 0
+                        ) + 1
                     if out.get("ok"):
                         candidate = out["candidate"]
                         stage_a_candidates.append(candidate)
@@ -3147,21 +3428,63 @@ def scan_for_signals_detailed(
         before_primary_filter = len(stage_a_candidates)
         stage_a_candidates = [c for c in stage_a_candidates if bool(c.get("data_provider_primary"))]
         diagnostics["primary_provider_filtered"] = max(0, before_primary_filter - len(stage_a_candidates))
+
+    pead_shadow_max = 50
+    pead_capacity_top_n = 5
+    try:
+        pead_shadow_max = int(get_pead_primary_shadow_max_names(skill_dir))
+    except Exception:
+        pead_shadow_max = 50
+    try:
+        pead_capacity_top_n = int(get_pead_primary_shadow_rank_top_n(skill_dir))
+    except Exception:
+        pead_capacity_top_n = 5
+    pead_partition = _partition_stage_a_by_entry_family(
+        stage_a_candidates,
+        top_n=top_n,
+        pead_shadow_max=pead_shadow_max,
+        pead_capacity_top_n=pead_capacity_top_n,
+    )
+    diagnostics["pead_primary_admitted"] = int(pead_partition["pead_primary_admitted"])
+    diagnostics["overlap_with_stage2"] = int(pead_partition["overlap_with_stage2"])
+    diagnostics["pead_primary_would_rank_top_n"] = int(pead_partition["pead_primary_would_rank_top_n"])
+    diagnostics["pead_primary_would_rank_capacity_top_n"] = int(
+        pead_partition.get("pead_primary_would_rank_capacity_top_n") or 0
+    )
+    diagnostics["pead_primary_capacity_rank_arm"] = str(
+        pead_partition.get("pead_primary_capacity_rank_arm") or "top5_by_edge_score"
+    )
+    diagnostics["pead_primary_capacity_rank_top_n"] = int(
+        pead_partition.get("pead_primary_capacity_rank_top_n") or pead_capacity_top_n
+    )
+    diagnostics["pead_primary_shadow_truncated"] = int(pead_partition["pead_primary_shadow_truncated"])
+    diagnostics["pead_primary_shadow_sort_key"] = str(
+        pead_partition.get("pead_primary_shadow_sort_key") or "edge_score_desc,ticker_asc"
+    )
+    diagnostics["pead_primary_shadow_names"] = list(pead_partition["pead_primary_shadow_names"])
+    try:
+        from config import get_pead_primary_lookback_days
+
+        diagnostics["pead_primary_lookback_days"] = int(get_pead_primary_lookback_days(skill_dir))
+    except Exception:
+        diagnostics["pead_primary_lookback_days"] = None
+    # Executable Stage B shortlist excludes PEAD-only shadow admits.
+    executable_candidates = list(pead_partition["executable"])
     shortlist_limit = _compute_stage_a_shortlist_limit(
-        total_candidates=len(stage_a_candidates),
+        total_candidates=len(executable_candidates),
         top_n=top_n,
         multiplier=shortlist_multiplier,
         cap=shortlist_cap,
         nocap_limit=shortlist_nocap_limit,
     )
-    shortlist = stage_a_candidates[:shortlist_limit]
+    shortlist = executable_candidates[:shortlist_limit]
     diagnostics["stage_a_shortlisted"] = len(shortlist)
-    diagnostics["stage_a_pruned"] = max(0, len(stage_a_candidates) - len(shortlist))
+    diagnostics["stage_a_pruned"] = max(0, len(executable_candidates) - len(shortlist))
 
     # Free the per-ticker DataFrames carried on pruned (non-shortlisted)
     # candidates before Stage B. On a broad universe this releases ~1500 frames
     # that Stage B never touches, cutting peak memory; shortlisted candidates
-    # keep their `df` for enrichment.
+    # keep their `df` for enrichment. PEAD-only shadow names are never Stage B.
     _shortlist_ids = {id(c) for c in shortlist}
     for _cand in stage_a_candidates:
         if id(_cand) not in _shortlist_ids:
@@ -3340,6 +3663,25 @@ def scan_for_signals_detailed(
             e,
         )
 
+    # Company display names for triage (Finnhub profile2, cached). Fail-soft:
+    # omit company_name when unresolved — never invent.
+    try:
+        from core.company_name_lookup import attach_company_names
+
+        name_rows: list[dict[str, Any]] = list(signals or [])
+        if capture_shortlist:
+            name_rows.extend(list(capture_shortlist))
+        attach_company_names(name_rows, skill_dir=skill_dir)
+        diagnostics["company_name_attached"] = sum(
+            1 for r in name_rows if isinstance(r, dict) and r.get("company_name")
+        )
+    except Exception as e:
+        _record_nonfatal(
+            "company_name_enrich_failures",
+            "Company name enrichment failed: %s",
+            e,
+        )
+
     return signals, diagnostics
 
 
@@ -3430,7 +3772,8 @@ def send_signal_alert(signal: dict[str, Any], skill_dir: Path) -> None:
         from hypothesis_ledger import append_hypothesis, record_from_signal
 
         if get_hypothesis_ledger_enabled(skill_dir):
-            append_hypothesis(record_from_signal(signal, skill_dir=skill_dir), skill_dir=skill_dir)
+            rec = record_from_signal(signal, skill_dir=skill_dir, sleeve_id="S0")
+            append_hypothesis(rec, skill_dir=skill_dir)
     except Exception as e:
         LOG.debug("Hypothesis ledger append skipped: %s", e)
 

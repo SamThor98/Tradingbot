@@ -72,6 +72,7 @@ SCAN_TRANSPARENCY_DOM_IDS = (
     "scanGateModesChip",
     "scanDeltaStrip",
     "scanDiagnosticsPanel",
+    "scanFunnelSummaryStrip",
     "scanBlockers",
     "scanFunnel",
     "scanDiagnostics",
@@ -91,6 +92,20 @@ SCAN_TRANSPARENCY_DOM_IDS = (
     "workflowStepEvaluate",
     "workflowStepApprove",
 )
+
+
+def test_advanced_scan_options_removed_from_dashboard(index_html: str) -> None:
+    assert "scanAdvancedOptionsPanel" not in index_html
+    assert "scanOptionsJson" not in index_html
+    assert "Advanced scan options" not in index_html
+
+
+def test_scan_funnel_disclosure_matches_editorial_pattern(index_html: str) -> None:
+    assert "Scan funnel" in index_html
+    assert "scanFunnelSummaryStrip" in index_html
+    assert "Top drop-offs" in index_html
+    assert "scan-funnel-rows" in index_html
+    assert "Diagnostics and funnel" not in index_html
 
 
 @pytest.mark.parametrize("element_id", SCAN_TRANSPARENCY_DOM_IDS)
@@ -147,6 +162,9 @@ def test_scan_table_panel_owns_row_rendering(scan_table_js: str, app_js: str) ->
         "data-rank-tip",
         "scanFunnelFilterBanner",
         "nearMissTableBody",
+        "buildRowWhyText",
+        "buildQualifiedReasonText",
+        "scan-row-why",
     ):
         assert token in scan_table_js, f"scanTable.js missing: {token}"
     for forbidden in (

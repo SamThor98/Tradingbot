@@ -424,6 +424,104 @@ def is_pullback_entry(df: pd.DataFrame, skill_dir: Path | None = None) -> bool:
     return bool(trend_ok and pullback_zone)
 
 
+# Liquidity floor for pead_primary entry family (matches backtest.py).
+PEAD_PRIMARY_MIN_PRICE = 5.0
+PEAD_PRIMARY_MIN_AVG_VOL = 200_000.0
+
+
+def evaluate_pead_primary_entry(
+    ticker: str,
+    df: pd.DataFrame,
+    *,
+    skill_dir: Path | None = None,
+    as_of: Any | None = None,
+    lookback_days: int | None = None,
+) -> dict[str, Any]:
+    """Liquidity floor + earnings beat; mirrors backtest ``pead_primary`` family.
+
+    When ``as_of`` is None, uses :func:`earnings_signal.check_recent_earnings`
+    (live scan). Otherwise uses :func:`earnings_signal.check_earnings_at_date`.
+    """
+    from config import get_pead_primary_lookback_days
+
+    sd = Path(skill_dir) if skill_dir is not None else None
+    lb = (
+        int(lookback_days)
+        if lookback_days is not None
+        else int(get_pead_primary_lookback_days(sd))
+    )
+    out: dict[str, Any] = {
+        "admitted": False,
+        "liquidity_ok": False,
+        "beat_ok": False,
+        "price": None,
+        "avg_vol_50": None,
+        "pead_beat": None,
+        "pead_surprise_pct": None,
+        "fail_reason": None,
+    }
+    if df is None or getattr(df, "empty", True):
+        out["fail_reason"] = "df_empty"
+        return out
+    try:
+        price = float(df["close"].iloc[-1])
+    except Exception:
+        price = 0.0
+    try:
+        avg_vol = float(df[AVG_VOL_50].iloc[-1]) if AVG_VOL_50 in df.columns else 0.0
+    except Exception:
+        avg_vol = 0.0
+    out["price"] = price
+    out["avg_vol_50"] = avg_vol
+    if price < PEAD_PRIMARY_MIN_PRICE or avg_vol < PEAD_PRIMARY_MIN_AVG_VOL:
+        out["fail_reason"] = "liquidity_floor"
+        return out
+    out["liquidity_ok"] = True
+
+    pead_info: dict[str, Any] | None = None
+    try:
+        from earnings_signal import check_earnings_at_date, check_recent_earnings
+
+        if as_of is None:
+            pead_info = check_recent_earnings(ticker, lookback_days=lb, skill_dir=sd)
+        else:
+            pead_info = check_earnings_at_date(
+                ticker,
+                as_of,
+                df=df,
+                lookback_days=lb,
+                skill_dir=sd,
+            )
+    except Exception:
+        pead_info = None
+
+    beat = bool((pead_info or {}).get("beat"))
+    surprise = (pead_info or {}).get("surprise_pct")
+    try:
+        surprise_f = float(surprise) if surprise is not None else None
+    except (TypeError, ValueError):
+        surprise_f = None
+    out["pead_beat"] = beat if pead_info is not None else None
+    out["pead_surprise_pct"] = surprise_f
+    if not beat or surprise_f is None or surprise_f <= 0.0:
+        out["fail_reason"] = "pead_beat_fail"
+        return out
+    out["beat_ok"] = True
+    out["admitted"] = True
+    return out
+
+
+def tag_entry_family(*, stage2_ok: bool, pead_ok: bool) -> str | None:
+    """Return ``stage2`` | ``pead_primary`` | ``both``, or None if neither admits."""
+    if stage2_ok and pead_ok:
+        return "both"
+    if stage2_ok:
+        return "stage2"
+    if pead_ok:
+        return "pead_primary"
+    return None
+
+
 def evaluate_early_stop_gate(
     *,
     pts_52w: float | None,

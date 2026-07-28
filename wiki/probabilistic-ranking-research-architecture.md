@@ -64,6 +64,7 @@ adding hard gates. See [[signal-ranking]] for rank-v2 control.
 - [[signal-quality-rollout]] — Live stack including rank-v2 p75
 - [[promotion-playbook]] — Hard PF floors and promotion process
 - [[feature-flags]] — `PROB_RANK_*` env knobs
+- [[multi-sleeve-trading-system-constitution]] — Prob-rank is an S0 brain upgrade, not a separate sleeve
 - [[sector-strength]] — Regime / sector context features
 
 ---

@@ -135,6 +135,11 @@ function persistEditor() {
   if (book) saveManualBook(book);
 }
 
+/** Flush the editor grid into localStorage (call before Risk / navigation). */
+export function persistManualEditor() {
+  persistEditor();
+}
+
 function editorRowHtml(pos = { ticker: "", qty: "", acquired_at: "", avg_cost: "" }) {
   const qtyVal = Number.isFinite(Number(pos.qty)) && pos.qty !== "" ? Number(pos.qty) : "";
   const costVal =
@@ -155,7 +160,13 @@ function editorRowHtml(pos = { ticker: "", qty: "", acquired_at: "", avg_cost: "
 }
 
 function wireEditorRow(tr) {
-  tr.querySelectorAll("input").forEach((input) => input.addEventListener("change", persistEditor));
+  // Persist on both input and change so a later Positions refresh (which
+  // re-renders from localStorage) cannot wipe a ticker the user typed but
+  // had not blurred yet — that used to drop names like RRX before Risk ran.
+  tr.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("input", persistEditor);
+    input.addEventListener("change", persistEditor);
+  });
   tr.querySelector("[data-manual-remove]")?.addEventListener("click", () => {
     tr.remove();
     persistEditor();
