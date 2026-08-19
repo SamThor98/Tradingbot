@@ -292,12 +292,11 @@ function renderStrategyGroup(title, hint, rows, prefs, primaryId, extraClass) {
     </div>`;
 }
 
-function renderStrategyCards(prefs) {
-  const rows = strategiesForTimeframe(prefs.timeframe);
-  if (!rows.length) {
-    return `<p class="muted small">No strategies in this timeframe yet.</p>`;
-  }
-  const primaryId = primaryStrategyIdForTimeframe(prefs.timeframe);
+function renderHorizonBoard(tf, prefs) {
+  const tfId = String(tf.id || "");
+  const rows = strategiesForTimeframe(tfId);
+  if (!rows.length) return "";
+  const primaryId = primaryStrategyIdForTimeframe(tfId);
   const yours = rows.filter((row) => !isPaperStrategy(row));
   const paper = rows.filter(isPaperStrategy);
   yours.sort((a, b) => {
@@ -305,8 +304,26 @@ function renderStrategyCards(prefs) {
     if (String(b.id) === primaryId) return 1;
     return 0;
   });
-  return `${renderStrategyGroup("Yours", "Iterated sleeves. The primary is this tab’s default.", yours, prefs, primaryId, "")}
-    ${renderStrategyGroup("Paper", "Literature screens — opt-in, not the published books.", paper, prefs, primaryId, "scan-studio-group--paper")}`;
+  const active = tfId === prefs.timeframe;
+  return `<section class="scan-studio-horizon${active ? " is-active" : ""}" data-scan-horizon="${escapeHtml(tfId)}" aria-label="${escapeHtml(tf.display_name || tfId)} sleeves">
+      <div class="scan-studio-horizon-head">
+        <h4 class="scan-studio-horizon-title">${escapeHtml(tf.display_name || tfId)} · ${rows.length}</h4>
+        <p class="muted small scan-studio-horizon-desc">${escapeHtml(tf.description || "")}</p>
+      </div>
+      ${renderStrategyGroup("Yours", "Iterated sleeves. Checking a row includes it in Run scan.", yours, prefs, primaryId, "")}
+      ${renderStrategyGroup("Paper", "Literature screens — opt-in, not the published books.", paper, prefs, primaryId, "scan-studio-group--paper")}
+    </section>`;
+}
+
+function renderStrategyCards(prefs) {
+  const frames = Array.isArray(catalog().timeframes) ? catalog().timeframes : [];
+  const boards = frames.map((tf) => renderHorizonBoard(tf, prefs)).filter(Boolean);
+  if (boards.length) return boards.join("");
+  const rows = strategiesForTimeframe(prefs.timeframe);
+  if (!rows.length) {
+    return `<p class="muted small">No strategies in this timeframe yet.</p>`;
+  }
+  return renderHorizonBoard({ id: prefs.timeframe, display_name: prefs.timeframe }, prefs);
 }
 
 function renderUniverseOptions(prefs) {
@@ -327,9 +344,8 @@ function catalogLoadNote(prefs) {
     return `<p class="scan-studio-note" role="status">Catalog refresh failed (${escapeHtml(err)}). Showing the bundled sleeve list — hard-refresh if this stays stale.</p>`;
   }
   const total = Array.isArray(catalog().strategies) ? catalog().strategies.length : 0;
-  const here = strategiesForTimeframe(prefs?.timeframe || catalog().defaults?.timeframe || "daily").length;
-  if (total > here) {
-    return `<p class="muted small scan-studio-tf-desc">This tab has ${here} of ${total} sleeves. Weekly, monthly, and intraday tabs hold the rest.</p>`;
+  if (total) {
+    return `<p class="muted small scan-studio-tf-desc">${total} sleeves are listed below and are live on local Run scan. Tabs set the scan horizon; they do not hide rows.</p>`;
   }
   return "";
 }
@@ -354,13 +370,13 @@ export function scanStudioMarkup(prefs) {
     <div class="scan-studio-head">
       <p class="scan-studio-kicker workspace-eyebrow">Scan lens</p>
       <h3 class="scan-studio-title">Scan studio</h3>
-      <p class="muted small scan-studio-lede">One primary per horizon. Paper is opt-in. Live execution stays daily Stage 2 / VCP. Switch timeframe tabs to see all 20 sleeves.</p>
+      <p class="muted small scan-studio-lede">All 20 sleeves are on this page. Checking a row includes it in Run scan. Live order routing stays daily Stage 2 / VCP.</p>
     </div>
     <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>
     <p class="muted small scan-studio-tf-desc">${escapeHtml(tf?.description || "")}</p>
     ${catalogLoadNote(prefs)}
     ${horizonNote(prefs)}
-    <div class="scan-studio-board" aria-label="Strategies in this timeframe">${renderStrategyCards(prefs)}</div>
+    <div class="scan-studio-board" aria-label="All scan studio strategies">${renderStrategyCards(prefs)}</div>
     <div class="scan-studio-universe">
       <label class="scan-studio-field" for="scanUniverseSelect">
         <span class="scan-studio-kicker">Universe</span>
@@ -416,9 +432,6 @@ export { primaryStrategyIdForTimeframe };
 function selectTimeframe(timeframe) {
   const prefs = state.scanStudioPrefs || loadScanStudioPrefs();
   prefs.timeframe = timeframe;
-  const inFrame = new Set(strategiesForTimeframe(timeframe).map((s) => String(s.id)));
-  const kept = (prefs.strategy_ids || []).filter((id) => inFrame.has(id));
-  prefs.strategy_ids = kept.length ? kept : [primaryStrategyIdForTimeframe(timeframe)];
   saveScanStudioPrefs(prefs);
   renderScanStudio();
 }

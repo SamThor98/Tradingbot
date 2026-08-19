@@ -4232,6 +4232,15 @@ body[data-theme="editorial"] .scan-studio-group--paper {
   border-top: 1px dashed color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border));
 }
 
+body[data-theme="editorial"] .scan-studio-horizon + .scan-studio-horizon {
+  border-top: 1px dashed color-mix(in srgb, var(--ol-gold) 40%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .scan-studio-horizon-title {
+  color: var(--ol-text) !important;
+  font-family: "Fraunces", Georgia, serif !important;
+}
+
 body[data-theme="editorial"] .scan-studio-strategy {
   background: var(--ol-surface) !important;
   border: 1px solid var(--ol-border) !important;

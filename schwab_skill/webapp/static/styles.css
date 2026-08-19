@@ -6997,7 +6997,33 @@ html, body {
 .scan-studio-board {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 1.1rem;
+}
+
+.scan-studio-horizon {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.65rem 0 0.15rem;
+}
+
+.scan-studio-horizon + .scan-studio-horizon {
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.scan-studio-horizon-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.scan-studio-horizon-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.scan-studio-horizon-desc {
+  margin: 0;
 }
 
 .scan-studio-group-head {

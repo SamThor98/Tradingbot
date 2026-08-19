@@ -322,6 +322,12 @@
             <strong>Scan + shortlist</strong>
             <p id="scanLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 1 — run scan to load the shortlist.</p>
           </div>
+          <section id="scanStudioPanel" class="scan-studio" aria-label="Scan studio"></section>
+          <script type="module">
+            import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
+            bindScanStudio();
+            void loadScanCatalog();
+          </script>
           <div class="section-title">
             <h2>Scan results</h2>
             <div class="scan-title-meta">
@@ -366,7 +372,6 @@
           </div>
           <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
-          <section id="scanStudioPanel" class="scan-studio" aria-label="Scan studio"></section>
           <div id="shadowWorkbenchTeaser" class="shadow-workbench-teaser hidden" aria-live="polite"></div>
           <section id="peadCanarySection" class="pead-canary-card operations-surface" aria-label="PEAD canary sleeve" data-state="empty">
             <div class="pead-canary-head">

@@ -162,9 +162,10 @@ test("fallback catalog paints daily sleeves without an API payload", () => {
   const html = scanStudioMarkup(state.scanStudioPrefs);
   assert.match(html, /data-scan-strategy="donchian_20"/);
   assert.match(html, /data-scan-strategy="st_reversal_5d"/);
+  assert.match(html, /data-scan-strategy="weekly_swing"/);
+  assert.match(html, /data-scan-strategy="monthly_position"/);
   assert.match(html, /data-scan-timeframe="weekly"/);
-  assert.match(html, /Daily · /);
-  assert.match(html, /of 20 sleeves/);
+  assert.match(html, /20 sleeves are listed below/);
 });
 
 test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => {
@@ -185,4 +186,19 @@ test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => 
   const primaryAt = html.indexOf("scan-studio-strategy--primary");
   const paperAt = html.indexOf("scan-studio-group--paper");
   assert.ok(primaryAt >= 0 && paperAt > primaryAt);
+});
+
+test("scanStudioMarkup keeps every timeframe visible when Daily is selected", () => {
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+    { id: "weekly", display_name: "Weekly", default_strategy_id: "weekly_swing" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "trend_breakout", display_name: "Stage 2 / VCP breakout", timeframe: "daily", origin: "iterated", status: "live", runnable: true },
+    { id: "weekly_swing", display_name: "Weekly Stage 2", timeframe: "weekly", origin: "iterated", status: "research", runnable: true },
+  ];
+  const html = scanStudioMarkup(state.scanStudioPrefs);
+  assert.match(html, /data-scan-strategy="trend_breakout"/);
+  assert.match(html, /data-scan-strategy="weekly_swing"/);
+  assert.match(html, /data-scan-horizon="weekly"/);
 });
