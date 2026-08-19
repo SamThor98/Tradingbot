@@ -151,6 +151,22 @@ test("loadScanStudioPrefs prefers v2 over a leftover v1 select-all blob", () => 
   assert.equal(prefs.universe_preset, "focused");
 });
 
+test("fallback catalog paints daily sleeves without an API payload", () => {
+  state.scanCatalog = null;
+  state.scanStudioPrefs = {
+    timeframe: "daily",
+    universe_preset: "sp1500",
+    strategy_ids: ["trend_breakout"],
+    tickersText: "",
+  };
+  const html = scanStudioMarkup(state.scanStudioPrefs);
+  assert.match(html, /data-scan-strategy="donchian_20"/);
+  assert.match(html, /data-scan-strategy="st_reversal_5d"/);
+  assert.match(html, /data-scan-timeframe="weekly"/);
+  assert.match(html, /Daily · /);
+  assert.match(html, /of 20 sleeves/);
+});
+
 test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => {
   state.scanCatalog.timeframes = [
     { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },

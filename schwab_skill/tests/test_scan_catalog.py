@@ -124,3 +124,32 @@ def test_run_scan_applies_strategy_id_filter(tmp_path, monkeypatch) -> None:
     assert out.diagnostics["strategy_id_filter_dropped"] == 1
     assert out.diagnostics["scan_timeframe"] == "daily"
     assert out.diagnostics["universe_preset"] == "nasdaq100"
+
+
+def test_dashboard_html_embeds_full_scan_catalog() -> None:
+    from pathlib import Path
+
+    from core.scan_catalog import known_strategy_ids
+    from webapp.static_assets import render_dashboard_html
+
+    html_path = Path(__file__).resolve().parent.parent / "webapp" / "static" / "index.html"
+    body = render_dashboard_html(html_path).body.decode("utf-8")
+    assert "__SCAN_CATALOG_JSON__" not in body
+    assert "scanCatalogBootstrap" in body
+    assert "/static/panels/scanStudio.js?v=" in body
+    for sid in known_strategy_ids():
+        assert sid in body
+
+
+def test_js_fallback_catalog_covers_python_strategy_ids() -> None:
+    import re
+    from pathlib import Path
+
+    from core.scan_catalog import known_strategy_ids
+
+    js = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "panels" / "scanStudio.js").read_text(
+        encoding="utf-8"
+    )
+    ids = set(re.findall(r'_fb\("([a-z0-9_]+)"', js))
+    missing = sorted(known_strategy_ids() - ids)
+    assert not missing, f"JS fallback catalog missing {missing}"

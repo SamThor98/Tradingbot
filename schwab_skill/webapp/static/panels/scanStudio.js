@@ -12,6 +12,10 @@ import { state, SCAN_STUDIO_PREFS_KEY, LEGACY_SCAN_STUDIO_PREFS_KEY } from "../m
 import { api } from "../modules/api.js";
 import { escapeHtml, safeText } from "../modules/format.js";
 
+function _fb(id, display_name, timeframe, status, origin, description, extra = {}) {
+  return { id, display_name, timeframe, status, runnable: true, origin, description, ...extra };
+}
+
 const FALLBACK_CATALOG = Object.freeze({
   timeframes: [
     { id: "intraday", display_name: "Intraday", description: "Live-quote confirmation of a daily setup.", default_strategy_id: "breakout_confirm" },
@@ -20,27 +24,69 @@ const FALLBACK_CATALOG = Object.freeze({
     { id: "monthly", display_name: "Monthly", description: "Position-style horizon on the daily engine.", default_strategy_id: "monthly_position" },
   ],
   strategies: [
-    {
-      id: "trend_breakout",
-      display_name: "Stage 2 / VCP breakout",
-      timeframe: "daily",
-      status: "live",
-      runnable: true,
-      origin: "iterated",
-      primary_for_timeframe: true,
-      description: "Weinstein Stage 2 uptrend plus volume contraction. This is the live book.",
-    },
+    _fb("breakout_confirm", "Intraday breakout confirm", "intraday", "live_overlay", "iterated", "Live-quote overlay on the daily Stage 2 name.", { primary_for_timeframe: true }),
+    _fb("gap_and_go", "Gap and go", "intraday", "shadow", "iterated", "Session-structure gap-and-hold on the last completed daily bar."),
+    _fb("range_expansion", "Range expansion", "intraday", "shadow", "iterated", "Opening-drive proxy: close through the prior high with expanded range."),
+    _fb("opening_range_breakout", "RVOL strong-close (ORB proxy)", "intraday", "research", "literature", "Completed-daily RVOL strong-close screen — not a 5-minute ORB engine."),
+    _fb("trend_breakout", "Stage 2 / VCP breakout", "daily", "live", "iterated", "Weinstein Stage 2 uptrend plus volume contraction. This is the live book.", { primary_for_timeframe: true }),
+    _fb("pullback", "Trend pullback", "daily", "shadow", "iterated", "Uptrend names pulling back toward the 50-day SMA."),
+    _fb("pead_primary", "PEAD earnings drift", "daily", "shadow", "iterated", "Post-earnings announcement drift. Paper / canary only."),
+    _fb("donchian_20", "Donchian 20-day breakout", "daily", "shadow", "iterated", "Close through the prior 20-day high with a 200-day SMA filter."),
+    _fb("nr7_breakout", "NR7 breakout", "daily", "shadow", "iterated", "Narrowest range of the last 7 sessions, then a break of that high."),
+    _fb("st_reversal_5d", "5-day loser bounce (screen)", "daily", "research", "literature", "Long-only 1-week bounce screen on completed daily bars."),
+    _fb("overnight_gap_fade", "Gap-down recovery (EOD label)", "daily", "research", "literature", "EOD label of a gap-down that recovered by the completed close."),
+    _fb("weekly_swing", "Weekly Stage 2", "weekly", "research", "iterated", "Weinstein-style weekly Stage 2 on resampled Friday bars.", { primary_for_timeframe: true }),
+    _fb("weekly_vcp", "Weekly volume dryness", "weekly", "research", "iterated", "Multi-week volume dryness above the 30-week SMA."),
+    _fb("weekly_breakout", "Weekly breakout", "weekly", "research", "iterated", "Weekly close through the prior week's high."),
+    _fb("weekly_reversal", "Weekly loser bounce (screen)", "weekly", "research", "literature", "Prior completed week down, this completed week turns up."),
+    _fb("monthly_position", "10-month SMA (Faber)", "monthly", "research", "iterated", "Month-end close above a rising 10-month SMA.", { primary_for_timeframe: true }),
+    _fb("monthly_52w_high", "Monthly 52-week high", "monthly", "research", "iterated", "Month-end close near the 52-week high, above the 10-month SMA."),
+    _fb("monthly_pullback", "Monthly SMA pullback", "monthly", "research", "iterated", "Uptrend pullback toward the 10-month SMA."),
+    _fb("momentum_12_1", "12-1 strength screen", "monthly", "research", "literature", "12-month formation skipping the most recent month."),
+    _fb("tsmom_12m", "12-month trend screen", "monthly", "research", "literature", "Completed month-end close above the close 12 months ago."),
   ],
   universes: [
     { id: "sp1500", display_name: "S&P 1500", description: "Default live universe.", available: true },
+    { id: "sp500", display_name: "S&P 500", description: "Large-cap US names only.", available: true },
+    { id: "nasdaq100", display_name: "Nasdaq-100", description: "Nasdaq-100 constituents.", available: true },
+    { id: "sector_etfs", display_name: "Sector ETFs", description: "Liquid sector and index ETFs.", available: true },
+    { id: "focused", display_name: "S&P 1500 sample", description: "Deterministic subset of S&P 1500.", available: true },
     { id: "custom", display_name: "Custom tickers", description: "Paste your own symbols.", available: true },
   ],
   defaults: { timeframe: "daily", universe_preset: "sp1500", strategy_ids: ["trend_breakout"] },
-  notes: { weekly_monthly: "Weekly/monthly still use daily bars." },
+  notes: { weekly_monthly: "Weekly/monthly resample daily bars (Friday week / month-end). Research only — not a live book." },
 });
 
+function catalogFromBootstrap() {
+  if (typeof document === "undefined") return null;
+  const el = document.getElementById("scanCatalogBootstrap");
+  if (!el) return null;
+  try {
+    const parsed = JSON.parse(el.textContent || "");
+    if (parsed && Array.isArray(parsed.strategies) && parsed.strategies.length) return parsed;
+  } catch {
+    /* unreplaced token or invalid JSON */
+  }
+  return null;
+}
+
+function catalogHasStrategies(value) {
+  return Boolean(value && typeof value === "object" && Array.isArray(value.strategies) && value.strategies.length);
+}
+
+function adoptCatalog(next) {
+  if (!catalogHasStrategies(next)) return false;
+  const currentCount = Array.isArray(state.scanCatalog?.strategies) ? state.scanCatalog.strategies.length : 0;
+  if (next.strategies.length < currentCount) return false;
+  state.scanCatalog = next;
+  return true;
+}
+
 function catalog() {
-  return state.scanCatalog && typeof state.scanCatalog === "object" ? state.scanCatalog : FALLBACK_CATALOG;
+  if (catalogHasStrategies(state.scanCatalog)) return state.scanCatalog;
+  const boot = catalogFromBootstrap();
+  if (boot) return boot;
+  return FALLBACK_CATALOG;
 }
 
 function defaultPrefs() {
@@ -161,7 +207,9 @@ function renderTimeframeTabs(prefs) {
   return frames
     .map((tf) => {
       const active = tf.id === prefs.timeframe;
-      return `<button type="button" class="scan-studio-tf${active ? " is-active" : ""}" role="tab" data-scan-timeframe="${escapeHtml(tf.id)}" aria-selected="${active ? "true" : "false"}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(tf.display_name)}</button>`;
+      const n = strategiesForTimeframe(tf.id).length;
+      const label = n ? `${tf.display_name} · ${n}` : tf.display_name;
+      return `<button type="button" class="scan-studio-tf${active ? " is-active" : ""}" role="tab" data-scan-timeframe="${escapeHtml(tf.id)}" aria-selected="${active ? "true" : "false"}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(label)}</button>`;
     })
     .join("");
 }
@@ -273,6 +321,19 @@ function renderUniverseOptions(prefs) {
     .join("");
 }
 
+function catalogLoadNote(prefs) {
+  const err = safeText(state.scanCatalogError || "");
+  if (err) {
+    return `<p class="scan-studio-note" role="status">Catalog refresh failed (${escapeHtml(err)}). Showing the bundled sleeve list — hard-refresh if this stays stale.</p>`;
+  }
+  const total = Array.isArray(catalog().strategies) ? catalog().strategies.length : 0;
+  const here = strategiesForTimeframe(prefs?.timeframe || catalog().defaults?.timeframe || "daily").length;
+  if (total > here) {
+    return `<p class="muted small scan-studio-tf-desc">This tab has ${here} of ${total} sleeves. Weekly, monthly, and intraday tabs hold the rest.</p>`;
+  }
+  return "";
+}
+
 function horizonNote(prefs) {
   const tf = String(prefs.timeframe || "daily");
   if (tf === "weekly" || tf === "monthly") {
@@ -293,10 +354,11 @@ export function scanStudioMarkup(prefs) {
     <div class="scan-studio-head">
       <p class="scan-studio-kicker workspace-eyebrow">Scan lens</p>
       <h3 class="scan-studio-title">Scan studio</h3>
-      <p class="muted small scan-studio-lede">One primary per horizon. Paper is opt-in. Live execution stays daily Stage 2 / VCP.</p>
+      <p class="muted small scan-studio-lede">One primary per horizon. Paper is opt-in. Live execution stays daily Stage 2 / VCP. Switch timeframe tabs to see all 20 sleeves.</p>
     </div>
     <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>
     <p class="muted small scan-studio-tf-desc">${escapeHtml(tf?.description || "")}</p>
+    ${catalogLoadNote(prefs)}
     ${horizonNote(prefs)}
     <div class="scan-studio-board" aria-label="Strategies in this timeframe">${renderStrategyCards(prefs)}</div>
     <div class="scan-studio-universe">
@@ -365,7 +427,9 @@ export function bindScanStudio() {
   const root = document.getElementById("scanStudioPanel");
   if (!root || root.dataset.bound === "1") return;
   root.dataset.bound = "1";
-  if (!state.scanCatalog) state.scanCatalog = FALLBACK_CATALOG;
+  if (!catalogHasStrategies(state.scanCatalog)) {
+    state.scanCatalog = catalogFromBootstrap() || FALLBACK_CATALOG;
+  }
   if (!state.scanStudioPrefs) state.scanStudioPrefs = loadScanStudioPrefs();
   renderScanStudio();
   root.addEventListener("click", (ev) => {
@@ -384,11 +448,20 @@ export function bindScanStudio() {
 }
 
 export async function loadScanCatalog() {
-  const out = await api.get("/api/scan-catalog", { timeoutMs: 15000 });
-  if (out.ok && out.data && typeof out.data === "object") {
-    state.scanCatalog = out.data;
+  if (!catalogHasStrategies(state.scanCatalog)) {
+    adoptCatalog(catalogFromBootstrap() || FALLBACK_CATALOG);
   } else {
-    state.scanCatalog = FALLBACK_CATALOG;
+    adoptCatalog(catalogFromBootstrap());
+  }
+  const out = await api.get("/api/scan-catalog", { timeoutMs: 15000 });
+  if (out.ok && catalogHasStrategies(out.data)) {
+    adoptCatalog(out.data);
+    state.scanCatalogError = "";
+  } else {
+    state.scanCatalogError = safeText(out.error || out.user_message || "Scan catalog unavailable");
+    if (!catalogHasStrategies(state.scanCatalog)) {
+      adoptCatalog(FALLBACK_CATALOG);
+    }
   }
   if (!state.scanStudioPrefs) {
     state.scanStudioPrefs = loadScanStudioPrefs();

@@ -34,7 +34,7 @@ import {
   applyRankExplainModeSelection,
   setRankExplainMode,
 } from "./panels/scanTable.js";
-import { bindScanStudio, loadScanCatalog, readScanStudioBody, scanStudioProgressLabel } from "./panels/scanStudio.js";
+import { bindScanStudio, loadScanCatalog, readScanStudioBody, scanStudioProgressLabel } from "/static/panels/scanStudio.js";
 import {
   configureApproveDialog,
   openApproveDialog,

@@ -75,7 +75,7 @@ from .security import (
     utcnow_iso,
 )
 from .security_headers import SecurityHeadersMiddleware
-from .static_assets import NoCacheStaticFiles, render_versioned_html
+from .static_assets import NoCacheStaticFiles, render_dashboard_html
 from .strategy_chat import run_strategy_chat
 from .tasks import celery_app, phase2_stage1_for_user, scan_for_user
 from .tenant_dashboard import _tenant_api_health_snapshot
@@ -632,7 +632,7 @@ def _backtest_rate_limit(user_id: str) -> None:
 
 @app.get("/")
 def index() -> HTMLResponse:
-    return render_versioned_html(STATIC_DIR / "index.html")
+    return render_dashboard_html(STATIC_DIR / "index.html")
 
 
 @app.get("/simple")

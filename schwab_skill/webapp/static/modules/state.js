@@ -100,6 +100,7 @@ export const state = {
   scanCatalog: null,
   /** Operator scan-studio prefs (timeframe, universe, strategy_ids). */
   scanStudioPrefs: null,
+  scanCatalogError: "",
   /** Presentation mode for rank explainers in scan tables:
    *  - tooltip: compact score + "?" hover details
    *  - inline: score with short inline rationale text */

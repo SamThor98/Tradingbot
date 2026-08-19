@@ -2400,6 +2400,17 @@
       </div>
     </div>
 
+    <script>
+      window.__APP_VERSION__ = "__APP_VERSION__";
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "/static/panels/scanStudio.js": "/static/panels/scanStudio.js?v=__APP_VERSION__"
+        }
+      }
+    </script>
+    <script type="application/json" id="scanCatalogBootstrap">__SCAN_CATALOG_JSON__</script>
     <script src="/static/auth-jwt-utils.js?v=__APP_VERSION__"></script>
     <script src="/static/app.js?v=__APP_VERSION__" type="module"></script>
   </body>

@@ -35,6 +35,8 @@ export function createOperationsController(ctx) {
   } = ctx;
 
   function init() {
+    bindScanStudio?.();
+    void loadScanCatalog?.();
     document.getElementById("queueScanCancelBtn")?.addEventListener("click", closeQueueScanDialog);
     document.getElementById("queueScanConfirmBtn")?.addEventListener("click", () => void confirmQueueScanDialog());
     document.getElementById("manualPendingBtn")?.addEventListener("click", () => void submitManualPendingTrade());
@@ -63,8 +65,6 @@ export function createOperationsController(ctx) {
       renderScanRows(Array.isArray(rows) ? rows : []);
     });
     bindScanSortHandlers();
-    bindScanStudio?.();
-    void loadScanCatalog?.();
     bindEvent("pendingFilter", "change", refreshPending);
     bindEvent("pendingSort", "change", refreshPending);
     document.getElementById("clearPendingBtn")?.addEventListener("click", async () => {

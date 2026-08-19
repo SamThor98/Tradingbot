@@ -110,7 +110,7 @@ from .schemas import (
     QueueUserBacktestRequest,
 )
 from .security_headers import SecurityHeadersMiddleware
-from .static_assets import NoCacheStaticFiles, render_versioned_html
+from .static_assets import NoCacheStaticFiles, render_dashboard_html
 
 LOCAL_DASHBOARD_USER_ID = (os.getenv("WEB_LOCAL_USER_ID", "local") or "local").strip() or "local"
 
@@ -1698,7 +1698,7 @@ def index(
             state=state,
             error=error or error_description,
         )
-    return render_versioned_html(STATIC_DIR / "index.html")
+    return render_dashboard_html(STATIC_DIR / "index.html")
 
 
 @app.get("/simple")

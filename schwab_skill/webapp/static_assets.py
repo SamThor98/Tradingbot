@@ -26,6 +26,7 @@ Version resolution priority:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -67,7 +68,10 @@ _HTML_NO_CACHE_HEADERS = {
 }
 
 
-def render_versioned_html(path: Path) -> HTMLResponse:
+def render_versioned_html(
+    path: Path,
+    extra_replacements: dict[str, str] | None = None,
+) -> HTMLResponse:
     """Read an HTML file, inject the deploy version, return no-cache HTML.
 
     The HTML must include ``__APP_VERSION__`` as a literal token in any
@@ -81,7 +85,23 @@ def render_versioned_html(path: Path) -> HTMLResponse:
         LOG.warning("render_versioned_html: missing %s", path)
         return HTMLResponse(status_code=404, content="Not Found")
     text = text.replace("__APP_VERSION__", app_version())
+    for token, value in (extra_replacements or {}).items():
+        text = text.replace(token, value)
     return HTMLResponse(content=text, headers=_HTML_NO_CACHE_HEADERS)
+
+
+def render_dashboard_html(path: Path) -> HTMLResponse:
+    """Dashboard HTML with cache-busted assets plus an inline Scan studio catalog.
+
+    Restarting uvicorn is not enough if the browser keeps a cached ES module
+    that never called ``/api/scan-catalog``. Embedding the catalog in the
+    no-cache HTML means a refresh after restart paints all sleeves immediately.
+    """
+    from core.scan_catalog import build_scan_catalog_payload
+
+    payload = json.dumps(build_scan_catalog_payload(), separators=(",", ":"), ensure_ascii=True)
+    payload = payload.replace("<", "\\u003c")
+    return render_versioned_html(path, extra_replacements={"__SCAN_CATALOG_JSON__": payload})
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -100,4 +120,4 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
-__all__ = ["app_version", "render_versioned_html", "NoCacheStaticFiles"]
+__all__ = ["app_version", "render_versioned_html", "render_dashboard_html", "NoCacheStaticFiles"]
