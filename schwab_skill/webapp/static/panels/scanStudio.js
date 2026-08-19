@@ -8,7 +8,7 @@
  * daily bar, not a minute-bar book.
  */
 
-import { state, SCAN_STUDIO_PREFS_KEY } from "../modules/state.js";
+import { state, SCAN_STUDIO_PREFS_KEY, LEGACY_SCAN_STUDIO_PREFS_KEY } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { escapeHtml, safeText } from "../modules/format.js";
 
@@ -51,22 +51,41 @@ function defaultPrefs() {
   };
 }
 
+function prefsFromParsed(parsed, base, { resetStrategyIds = false } = {}) {
+  const timeframe = safeText(parsed.timeframe || base.timeframe).toLowerCase() || base.timeframe;
+  const universe_preset =
+    safeText(parsed.universe_preset || base.universe_preset).toLowerCase() || base.universe_preset;
+  let ids = Array.isArray(parsed.strategy_ids)
+    ? parsed.strategy_ids.map((s) => String(s || "").trim().toLowerCase()).filter(Boolean)
+    : [...base.strategy_ids];
+  if (resetStrategyIds) {
+    const primary = primaryStrategyIdForTimeframe(timeframe);
+    ids = primary ? [primary] : [...base.strategy_ids];
+  }
+  return {
+    timeframe,
+    universe_preset,
+    strategy_ids: ids.length ? ids : [...base.strategy_ids],
+    tickersText: typeof parsed.tickersText === "string" ? parsed.tickersText : "",
+  };
+}
+
 export function loadScanStudioPrefs() {
   const base = defaultPrefs();
   try {
-    const raw = localStorage.getItem(SCAN_STUDIO_PREFS_KEY);
-    if (!raw) return { ...base, strategy_ids: [...base.strategy_ids] };
-    const parsed = JSON.parse(raw);
+    const rawV2 = localStorage.getItem(SCAN_STUDIO_PREFS_KEY);
+    if (rawV2) {
+      const parsed = JSON.parse(rawV2);
+      if (!parsed || typeof parsed !== "object") return { ...base, strategy_ids: [...base.strategy_ids] };
+      return prefsFromParsed(parsed, base);
+    }
+    const rawV1 = localStorage.getItem(LEGACY_SCAN_STUDIO_PREFS_KEY);
+    if (!rawV1) return { ...base, strategy_ids: [...base.strategy_ids] };
+    const parsed = JSON.parse(rawV1);
     if (!parsed || typeof parsed !== "object") return { ...base, strategy_ids: [...base.strategy_ids] };
-    const ids = Array.isArray(parsed.strategy_ids)
-      ? parsed.strategy_ids.map((s) => String(s || "").trim().toLowerCase()).filter(Boolean)
-      : [...base.strategy_ids];
-    return {
-      timeframe: safeText(parsed.timeframe || base.timeframe).toLowerCase() || base.timeframe,
-      universe_preset: safeText(parsed.universe_preset || base.universe_preset).toLowerCase() || base.universe_preset,
-      strategy_ids: ids.length ? ids : [...base.strategy_ids],
-      tickersText: typeof parsed.tickersText === "string" ? parsed.tickersText : "",
-    };
+    const migrated = prefsFromParsed(parsed, base, { resetStrategyIds: true });
+    saveScanStudioPrefs(migrated);
+    return migrated;
   } catch {
     return { ...base, strategy_ids: [...base.strategy_ids] };
   }

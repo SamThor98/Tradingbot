@@ -115,5 +115,10 @@ export const UI_VIEW_MODE_KEY = "tradingbot.ui.view_mode";
 export const AUTH_TOKEN_KEY = "tradingbot.jwt";
 export const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 export const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
-export const SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio";
+/** Pre-v2 key. Sessions stored every runnable sleeve in the tab; v2
+ *  migrates universe/tickers but resets strategy_ids to the tab primary. */
+export const LEGACY_SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio";
+/** Bump when default selection semantics change so stale "select all"
+ *  sessions do not override one-primary-per-timeframe. */
+export const SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio.v2";
 export const NOTIF_STORAGE_KEY = "tradingbot.notifications";

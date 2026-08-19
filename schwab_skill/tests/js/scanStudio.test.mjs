@@ -4,18 +4,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+const store = new Map();
 globalThis.localStorage = {
-  getItem: () => null,
-  setItem: () => {},
-  removeItem: () => {},
+  getItem: (key) => (store.has(key) ? store.get(key) : null),
+  setItem: (key, value) => {
+    store.set(String(key), String(value));
+  },
+  removeItem: (key) => {
+    store.delete(key);
+  },
 };
 
-const { state } = await import("../../webapp/static/modules/state.js");
-const { readScanStudioBody, scanStudioProgressLabel, primaryStrategyIdForTimeframe } = await import(
-  "../../webapp/static/panels/scanStudio.js"
+const { state, SCAN_STUDIO_PREFS_KEY, LEGACY_SCAN_STUDIO_PREFS_KEY } = await import(
+  "../../webapp/static/modules/state.js"
 );
+const {
+  readScanStudioBody,
+  scanStudioProgressLabel,
+  primaryStrategyIdForTimeframe,
+  loadScanStudioPrefs,
+} = await import("../../webapp/static/panels/scanStudio.js");
 
 test.beforeEach(() => {
+  store.clear();
   state.scanCatalog = {
     timeframes: [{ id: "daily", display_name: "Daily", description: "Daily engine." }],
     strategies: [{ id: "trend_breakout", display_name: "Stage 2 / VCP breakout", timeframe: "daily", runnable: true }],
@@ -77,4 +88,64 @@ test("primaryStrategyIdForTimeframe uses catalog default", () => {
   ];
   assert.equal(primaryStrategyIdForTimeframe("weekly"), "weekly_swing");
   assert.equal(primaryStrategyIdForTimeframe("daily"), "trend_breakout");
+});
+
+test("scan studio prefs key is versioned past the select-all era", () => {
+  assert.equal(SCAN_STUDIO_PREFS_KEY, "tradingbot.scan.studio.v2");
+  assert.equal(LEGACY_SCAN_STUDIO_PREFS_KEY, "tradingbot.scan.studio");
+});
+
+test("loadScanStudioPrefs migrates v1 select-all sessions to the tab primary", () => {
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "trend_breakout", timeframe: "daily", runnable: true },
+    { id: "pullback", timeframe: "daily", runnable: true },
+    { id: "donchian_20", timeframe: "daily", runnable: true },
+    { id: "nr7_breakout", timeframe: "daily", runnable: true },
+    { id: "pead_primary", timeframe: "daily", runnable: true },
+  ];
+  store.set(
+    LEGACY_SCAN_STUDIO_PREFS_KEY,
+    JSON.stringify({
+      timeframe: "daily",
+      universe_preset: "nasdaq100",
+      strategy_ids: ["trend_breakout", "pullback", "donchian_20", "nr7_breakout", "pead_primary"],
+      tickersText: "AAPL",
+    }),
+  );
+  const prefs = loadScanStudioPrefs();
+  assert.equal(prefs.timeframe, "daily");
+  assert.equal(prefs.universe_preset, "nasdaq100");
+  assert.equal(prefs.tickersText, "AAPL");
+  assert.deepEqual(prefs.strategy_ids, ["trend_breakout"]);
+  assert.ok(store.has(SCAN_STUDIO_PREFS_KEY));
+  const saved = JSON.parse(store.get(SCAN_STUDIO_PREFS_KEY));
+  assert.deepEqual(saved.strategy_ids, ["trend_breakout"]);
+});
+
+test("loadScanStudioPrefs prefers v2 over a leftover v1 select-all blob", () => {
+  store.set(
+    LEGACY_SCAN_STUDIO_PREFS_KEY,
+    JSON.stringify({
+      timeframe: "daily",
+      universe_preset: "sp1500",
+      strategy_ids: ["trend_breakout", "pullback"],
+      tickersText: "",
+    }),
+  );
+  store.set(
+    SCAN_STUDIO_PREFS_KEY,
+    JSON.stringify({
+      timeframe: "weekly",
+      universe_preset: "focused",
+      strategy_ids: ["weekly_swing"],
+      tickersText: "",
+    }),
+  );
+  const prefs = loadScanStudioPrefs();
+  assert.equal(prefs.timeframe, "weekly");
+  assert.deepEqual(prefs.strategy_ids, ["weekly_swing"]);
+  assert.equal(prefs.universe_preset, "focused");
 });
