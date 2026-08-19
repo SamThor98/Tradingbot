@@ -21,6 +21,8 @@ export function createOperationsController(ctx) {
     updateScanModeHelperText,
     renderScanRows,
     bindScanSortHandlers,
+    bindScanStudio,
+    loadScanCatalog,
     closeQueueScanDialog,
     confirmQueueScanDialog,
     submitManualPendingTrade,
@@ -61,6 +63,8 @@ export function createOperationsController(ctx) {
       renderScanRows(Array.isArray(rows) ? rows : []);
     });
     bindScanSortHandlers();
+    bindScanStudio?.();
+    void loadScanCatalog?.();
     bindEvent("pendingFilter", "change", refreshPending);
     bindEvent("pendingSort", "change", refreshPending);
     document.getElementById("clearPendingBtn")?.addEventListener("click", async () => {

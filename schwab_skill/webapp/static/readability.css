@@ -4164,6 +4164,26 @@ body[data-theme="editorial"] .scan-title-meta {
   min-width: 0;
 }
 
+body[data-theme="editorial"] .scan-studio {
+  background: color-mix(in srgb, var(--ol-surface, #fffefb) 88%, var(--ol-gold, #c9a962) 12%);
+  border-color: color-mix(in srgb, var(--ol-accent, #1a3a2e) 18%, transparent);
+}
+
+body[data-theme="editorial"] .scan-studio-tf.is-active,
+body[data-theme="editorial"] .scan-studio-strategy.is-selected {
+  background: color-mix(in srgb, var(--ol-accent, #1a3a2e) 8%, var(--ol-surface, #fffefb));
+  border-color: color-mix(in srgb, var(--ol-accent, #1a3a2e) 45%, transparent);
+}
+
+body[data-theme="editorial"] .scan-studio-strategy-desc,
+body[data-theme="editorial"] .scan-strategy-tf {
+  color: var(--ol-muted, #5a5a5a);
+}
+
+body[data-theme="editorial"] .scan-studio-note {
+  color: var(--ol-warn, #8a5c1f);
+}
+
 body[data-theme="editorial"] .operate-kanban {
   overflow: hidden !important;
 }

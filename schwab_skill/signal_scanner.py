@@ -97,39 +97,57 @@ def _apply_universe_focus(skill_dir: Path, watchlist: list[str]) -> list[str]:
         return watchlist
 
 
-def _load_watchlist(skill_dir: Path) -> list[str]:
+def _load_watchlist(skill_dir: Path, universe_preset: str | None = None) -> list[str]:
     """
-    Load the canonical scan universe.
+    Load the scan universe.
 
     Default behavior is strict SP1500 (S&P 500 + 400 + 600) sourced via
-    watchlist_loader and refreshed daily. Static/custom env watchlist paths are
-    intentionally ignored for normal scan runs.
+    watchlist_loader and refreshed daily. Named presets (sp500, nasdaq100,
+    sector_etfs, focused) dispatch through watchlist_loader.load_universe.
 
-    When SIGNAL_UNIVERSE_MODE=focused (set in .env or via API
-    strategy_overrides), the SP1500 list is narrowed to
-    SIGNAL_UNIVERSE_TARGET_SIZE tickers via prefilter_watchlist for a fast
-    backtest / smoke-test. Default mode "broad" returns the full universe
-    untouched and is what the dashboard's Run Scan button uses.
+    When SIGNAL_UNIVERSE_MODE=focused (set in .env, via API strategy_overrides,
+    or universe_preset="focused"), an SP1500 list is narrowed to
+    SIGNAL_UNIVERSE_TARGET_SIZE tickers via prefilter_watchlist.
 
-    To scan an entirely different universe, callers must provide an explicit
+    To scan an arbitrary ticker list, callers must provide an explicit
     watchlist_override (for example, API universe_mode="tickers").
     """
-    from watchlist_loader import load_full_watchlist
+    from watchlist_loader import load_full_watchlist, load_universe
 
-    wl = load_full_watchlist()
-    focused = _apply_universe_focus(skill_dir, wl)
-    if len(focused) == len(wl):
-        LOG.info(
-            "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
-            len(wl),
-        )
-    else:
-        LOG.info(
-            "Watchlist mode=sp1500_focused (SIGNAL_UNIVERSE_MODE=focused) tickers=%d (from %d)",
-            len(focused),
-            len(wl),
-        )
-    return focused
+    preset = str(universe_preset or "sp1500").strip().lower() or "sp1500"
+    if preset in {"sp1500", "watchlist"}:
+        wl = load_full_watchlist()
+        focused = _apply_universe_focus(skill_dir, wl)
+        if len(focused) == len(wl):
+            LOG.info(
+                "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
+                len(wl),
+            )
+        else:
+            LOG.info(
+                "Watchlist mode=sp1500_focused (SIGNAL_UNIVERSE_MODE=focused) tickers=%d (from %d)",
+                len(focused),
+                len(wl),
+            )
+        return focused
+
+    if preset == "focused":
+        wl = load_full_watchlist()
+        from watchlist_loader import prefilter_watchlist
+
+        try:
+            from config import get_signal_universe_target_size
+
+            target = max(20, int(get_signal_universe_target_size(skill_dir)))
+        except Exception:
+            target = 250
+        focused = prefilter_watchlist(wl, max_tickers=target, include_etf_hints=True)
+        LOG.info("Watchlist mode=sp1500_focused (universe_preset=focused) tickers=%d (from %d)", len(focused), len(wl))
+        return focused
+
+    wl = load_universe(preset)
+    LOG.info("Watchlist mode=universe_%s tickers=%d", preset, len(wl))
+    return wl
 
 
 def _quality_metrics_path(skill_dir: Path) -> Path:
@@ -2625,6 +2643,7 @@ def scan_for_signals_detailed(
     watchlist_override: list[str] | None = None,
     *,
     capture_shortlist: list[dict[str, Any]] | None = None,
+    universe_preset: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Like scan_for_signals, but also returns lightweight diagnostics counters.
@@ -2655,6 +2674,7 @@ def scan_for_signals_detailed(
                 env_overrides=None,
                 watchlist_override=watchlist_override,
                 capture_shortlist=capture_shortlist,
+                universe_preset=universe_preset,
             )
 
     from notifier import send_alert
@@ -3162,17 +3182,23 @@ def scan_for_signals_detailed(
     if watchlist_override is not None:
         watchlist = [str(t).strip().upper() for t in watchlist_override if str(t).strip()]
         diagnostics["watchlist_source"] = "explicit_tickers_override"
+        diagnostics["universe_preset"] = "custom"
     else:
-        watchlist = _load_watchlist(skill_dir)
+        preset = str(universe_preset or "sp1500").strip().lower() or "sp1500"
+        watchlist = _load_watchlist(skill_dir, universe_preset=preset)
         try:
             from config import get_signal_universe_mode
 
             universe_mode = get_signal_universe_mode(skill_dir)
         except Exception:
             universe_mode = "broad"
-        diagnostics["watchlist_source"] = (
-            "sp1500_focused" if universe_mode == "focused" else "sp1500_default"
-        )
+        if preset == "focused" or (preset in {"sp1500", "watchlist"} and universe_mode == "focused"):
+            diagnostics["watchlist_source"] = "sp1500_focused"
+        elif preset in {"sp1500", "watchlist"}:
+            diagnostics["watchlist_source"] = "sp1500_default"
+        else:
+            diagnostics["watchlist_source"] = f"universe_{preset}"
+        diagnostics["universe_preset"] = preset if preset != "watchlist" else "sp1500"
     diagnostics["watchlist_size"] = len(watchlist)
     try:
         from earnings_signal import maybe_warm_earnings_for_scan

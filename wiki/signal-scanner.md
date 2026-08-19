@@ -57,6 +57,7 @@ Every scan returns `(signals, diagnostics)` with counters: `stage2_fail`, `vcp_f
 - [[mirofish-engine]] — Stage B persona simulation
 - [[prediction-market]] — Stage B prediction-market overlay
 - [[backtest]] — historical replay that reuses these same Stage A/B rules
+- [[scan-catalog]] — timeframe / universe picker in front of this pipeline
 - [[feature-store]] — every emitted signal is recorded here
 
 ---

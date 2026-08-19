@@ -195,6 +195,12 @@ def apply_strategy_ensemble(
             "top_shadow": top_shadow,
             "regime_bucket": regime_bucket,
         }
+        try:
+            from core.scan_catalog import catalog_fields_for_signal
+
+            enriched["strategy_attribution"].update(catalog_fields_for_signal(enriched))
+        except Exception:
+            pass
         out.append(enriched)
     return out
 

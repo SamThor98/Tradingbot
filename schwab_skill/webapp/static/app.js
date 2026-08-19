@@ -34,6 +34,7 @@ import {
   applyRankExplainModeSelection,
   setRankExplainMode,
 } from "./panels/scanTable.js";
+import { bindScanStudio, loadScanCatalog, readScanStudioBody, scanStudioProgressLabel } from "./panels/scanStudio.js";
 import {
   configureApproveDialog,
   openApproveDialog,
@@ -1287,7 +1288,7 @@ async function initSupabaseAuth(url, anonKey) {
 
 function formatStrategySummary(summary = null) {
   if (!summary || typeof summary !== "object") return "";
-  const dominant = formatStrategyLabel(summary.dominant_live_strategy || "");
+  const dominant = formatStrategyLabel(summary.dominant_live_strategy || "", state.scanCatalog);
   const total = safeNum(summary.total_ranked, 0);
   const count = safeNum(summary.dominant_count, 0);
   if (!dominant || dominant === "—" || total <= 0 || count <= 0) return "";
@@ -1297,7 +1298,7 @@ function formatStrategySummary(summary = null) {
 function updateTopStrategyChip(summary = null) {
   const el = document.getElementById("scanTopStrategy");
   if (!el) return;
-  const dominant = formatStrategyLabel(summary?.dominant_live_strategy || "—");
+  const dominant = formatStrategyLabel(summary?.dominant_live_strategy || "—", state.scanCatalog);
   const total = safeNum(summary?.total_ranked, 0);
   const count = safeNum(summary?.dominant_count, 0);
   if (dominant === "—" || total <= 0 || count <= 0) {
@@ -3573,14 +3574,17 @@ async function runAblationCycle() {
   }
 }
 
-const SCAN_START_META = "Scanning S&P 1500 candidates…";
 let localScanPollActive = false;
 let resumedLocalScanJobId = null;
 
 function readScanOptionsFromForm() {
-  // Advanced JSON scan options were removed from the dashboard UI.
-  // Scans always use server defaults (S&P 1500) unless another path sets state.scanRunOptions.
-  state.scanRunOptions = null;
+  const studio = readScanStudioBody();
+  if (studio.error) {
+    showToast(studio.error, "error", 4000);
+    updateActionCenter({ title: "Scan options", message: studio.error, severity: "warn" });
+    return false;
+  }
+  state.scanRunOptions = studio.body && typeof studio.body === "object" ? studio.body : {};
   return true;
 }
 
@@ -3852,12 +3856,14 @@ async function waitForSaaScanCompletion(taskId) {
 async function runScan() {
   const btn = document.getElementById("scanBtn");
   const scanMetaEl = document.getElementById("scanMeta");
+  if (!readScanOptionsFromForm()) return;
+  const scanStartMeta = scanStudioProgressLabel();
   const mode = getScanMode();
   const profile = getScanModeProfile(mode);
   btn.disabled = true;
   btn.textContent = "Scanning...";
   setJobProgress("scanJobProgress", "scanJobProgressLabel", 0, "");
-  setLoading({ scan: SCAN_START_META });
+  setLoading({ scan: scanStartMeta });
   setScanStatusLoading(
     "Scan running.",
     `${profile.label} mode · score >= ${profile.minScore} · volume >= ${profile.minVolumeRatio.toFixed(1)}.`,
@@ -3877,7 +3883,6 @@ async function runScan() {
     });
   }
   try {
-    if (!readScanOptionsFromForm()) return;
     const baseScanBody =
       state.scanRunOptions && typeof state.scanRunOptions === "object"
         ? state.scanRunOptions
@@ -3954,7 +3959,7 @@ async function runScan() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Run Scan";
-    if (scanMetaEl && scanMetaEl.textContent === SCAN_START_META) {
+    if (scanMetaEl && scanMetaEl.textContent === scanStartMeta) {
       scanMetaEl.textContent = "No scan run yet.";
       setOperationsStatusStrip(
         "scanStatusStrip",
@@ -4512,6 +4517,8 @@ function buildScreenControllers() {
     updateScanModeHelperText,
     renderScanRows,
     bindScanSortHandlers,
+    bindScanStudio,
+    loadScanCatalog,
     closeQueueScanDialog,
     confirmQueueScanDialog,
     submitManualPendingTrade,

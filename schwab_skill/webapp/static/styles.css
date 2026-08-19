@@ -6937,6 +6937,133 @@ html, body {
   align-items: center;
 }
 
+.scan-studio {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.6);
+}
+
+.scan-studio-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.scan-studio-tf-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scan-studio-tf {
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.scan-studio-tf.is-active {
+  border-color: rgba(26, 58, 46, 0.7);
+  background: rgba(26, 58, 46, 0.08);
+  font-weight: 600;
+}
+
+.scan-studio-strategies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.55rem;
+}
+
+.scan-studio-strategy {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.scan-studio-strategy.is-selected {
+  border-color: rgba(26, 58, 46, 0.55);
+  background: rgba(26, 58, 46, 0.05);
+}
+
+.scan-studio-strategy.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.scan-studio-strategy-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.scan-studio-strategy-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.scan-studio-strategy-desc {
+  font-size: 0.78rem;
+  color: #5a5a5a;
+  line-height: 1.35;
+}
+
+.scan-studio-status {
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.scan-studio-universe {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.scan-studio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 28rem;
+}
+
+.scan-studio-note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #8a5c1f;
+}
+
+.scan-strategy-label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.scan-strategy-tf {
+  font-size: 0.68rem;
+  text-transform: capitalize;
+  color: #5a5a5a;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  padding: 0 0.35rem;
+}
+
 .scan-list-header {
   display: flex;
   align-items: center;

@@ -744,6 +744,14 @@ def public_config() -> ApiResponse:
     return _ok(data)
 
 
+@app.get("/api/scan-catalog", response_model=ApiResponse)
+def scan_catalog() -> ApiResponse:
+    """Timeframes, strategy descriptions, and scan universe presets for the dashboard studio."""
+    from core.scan_catalog import build_scan_catalog_payload
+
+    return _ok(build_scan_catalog_payload())
+
+
 @app.get("/api/runtime-contract", response_model=ApiResponse)
 def runtime_contract() -> ApiResponse:
     return _ok(

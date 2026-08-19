@@ -96,6 +96,10 @@ export const state = {
   systemLane: "ready",
   /** Last full diagnostics dict from the most recent scan (for funnel re-render). */
   lastScanDiagnostics: null,
+  /** Scan studio catalog from GET /api/scan-catalog (timeframes, strategies, universes). */
+  scanCatalog: null,
+  /** Operator scan-studio prefs (timeframe, universe, strategy_ids). */
+  scanStudioPrefs: null,
   /** Presentation mode for rank explainers in scan tables:
    *  - tooltip: compact score + "?" hover details
    *  - inline: score with short inline rationale text */
@@ -111,4 +115,5 @@ export const UI_VIEW_MODE_KEY = "tradingbot.ui.view_mode";
 export const AUTH_TOKEN_KEY = "tradingbot.jwt";
 export const LEGACY_AUTH_TOKEN_KEYS = ["supabasetoken", "supabaseToken", "supabase_token"];
 export const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
+export const SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio";
 export const NOTIF_STORAGE_KEY = "tradingbot.notifications";

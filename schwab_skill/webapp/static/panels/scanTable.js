@@ -24,6 +24,7 @@ import {
   formatDecimal,
   pct,
   formatStrategyLabel,
+  strategyCatalogEntry,
 } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import {
@@ -388,9 +389,19 @@ function renderTickerCell(row = {}, rawSig = {}) {
 }
 
 function renderStrategyCell(row = {}) {
-  const label = formatStrategyLabel(row?.strategy_attribution?.top_live || "");
+  const attr = row?.strategy_attribution || {};
+  const rawId = attr.top_live || attr.catalog_id || "";
+  const label = formatStrategyLabel(rawId, state.scanCatalog);
   if (!label || label === "—") return `<span class="muted">—</span>`;
-  return `<span class="scan-strategy-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+  const entry = strategyCatalogEntry(rawId, state.scanCatalog);
+  const timeframe = safeText(attr.timeframe || entry?.timeframe || "");
+  const desc = safeText(attr.description || entry?.description || label);
+  const tfBit = timeframe ? `${timeframe} · ` : "";
+  const title = `${tfBit}${desc}`;
+  const tfChip = timeframe
+    ? `<span class="scan-strategy-tf">${escapeHtml(timeframe)}</span>`
+    : "";
+  return `<span class="scan-strategy-label" title="${escapeHtml(title)}">${escapeHtml(label)}${tfChip}</span>`;
 }
 
 function renderVolCell(row = {}) {
@@ -495,8 +506,13 @@ function getScanSortValue(rawSig, field) {
       return getScanSourceRank(row);
     case "flagged_days":
       return optionalNum(row.flagged_days ?? row.days_flagged);
-    case "strategy":
-      return safeText(formatStrategyLabel(row?.strategy_attribution?.top_live || "")).toLowerCase() || null;
+    case "strategy": {
+      const attr = row?.strategy_attribution || {};
+      const tf = safeText(attr.timeframe || "").toLowerCase();
+      const tfRank = { intraday: "0", daily: "1", weekly: "2", monthly: "3" }[tf] || "9";
+      const label = safeText(formatStrategyLabel(attr.top_live || attr.catalog_id || "", state.scanCatalog)).toLowerCase();
+      return label ? `${tfRank}:${label}` : null;
+    }
     case "volume_ratio":
       return optionalNum(row.volume_ratio);
     case "price":

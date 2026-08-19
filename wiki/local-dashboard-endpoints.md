@@ -14,7 +14,8 @@ tags: [api, local, endpoints]
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health/deep` | Full health: DB, tokens, quotes |
-| POST | `/api/scan` | Trigger scan |
+| GET | `/api/scan-catalog` | Timeframes, strategy descriptions, named universes |
+| POST | `/api/scan` | Trigger scan (`universe_preset`, `scan_timeframe`, `strategy_ids` optional) |
 | GET | `/api/scan/status` | Current/last scan status + signals |
 | GET | `/api/check/{ticker}` | Quick technical check |
 | GET | `/api/report/{ticker}` | Full multi-section report |
@@ -42,6 +43,7 @@ tags: [api, local, endpoints]
 - [[webapp-dashboard]] — architecture overview
 - [[saas-endpoints]] — SaaS equivalent
 - [[tenant-dashboard-endpoints]] — per-tenant routes
+- [[scan-catalog]] — `/api/scan-catalog` payload
 
 ---
 

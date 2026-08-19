@@ -38,6 +38,7 @@ tags: [strategy, technical]
 - [[vcp-detection]] — next filter after Stage 2
 - [[signal-scanner]] — Stage A first-pass filter
 - [[scanner-tunables]] — env var reference
+- [[scan-catalog]] — dashboard grouping of this sleeve as "Stage 2 / VCP breakout"
 
 ---
 

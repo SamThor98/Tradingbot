@@ -1,7 +1,7 @@
 ---
 source: n/a (wiki catalog)
 created: 2026-04-30
-updated: 2026-07-27
+updated: 2026-08-19
 tags: [wiki, index, catalog]
 ---
 
@@ -47,6 +47,7 @@ tags: [wiki, index, catalog]
 
 ## Trading Strategies
 
+- [[scan-catalog]] — Timeframe grouping, strategy descriptions, and named scan universes
 - [[stage-2-analysis]] — Weinstein Stage 2 trend qualification
 - [[vcp-detection]] — Volume Contraction Pattern identification
 - [[sector-strength]] — Relative sector performance filter

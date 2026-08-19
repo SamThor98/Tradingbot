@@ -21,6 +21,7 @@ import {
   formatCents,
   formatSignedDelta,
   formatDecimal,
+  formatStrategyLabel,
 } from "../../webapp/static/modules/format.js";
 
 test("safeText renders em-dash for null/undefined and stringifies everything else", () => {
@@ -120,4 +121,15 @@ test("formatDecimal honors digits and fallback", () => {
   assert.equal(formatDecimal(12.345, 2), "12.35");
   assert.equal(formatDecimal("nope"), "—");
   assert.equal(formatDecimal(undefined, 1, "n/a"), "n/a");
+});
+
+test("formatStrategyLabel uses catalog display names when provided", () => {
+  const catalog = {
+    strategies: [
+      { id: "trend_breakout", display_name: "Stage 2 / VCP breakout", match_ids: ["breakout"] },
+    ],
+  };
+  assert.equal(formatStrategyLabel("trend_breakout", catalog), "Stage 2 / VCP breakout");
+  assert.equal(formatStrategyLabel("breakout", catalog), "Stage 2 / VCP breakout");
+  assert.equal(formatStrategyLabel("momentum_stage2"), "Momentum stage 2");
 });

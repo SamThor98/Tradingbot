@@ -38,6 +38,7 @@ tags: [strategy, technical]
 - [[stage-2-analysis]] — prerequisite for VCP
 - [[signal-scanner]] — VCP is second filter in Stage A
 - [[scanner-tunables]] — env var reference
+- [[scan-catalog]] — VCP described as part of the live daily breakout sleeve
 
 ---
 

@@ -171,7 +171,8 @@
           <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Auth check</span>
         </div>
         <nav class="mode-header-anchors section-nav tab-landing-anchors" aria-label="In-mode navigation">
-          <a href="#scanSection" data-nav-screens="operations">Run scan</a>
+              <a href="#scanSection" data-nav-screens="operations">Run scan</a>
+              <a href="#scanStudioPanel" data-nav-screens="operations">Scan studio</a>
           <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
           <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
           <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
@@ -365,6 +366,7 @@
           </div>
           <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
+          <section id="scanStudioPanel" class="scan-studio" aria-label="Scan studio"></section>
           <div id="shadowWorkbenchTeaser" class="shadow-workbench-teaser hidden" aria-live="polite"></div>
           <section id="peadCanarySection" class="pead-canary-card operations-surface" aria-label="PEAD canary sleeve" data-state="empty">
             <div class="pead-canary-head">
@@ -1719,10 +1721,10 @@
               <div class="form-row">
                 <label class="field-label" for="btUniverse">Universe</label>
                 <select id="btUniverse" aria-describedby="btUniverseHint">
-                  <option value="watchlist">Saved watchlist</option>
+                  <option value="watchlist">S&amp;P 1500 (default)</option>
                   <option value="tickers">Custom tickers</option>
                 </select>
-                <span id="btUniverseHint" class="muted form-hint">Watchlist uses symbols from your saved settings.</span>
+                <span id="btUniverseHint" class="muted form-hint">Default is the live S&amp;P 1500 list. Custom tickers are capped (default 40).</span>
               </div>
               <div class="form-row" id="btTickersRow">
                 <label class="field-label" for="btTickers">Tickers</label>
@@ -1913,14 +1915,14 @@
             <div id="scMessages" class="chat-log-scroll" role="log" aria-live="polite"></div>
             <div id="scEmptyChips" class="preset-row chat-chips" aria-label="Example prompts">
               <span class="field-label">Try</span>
-              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 5 years, skip MiroFish for speed.">
-                Watchlist · 5y · fast
+              <button type="button" class="btn small secondary sc-chip" data-text="S&amp;P 1500, last 5 years, skip MiroFish for speed.">
+                5y S&amp;P 1500, skip MiroFish
               </button>
               <button type="button" class="btn small secondary sc-chip" data-text="Tickers AAPL MSFT GOOGL, last 3 years, soft quality gates.">
                 Custom tickers · 3y
               </button>
-              <button type="button" class="btn small secondary sc-chip" data-text="Saved watchlist, last 8 years, use account defaults for gates.">
-                Watchlist · 8y · defaults
+              <button type="button" class="btn small secondary sc-chip" data-text="S&amp;P 1500, last 8 years, use account defaults for gates.">
+                8y S&amp;P 1500, default gates
               </button>
             </div>
             <div id="scQueueCallout" class="callout callout-info hidden" aria-live="polite"></div>

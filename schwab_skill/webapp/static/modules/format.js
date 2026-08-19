@@ -228,9 +228,18 @@ export function unknown() {
  * "momentum_stage2" → "Momentum stage 2"; "vcp_breakout" → "VCP breakout".
  * Em-dash / empty pass through as "—".
  */
-export function formatStrategyLabel(value) {
+export function formatStrategyLabel(value, catalog) {
   const raw = safeText(value || "").trim();
   if (!raw || raw === "—") return "—";
+  const cat = catalog && typeof catalog === "object" ? catalog : null;
+  const rows = Array.isArray(cat?.strategies) ? cat.strategies : [];
+  const key = raw.toLowerCase();
+  const hit = rows.find((s) => {
+    if (String(s.id || "").toLowerCase() === key) return true;
+    const aliases = Array.isArray(s.match_ids) ? s.match_ids : [];
+    return aliases.some((a) => String(a).toLowerCase() === key);
+  });
+  if (hit?.display_name) return String(hit.display_name);
   const spaced = raw
     .replace(/[_-]+/g, " ")
     .replace(/([A-Za-z])(\d+)/g, "$1 $2")
@@ -246,4 +255,17 @@ export function formatStrategyLabel(value) {
       return lower;
     })
     .join(" ");
+}
+
+export function strategyCatalogEntry(value, catalog) {
+  const raw = safeText(value || "").trim().toLowerCase();
+  if (!raw || raw === "—") return null;
+  const rows = Array.isArray(catalog?.strategies) ? catalog.strategies : [];
+  return (
+    rows.find((s) => {
+      if (String(s.id || "").toLowerCase() === raw) return true;
+      const aliases = Array.isArray(s.match_ids) ? s.match_ids : [];
+      return aliases.some((a) => String(a).toLowerCase() === raw);
+    }) || null
+  );
 }

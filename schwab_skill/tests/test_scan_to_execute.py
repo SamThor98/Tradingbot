@@ -522,6 +522,15 @@ class TestHealthAndStatus:
         assert contract["sse_enabled"] is True
         assert contract["api_envelope"] == "ApiResponse"
 
+    def test_scan_catalog(self, client: TestClient):
+        resp = client.get("/api/scan-catalog")
+        data = resp.json()
+        assert data["ok"] is True
+        catalog = data["data"]
+        assert [t["id"] for t in catalog["timeframes"]] == ["intraday", "daily", "weekly", "monthly"]
+        assert any(s["id"] == "trend_breakout" for s in catalog["strategies"])
+        assert any(u["id"] == "nasdaq100" and u["available"] for u in catalog["universes"])
+
     def test_static_pages(self, client: TestClient):
         resp = client.get("/")
         assert resp.status_code == 200

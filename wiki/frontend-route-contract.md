@@ -58,6 +58,7 @@ Default landing: `operations` (Today).
 | Alias | Canonical id | Screen |
 |-------|--------------|--------|
 | `scan`, `candidates` | `scanSection` | operations |
+| `scanstudio`, `scan-studio` | `scanStudioPanel` | operations |
 | `peadcanary`, `canary`, `pead-canary` | `peadCanarySection` | operations |
 | `pending`, `queue`, `approvals`, `trades` | `pendingSection` | operations |
 | `workflow` | `workflowPrimary` | operations |
@@ -96,6 +97,7 @@ compatibility; they are hidden. Prefer canonical section ids in new links.
 - [[ux-kpi-baseline]] — KPI events keyed to screen views
 - [[static-module-layout]] — frontend module map including `router.js`
 - [[webapp-dashboard]] — dashboard overview
+- [[scan-catalog]] — `?section=scanstudio` Scan studio
 
 ---
 

@@ -448,10 +448,18 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
         ? "SP1500 focused (smaller sample)"
         : watchlistSource === "sp1500_default"
           ? "S&P 1500 (full universe)"
-          : "default universe";
+          : watchlistSource === "universe_sp500"
+            ? "S&P 500"
+            : watchlistSource === "universe_nasdaq100"
+              ? "Nasdaq-100"
+              : watchlistSource === "universe_sector_etfs"
+                ? "sector ETFs"
+                : watchlistSource.startsWith("universe_")
+                  ? watchlistSource.replace("universe_", "").replaceAll("_", " ")
+                  : "default universe";
   const watchlistTooltip =
     `Total tickers scanned: ${nWatchlist}. Source: ${watchlistSourceLabel}. ` +
-    "Run Scan covers the S&P 1500. Use focused universe in settings to scan a smaller sample.";
+    "Choose a universe in Scan studio (S&P 1500, S&P 500, Nasdaq-100, sector ETFs, or custom tickers).";
 
   const stages = [
     {

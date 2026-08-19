@@ -15,6 +15,7 @@ tags: [api, saas, endpoints]
 |--------|------|------|-------------|
 | GET | `/api/auth/session` | JWT | Current session |
 | POST | `/api/credentials/schwab` | JWT | Upload Schwab tokens |
+| GET | `/api/scan-catalog` | None | Timeframes, strategy descriptions, named universes |
 | POST | `/api/scan` | JWT | Queue async scan (Celery) |
 | GET | `/api/scan/{task_id}` | JWT | Poll scan status |
 | GET | `/api/positions` | JWT | Current positions |
@@ -28,6 +29,7 @@ tags: [api, saas, endpoints]
 - [[saas-api]] — architecture overview
 - [[tenant-dashboard-endpoints]] — per-tenant router
 - [[local-dashboard-endpoints]] — local equivalent
+- [[scan-catalog]] — `/api/scan-catalog` on SaaS too
 
 ---
 

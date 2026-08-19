@@ -73,6 +73,7 @@ webapp/static/
    ├─ profile.js                  preset/profile panel + apply-preview diff
    ├─ performance.js              backtest/shadow/live + challenger + evolve cards
    ├─ strategyChat.js             chat bubble renderer + queue callout + send loop
+   ├─ scanStudio.js               timeframe tabs, strategy descriptions, universe picker
    ├─ decisionDashboard.js        executive reliability/quality/readiness render card
    └─ backtest.js                 form persistence, queue, polling, results, hub tabs
 ```
@@ -83,7 +84,7 @@ webapp/static/
 
 Exports the singleton `state` object and the localStorage namespace
 constants (`UI_VIEW_MODE_KEY`, `AUTH_TOKEN_KEY`, `LEGACY_AUTH_TOKEN_KEYS`,
-`BACKTEST_PREFS_KEY`, `NOTIF_STORAGE_KEY`). Keep `state` shallow and
+`BACKTEST_PREFS_KEY`, `SCAN_STUDIO_PREFS_KEY`, `NOTIF_STORAGE_KEY`). Keep `state` shallow and
 JSON-ish — a future migration to a real store should stay tractable.
 
 ### `format.js`
@@ -283,6 +284,7 @@ is a separate effort.
 - [[webapp-dashboard]] — Backend that serves these static files.
 - [[saas-api]] — Multi-tenant variant that shares the same static bundle.
 - [[plugin-modes]] — Many of the toggles surfaced in the dashboard.
+- [[scan-catalog]] — `panels/scanStudio.js` timeframe + universe picker
 
 ---
 

@@ -15,6 +15,8 @@ export const GLOSSARY = Object.freeze({
   PF: "Profit factor: gross wins divided by gross losses. Promotion gate: mean at or above 1.20, worst era at or above 1.00.",
   VCP: "Volatility contraction pattern: price range tightens on falling volume before a potential breakout.",
   "Stage 2": "Uptrend phase in Weinstein stage analysis: price above rising long-term moving averages.",
+  PEAD: "Post-earnings announcement drift: stocks that beat (or miss) earnings often keep drifting in that direction.",
+  pullback: "A dip toward a rising moving average inside an uptrend, used as an alternate entry to a fresh breakout.",
   ECE: "Expected calibration error: how far predicted probabilities drift from realized hit rates.",
   SLO: "Service-level objective: the reliability target for scans and data feeds.",
   shadow: "Shadow mode: the plugin computes decisions for comparison but never affects live orders.",

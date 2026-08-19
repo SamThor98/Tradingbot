@@ -59,6 +59,7 @@ backtest-only (not wired into `execution.py`) for the same reason.
 - [[execution-engine]] — plugins hook into execution flow
 - [[canary-rollout]] — canary process
 - [[plugin-modes-config]] — full env var reference
+- [[scan-catalog]] — Scan studio can filter shadow sleeves without promoting them to LIVE
 
 ---
 

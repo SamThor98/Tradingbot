@@ -72,6 +72,8 @@ EXPECTED_ALIASES = {
     "trades": "pendingSection",
     "scan": "scanSection",
     "candidates": "scanSection",
+    "scanstudio": "scanStudioPanel",
+    "scan-studio": "scanStudioPanel",
     "peadcanary": "peadCanarySection",
     "canary": "peadCanarySection",
     "pead-canary": "peadCanarySection",

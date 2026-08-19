@@ -34,7 +34,7 @@ Display modes: Simple / Standard / Pro (`?display=` or header selector). Simple 
 | Group | Example | Auth |
 |-------|---------|------|
 | Health | `GET /api/health/deep` | None |
-| Scanning | `POST /api/scan`, `GET /api/scan/status` | Optional API key |
+| Scanning | `GET /api/scan-catalog`, `POST /api/scan`, `GET /api/scan/status` | Catalog is public; scan is optional API key |
 | Research | `GET /api/check/{ticker}`, `GET /api/report/{ticker}` | None |
 | SEC | `GET /api/sec/analyze/{ticker}`, `GET /api/sec/compare` | None |
 | Portfolio | `GET /api/portfolio`, `GET /api/sectors` | None |
@@ -57,6 +57,7 @@ All API routes return `ApiResponse(ok, data, error)` via `_ok()` / `_err()` help
 - [[section-migration-map]] — locked section layout
 - [[portfolio-book]] — Book sub-tab (calendar, tax, journal)
 - [[local-dashboard-endpoints]] — full endpoint reference
+- [[scan-catalog]] — Scan studio timeframes, descriptions, universes
 - [[tenant-dashboard-endpoints]] — SaaS per-tenant routes
 - [[system-overview]] — architecture context
 

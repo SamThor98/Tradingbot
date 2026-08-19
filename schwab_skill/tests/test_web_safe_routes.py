@@ -12,7 +12,9 @@ def test_safe_route_inventory_contains_only_read_like_paths() -> None:
         assert "/approve" not in lowered
         assert "/reject" not in lowered
         assert "/delete" not in lowered
-        assert "/scan" not in lowered
+        # Live scan POST lives at /api/scan; the catalog GET is a cheap read.
+        assert path.rstrip("/") != "/api/scan"
+        assert not lowered.startswith("/api/scan/")
         assert "/billing" not in lowered
         assert "/oauth/" not in lowered
 

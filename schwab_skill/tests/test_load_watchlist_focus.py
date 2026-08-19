@@ -6,7 +6,7 @@ When SIGNAL_UNIVERSE_MODE=focused + SIGNAL_UNIVERSE_TARGET_SIZE=N is set
 the SP1500 to N tickers via prefilter_watchlist. After commit `8ff00dc` the
 wiring that honored those env vars was removed, so focused-mode runs
 silently fell back to the full universe. This test pins the restored
-behavior. The dashboard's Run Scan button always uses broad SP1500 mode.
+behavior. Scan studio can also request universe_preset=focused explicitly.
 """
 
 from __future__ import annotations
@@ -83,3 +83,39 @@ def test_load_watchlist_broad_mode_returns_full_universe(tmp_path: Path, monkeyp
 
     wl = signal_scanner._load_watchlist(tmp_path)
     assert len(wl) == len(_FAKE_SP1500)
+
+
+def test_load_watchlist_nasdaq_preset_uses_named_universe(tmp_path: Path, monkeypatch) -> None:
+    import watchlist_loader
+
+    monkeypatch.setattr(watchlist_loader, "load_universe", lambda preset, **__: ["AAPL", "MSFT", "NVDA"])
+    wl = signal_scanner._load_watchlist(tmp_path, universe_preset="nasdaq100")
+    assert wl == ["AAPL", "MSFT", "NVDA"]
+
+
+def test_load_watchlist_focused_preset_narrows_without_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SIGNAL_UNIVERSE_MODE", raising=False)
+    monkeypatch.setenv("SIGNAL_UNIVERSE_TARGET_SIZE", "50")
+    config.clear_env_cache()
+    _patch_load_full(monkeypatch)
+    wl = signal_scanner._load_watchlist(tmp_path, universe_preset="focused")
+    assert len(wl) <= 60
+    assert len(wl) < len(_FAKE_SP1500)
+
+
+def test_load_universe_sector_etfs() -> None:
+    import watchlist_loader
+
+    names = watchlist_loader.load_universe("sector_etfs")
+    assert "SPY" in names
+    assert "XLK" in names
+
+
+def test_load_universe_unknown_raises() -> None:
+    import pytest
+
+    import watchlist_loader
+
+    with pytest.raises(ValueError):
+        watchlist_loader.load_universe("russell2000")
+

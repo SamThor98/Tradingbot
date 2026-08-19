@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.scan_catalog import filter_signals_for_scan_selection
 from signal_scanner import scan_for_signals_detailed
 
 
@@ -28,6 +29,9 @@ def run_scan(
     skill_dir: Path,
     env_overrides: dict[str, str] | None = None,
     watchlist_override: list[str] | None = None,
+    universe_preset: str | None = None,
+    strategy_ids: list[str] | None = None,
+    scan_timeframe: str | None = None,
 ) -> ScanRunResult:
     shortlist: list[dict[str, Any]] = []
     signals, diagnostics = scan_for_signals_detailed(
@@ -35,7 +39,20 @@ def run_scan(
         env_overrides=env_overrides,
         watchlist_override=watchlist_override,
         capture_shortlist=shortlist,
+        universe_preset=universe_preset,
     )
+    selected = [str(s) for s in (strategy_ids or []) if str(s).strip()]
+    if isinstance(diagnostics, dict):
+        diagnostics["scan_timeframe"] = str(scan_timeframe or "daily")
+        diagnostics["strategy_ids_requested"] = list(selected)
+        diagnostics.setdefault("universe_preset", universe_preset or "sp1500")
+        if selected:
+            before = len(signals)
+            signals = filter_signals_for_scan_selection(signals, selected)
+            diagnostics["strategy_id_filter_dropped"] = max(0, before - len(signals))
+            shortlist[:] = filter_signals_for_scan_selection(shortlist, selected)
+        else:
+            diagnostics["strategy_id_filter_dropped"] = 0
     try:
         from core.observability import flush_observability_metrics
 

@@ -12,6 +12,7 @@ SAFE_READ_ROUTE_INVENTORY: dict[str, list[str]] = {
         "/healthz",
         "/api/health",
         "/api/public-config",
+        "/api/scan-catalog",
         "/api/runtime-contract",
     ],
     # SaaS-only liveness/readiness routes. These can be included in read-only
