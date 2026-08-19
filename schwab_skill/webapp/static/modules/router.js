@@ -62,6 +62,8 @@ export const SECTION_ALIASES = Object.freeze({
   queue: "pendingSection",
   approvals: "pendingSection",
   trades: "pendingSection",
+  scan: "scanSection",
+  candidates: "scanSection",
   scanstudio: "scanStudioPanel",
   "scan-studio": "scanStudioPanel",
   peadcanary: "peadCanarySection",
