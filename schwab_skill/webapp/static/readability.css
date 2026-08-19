@@ -4165,23 +4165,181 @@ body[data-theme="editorial"] .scan-title-meta {
 }
 
 body[data-theme="editorial"] .scan-studio {
-  background: color-mix(in srgb, var(--ol-surface, #fffefb) 88%, var(--ol-gold, #c9a962) 12%);
-  border-color: color-mix(in srgb, var(--ol-accent, #1a3a2e) 18%, transparent);
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 12px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--ol-gold) 28%, transparent);
+  padding: var(--ol-space-5) var(--ol-space-5) var(--ol-space-6);
+  gap: var(--ol-space-4);
 }
 
-body[data-theme="editorial"] .scan-studio-tf.is-active,
-body[data-theme="editorial"] .scan-studio-strategy.is-selected {
-  background: color-mix(in srgb, var(--ol-accent, #1a3a2e) 8%, var(--ol-surface, #fffefb));
-  border-color: color-mix(in srgb, var(--ol-accent, #1a3a2e) 45%, transparent);
+body[data-theme="editorial"] .scan-studio-kicker,
+body[data-theme="editorial"] .scan-studio .workspace-eyebrow {
+  margin: 0;
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: var(--ol-text-micro) !important;
+  font-weight: 600 !important;
+}
+
+body[data-theme="editorial"] .scan-studio-title {
+  margin: 0.15rem 0 0;
+  color: var(--ol-text) !important;
+  font-family: "Fraunces", Georgia, serif !important;
+  font-size: var(--ol-text-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+body[data-theme="editorial"] .scan-studio-lede,
+body[data-theme="editorial"] .scan-studio-tf-desc,
+body[data-theme="editorial"] .scan-studio-group-hint {
+  color: var(--ol-muted) !important;
+  font-size: var(--ol-text-caption) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-tf-row {
+  background: var(--ol-surface-soft);
+  border: 1px solid var(--ol-border);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+body[data-theme="editorial"] .scan-studio-tf {
+  color: var(--ol-text-soft);
+  font-weight: 600;
+}
+
+body[data-theme="editorial"] .scan-studio-tf.is-active {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+  box-shadow: inset 0 -2px 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .scan-studio-note {
+  color: var(--ol-warn) !important;
+  background: color-mix(in srgb, var(--ol-warn) 8%, var(--ol-surface));
+  border: 1px solid color-mix(in srgb, var(--ol-warn) 28%, transparent);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font-size: var(--ol-text-caption) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-group--paper {
+  padding-top: var(--ol-space-2);
+  border-top: 1px dashed color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .scan-studio-strategy {
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 10px;
+}
+
+body[data-theme="editorial"] .scan-studio-strategy--yours.is-selected,
+body[data-theme="editorial"] .scan-studio-strategy--primary.is-selected {
+  background: color-mix(in srgb, var(--ol-accent) 8%, var(--ol-surface)) !important;
+  border-color: color-mix(in srgb, var(--ol-accent) 42%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .scan-studio-strategy--paper {
+  background: color-mix(in srgb, var(--ol-bg) 70%, var(--ol-surface)) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-strategy--paper.is-selected {
+  background: color-mix(in srgb, var(--ol-gold) 12%, var(--ol-surface)) !important;
+  border-color: color-mix(in srgb, var(--ol-gold) 55%, var(--ol-border)) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-check {
+  background: var(--ol-surface);
+  border-color: var(--ol-border-strong);
+}
+
+body[data-theme="editorial"] .scan-studio-strategy:has(:focus-visible) {
+  outline: 2px solid var(--ol-accent);
+  outline-offset: 2px;
+}
+
+body[data-theme="editorial"] .scan-studio-strategy-head strong {
+  color: var(--ol-text) !important;
+  font-weight: 650;
 }
 
 body[data-theme="editorial"] .scan-studio-strategy-desc,
 body[data-theme="editorial"] .scan-strategy-tf {
-  color: var(--ol-muted, #5a5a5a);
+  color: var(--ol-muted) !important;
+  font-size: var(--ol-text-caption) !important;
 }
 
-body[data-theme="editorial"] .scan-studio-note {
-  color: var(--ol-warn, #8a5c1f);
+body[data-theme="editorial"] .scan-studio-evidence {
+  color: var(--ol-muted-soft) !important;
+  font-size: var(--ol-text-micro) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-status,
+body[data-theme="editorial"] .scan-studio-origin,
+body[data-theme="editorial"] .scan-studio-primary-chip {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  background: var(--ol-bg);
+  color: var(--ol-muted);
+  border-color: var(--ol-border);
+}
+
+body[data-theme="editorial"] .scan-studio-status--live {
+  background: var(--ol-accent);
+  color: var(--ol-on-accent);
+  border-color: var(--ol-accent);
+}
+
+body[data-theme="editorial"] .scan-studio-status--live_overlay {
+  color: var(--ol-ok);
+  border-color: var(--ol-accent-border);
+  background: color-mix(in srgb, var(--ol-accent) 8%, var(--ol-surface));
+}
+
+body[data-theme="editorial"] .scan-studio-status--shadow {
+  color: var(--ol-ok);
+  border-color: var(--ol-accent-border);
+}
+
+body[data-theme="editorial"] .scan-studio-status--research {
+  border-color: color-mix(in srgb, var(--ol-gold) 55%, var(--ol-border));
+  color: var(--ol-warn);
+}
+
+body[data-theme="editorial"] .scan-studio-origin--iterated {
+  color: var(--ol-ok);
+  border-color: var(--ol-accent-border);
+}
+
+body[data-theme="editorial"] .scan-studio-origin--literature {
+  color: var(--ol-warn);
+  border-color: color-mix(in srgb, var(--ol-gold) 55%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .scan-studio-primary-chip {
+  color: var(--ol-accent);
+  border-color: color-mix(in srgb, var(--ol-gold) 70%, transparent);
+  background: color-mix(in srgb, var(--ol-gold) 16%, var(--ol-surface));
+}
+
+body[data-theme="editorial"] .scan-studio-universe {
+  border-top: 1px solid var(--ol-border);
+  padding-top: var(--ol-space-4);
+}
+
+body[data-theme="editorial"] .scan-studio-field select,
+body[data-theme="editorial"] .scan-studio-field input {
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border-strong) !important;
+  color: var(--ol-text) !important;
+  border-radius: 8px;
+  min-height: 2.25rem;
 }
 
 body[data-theme="editorial"] .operate-kanban {

@@ -23,6 +23,7 @@ const {
   scanStudioProgressLabel,
   primaryStrategyIdForTimeframe,
   loadScanStudioPrefs,
+  scanStudioMarkup,
 } = await import("../../webapp/static/panels/scanStudio.js");
 
 test.beforeEach(() => {
@@ -148,4 +149,24 @@ test("loadScanStudioPrefs prefers v2 over a leftover v1 select-all blob", () => 
   assert.equal(prefs.timeframe, "weekly");
   assert.deepEqual(prefs.strategy_ids, ["weekly_swing"]);
   assert.equal(prefs.universe_preset, "focused");
+});
+
+test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => {
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "pullback", display_name: "Trend pullback", timeframe: "daily", origin: "iterated", status: "shadow", runnable: true },
+    { id: "trend_breakout", display_name: "Stage 2 / VCP breakout", timeframe: "daily", origin: "iterated", status: "live", runnable: true },
+    { id: "st_reversal_5d", display_name: "5-day loser bounce (screen)", timeframe: "daily", origin: "literature", status: "research", runnable: true },
+  ];
+  const html = scanStudioMarkup(state.scanStudioPrefs);
+  assert.match(html, /Scan lens/);
+  assert.match(html, /scan-studio-group--paper/);
+  assert.match(html, /scan-studio-strategy--primary/);
+  assert.match(html, /data-scan-strategy="trend_breakout"[^>]*checked/);
+  assert.match(html, /Literature screens/);
+  const primaryAt = html.indexOf("scan-studio-strategy--primary");
+  const paperAt = html.indexOf("scan-studio-group--paper");
+  assert.ok(primaryAt >= 0 && paperAt > primaryAt);
 });

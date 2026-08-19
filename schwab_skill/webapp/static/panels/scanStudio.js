@@ -159,7 +159,7 @@ function renderTimeframeTabs(prefs) {
   return frames
     .map((tf) => {
       const active = tf.id === prefs.timeframe;
-      return `<button type="button" class="scan-studio-tf${active ? " is-active" : ""}" data-scan-timeframe="${escapeHtml(tf.id)}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(tf.display_name)}</button>`;
+      return `<button type="button" class="scan-studio-tf${active ? " is-active" : ""}" role="tab" data-scan-timeframe="${escapeHtml(tf.id)}" aria-selected="${active ? "true" : "false"}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(tf.display_name)}</button>`;
     })
     .join("");
 }
@@ -193,31 +193,70 @@ function evidenceLine(ev) {
   return `<span class="scan-studio-evidence">${escapeHtml(head)}: ${escapeHtml(citeText)}${caveat ? ` ${escapeHtml(caveat)}` : ""}</span>`;
 }
 
+function isPaperStrategy(row) {
+  return safeText(row?.origin || "").toLowerCase() === "literature";
+}
+
+function renderStrategyCard(row, prefs, primaryId) {
+  const id = String(row.id || "");
+  const selected = new Set(prefs.strategy_ids || []);
+  const checked = selected.has(id);
+  const disabled = row.available === false || row.runnable === false;
+  const paper = isPaperStrategy(row);
+  const status = safeText(row.status || "research").toLowerCase();
+  const mods = [
+    checked ? "is-selected" : "",
+    disabled ? "is-disabled" : "",
+    id === primaryId ? "scan-studio-strategy--primary" : "",
+    paper ? "scan-studio-strategy--paper" : "scan-studio-strategy--yours",
+    status === "live" || status === "live_overlay" ? "scan-studio-strategy--live" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const primaryChip =
+    id === primaryId ? `<span class="scan-studio-primary-chip">Primary</span>` : "";
+  return `<label class="scan-studio-strategy ${mods}">
+      <input class="scan-studio-strategy-input" type="checkbox" data-scan-strategy="${escapeHtml(id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      <span class="scan-studio-check" aria-hidden="true"></span>
+      <span class="scan-studio-strategy-copy">
+        <span class="scan-studio-strategy-head">
+          <strong>${escapeHtml(row.display_name || id)}</strong>
+          ${primaryChip}
+          ${statusChip(row.status)}
+          ${originChip(row.origin)}
+        </span>
+        <span class="scan-studio-strategy-desc">${escapeHtml(row.description || "")}</span>
+        ${evidenceLine(row.evidence)}
+      </span>
+    </label>`;
+}
+
+function renderStrategyGroup(title, hint, rows, prefs, primaryId, extraClass) {
+  if (!rows.length) return "";
+  return `<div class="scan-studio-group${extraClass ? ` ${extraClass}` : ""}">
+      <div class="scan-studio-group-head">
+        <p class="scan-studio-kicker">${escapeHtml(title)}</p>
+        ${hint ? `<p class="muted small scan-studio-group-hint">${escapeHtml(hint)}</p>` : ""}
+      </div>
+      <div class="scan-studio-strategies">${rows.map((row) => renderStrategyCard(row, prefs, primaryId)).join("")}</div>
+    </div>`;
+}
+
 function renderStrategyCards(prefs) {
   const rows = strategiesForTimeframe(prefs.timeframe);
   if (!rows.length) {
     return `<p class="muted small">No strategies in this timeframe yet.</p>`;
   }
-  const selected = new Set(prefs.strategy_ids || []);
-  return rows
-    .map((s) => {
-      const id = String(s.id);
-      const checked = selected.has(id);
-      const disabled = s.available === false || s.runnable === false;
-      return `<label class="scan-studio-strategy${checked ? " is-selected" : ""}${disabled ? " is-disabled" : ""}">
-        <input type="checkbox" data-scan-strategy="${escapeHtml(id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
-        <span class="scan-studio-strategy-copy">
-          <span class="scan-studio-strategy-head">
-            <strong>${escapeHtml(s.display_name || id)}</strong>
-            ${statusChip(s.status)}
-            ${originChip(s.origin)}
-          </span>
-          <span class="scan-studio-strategy-desc">${escapeHtml(s.description || "")}</span>
-          ${evidenceLine(s.evidence)}
-        </span>
-      </label>`;
-    })
-    .join("");
+  const primaryId = primaryStrategyIdForTimeframe(prefs.timeframe);
+  const yours = rows.filter((row) => !isPaperStrategy(row));
+  const paper = rows.filter(isPaperStrategy);
+  yours.sort((a, b) => {
+    if (String(a.id) === primaryId) return -1;
+    if (String(b.id) === primaryId) return 1;
+    return 0;
+  });
+  return `${renderStrategyGroup("Yours", "Iterated sleeves. The primary is this tab’s default.", yours, prefs, primaryId, "")}
+    ${renderStrategyGroup("Paper", "Literature screens — opt-in, not the published books.", paper, prefs, primaryId, "scan-studio-group--paper")}`;
 }
 
 function renderUniverseOptions(prefs) {
@@ -244,37 +283,40 @@ function horizonNote(prefs) {
   return "";
 }
 
+export function scanStudioMarkup(prefs) {
+  const uni = universeRow(prefs.universe_preset);
+  const tf = timeframeRow(prefs.timeframe);
+  const custom = prefs.universe_preset === "custom";
+  return `
+    <div class="scan-studio-head">
+      <p class="scan-studio-kicker workspace-eyebrow">Scan lens</p>
+      <h3 class="scan-studio-title">Scan studio</h3>
+      <p class="muted small scan-studio-lede">One primary per horizon. Paper is opt-in. Live execution stays daily Stage 2 / VCP.</p>
+    </div>
+    <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>
+    <p class="muted small scan-studio-tf-desc">${escapeHtml(tf?.description || "")}</p>
+    ${horizonNote(prefs)}
+    <div class="scan-studio-board" aria-label="Strategies in this timeframe">${renderStrategyCards(prefs)}</div>
+    <div class="scan-studio-universe">
+      <label class="scan-studio-field" for="scanUniverseSelect">
+        <span class="scan-studio-kicker">Universe</span>
+        <select id="scanUniverseSelect">${renderUniverseOptions(prefs)}</select>
+      </label>
+      <p class="muted small" id="scanUniverseHint">${escapeHtml(uni?.description || "")}</p>
+      <label class="scan-studio-field${custom ? "" : " hidden"}" id="scanCustomTickersWrap" for="scanCustomTickers">
+        <span class="scan-studio-kicker">Custom tickers</span>
+        <input id="scanCustomTickers" type="text" placeholder="AAPL, MSFT, NVDA" value="${escapeHtml(prefs.tickersText || "")}" />
+      </label>
+    </div>
+  `;
+}
+
 export function renderScanStudio() {
   const root = document.getElementById("scanStudioPanel");
   if (!root) return;
   const prefs = state.scanStudioPrefs || loadScanStudioPrefs();
   state.scanStudioPrefs = prefs;
-  const uni = universeRow(prefs.universe_preset);
-  const tf = timeframeRow(prefs.timeframe);
-  const custom = prefs.universe_preset === "custom";
-  root.innerHTML = `
-    <div class="scan-studio-head">
-      <div>
-        <h3 class="scan-studio-title">Scan studio</h3>
-        <p class="muted small">Pick a horizon. Each tab starts with <strong>one</strong> primary sleeve; Paper rows are opt-in. <strong>Yours</strong> are iterated sleeves; <strong>Paper</strong> are literature screens, not the published portfolios. Live execution stays daily Stage 2 / VCP.</p>
-      </div>
-    </div>
-    <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>
-    <p class="muted small scan-studio-tf-desc">${escapeHtml(tf?.description || "")}</p>
-    ${horizonNote(prefs)}
-    <div class="scan-studio-strategies" aria-label="Strategies in this timeframe">${renderStrategyCards(prefs)}</div>
-    <div class="scan-studio-universe">
-      <label class="scan-studio-field" for="scanUniverseSelect">
-        <span class="muted small">Universe</span>
-        <select id="scanUniverseSelect">${renderUniverseOptions(prefs)}</select>
-      </label>
-      <p class="muted small" id="scanUniverseHint">${escapeHtml(uni?.description || "")}</p>
-      <label class="scan-studio-field${custom ? "" : " hidden"}" id="scanCustomTickersWrap" for="scanCustomTickers">
-        <span class="muted small">Custom tickers</span>
-        <input id="scanCustomTickers" type="text" placeholder="AAPL, MSFT, NVDA" value="${escapeHtml(prefs.tickersText || "")}" />
-      </label>
-    </div>
-  `;
+  root.innerHTML = scanStudioMarkup(prefs);
 }
 
 function syncPrefsFromDom() {
