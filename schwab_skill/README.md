@@ -133,17 +133,19 @@ A FastAPI-powered website is available under `webapp/` with a modern UI for:
 
 The main dashboard (`webapp/static/index.html`) is organized around **today’s workflow** (health → blockers → scan & pending approvals → quick ticker check), with a **Tools** grid for jumping to deeper capabilities. **Simple / Standard / Pro** (saved in `localStorage`) trims or expands what appears above the fold; diagnostics, detailed status, SEC compare depth, and several panels use a shared **disclosure** pattern and **lazy-load** their backing API calls when sections scroll into view—**Refresh All** still loads everything. Preset **Expert** mode remains the server-backed `standard` vs `expert` setting on `/api/settings/profile` (separate from the display layout).
 
-Run:
+Run (from `schwab_skill/`):
 
 ```
-uvicorn webapp.main:app --reload --port 8000
+python scripts/start_local_dashboard.py
 ```
 
 Then open:
 
 ```
-http://127.0.0.1:8000
+https://127.0.0.1:8182/
 ```
+
+That HTTPS port is the operator dashboard (Schwab OAuth callback). Do not use `uvicorn --port 8000` for local UI work.
 
 **Legal:** The dashboard footer links to **`/static/legal.html`** (not investment advice, third-party trademark notice, risk and “as is” terms). Operators should review **`docs/LEGAL_DISCLOSURES.md`** and have counsel adapt it for your jurisdiction and offering.
 

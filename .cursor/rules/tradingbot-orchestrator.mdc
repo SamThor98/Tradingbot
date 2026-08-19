@@ -24,7 +24,12 @@ Improve risk-adjusted edge on the **base signal** (scanner → ranking → backt
 - **Config**: all tunables via `config.py` / `.env`; process env overrides `.env`
 - **Plugins**: OFF → SHADOW → LIVE only; never skip shadow
 - **API**: `ApiResponse(ok, data, error)` from `schemas.py`; diagnostics `dict` travels with signals
-- **Deploy modes**: local (`webapp/main.py`, SQLite, API key) vs SaaS (`webapp/main_saas.py`, Postgres, Celery, Supabase JWT)
+- **Deploy modes**: local (`webapp/main.py` on **https://127.0.0.1:8182**, SQLite, API key) vs SaaS (`webapp/main_saas.py`, Postgres, Celery, Supabase JWT)
+
+## Local dashboard port (do not regress)
+
+The operator dashboard is **https://127.0.0.1:8182/** via `python scripts/start_local_dashboard.py`.
+Never start or verify UI on port 8000. Plain `uvicorn --port 8000` is debug-only. SaaS/Render may still bind `$PORT` (often 8000) — that is not the local operator dashboard.
 
 ## Safety and trading rules
 
@@ -40,6 +45,7 @@ Improve risk-adjusted edge on the **base signal** (scanner → ranking → backt
 3. **Verify** — from `schwab_skill/`:
    - Fast: `python -m ruff check .` and `python -m pytest -q` on touched areas
    - Behavior changes: `python scripts/validate_all.py --profile local --strict --skip-backtest`
+   - Dashboard UI: `https://127.0.0.1:8182/` (never port 8000)
 4. **Summarize** — changed files, command outcomes, risks, and next validation step
 
 ## Priority stack (unless the user redirects)

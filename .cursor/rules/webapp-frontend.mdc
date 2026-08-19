@@ -6,6 +6,11 @@ alwaysApply: false
 
 # Frontend Patterns
 
+## Local operator URL
+
+Verify UI only on **https://127.0.0.1:8182/** (`python scripts/start_local_dashboard.py`).
+Never start or screenshot the local dashboard on port 8000.
+
 ## Architecture
 
 Two dashboards:

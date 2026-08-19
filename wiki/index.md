@@ -72,7 +72,7 @@ tags: [wiki, index, catalog]
 
 ## APIs & Integrations
 
-- [[local-dashboard-endpoints]] — Local FastAPI routes
+- [[local-dashboard-endpoints]] — Local FastAPI routes on https://127.0.0.1:8182
 - [[saas-endpoints]] — SaaS multi-tenant routes
 - [[tenant-dashboard-endpoints]] — Per-tenant API router
 

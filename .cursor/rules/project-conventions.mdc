@@ -8,7 +8,7 @@ alwaysApply: true
 ## Architecture
 
 Two deployment modes:
-- **Local** (`schwab_skill/webapp/main.py`): single-user, SQLite, API key auth, `schedule`-based bot loop
+- **Local** (`schwab_skill/webapp/main.py` on **https://127.0.0.1:8182** via `scripts/start_local_dashboard.py`): single-user, SQLite, API key auth, `schedule`-based bot loop. Never verify UI on port 8000.
 - **SaaS** (`schwab_skill/webapp/main_saas.py` + `schwab_skill/webapp/tenant_dashboard.py`): multi-tenant, Postgres, Supabase JWT auth, Stripe billing, Celery workers, Redis
 
 ## Scanner Pipeline

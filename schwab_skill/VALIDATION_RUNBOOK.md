@@ -6,10 +6,10 @@ Use this to execute the same validation flow in each environment.
 
 1. `python scripts/validate_all.py --profile local --strict`
 2. Optional web metrics gate:
-   - Start web app: `uvicorn webapp.main:app --port 8000`
-   - Run: `python scripts/validate_all.py --profile local --web-base-url http://127.0.0.1:8000 --strict`
+   - Start operator dashboard: `python scripts/start_local_dashboard.py`
+   - Run: `python scripts/validate_all.py --profile local --web-base-url https://127.0.0.1:8182 --strict`
 3. Optional production-safe light-load probe (read-only endpoints only):
-   - `python scripts/web_load_smoke.py --base-url http://127.0.0.1:8000`
+   - `python scripts/web_load_smoke.py --base-url https://127.0.0.1:8182`
 
 Expected:
 - All steps `PASS`

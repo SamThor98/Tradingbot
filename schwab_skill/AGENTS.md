@@ -68,12 +68,24 @@ Frozen Schwab-shaped samples and scanner diagnostics live under `tests/fixtures/
 
 All work runs from `schwab_skill/` (in Cursor Cloud that is often `/workspace/schwab_skill`). Use `python3` — there is typically no `python` symlink.
 
+### Local operator dashboard (mandatory)
+
+The dashboard operators actually use is **HTTPS port 8182**, not 8000.
+
+| Item | Value |
+|------|--------|
+| **Start** | `python3 scripts/start_local_dashboard.py` |
+| **URL** | `https://127.0.0.1:8182/` |
+| **Do not use** | `uvicorn webapp.main:app --port 8000` for UI work or screenshots |
+
+Schwab OAuth callbacks are registered to `https://127.0.0.1:8182/`. Verifying Scan studio or any dashboard change on port 8000 is wrong.
+
 ### Services
 
 | Service | How to run | Notes |
 |---------|-----------|-------|
-| **FastAPI dashboard** | `python3 -m uvicorn webapp.main:app --reload --port 8000` | Local single-user dashboard; SQLite by default. |
-| **SaaS API** | `python3 -m uvicorn webapp.main_saas:app --host 0.0.0.0 --port 8000` | Multi-tenant mode; Postgres + Redis + Celery (see `docker-compose.saas.yml`). |
+| **Local dashboard** | `python3 scripts/start_local_dashboard.py` | HTTPS `https://127.0.0.1:8182/` — this is the operator UI |
+| **SaaS API** | `python3 -m uvicorn webapp.main_saas:app --host 0.0.0.0 --port 8000` | Multi-tenant mode; Postgres + Redis + Celery (see `docker-compose.saas.yml`). Port 8000 here is SaaS/debug only. |
 
 ### Quality checks
 

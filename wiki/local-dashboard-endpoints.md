@@ -7,7 +7,7 @@ tags: [api, local, endpoints]
 
 # Local Dashboard Endpoints
 
-> All routes from `webapp/main.py` — single-user FastAPI app.
+> All routes from `webapp/main.py` — single-user FastAPI app served at **https://127.0.0.1:8182/** (`python scripts/start_local_dashboard.py`). Port 8000 is not the operator dashboard.
 
 ## Key Endpoints
 

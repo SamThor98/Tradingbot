@@ -35,7 +35,7 @@ def main() -> int:
     parser.add_argument("--max-web-error-rate-pct", type=float, default=5.0)
     parser.add_argument("--max-stop-failures", type=int, default=1)
     parser.add_argument("--max-guardrail-blocks", type=int, default=25)
-    parser.add_argument("--web-base-url", default="", help="Optional web API base URL, e.g. http://127.0.0.1:8000")
+    parser.add_argument("--web-base-url", default="", help="Optional web API base URL, e.g. https://127.0.0.1:8182")
     parser.add_argument(
         "--baseline-events-json",
         default="",

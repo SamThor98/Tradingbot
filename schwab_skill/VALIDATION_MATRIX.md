@@ -92,7 +92,7 @@ Pass condition:
 
 If the web API is running, include endpoint error-rate checks:
 
-`python scripts/validate_all.py --profile local --web-base-url http://127.0.0.1:8000 --strict`
+`python scripts/validate_all.py --profile local --web-base-url https://127.0.0.1:8182 --strict`
 
 This enables `/api/health/deep` metric gating inside `validate_observability_gates.py`.
 It also enables `web_load_smoke`, which uses an allowlisted read-only route

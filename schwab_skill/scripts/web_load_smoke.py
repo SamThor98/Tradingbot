@@ -82,7 +82,7 @@ def _percentile(values: list[float], p: float) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Production-safe light-load web probe")
-    parser.add_argument("--base-url", required=True, help="Base URL like http://127.0.0.1:8000")
+    parser.add_argument("--base-url", required=True, help="Base URL like https://127.0.0.1:8182")
     parser.add_argument("--include-saas", action="store_true", help="Include SaaS-only readiness/live endpoints")
     parser.add_argument("--endpoints-file", default="", help="Optional JSON file containing endpoint path list")
     parser.add_argument("--burst-requests-per-endpoint", type=int, default=5)
