@@ -29,6 +29,7 @@ Academic research shows stocks drift in the direction of their earnings surprise
 - [[signal-scanner]] — applied during Stage B enrichment
 - [[multi-sleeve-trading-system-constitution]] — S1 PEAD-primary canary sleeve in target architecture
 - [[scan-catalog]] — PEAD listed as a daily shadow sleeve in Scan studio
+- [[horizon-strategies]] — another non-executable dual-admit family (`entry_family=horizon`)
 
 ---
 

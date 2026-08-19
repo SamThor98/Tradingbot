@@ -13,8 +13,7 @@ class StrategyPlugin(Protocol):
         *,
         signal: dict[str, Any],
         candidate: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        ...
+    ) -> dict[str, Any] | None: ...
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -33,25 +32,39 @@ def build_default_strategy_plugins(
     """
     Build strategy plugin payloads for this signal.
 
-    The baseline breakout strategy is always live to preserve existing behavior.
-    Additional strategies can run in shadow/live via mode.
+    The baseline breakout strategy is live only for Stage 2 / both entry
+    families. Horizon-only admits stamp shadow plugins and never promote
+    ``trend_breakout`` to a live trigger.
     """
     plugins: list[dict[str, Any]] = []
 
+    family = str(signal.get("entry_family") or "")
+    if not family and isinstance(candidate, dict):
+        family = str(candidate.get("entry_family") or "")
+    family = family or "stage2"
+    stage2_live = family in {"stage2", "both"}
     base_score = max(0.0, min(100.0, _safe_float(signal.get("signal_score"), 0.0)))
     plugins.append(
         {
             "name": "trend_breakout",
             "mode": "live",
-            "raw_score": round(base_score, 2),
-            "triggered": True,
-            "meta": {"source": "existing_signal_score"},
+            "raw_score": round(base_score, 2) if stage2_live else 0.0,
+            "triggered": stage2_live,
+            "meta": {"source": "existing_signal_score", "entry_family": family},
         }
     )
 
     pullback = evaluate_pullback_strategy(signal=signal, candidate=candidate, mode=pullback_mode)
     if pullback is not None:
         plugins.append(pullback)
+
+    try:
+        from core.horizon_strategies import evaluate_horizon_plugins
+
+        df = candidate.get("df") if isinstance(candidate, dict) else None
+        plugins.extend(evaluate_horizon_plugins(df))
+    except Exception:
+        pass
     return plugins
 
 
@@ -152,16 +165,26 @@ def apply_strategy_ensemble(
             name = str(plugin.get("name") or "unknown")
             mode = str(plugin.get("mode") or "shadow").lower()
             raw_score = _safe_float(plugin.get("raw_score"), 0.0)
-            weight = _strategy_router_weight(name=name, bucket=regime_bucket, router_mode=router_mode, skill_dir=skill_dir)
+            weight = _strategy_router_weight(
+                name=name, bucket=regime_bucket, router_mode=router_mode, skill_dir=skill_dir
+            )
             weighted = max(0.0, min(100.0, raw_score * weight))
             plugin["router_weight"] = round(weight, 3)
             plugin["weighted_score"] = round(weighted, 2)
 
             diagnostics["strategy_plugins_evaluated"] = int(diagnostics.get("strategy_plugins_evaluated", 0) or 0) + 1
+            if bool(plugin.get("triggered")):
+                diagnostics[f"strategy_{name}_triggered"] = (
+                    int(diagnostics.get(f"strategy_{name}_triggered", 0) or 0) + 1
+                )
             if name == "pullback":
-                diagnostics["strategy_pullback_evaluated"] = int(diagnostics.get("strategy_pullback_evaluated", 0) or 0) + 1
+                diagnostics["strategy_pullback_evaluated"] = (
+                    int(diagnostics.get("strategy_pullback_evaluated", 0) or 0) + 1
+                )
                 if bool(plugin.get("triggered")):
-                    diagnostics["strategy_pullback_triggered"] = int(diagnostics.get("strategy_pullback_triggered", 0) or 0) + 1
+                    diagnostics["strategy_pullback_triggered"] = (
+                        int(diagnostics.get("strategy_pullback_triggered", 0) or 0) + 1
+                    )
 
             if mode == "live":
                 live_weighted.append((name, weighted))
@@ -178,11 +201,13 @@ def apply_strategy_ensemble(
 
         top_live = max(live_weighted, key=lambda x: x[1])[0] if live_weighted else "trend_breakout"
         top_shadow = max(shadow_weighted, key=lambda x: x[1])[0] if shadow_weighted else None
-        diagnostics[f"strategy_live_primary_{top_live}"] = int(diagnostics.get(f"strategy_live_primary_{top_live}", 0) or 0) + 1
+        diagnostics[f"strategy_live_primary_{top_live}"] = (
+            int(diagnostics.get(f"strategy_live_primary_{top_live}", 0) or 0) + 1
+        )
         if top_shadow:
-            diagnostics[f"strategy_shadow_primary_{top_shadow}"] = int(
-                diagnostics.get(f"strategy_shadow_primary_{top_shadow}", 0) or 0
-            ) + 1
+            diagnostics[f"strategy_shadow_primary_{top_shadow}"] = (
+                int(diagnostics.get(f"strategy_shadow_primary_{top_shadow}", 0) or 0) + 1
+            )
 
         ranked_score = live_score if ensemble_mode == "live" else base_score
         enriched = dict(signal)

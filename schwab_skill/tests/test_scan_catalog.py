@@ -17,6 +17,9 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
     assert "trend_breakout" in ids
     assert "pullback" in ids
     assert "weekly_swing" in ids
+    assert "donchian_20" in ids
+    assert "gap_and_go" in ids
+    assert "monthly_52w_high" in ids
     universes = {u["id"]: u for u in payload["universes"]}
     assert universes["sp1500"]["available"] is True
     assert universes["nasdaq100"]["available"] is True
@@ -24,18 +27,25 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
 
 
 def test_resolve_strategy_ids_defaults_to_timeframe() -> None:
-    assert resolve_strategy_ids([], scan_timeframe="weekly") == ["weekly_swing"]
+    weekly = resolve_strategy_ids([], scan_timeframe="weekly")
+    assert weekly[0] == "weekly_swing"
+    assert set(weekly) >= {"weekly_swing", "weekly_vcp", "weekly_breakout"}
     assert resolve_strategy_ids(["nope"], scan_timeframe=None) == []
     assert resolve_strategy_ids(["trend_breakout", "trend_breakout"]) == ["trend_breakout"]
 
 
-def test_filter_weekly_sleeve_matches_live_breakout() -> None:
+def test_filter_weekly_sleeve_matches_triggered_plugin_not_live_breakout() -> None:
     rows = [
         {"ticker": "AAPL", "entry_family": "stage2", "strategy_attribution": {"top_live": "trend_breakout"}},
         {"ticker": "MSFT", "entry_family": "pead_primary", "strategy_attribution": {"top_live": "trend_breakout"}},
+        {
+            "ticker": "NVDA",
+            "entry_family": "horizon",
+            "strategy_plugins": [{"name": "weekly_swing", "triggered": True, "mode": "shadow"}],
+        },
     ]
     kept = filter_signals_for_scan_selection(rows, ["weekly_swing"])
-    assert [r["ticker"] for r in kept] == ["AAPL", "MSFT"]
+    assert [r["ticker"] for r in kept] == ["NVDA"]
     pull = filter_signals_for_scan_selection(rows, ["pullback"])
     assert pull == []
     pead = filter_signals_for_scan_selection(rows, ["pead_primary"])

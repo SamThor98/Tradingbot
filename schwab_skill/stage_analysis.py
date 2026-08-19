@@ -511,14 +511,16 @@ def evaluate_pead_primary_entry(
     return out
 
 
-def tag_entry_family(*, stage2_ok: bool, pead_ok: bool) -> str | None:
-    """Return ``stage2`` | ``pead_primary`` | ``both``, or None if neither admits."""
+def tag_entry_family(*, stage2_ok: bool, pead_ok: bool, horizon_ok: bool = False) -> str | None:
+    """Return ``stage2`` | ``pead_primary`` | ``both`` | ``horizon``, or None if none admit."""
     if stage2_ok and pead_ok:
         return "both"
     if stage2_ok:
         return "stage2"
     if pead_ok:
         return "pead_primary"
+    if horizon_ok:
+        return "horizon"
     return None
 
 

@@ -7,24 +7,24 @@ tags: [scanner, strategies, universe, dashboard]
 
 # Scan Catalog
 
-> Timeframe grouping, strategy descriptions, and named universes for the dashboard Scan studio. The live bar engine remains daily Stage 2 + VCP.
+> Timeframe grouping, strategy descriptions, and named universes for the dashboard Scan studio. The live bar engine remains daily Stage 2 + VCP. Extra sleeves are real evaluators in shadow/research — they do not promote to LIVE.
 
 ## What this is
 
-Operators asked to sort strategies by horizon (Intraday / Daily / Weekly / Monthly), read a short description of each sleeve, and scan more than S&P 1500. The catalog is the metadata layer that makes that possible **without** claiming weekly or monthly OHLCV engines that do not exist yet.
+Operators asked to sort strategies by horizon (Intraday / Daily / Weekly / Monthly), read a short description of each sleeve, and scan more than S&P 1500. The catalog is the metadata layer in `core/scan_catalog.py`.
 
-Live execution is still the daily [[signal-scanner]] (Stage 2 + VCP). Weekly and monthly catalog rows are **horizon labels** on that engine. Intraday is the existing breakout-confirm overlay (live quote), not a standalone minute-bar book.
+Live execution is still the daily [[signal-scanner]] (Stage 2 + VCP). Weekly and monthly catalog rows **resample** that daily OHLCV (Friday week / month-end); they are not a separate vendor feed. Intraday includes the existing breakout-confirm overlay (live quote) plus session-structure proxies on the latest daily bar. Evaluator math lives in [[horizon-strategies]].
 
 ## Timeframes
 
 | Id | Meaning |
 |----|---------|
-| `intraday` | Confirm a daily setup on the live quote (`BREAKOUT_CONFIRM_ENABLED`) |
-| `daily` | Primary live engine |
-| `weekly` | Multi-week hold of the daily Stage 2 / VCP thesis |
-| `monthly` | Position-style hold of the same thesis |
+| `intraday` | Live-quote confirm plus daily-bar gap/range session structure |
+| `daily` | Primary live engine plus shadow daily sleeves |
+| `weekly` | Resampled Friday bars (30-week SMA family) |
+| `monthly` | Resampled month-end bars (10-month SMA family) |
 
-Dedicated weekly/monthly bar scanners are **not live**. Selecting those tabs still runs the daily pipeline and stamps `diagnostics.scan_timeframe`.
+Selecting a weekly/monthly tab still runs the daily pipeline (`get_daily_history`) and stamps `diagnostics.scan_timeframe`. The difference is **which evaluators admit and filter**, not a second market-data engine.
 
 ## Strategies
 
@@ -32,14 +32,22 @@ Canonical ids live in `core/scan_catalog.py` (`STRATEGIES`). Each row has `displ
 
 | Id | Timeframe | Status | Notes |
 |----|-----------|--------|-------|
-| `breakout_confirm` | intraday | live overlay | Selecting it sets `BREAKOUT_CONFIRM_ENABLED=true` for that scan only |
+| `breakout_confirm` | intraday | live overlay | Sets `BREAKOUT_CONFIRM_ENABLED=true` for that scan only |
+| `gap_and_go` | intraday | shadow | Opening gap hold on the latest daily bar |
+| `range_expansion` | intraday | shadow | Wide bar closing through the prior high |
 | `trend_breakout` | daily | live | Stage 2 / VCP momentum breakout (the live book) |
 | `pullback` | daily | shadow | Filters to pullback-triggered names; does **not** promote `STRATEGY_PULLBACK_MODE` to LIVE |
 | `pead_primary` | daily | shadow | Paper PEAD sleeve; Stage 2 still owns executable entries |
-| `weekly_swing` | weekly | research | Proxies `trend_breakout` |
-| `monthly_position` | monthly | research | Proxies `trend_breakout` |
+| `donchian_20` | daily | shadow | 20-day channel breakout + 200-day SMA |
+| `nr7_breakout` | daily | shadow | Fisher NR7 then close through that high |
+| `weekly_swing` | weekly | research | Weinstein weekly Stage 2 on resampled bars |
+| `weekly_vcp` | weekly | research | Multi-week volume contraction |
+| `weekly_breakout` | weekly | research | Weekly close through prior week high |
+| `monthly_position` | monthly | research | Faber 10-month SMA timing |
+| `monthly_52w_high` | monthly | research | Month-end close near 52-week high |
+| `monthly_pullback` | monthly | research | Pullback that tags the 10-month SMA |
 
-Plugin promotion remains OFF → SHADOW → LIVE. Scan studio selection is a **filter + description**, not a LIVE promotion.
+Plugin promotion remains OFF → SHADOW → LIVE. Scan studio selection is a **filter + optional Stage A dual-admit**, not a LIVE promotion. Horizon-only names are `executable=false`.
 
 ## Universes
 
@@ -64,9 +72,10 @@ Dashboard: `#scanStudioPanel` on the Today scan lane. Prefs persist in `tradingb
 
 ## Related Pages
 
+- [[horizon-strategies]] — evaluator rules and Stage A dual-admit
 - [[signal-scanner]] — Stage A/B pipeline that still runs
 - [[stage-2-analysis]] — live breakout thesis
-- [[vcp-detection]] — volume contraction gate
+- [[vcp-detection]] — volume contraction gate (skipped for horizon-only admits)
 - [[pead]] — shadow earnings-drift sleeve
 - [[plugin-modes]] — why shadow strategies are not auto-promoted
 - [[webapp-dashboard]] — Scan studio UI

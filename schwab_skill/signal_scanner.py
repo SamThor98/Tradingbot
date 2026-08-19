@@ -813,7 +813,7 @@ def _compute_stage_a_shortlist_limit(
 
 
 def _pead_primary_is_executable(entry_family: str | None) -> bool:
-    """PEAD-only never enters the executable Stage B / order path."""
+    """PEAD-only and horizon-only never enter the executable Stage B / order path."""
     return str(entry_family or "") in {"stage2", "both"}
 
 
@@ -1025,6 +1025,7 @@ def _scan_stage_a_one(
     vcp_penalty_points: float,
     sector_penalty_points: float,
     sector_unresolved_penalty_points: float,
+    horizon_strategy_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     from market_data import extract_schwab_live_price, get_current_quote, get_daily_history_with_meta
     from sector_strength import get_ticker_sector_etf
@@ -1108,7 +1109,37 @@ def _scan_stage_a_one(
             pead_eval = None
             pead_ok = False
 
-        if not stage2_ok and not pead_ok:
+        horizon_hits: list[str] = []
+        try:
+            from core.horizon_strategies import selected_dual_admit_ids, triggered_dual_admit_ids
+
+            wanted_horizon = selected_dual_admit_ids(horizon_strategy_ids)
+            if wanted_horizon:
+                pullback_hit = False
+                if "pullback" in wanted_horizon:
+                    from strategy_plugins import evaluate_pullback_strategy
+
+                    pb = evaluate_pullback_strategy(
+                        signal={
+                            "price": float(df["close"].iloc[-1]),
+                            "sma_50": float(df["sma_50"].iloc[-1]) if "sma_50" in df.columns else 0.0,
+                            "sma_200": float(df["sma_200"].iloc[-1]) if "sma_200" in df.columns else 0.0,
+                        },
+                        candidate={"df": df},
+                        mode="shadow",
+                    )
+                    pullback_hit = bool(pb and pb.get("triggered"))
+                horizon_hits = triggered_dual_admit_ids(
+                    df,
+                    wanted_horizon,
+                    pullback_triggered=pullback_hit,
+                )
+        except Exception as _e:
+            LOG.debug("Horizon Stage A eval skipped for %s: %s", ticker, _e)
+            horizon_hits = []
+        horizon_ok = bool(horizon_hits)
+
+        if not stage2_ok and not pead_ok and not horizon_ok:
             # Preserve legacy stage2_fail counter; PEAD miss is tracked separately.
             return {
                 "ok": False,
@@ -1121,12 +1152,16 @@ def _scan_stage_a_one(
                 "pead_primary_eval": pead_eval,
                 "strategy_pead_primary_mode": pead_configured,
                 "strategy_pead_primary_effective_mode": pead_mode_eff,
+                "horizon_hits": horizon_hits,
             }
 
-        entry_family = tag_entry_family(stage2_ok=stage2_ok, pead_ok=pead_ok) or (
-            "stage2" if stage2_ok else "pead_primary"
+        entry_family = tag_entry_family(
+            stage2_ok=stage2_ok, pead_ok=pead_ok, horizon_ok=horizon_ok
+        ) or (
+            "stage2" if stage2_ok else "pead_primary" if pead_ok else "horizon"
         )
         pead_only_admit = entry_family == "pead_primary"
+        shadow_only_admit = pead_only_admit or entry_family == "horizon"
 
         entry_timing_at_stage2 = None
         try:
@@ -1150,7 +1185,7 @@ def _scan_stage_a_one(
 
         vcp_ok = bool(check_vcp_volume(df, skill_dir))
         # Match backtest: VCP hard gate applies only to Stage-2 family admits.
-        if not vcp_ok and vcp_gate_mode == "hard" and not pead_only_admit:
+        if not vcp_ok and vcp_gate_mode == "hard" and not shadow_only_admit:
             return _with_stage2_shadow(
                 {
                     "ok": False,
@@ -1193,7 +1228,7 @@ def _scan_stage_a_one(
         # extractor so a stale `closePrice` substitution cannot anchor a fresh
         # breakout decision (would compare today's high against yesterday's close).
         # PEAD-only admits skip breakout (backtest disables breakout for pead_primary).
-        apply_breakout = bool(breakout_enabled) and not pead_only_admit
+        apply_breakout = bool(breakout_enabled) and not shadow_only_admit
         if apply_breakout:
             quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
             live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
@@ -1419,6 +1454,7 @@ def _scan_stage_a_one(
             "early_stop_gate": candidate_early_stop_gate,
             "entry_family": entry_family,
             "executable": _pead_primary_is_executable(entry_family),
+            "horizon_hits": list(horizon_hits),
             "pead_beat": (pead_eval or {}).get("pead_beat") if pead_eval else None,
             "pead_surprise_pct": (pead_eval or {}).get("pead_surprise_pct") if pead_eval else None,
             "data_provider": provider,
@@ -2644,6 +2680,8 @@ def scan_for_signals_detailed(
     *,
     capture_shortlist: list[dict[str, Any]] | None = None,
     universe_preset: str | None = None,
+    strategy_ids: list[str] | None = None,
+    scan_timeframe: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Like scan_for_signals, but also returns lightweight diagnostics counters.
@@ -2675,6 +2713,8 @@ def scan_for_signals_detailed(
                 watchlist_override=watchlist_override,
                 capture_shortlist=capture_shortlist,
                 universe_preset=universe_preset,
+                strategy_ids=strategy_ids,
+                scan_timeframe=scan_timeframe,
             )
 
     from notifier import send_alert
@@ -2771,6 +2811,8 @@ def scan_for_signals_detailed(
         "early_stop_gate_mode": None,
         "early_stop_gate_would_filter": 0,
         "early_stop_gate_blocked": 0,
+        "horizon_admitted": 0,
+        "horizon_shortlisted": 0,
         "strategy_pead_primary_mode": "off",
         "strategy_pead_primary_effective_mode": "off",
         "pead_primary_live_coerced_to_shadow": 0,
@@ -3296,6 +3338,12 @@ def scan_for_signals_detailed(
         LOG.debug("Regime v2 scan diagnostics skipped: %s", e)
 
     # Stage A: fast structural filter on broad universe.
+    from core.horizon_strategies import HORIZON_STAGE_B_CAP, selected_dual_admit_ids
+
+    horizon_ids = selected_dual_admit_ids(strategy_ids)
+    diagnostics["scan_timeframe"] = str(scan_timeframe or "daily")
+    diagnostics["strategy_ids_requested"] = [str(s) for s in (strategy_ids or []) if str(s).strip()]
+    diagnostics["horizon_dual_admit_ids"] = list(horizon_ids)
     stage_a_start = time.perf_counter()
     stage_a_candidates: list[dict[str, Any]] = []
     stage_a_reason_keys = {
@@ -3331,6 +3379,7 @@ def scan_for_signals_detailed(
                 vcp_penalty_points,
                 sector_penalty_points,
                 sector_unresolved_penalty_points,
+                list(horizon_ids),
             )
             future_map_a[fut] = ticker
         try:
@@ -3504,8 +3553,18 @@ def scan_for_signals_detailed(
         nocap_limit=shortlist_nocap_limit,
     )
     shortlist = executable_candidates[:shortlist_limit]
+    horizon_only = [
+        c for c in stage_a_candidates if str(c.get("entry_family") or "") == "horizon"
+    ]
+    horizon_only.sort(key=_executable_stage_a_sort_key)
+    diagnostics["horizon_admitted"] = len(horizon_only)
+    horizon_extra: list[dict[str, Any]] = []
+    if horizon_ids:
+        horizon_extra = horizon_only[: int(HORIZON_STAGE_B_CAP)]
+        shortlist = list(shortlist) + horizon_extra
+    diagnostics["horizon_shortlisted"] = len(horizon_extra)
     diagnostics["stage_a_shortlisted"] = len(shortlist)
-    diagnostics["stage_a_pruned"] = max(0, len(executable_candidates) - len(shortlist))
+    diagnostics["stage_a_pruned"] = max(0, len(executable_candidates) - len(executable_candidates[:shortlist_limit]))
 
     # Free the per-ticker DataFrames carried on pruned (non-shortlisted)
     # candidates before Stage B. On a broad universe this releases ~1500 frames

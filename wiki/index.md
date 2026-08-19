@@ -48,6 +48,7 @@ tags: [wiki, index, catalog]
 ## Trading Strategies
 
 - [[scan-catalog]] — Timeframe grouping, strategy descriptions, and named scan universes
+- [[horizon-strategies]] — Shadow/research evaluators per timeframe (resampled weekly/monthly, daily Donchian/NR7, session-structure intraday)
 - [[stage-2-analysis]] — Weinstein Stage 2 trend qualification
 - [[vcp-detection]] — Volume Contraction Pattern identification
 - [[sector-strength]] — Relative sector performance filter

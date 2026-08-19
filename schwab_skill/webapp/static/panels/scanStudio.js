@@ -3,7 +3,9 @@
  *
  * The live engine is still daily Stage 2 + VCP. This panel lets operators
  * choose a horizon, read what each sleeve does, and scan a universe other
- * than S&P 1500. Weekly/monthly are horizon labels on that daily engine.
+ * than S&P 1500. Weekly/monthly resample the same daily bars (Friday week /
+ * month-end). Intraday gap/range sleeves use session structure on the latest
+ * daily bar, not a minute-bar book.
  */
 
 import { state, SCAN_STUDIO_PREFS_KEY } from "../modules/state.js";
@@ -190,11 +192,11 @@ function renderUniverseOptions(prefs) {
 function horizonNote(prefs) {
   const tf = String(prefs.timeframe || "daily");
   if (tf === "weekly" || tf === "monthly") {
-    const note = catalog().notes?.weekly_monthly || "Weekly/monthly still use daily bars.";
+    const note = catalog().notes?.weekly_monthly || "Weekly/monthly resample daily bars (Friday week / month-end). Research only — not a live book.";
     return `<p class="scan-studio-note" role="status">${escapeHtml(note)}</p>`;
   }
   if (tf === "intraday") {
-    return `<p class="scan-studio-note" role="status">Intraday confirm is an overlay on the daily Stage 2 scan, not a separate minute-bar book.</p>`;
+    return `<p class="scan-studio-note" role="status">Intraday confirm is a live-quote overlay. Gap-and-go and range expansion use the latest daily bar as session structure — not a separate minute-bar scanner.</p>`;
   }
   return "";
 }
@@ -211,7 +213,7 @@ export function renderScanStudio() {
     <div class="scan-studio-head">
       <div>
         <h3 class="scan-studio-title">Scan studio</h3>
-        <p class="muted small">Pick a horizon, read the sleeve, and choose a universe. Live execution stays the daily Stage 2 / VCP engine.</p>
+        <p class="muted small">Pick a horizon, read the sleeve, and choose a universe. Live execution stays the daily Stage 2 / VCP engine; extra sleeves are shadow or research only.</p>
       </div>
     </div>
     <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>

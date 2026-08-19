@@ -54,6 +54,12 @@ def test_tag_entry_family_neither() -> None:
     assert tag_entry_family(stage2_ok=False, pead_ok=False) is None
 
 
+def test_tag_entry_family_horizon_only() -> None:
+    assert tag_entry_family(stage2_ok=False, pead_ok=False, horizon_ok=True) == "horizon"
+    assert tag_entry_family(stage2_ok=True, pead_ok=False, horizon_ok=True) == "stage2"
+    assert _pead_primary_is_executable("horizon") is False
+
+
 def test_pead_primary_liquidity_floor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PEAD_LOOKBACK_DAYS", "10")
     df = _ohlcv(price=4.0, avg_vol=500_000.0)
@@ -214,9 +220,7 @@ def test_partition_capacity_top5_by_edge_score_not_stage_a() -> None:
         {"ticker": "P_HI", "entry_family": "pead_primary", "stage_a_score": 40.0, "edge_score": 90.0},
         {"ticker": "P_MID", "entry_family": "pead_primary", "stage_a_score": 70.0, "edge_score": 60.0},
     ]
-    part = _partition_stage_a_by_entry_family(
-        cands, top_n=5, pead_shadow_max=10, pead_capacity_top_n=2
-    )
+    part = _partition_stage_a_by_entry_family(cands, top_n=5, pead_shadow_max=10, pead_capacity_top_n=2)
     assert [c["ticker"] for c in part["executable"]] == ["S1"]
     names = part["pead_primary_shadow_names"]
     assert [n["ticker"] for n in names] == ["P_HI", "P_MID", "P_LO"]

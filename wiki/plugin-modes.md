@@ -60,6 +60,7 @@ backtest-only (not wired into `execution.py`) for the same reason.
 - [[canary-rollout]] — canary process
 - [[plugin-modes-config]] — full env var reference
 - [[scan-catalog]] — Scan studio can filter shadow sleeves without promoting them to LIVE
+- [[horizon-strategies]] — new timeframe sleeves stay shadow/research
 
 ---
 

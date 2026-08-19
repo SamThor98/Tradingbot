@@ -2,8 +2,9 @@
 
 Live execution remains the daily Stage 2 + VCP engine. This module is the
 normalized metadata layer so the dashboard can group strategies by horizon,
-show short descriptions, and let operators pick a universe other than SP1500
-without inventing weekly/monthly bar scanners.
+show short descriptions, and let operators pick a universe other than SP1500.
+Weekly/monthly sleeves resample that same daily OHLCV; they are not a
+separate vendor bar feed.
 """
 
 from __future__ import annotations
@@ -24,12 +25,12 @@ TIMEFRAMES: tuple[dict[str, str], ...] = (
     {
         "id": "weekly",
         "display_name": "Weekly",
-        "description": "Multi-week swing horizon. Still scanned on daily bars until a dedicated weekly-bar engine ships.",
+        "description": "Multi-week swing horizon. Evaluators resample the daily OHLCV the scanner already fetched (Friday week, 30-week SMA). Not a separate vendor weekly feed.",
     },
     {
         "id": "monthly",
         "display_name": "Monthly",
-        "description": "Position-style horizon. Still scanned on daily bars until a dedicated monthly-bar engine ships.",
+        "description": "Position-style horizon. Evaluators resample daily bars to month-end (10-month SMA). Not a separate vendor monthly feed.",
     },
 )
 
@@ -39,8 +40,16 @@ _STRATEGY_ALIASES: dict[str, tuple[str, ...]] = {
     "pullback": ("pullback",),
     "pead_primary": ("pead_primary", "pead"),
     "breakout_confirm": ("breakout_confirm",),
-    "weekly_swing": ("weekly_swing",),
-    "monthly_position": ("monthly_position",),
+    "gap_and_go": ("gap_and_go",),
+    "range_expansion": ("range_expansion",),
+    "donchian_20": ("donchian_20", "donchian"),
+    "nr7_breakout": ("nr7_breakout", "nr7"),
+    "weekly_swing": ("weekly_swing", "weekly_stage2"),
+    "weekly_vcp": ("weekly_vcp",),
+    "weekly_breakout": ("weekly_breakout",),
+    "monthly_position": ("monthly_position", "ten_month_sma", "faber"),
+    "monthly_52w_high": ("monthly_52w_high",),
+    "monthly_pullback": ("monthly_pullback",),
 }
 
 STRATEGIES: tuple[dict[str, Any], ...] = (
@@ -54,6 +63,28 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {"BREAKOUT_CONFIRM_ENABLED": "true"},
         "description": "Requires the daily Stage 2 name to trade through the breakout on the live quote before it stays on the shortlist. Overlay on the daily engine, not a separate minute-bar scanner.",
+    },
+    {
+        "id": "gap_and_go",
+        "display_name": "Gap and go",
+        "timeframe": "intraday",
+        "status": "shadow",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["gap_and_go"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Session-structure proxy on the latest daily bar: ≥1% opening gap that holds, close in the upper half of the range, volume vs the 50-day average, trend filter above the 200-day SMA. Shadow only — not a 1-minute gap-and-go book.",
+    },
+    {
+        "id": "range_expansion",
+        "display_name": "Range expansion",
+        "timeframe": "intraday",
+        "status": "shadow",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["range_expansion"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Opening-drive proxy: close through the prior high, today's true range ≥ 1.25× ATR(14), close in the top quartile, above the 50-day SMA. Shadow only.",
     },
     {
         "id": "trend_breakout",
@@ -89,26 +120,92 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "description": "Post-earnings announcement drift sleeve. Paper / canary only — Stage 2 still owns executable entries.",
     },
     {
+        "id": "donchian_20",
+        "display_name": "Donchian 20-day breakout",
+        "timeframe": "daily",
+        "status": "shadow",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["donchian_20"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Close through the prior 20-day high (channel excludes today) with a 200-day SMA trend filter. Classic Turtle / channel breakout. Shadow only — selecting it does not go LIVE.",
+    },
+    {
+        "id": "nr7_breakout",
+        "display_name": "NR7 breakout",
+        "timeframe": "daily",
+        "status": "shadow",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["nr7_breakout"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Mark Fisher NR7: yesterday was the narrowest range of the last 7 sessions, today closes above that bar's high, above the 50-day SMA. Shadow only.",
+    },
+    {
         "id": "weekly_swing",
-        "display_name": "Weekly swing (daily bars)",
+        "display_name": "Weekly Stage 2",
         "timeframe": "weekly",
         "status": "research",
         "runnable": True,
         "match_ids": _STRATEGY_ALIASES["weekly_swing"],
-        "proxy_ids": ("trend_breakout",),
+        "proxy_ids": (),
         "env_on_select": {},
-        "description": "Same Stage 2 / VCP thesis held as a multi-week swing. Uses the daily scanner today; a weekly-bar resample is not live.",
+        "description": "Weinstein-style weekly Stage 2 on resampled Friday bars: close > 10-week SMA > 30-week SMA, 30-week SMA rising, within 15% of the 52-week high. Research — not the live book.",
+    },
+    {
+        "id": "weekly_vcp",
+        "display_name": "Weekly VCP",
+        "timeframe": "weekly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["weekly_vcp"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Multi-week volume contraction: last 5 weekly bars each print below the 10-week average volume, close above the 30-week SMA. Research only.",
+    },
+    {
+        "id": "weekly_breakout",
+        "display_name": "Weekly breakout",
+        "timeframe": "weekly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["weekly_breakout"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Weekly close through the prior week's high while above the 30-week SMA. Research only.",
     },
     {
         "id": "monthly_position",
-        "display_name": "Monthly position (daily bars)",
+        "display_name": "10-month SMA (Faber)",
         "timeframe": "monthly",
         "status": "research",
         "runnable": True,
         "match_ids": _STRATEGY_ALIASES["monthly_position"],
-        "proxy_ids": ("trend_breakout",),
+        "proxy_ids": (),
         "env_on_select": {},
-        "description": "Same Stage 2 / VCP thesis as a longer hold. Uses the daily scanner today; a monthly-bar engine is not live.",
+        "description": "Meb Faber GTAA timing on month-end bars: monthly close above a rising 10-month SMA. Research — not a live monthly engine.",
+    },
+    {
+        "id": "monthly_52w_high",
+        "display_name": "Monthly 52-week high",
+        "timeframe": "monthly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["monthly_52w_high"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Position-style strength: month-end close within 5% of the 52-week high and above the 10-month SMA. Research only.",
+    },
+    {
+        "id": "monthly_pullback",
+        "display_name": "Monthly SMA pullback",
+        "timeframe": "monthly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["monthly_pullback"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "description": "Uptrend pullback toward the 10-month SMA: average rising, this month's low tagged it, close still holds above. Research only.",
     },
 )
 
@@ -271,12 +368,28 @@ def catalog_fields_for_signal(signal: dict[str, Any] | None) -> dict[str, Any]:
     """Metadata to attach onto strategy_attribution for UI labels/tooltips."""
     attr = signal.get("strategy_attribution") if isinstance(signal, dict) else None
     top_live = None
+    top_shadow = None
     if isinstance(attr, dict):
         top_live = attr.get("top_live")
+        top_shadow = attr.get("top_shadow")
     family = None
+    triggered_name = None
     if isinstance(signal, dict):
         family = signal.get("entry_family")
-    row = lookup_strategy(str(top_live or "")) or lookup_strategy(str(family or ""))
+        plugins = signal.get("strategy_plugins") if isinstance(signal.get("strategy_plugins"), list) else []
+        for plugin in plugins:
+            if not isinstance(plugin, dict) or not plugin.get("triggered"):
+                continue
+            name = str(plugin.get("name") or "").strip().lower()
+            if name and name != "trend_breakout":
+                triggered_name = name
+                if str(plugin.get("mode") or "").lower() != "live":
+                    break
+    row = None
+    if str(family or "") == "horizon":
+        row = lookup_strategy(str(triggered_name or "")) or lookup_strategy(str(top_shadow or ""))
+    if row is None:
+        row = lookup_strategy(str(top_live or "")) or lookup_strategy(str(family or ""))
     if row is None:
         row = _STRATEGY_BY_ID["trend_breakout"]
     return {
@@ -306,13 +419,11 @@ def _signal_match_tokens(signal: dict[str, Any]) -> set[str]:
         tokens.add("breakout_confirm")
     plugins = signal.get("strategy_plugins") if isinstance(signal.get("strategy_plugins"), list) else []
     for plugin in plugins:
-        if not isinstance(plugin, dict):
+        if not isinstance(plugin, dict) or not plugin.get("triggered"):
             continue
         name = str(plugin.get("name") or "").strip().lower()
         if name:
             tokens.add(name)
-        if name == "pullback" and plugin.get("triggered"):
-            tokens.add("pullback")
     return tokens
 
 
@@ -332,10 +443,6 @@ def signal_matches_strategy_ids(signal: dict[str, Any], strategy_ids: list[str])
                 wanted.update(str(a).lower() for a in (proxy_row.get("match_ids") or ()))
                 wanted.add(str(proxy_row["id"]))
         if tokens & wanted:
-            return True
-        # Weekly/monthly research sleeves proxy the live breakout book when the
-        # scan did not stamp a catalog_id yet.
-        if row.get("proxy_ids") and ("trend_breakout" in tokens or "stage2" in tokens or "both" in tokens):
             return True
     return False
 
@@ -363,7 +470,7 @@ def build_scan_catalog_payload() -> dict[str, Any]:
         },
         "notes": {
             "bar_engine": "daily",
-            "weekly_monthly": "Horizon labels on the daily Stage 2 + VCP engine. Dedicated weekly/monthly bar scanners are not live.",
+            "weekly_monthly": "Weekly/monthly sleeves resample the daily OHLCV already fetched (Friday weeks, month-end). They are research/shadow evaluators, not a separate vendor bar feed, and they do not promote to LIVE.",
             "plugin_promotion": "Selecting a shadow strategy filters results for this scan; it does not promote plugins to LIVE.",
         },
     }

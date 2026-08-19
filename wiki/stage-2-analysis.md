@@ -39,6 +39,7 @@ tags: [strategy, technical]
 - [[signal-scanner]] — Stage A first-pass filter
 - [[scanner-tunables]] — env var reference
 - [[scan-catalog]] — dashboard grouping of this sleeve as "Stage 2 / VCP breakout"
+- [[horizon-strategies]] — extra sleeves do not replace this live gate
 
 ---
 

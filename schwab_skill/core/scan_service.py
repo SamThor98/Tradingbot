@@ -40,6 +40,8 @@ def run_scan(
         watchlist_override=watchlist_override,
         capture_shortlist=shortlist,
         universe_preset=universe_preset,
+        strategy_ids=strategy_ids,
+        scan_timeframe=scan_timeframe,
     )
     selected = [str(s) for s in (strategy_ids or []) if str(s).strip()]
     if isinstance(diagnostics, dict):
