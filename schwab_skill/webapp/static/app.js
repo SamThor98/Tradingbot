@@ -450,6 +450,7 @@ const SCREEN_SECTIONS = Object.freeze({
   operations: [
     "dashboardToday",
     "todaySummaryLanding",
+    "scanStudioPanel",
     "workflowPrimary",
     "scanSection",
     "scanDetailPanel",

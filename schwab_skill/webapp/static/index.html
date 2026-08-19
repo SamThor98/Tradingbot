@@ -261,7 +261,13 @@
         </div>
       </section>
 
-      <section id="scanStudioPanel" class="scan-studio card operations-surface" aria-label="Scan studio"></section>
+      <section id="scanStudioPanel" class="scan-studio card operations-surface" aria-label="Scan studio">
+        <div class="scan-studio-head">
+          <p class="scan-studio-kicker workspace-eyebrow">Scan lens</p>
+          <h3 class="scan-studio-title">Scan studio</h3>
+          <p class="muted small scan-studio-lede">Loading sleeves…</p>
+        </div>
+      </section>
       <script type="module">
         import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
         bindScanStudio();

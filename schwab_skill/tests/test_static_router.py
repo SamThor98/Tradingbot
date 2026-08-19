@@ -192,3 +192,10 @@ def test_scan_studio_sits_on_today_landing_not_behind_run_scan_tab() -> None:
     assert today != -1 and studio != -1 and workflow != -1
     assert today < studio < workflow, "Scan studio must paint on the Today landing, above the kanban"
     assert html.count('id="scanStudioPanel"') == 1
+    assert "scan-studio-title" in html[studio:workflow]
+    app = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert re.search(
+        r"operations:\s*\[\s*[^\]]*[\"']scanStudioPanel[\"']",
+        app,
+        re.S,
+    ), "operations SCREEN_SECTIONS must include scanStudioPanel"
