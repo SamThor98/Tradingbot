@@ -49,6 +49,21 @@ Default empty `strategy_ids` (full book API) does **not** dual-admit. Horizon pl
 
 `trend_breakout`, `pullback`, `pead_primary`, and `breakout_confirm` keep their existing paths (see [[scan-catalog]]).
 
+## Literature sleeves (additive)
+
+Paper strategies from the evidence ranking in the [Claude share](https://claude.ai/share/60aa957c-fd7a-4d15-95d9-b9fb4f42382c) were **appended**. Iterated ids (`ITERATED_STRATEGY_IDS` in `scan_catalog.py`) are never removed.
+
+| Id | Timeframe | Evidence | What we actually evaluate |
+|----|-----------|----------|---------------------------|
+| `opening_range_breakout` | intraday | Zarattini, Barbon & Aziz 2024 (5-min ORB, stocks in play) | Daily RVOL ≥ 1.5× and close through open + prior high. **Not** a 5-minute ORB fetch on the full universe |
+| `st_reversal_5d` | daily | Jegadeesh 1990, Lehmann 1990; Avramov et al. 2006 liquidity caveat | 5-session return ≤ −8%, today turns up, 50-day volume ≥ 200k |
+| `overnight_gap_fade` | daily | Overnight-drift literature (Bogousslavsky; NY Fed). Edge decaying | Long fade of a ≥1.5% gap down that fills ≥50% |
+| `weekly_reversal` | weekly | Same Jegadeesh/Lehmann weekly contrarian | Prior week ≤ −6%, this week closes higher |
+| `momentum_12_1` | monthly | Jegadeesh & Titman 1993 (most replicated CS momentum) | Skip-last-month 12m return ≥ 20%, above 200-day SMA. Single-name screen, not WML |
+| `tsmom_12m` | monthly | Moskowitz, Ooi & Pedersen 2012 | Month-end close > close 12 months ago. Single-name analog of futures TSMOM |
+
+Skipped as not scanner-viable here: SPY overnight-hold (not a name scanner), VWAP/stat-arb (institutional), weekly futures TSMOM.
+
 ## Related Pages
 
 - [[scan-catalog]] — dashboard grouping and API ids

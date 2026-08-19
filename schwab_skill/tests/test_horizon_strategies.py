@@ -7,9 +7,15 @@ from core.horizon_strategies import (
     evaluate_donchian_20,
     evaluate_gap_and_go,
     evaluate_horizon_plugins,
+    evaluate_momentum_12_1,
     evaluate_monthly_position,
     evaluate_nr7_breakout,
+    evaluate_opening_range_breakout,
+    evaluate_overnight_gap_fade,
     evaluate_range_expansion,
+    evaluate_st_reversal_5d,
+    evaluate_tsmom_12m,
+    evaluate_weekly_reversal,
     evaluate_weekly_swing,
     resample_monthly,
     resample_weekly,
@@ -17,9 +23,11 @@ from core.horizon_strategies import (
     triggered_dual_admit_ids,
 )
 from core.scan_catalog import (
+    ITERATED_STRATEGY_IDS,
     build_scan_catalog_payload,
     catalog_fields_for_signal,
     filter_signals_for_scan_selection,
+    known_strategy_ids,
     resolve_strategy_ids,
     signal_matches_strategy_ids,
 )
@@ -134,6 +142,12 @@ def test_evaluate_horizon_plugins_covers_catalog_sleeves() -> None:
         "monthly_position",
         "monthly_52w_high",
         "monthly_pullback",
+        "opening_range_breakout",
+        "st_reversal_5d",
+        "overnight_gap_fade",
+        "weekly_reversal",
+        "momentum_12_1",
+        "tsmom_12m",
     } <= names
 
 
@@ -184,6 +198,10 @@ def test_catalog_lists_multiple_strategies_per_timeframe() -> None:
     assert "donchian_20" in by_tf["daily"]
     assert "weekly_vcp" in by_tf["weekly"]
     assert "monthly_52w_high" in by_tf["monthly"]
+    assert "opening_range_breakout" in by_tf["intraday"]
+    assert "st_reversal_5d" in by_tf["daily"]
+    assert "weekly_reversal" in by_tf["weekly"]
+    assert "momentum_12_1" in by_tf["monthly"]
     weekly = next(s for s in payload["strategies"] if s["id"] == "weekly_swing")
     assert weekly.get("proxy_ids") in ((), [], None)
 
@@ -236,3 +254,67 @@ def test_dual_admit_set_excludes_live_breakout() -> None:
     assert "pead_primary" not in DUAL_ADMIT_STRATEGY_IDS
     assert "breakout_confirm" not in DUAL_ADMIT_STRATEGY_IDS
     assert "donchian_20" in DUAL_ADMIT_STRATEGY_IDS
+    assert "momentum_12_1" in DUAL_ADMIT_STRATEGY_IDS
+    assert "opening_range_breakout" in DUAL_ADMIT_STRATEGY_IDS
+
+
+def test_iterated_strategy_ids_are_not_removed() -> None:
+    ids = known_strategy_ids()
+    missing = sorted(ITERATED_STRATEGY_IDS - ids)
+    assert missing == []
+    payload = build_scan_catalog_payload()
+    yours = [s["id"] for s in payload["strategies"] if s.get("origin") == "iterated"]
+    assert set(yours) >= ITERATED_STRATEGY_IDS
+    papers = [s["id"] for s in payload["strategies"] if s.get("origin") == "literature"]
+    assert "momentum_12_1" in papers
+    assert "trend_breakout" not in papers
+
+
+def test_opening_range_breakout_needs_rvol_and_prior_high() -> None:
+    n = 40
+    close = [100.0] * (n - 1) + [106.0]
+    open_ = [100.0] * (n - 1) + [100.5]
+    high = [101.0] * (n - 1) + [106.2]
+    low = [99.0] * (n - 1) + [100.4]
+    volume = [1_000_000.0] * (n - 1) + [2_000_000.0]
+    out = evaluate_opening_range_breakout(_ohlcv(n=n, close=close, open_=open_, high=high, low=low, volume=volume))
+    assert out["triggered"] is True
+    assert out["meta"]["bar_engine"] == "daily_rvol_proxy"
+
+
+def test_st_reversal_5d_loser_then_turn() -> None:
+    n = 20
+    close = [100.0] * (n - 6) + [100.0, 96.0, 93.0, 91.0, 90.0, 92.0]
+    volume = [300_000.0] * n
+    out = evaluate_st_reversal_5d(_ohlcv(n=n, close=close, volume=volume))
+    assert out["meta"]["turned_up"] is True
+    assert out["triggered"] is True
+
+
+def test_overnight_gap_fade_recovers_half_the_gap() -> None:
+    n = 10
+    close = [100.0] * (n - 1) + [99.2]
+    open_ = [100.0] * (n - 1) + [97.0]
+    high = [101.0] * (n - 1) + [99.4]
+    low = [99.0] * (n - 1) + [96.8]
+    out = evaluate_overnight_gap_fade(_ohlcv(n=n, close=close, open_=open_, high=high, low=low))
+    assert out["triggered"] is True
+
+
+def test_weekly_reversal_after_down_week() -> None:
+    n = 40
+    close = [100.0] * (n - 12) + [90.0, 88.0, 85.0, 82.0, 80.0, 78.0, 81.0, 83.0, 85.0, 86.0, 88.0, 90.0]
+    out = evaluate_weekly_reversal(_ohlcv(n=n, close=close))
+    assert out["name"] == "weekly_reversal"
+    assert "prior_week_return_pct" in out["meta"]
+
+
+def test_momentum_12_1_on_year_long_uptrend() -> None:
+    out = evaluate_momentum_12_1(_ohlcv(n=280))
+    assert out["triggered"] is True
+    assert out["meta"]["formation_return_pct"] >= 20.0
+
+
+def test_tsmom_12m_on_rising_monthly_closes() -> None:
+    out = evaluate_tsmom_12m(_ohlcv(n=280, start="2019-01-02"))
+    assert out["triggered"] is True

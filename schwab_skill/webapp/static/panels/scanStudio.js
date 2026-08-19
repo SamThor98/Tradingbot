@@ -152,6 +152,28 @@ function statusChip(status) {
   return `<span class="scan-studio-status scan-studio-status--${escapeHtml(raw)}">${escapeHtml(label)}</span>`;
 }
 
+function originChip(origin) {
+  const raw = safeText(origin || "").toLowerCase();
+  if (raw === "literature") {
+    return `<span class="scan-studio-origin scan-studio-origin--literature">Paper</span>`;
+  }
+  if (raw === "iterated") {
+    return `<span class="scan-studio-origin scan-studio-origin--iterated">Yours</span>`;
+  }
+  return "";
+}
+
+function evidenceLine(ev) {
+  if (!ev || typeof ev !== "object") return "";
+  const cites = Array.isArray(ev.citations) ? ev.citations.map((c) => String(c || "").trim()).filter(Boolean) : [];
+  const caveat = safeText(ev.caveat || "");
+  const strength = safeText(ev.strength || "");
+  if (!cites.length && !caveat) return "";
+  const head = strength ? `Evidence (${strength})` : "Evidence";
+  const citeText = cites.length ? `${cites.join("; ")}.` : "";
+  return `<span class="scan-studio-evidence">${escapeHtml(head)}: ${escapeHtml(citeText)}${caveat ? ` ${escapeHtml(caveat)}` : ""}</span>`;
+}
+
 function renderStrategyCards(prefs) {
   const rows = strategiesForTimeframe(prefs.timeframe);
   if (!rows.length) {
@@ -169,8 +191,10 @@ function renderStrategyCards(prefs) {
           <span class="scan-studio-strategy-head">
             <strong>${escapeHtml(s.display_name || id)}</strong>
             ${statusChip(s.status)}
+            ${originChip(s.origin)}
           </span>
           <span class="scan-studio-strategy-desc">${escapeHtml(s.description || "")}</span>
+          ${evidenceLine(s.evidence)}
         </span>
       </label>`;
     })
@@ -196,7 +220,7 @@ function horizonNote(prefs) {
     return `<p class="scan-studio-note" role="status">${escapeHtml(note)}</p>`;
   }
   if (tf === "intraday") {
-    return `<p class="scan-studio-note" role="status">Intraday confirm is a live-quote overlay. Gap-and-go and range expansion use the latest daily bar as session structure — not a separate minute-bar scanner.</p>`;
+    return `<p class="scan-studio-note" role="status">Intraday confirm is a live-quote overlay. Gap-and-go / range expansion are your session-structure sleeves. Opening-range breakout is a daily RVOL proxy of the 5-minute ORB literature — not a minute-bar book.</p>`;
   }
   return "";
 }
@@ -213,7 +237,7 @@ export function renderScanStudio() {
     <div class="scan-studio-head">
       <div>
         <h3 class="scan-studio-title">Scan studio</h3>
-        <p class="muted small">Pick a horizon, read the sleeve, and choose a universe. Live execution stays the daily Stage 2 / VCP engine; extra sleeves are shadow or research only.</p>
+        <p class="muted small">Pick a horizon. <strong>Yours</strong> are the iterated sleeves already in this bot; <strong>Paper</strong> rows are additive literature screens. Live execution stays daily Stage 2 / VCP.</p>
       </div>
     </div>
     <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>

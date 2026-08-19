@@ -46,8 +46,14 @@ Canonical ids live in `core/scan_catalog.py` (`STRATEGIES`). Each row has `displ
 | `monthly_position` | monthly | research | Faber 10-month SMA timing |
 | `monthly_52w_high` | monthly | research | Month-end close near 52-week high |
 | `monthly_pullback` | monthly | research | Pullback that tags the 10-month SMA |
+| `opening_range_breakout` | intraday | research | **Paper.** Daily RVOL proxy of Zarattini et al. 2024 5-min ORB |
+| `st_reversal_5d` | daily | research | **Paper.** Jegadeesh/Lehmann 1-week loser bounce |
+| `overnight_gap_fade` | daily | research | **Paper.** Long fade of a gap down |
+| `weekly_reversal` | weekly | research | **Paper.** Weekly loser bounce |
+| `momentum_12_1` | monthly | research | **Paper.** Jegadeesh-Titman 12-1 strength screen |
+| `tsmom_12m` | monthly | research | **Paper.** Moskowitz et al. 12-month TSMOM analog |
 
-Plugin promotion remains OFF → SHADOW → LIVE. Scan studio selection is a **filter + optional Stage A dual-admit**, not a LIVE promotion. Horizon-only names are `executable=false`.
+Literature rows are **additive**. Iterated ids stay in `ITERATED_STRATEGY_IDS` and show a **Yours** chip in Scan studio. Plugin promotion remains OFF → SHADOW → LIVE. Horizon-only names are `executable=false`.
 
 ## Universes
 
@@ -72,7 +78,7 @@ Dashboard: `#scanStudioPanel` on the Today scan lane. Prefs persist in `tradingb
 
 ## Related Pages
 
-- [[horizon-strategies]] — evaluator rules and Stage A dual-admit
+- [[horizon-strategies]] — evaluator rules, dual-admit, and literature vs iterated merge
 - [[signal-scanner]] — Stage A/B pipeline that still runs
 - [[stage-2-analysis]] — live breakout thesis
 - [[vcp-detection]] — volume contraction gate (skipped for horizon-only admits)

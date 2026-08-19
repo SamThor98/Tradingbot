@@ -28,6 +28,12 @@ DUAL_ADMIT_STRATEGY_IDS: frozenset[str] = frozenset(
         "monthly_position",
         "monthly_52w_high",
         "monthly_pullback",
+        "opening_range_breakout",
+        "st_reversal_5d",
+        "overnight_gap_fade",
+        "weekly_reversal",
+        "momentum_12_1",
+        "tsmom_12m",
     }
 )
 
@@ -537,6 +543,206 @@ def evaluate_monthly_pullback(df: pd.DataFrame) -> dict[str, Any]:
     )
 
 
+def evaluate_opening_range_breakout(df: pd.DataFrame) -> dict[str, Any]:
+    """Daily RVOL + close-through-open proxy of 5-minute ORB (Zarattini et al. 2024)."""
+    frame = _require_ohlcv(df, min_rows=25)
+    if frame is None:
+        return _plugin(
+            name="opening_range_breakout", triggered=False, raw_score=0.0, meta={"reason": "insufficient_bars"}
+        )
+    last = frame.iloc[-1]
+    prior_high = _safe_float(frame["high"].iloc[-2])
+    open_ = _safe_float(last["open"])
+    high = _safe_float(last["high"])
+    low = _safe_float(last["low"])
+    close = _safe_float(last["close"])
+    vol = _safe_float(last["volume"])
+    hist_vol = frame["volume"].astype(float).iloc[:-1]
+    avg_vol = _safe_float(hist_vol.iloc[-50:].mean() if len(hist_vol) else 0.0)
+    rvol = (vol / avg_vol) if avg_vol > 0 else 0.0
+    loc = _close_in_range_pct(open_, high, low, close)
+    sip = rvol >= 1.5
+    through_open = close > open_ > 0
+    through_prior = prior_high > 0 and close > prior_high
+    location_ok = loc is not None and loc >= 0.5
+    triggered = bool(sip and through_open and through_prior and location_ok)
+    score = 0.0
+    if sip:
+        score += min(35.0, rvol * 15.0)
+    if through_open:
+        score += 20.0
+    if through_prior:
+        score += 25.0
+    if location_ok and loc is not None:
+        score += loc * 20.0
+    return _plugin(
+        name="opening_range_breakout",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "rvol": round(rvol, 3),
+            "close_above_open": through_open,
+            "close_above_prior_high": through_prior,
+            "close_in_range": round(loc, 3) if loc is not None else None,
+            "bar_engine": "daily_rvol_proxy",
+        },
+    )
+
+
+def evaluate_st_reversal_5d(df: pd.DataFrame) -> dict[str, Any]:
+    """Jegadeesh/Lehmann 1-week reversal, long-only loser bounce with a volume floor."""
+    frame = _require_ohlcv(df, min_rows=8)
+    if frame is None:
+        return _plugin(name="st_reversal_5d", triggered=False, raw_score=0.0, meta={"reason": "insufficient_bars"})
+    close = frame["close"].astype(float)
+    now = _safe_float(close.iloc[-1])
+    start = _safe_float(close.iloc[-6])
+    if start <= 0 or now <= 0:
+        return _plugin(name="st_reversal_5d", triggered=False, raw_score=0.0, meta={"reason": "invalid_prices"})
+    ret5 = (now / start) - 1.0
+    turned = now > _safe_float(close.iloc[-2])
+    avg_vol = _safe_float(frame["volume"].astype(float).iloc[-50:].mean())
+    liquid = avg_vol >= 200_000.0
+    triggered = bool(ret5 <= -0.0799 and turned and liquid)
+    score = 0.0
+    if ret5 <= -0.0799:
+        score += min(45.0, abs(ret5) * 250.0)
+    if turned:
+        score += 30.0
+    if liquid:
+        score += 25.0
+    return _plugin(
+        name="st_reversal_5d",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "return_5d_pct": round(ret5 * 100.0, 2),
+            "turned_up": turned,
+            "avg_vol_50": round(avg_vol, 0),
+            "volume_floor_ok": liquid,
+        },
+    )
+
+
+def evaluate_overnight_gap_fade(df: pd.DataFrame) -> dict[str, Any]:
+    """Long-only fade of a gap down (daily analog of overnight-session literature)."""
+    frame = _require_ohlcv(df, min_rows=3)
+    if frame is None:
+        return _plugin(name="overnight_gap_fade", triggered=False, raw_score=0.0, meta={"reason": "insufficient_bars"})
+    last = frame.iloc[-1]
+    prior_close = _safe_float(frame["close"].iloc[-2])
+    open_ = _safe_float(last["open"])
+    close = _safe_float(last["close"])
+    if prior_close <= 0 or open_ <= 0 or close <= 0:
+        return _plugin(name="overnight_gap_fade", triggered=False, raw_score=0.0, meta={"reason": "invalid_prices"})
+    gap_pct = (open_ - prior_close) / prior_close
+    gap_span = prior_close - open_
+    fill = ((close - open_) / gap_span) if gap_span > 0 else 0.0
+    triggered = bool(gap_pct <= -0.015 and close > open_ and fill >= 0.5)
+    score = 0.0
+    if gap_pct <= -0.015:
+        score += min(40.0, abs(gap_pct) * 800.0)
+    if close > open_:
+        score += 30.0
+    if fill >= 0.5:
+        score += min(30.0, fill * 30.0)
+    return _plugin(
+        name="overnight_gap_fade",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "gap_pct": round(gap_pct * 100.0, 2),
+            "gap_fill_frac": round(fill, 3),
+        },
+    )
+
+
+def evaluate_weekly_reversal(df: pd.DataFrame) -> dict[str, Any]:
+    """Weekly loser bounce on resampled Friday bars (Jegadeesh/Lehmann)."""
+    weekly = resample_weekly(df)
+    if len(weekly) < 4:
+        return _plugin(name="weekly_reversal", triggered=False, raw_score=0.0, meta={"reason": "insufficient_weekly_bars"})
+    prior_close = _safe_float(weekly["close"].iloc[-2])
+    prior_start = _safe_float(weekly["close"].iloc[-3])
+    now = _safe_float(weekly["close"].iloc[-1])
+    if prior_start <= 0 or prior_close <= 0 or now <= 0:
+        return _plugin(name="weekly_reversal", triggered=False, raw_score=0.0, meta={"reason": "invalid_prices"})
+    prior_ret = (prior_close / prior_start) - 1.0
+    recovering = now > prior_close
+    triggered = bool(prior_ret <= -0.06 and recovering)
+    score = 0.0
+    if prior_ret <= -0.06:
+        score += min(50.0, abs(prior_ret) * 300.0)
+    if recovering:
+        score += 40.0
+    return _plugin(
+        name="weekly_reversal",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "prior_week_return_pct": round(prior_ret * 100.0, 2),
+            "recovering": recovering,
+        },
+    )
+
+
+def evaluate_momentum_12_1(df: pd.DataFrame) -> dict[str, Any]:
+    """Jegadeesh-Titman 12-1 single-name strength screen (skip last month)."""
+    frame = _require_ohlcv(df, min_rows=260)
+    if frame is None:
+        return _plugin(name="momentum_12_1", triggered=False, raw_score=0.0, meta={"reason": "insufficient_bars"})
+    end_px = _safe_float(frame["close"].iloc[-22])
+    start_px = _safe_float(frame["close"].iloc[-253])
+    last_close = _safe_float(frame["close"].iloc[-1])
+    if start_px <= 0 or end_px <= 0:
+        return _plugin(name="momentum_12_1", triggered=False, raw_score=0.0, meta={"reason": "invalid_prices"})
+    formation = (end_px / start_px) - 1.0
+    sma200 = _safe_float(_sma(frame["close"], 200).iloc[-1])
+    trend_ok = sma200 <= 0 or last_close > sma200
+    triggered = bool(formation >= 0.20 and trend_ok)
+    score = 0.0
+    if formation >= 0.20:
+        score += min(60.0, formation * 80.0)
+    if trend_ok:
+        score += 30.0
+    return _plugin(
+        name="momentum_12_1",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "formation_return_pct": round(formation * 100.0, 2),
+            "skip_days": 21,
+            "above_sma200": trend_ok,
+        },
+    )
+
+
+def evaluate_tsmom_12m(df: pd.DataFrame) -> dict[str, Any]:
+    """Moskowitz-Ooi-Pedersen 12-month time-series momentum, single-name analog."""
+    monthly = resample_monthly(df)
+    if len(monthly) < 13:
+        return _plugin(name="tsmom_12m", triggered=False, raw_score=0.0, meta={"reason": "insufficient_monthly_bars"})
+    now = _safe_float(monthly["close"].iloc[-1])
+    ago = _safe_float(monthly["close"].iloc[-13])
+    if ago <= 0 or now <= 0:
+        return _plugin(name="tsmom_12m", triggered=False, raw_score=0.0, meta={"reason": "invalid_prices"})
+    ret = (now / ago) - 1.0
+    triggered = bool(now > ago)
+    score = 55.0 if triggered else 10.0
+    if triggered:
+        score += min(35.0, max(0.0, ret) * 80.0)
+    return _plugin(
+        name="tsmom_12m",
+        triggered=triggered,
+        raw_score=score,
+        meta={
+            "return_12m_pct": round(ret * 100.0, 2),
+            "monthly_close": round(now, 4),
+            "close_12m_ago": round(ago, 4),
+        },
+    )
+
+
 _EVALUATORS: dict[str, Any] = {
     "gap_and_go": evaluate_gap_and_go,
     "range_expansion": evaluate_range_expansion,
@@ -548,6 +754,12 @@ _EVALUATORS: dict[str, Any] = {
     "monthly_position": evaluate_monthly_position,
     "monthly_52w_high": evaluate_monthly_52w_high,
     "monthly_pullback": evaluate_monthly_pullback,
+    "opening_range_breakout": evaluate_opening_range_breakout,
+    "st_reversal_5d": evaluate_st_reversal_5d,
+    "overnight_gap_fade": evaluate_overnight_gap_fade,
+    "weekly_reversal": evaluate_weekly_reversal,
+    "momentum_12_1": evaluate_momentum_12_1,
+    "tsmom_12m": evaluate_tsmom_12m,
 }
 
 

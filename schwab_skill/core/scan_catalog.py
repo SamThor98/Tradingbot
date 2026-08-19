@@ -50,6 +50,12 @@ _STRATEGY_ALIASES: dict[str, tuple[str, ...]] = {
     "monthly_position": ("monthly_position", "ten_month_sma", "faber"),
     "monthly_52w_high": ("monthly_52w_high",),
     "monthly_pullback": ("monthly_pullback",),
+    "opening_range_breakout": ("opening_range_breakout", "orb", "orb_5m"),
+    "st_reversal_5d": ("st_reversal_5d", "jegadeesh_reversal", "weekly_loser"),
+    "overnight_gap_fade": ("overnight_gap_fade", "gap_fade"),
+    "weekly_reversal": ("weekly_reversal", "lehmann_reversal"),
+    "momentum_12_1": ("momentum_12_1", "cs_momentum", "jegadeesh_titman"),
+    "tsmom_12m": ("tsmom_12m", "time_series_momentum"),
 }
 
 STRATEGIES: tuple[dict[str, Any], ...] = (
@@ -207,6 +213,108 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "description": "Uptrend pullback toward the 10-month SMA: average rising, this month's low tagged it, close still holds above. Research only.",
     },
+    {
+        "id": "opening_range_breakout",
+        "display_name": "Opening range breakout (RVOL proxy)",
+        "timeframe": "intraday",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["opening_range_breakout"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "high",
+            "citations": ["Zarattini, Barbon & Aziz 2024 (Swiss Finance Institute / SSRN)"],
+            "caveat": "The paper uses 5-minute ORB on the top-20 relative-volume 'stocks in play'. This sleeve does not fetch 5-minute bars for the full universe; it is the daily RVOL + close-through-open/prior-high screen.",
+        },
+        "description": "Daily-bar stocks-in-play proxy of 5-minute opening-range breakout: relative volume ≥ 1.5×, close above the open and prior high, close in the upper half of the range. Research only — not a 5-minute ORB engine.",
+    },
+    {
+        "id": "st_reversal_5d",
+        "display_name": "5-day short-term reversal",
+        "timeframe": "daily",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["st_reversal_5d"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "high",
+            "citations": ["Jegadeesh 1990", "Lehmann 1990", "Avramov, Chordia, Goyal 2006"],
+            "caveat": "Academic profits concentrate in small, high-turnover, illiquid names. This long-only loser-bounce adds a 50-day volume floor; paper Sharpes will not survive your fills.",
+        },
+        "description": "Long-only 1-week reversal: 5-session return ≤ −8%, today closes above yesterday (turn), 50-day average volume ≥ 200k. Research — not the live book.",
+    },
+    {
+        "id": "overnight_gap_fade",
+        "display_name": "Overnight gap fade",
+        "timeframe": "daily",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["overnight_gap_fade"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "medium",
+            "citations": ["Bogousslavsky 2021", "NY Fed / Liberty Street Economics overnight drift series"],
+            "caveat": "Overnight premium is close-to-open hold, and has been decaying since 2020. This sleeve is the long gap-down fade, distinct from gap-and-go continuation.",
+        },
+        "description": "Long-only fade of a ≥1.5% opening gap down: close recovers at least half the gap. Distinct from gap-and-go (gap-up continuation). Research only.",
+    },
+    {
+        "id": "weekly_reversal",
+        "display_name": "Weekly loser reversal",
+        "timeframe": "weekly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["weekly_reversal"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "medium",
+            "citations": ["Jegadeesh 1990", "Lehmann 1990", "Avramov et al. 2006"],
+            "caveat": "Same liquidity warning as the daily 5-day reversal: costs eat the edge in microcaps.",
+        },
+        "description": "Prior week's return ≤ −6% and this week closes above last week's close (loser bounce on Friday bars). Research only.",
+    },
+    {
+        "id": "momentum_12_1",
+        "display_name": "12-1 momentum",
+        "timeframe": "monthly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["momentum_12_1"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "high",
+            "citations": ["Jegadeesh & Titman 1993", "Jegadeesh & Titman 2001 replication"],
+            "caveat": "The paper is cross-sectional winner-minus-loser. This is a single-name 12-1 strength screen (skip last month, ≥20% formation return, above 200-day SMA), not a WML portfolio.",
+        },
+        "description": "12-month formation skipping the most recent month: return from 252 to 21 days ago ≥ 20%, last close above the 200-day SMA. Most replicated equity anomaly. Research — not LIVE.",
+    },
+    {
+        "id": "tsmom_12m",
+        "display_name": "12-month time-series momentum",
+        "timeframe": "monthly",
+        "status": "research",
+        "runnable": True,
+        "match_ids": _STRATEGY_ALIASES["tsmom_12m"],
+        "proxy_ids": (),
+        "env_on_select": {},
+        "origin": "literature",
+        "evidence": {
+            "strength": "high",
+            "citations": ["Moskowitz, Ooi & Pedersen 2012"],
+            "caveat": "Original TSMOM is a diversified futures overlay (crisis alpha). This is the single-name analog: month-end close above the close 12 months earlier.",
+        },
+        "description": "Month-end close above the close 12 months ago. Distinct from the 10-month SMA Faber sleeve. Research only.",
+    },
 )
 
 UNIVERSES: tuple[dict[str, Any], ...] = (
@@ -271,6 +379,26 @@ UNIVERSES: tuple[dict[str, Any], ...] = (
 DEFAULT_TIMEFRAME = "daily"
 DEFAULT_UNIVERSE = "sp1500"
 DEFAULT_STRATEGY_IDS: tuple[str, ...] = ("trend_breakout",)
+
+# Operator-iterated sleeves. Literature rows are additive — never remove these ids.
+ITERATED_STRATEGY_IDS: frozenset[str] = frozenset(
+    {
+        "breakout_confirm",
+        "gap_and_go",
+        "range_expansion",
+        "trend_breakout",
+        "pullback",
+        "pead_primary",
+        "donchian_20",
+        "nr7_breakout",
+        "weekly_swing",
+        "weekly_vcp",
+        "weekly_breakout",
+        "monthly_position",
+        "monthly_52w_high",
+        "monthly_pullback",
+    }
+)
 
 _UNIVERSE_IDS = {str(u["id"]) for u in UNIVERSES}
 _AVAILABLE_UNIVERSE_IDS = {str(u["id"]) for u in UNIVERSES if u.get("available")}
@@ -458,10 +586,19 @@ def filter_signals_for_scan_selection(
     return [s for s in rows if signal_matches_strategy_ids(s, ids)]
 
 
+def _strategy_payload_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    sid = str(out.get("id") or "")
+    out.setdefault("origin", "iterated" if sid in ITERATED_STRATEGY_IDS else "literature")
+    if not isinstance(out.get("evidence"), dict):
+        out["evidence"] = {}
+    return out
+
+
 def build_scan_catalog_payload() -> dict[str, Any]:
     return {
         "timeframes": [dict(t) for t in TIMEFRAMES],
-        "strategies": [dict(s) for s in STRATEGIES],
+        "strategies": [_strategy_payload_row(dict(s)) for s in STRATEGIES],
         "universes": [dict(u) for u in UNIVERSES],
         "defaults": {
             "timeframe": DEFAULT_TIMEFRAME,
@@ -472,5 +609,6 @@ def build_scan_catalog_payload() -> dict[str, Any]:
             "bar_engine": "daily",
             "weekly_monthly": "Weekly/monthly sleeves resample the daily OHLCV already fetched (Friday weeks, month-end). They are research/shadow evaluators, not a separate vendor bar feed, and they do not promote to LIVE.",
             "plugin_promotion": "Selecting a shadow strategy filters results for this scan; it does not promote plugins to LIVE.",
+            "strategy_merge": "Literature sleeves are additive. Iterated ids (Yours) are never removed when paper strategies are added.",
         },
     }

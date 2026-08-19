@@ -17,6 +17,8 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
     assert "trend_breakout" in ids
     assert "pullback" in ids
     assert "weekly_swing" in ids
+    assert "momentum_12_1" in ids
+    assert "opening_range_breakout" in ids
     assert "donchian_20" in ids
     assert "gap_and_go" in ids
     assert "monthly_52w_high" in ids
