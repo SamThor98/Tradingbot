@@ -220,7 +220,7 @@ function horizonNote(prefs) {
     return `<p class="scan-studio-note" role="status">${escapeHtml(note)}</p>`;
   }
   if (tf === "intraday") {
-    return `<p class="scan-studio-note" role="status">Intraday confirm is a live-quote overlay. Gap-and-go / range expansion are your session-structure sleeves. Opening-range breakout is a daily RVOL proxy of the 5-minute ORB literature — not a minute-bar book.</p>`;
+    return `<p class="scan-studio-note" role="status">Intraday confirm is a live-quote overlay. Gap-and-go / range expansion are your session-structure sleeves on completed daily bars. RVOL strong-close is a daily proxy of the 5-minute ORB literature — not a minute-bar book.</p>`;
   }
   return "";
 }
@@ -237,7 +237,7 @@ export function renderScanStudio() {
     <div class="scan-studio-head">
       <div>
         <h3 class="scan-studio-title">Scan studio</h3>
-        <p class="muted small">Pick a horizon. <strong>Yours</strong> are the iterated sleeves already in this bot; <strong>Paper</strong> rows are additive literature screens. Live execution stays daily Stage 2 / VCP.</p>
+        <p class="muted small">Pick a horizon. Each tab starts with <strong>one</strong> primary sleeve; Paper rows are opt-in. <strong>Yours</strong> are iterated sleeves; <strong>Paper</strong> are literature screens, not the published portfolios. Live execution stays daily Stage 2 / VCP.</p>
       </div>
     </div>
     <div class="scan-studio-tf-row" role="tablist" aria-label="Strategy timeframe">${renderTimeframeTabs(prefs)}</div>
@@ -276,12 +276,24 @@ function syncPrefsFromDom() {
   return prefs;
 }
 
+function primaryStrategyIdForTimeframe(timeframe) {
+  const tf = timeframeRow(timeframe);
+  const fromTf = safeText(tf?.default_strategy_id || "").toLowerCase();
+  if (fromTf) return fromTf;
+  const marked = strategiesForTimeframe(timeframe).find((s) => s.primary_for_timeframe);
+  if (marked?.id) return String(marked.id);
+  const rows = strategiesForTimeframe(timeframe).filter((s) => s.runnable !== false);
+  return rows[0] ? String(rows[0].id) : "trend_breakout";
+}
+
+export { primaryStrategyIdForTimeframe };
+
 function selectTimeframe(timeframe) {
   const prefs = state.scanStudioPrefs || loadScanStudioPrefs();
   prefs.timeframe = timeframe;
   const inFrame = new Set(strategiesForTimeframe(timeframe).map((s) => String(s.id)));
   const kept = (prefs.strategy_ids || []).filter((id) => inFrame.has(id));
-  prefs.strategy_ids = kept.length ? kept : strategiesForTimeframe(timeframe).filter((s) => s.runnable !== false).map((s) => String(s.id));
+  prefs.strategy_ids = kept.length ? kept : [primaryStrategyIdForTimeframe(timeframe)];
   saveScanStudioPrefs(prefs);
   renderScanStudio();
 }

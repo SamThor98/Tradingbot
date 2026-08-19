@@ -637,14 +637,15 @@ def _evaluate_quality_gates(signal: dict[str, Any], skill_dir: Path) -> list[str
         get_quality_require_breakout_volume,
     )
     reasons: list[str] = []
+    horizon = str(signal.get("entry_family") or "").strip().lower() == "horizon"
     score = float(signal.get("signal_score", 0) or 0)
-    if score < float(get_quality_min_signal_score(skill_dir)):
+    if not horizon and score < float(get_quality_min_signal_score(skill_dir)):
         reasons.append("low_signal_score")
 
     # continuation_prob / bull_trap_prob removed: already baked into signal_score
     # via MiroFish conviction. Separate thresholds were double-counting the same signal.
 
-    if get_quality_require_breakout_volume(skill_dir):
+    if (not horizon) and get_quality_require_breakout_volume(skill_dir):
         latest_vol = signal.get("latest_volume")
         avg_vol = signal.get("avg_vol_50")
         min_ratio = signal.get("breakout_volume_min_ratio")
@@ -1110,8 +1111,9 @@ def _scan_stage_a_one(
             pead_ok = False
 
         horizon_hits: list[str] = []
+        horizon_plugin_hits: list[dict[str, Any]] = []
         try:
-            from core.horizon_strategies import selected_dual_admit_ids, triggered_dual_admit_ids
+            from core.horizon_strategies import selected_dual_admit_ids, selected_horizon_plugin_hits
 
             wanted_horizon = selected_dual_admit_ids(horizon_strategy_ids)
             if wanted_horizon:
@@ -1129,14 +1131,16 @@ def _scan_stage_a_one(
                         mode="shadow",
                     )
                     pullback_hit = bool(pb and pb.get("triggered"))
-                horizon_hits = triggered_dual_admit_ids(
+                horizon_plugin_hits = selected_horizon_plugin_hits(
                     df,
                     wanted_horizon,
                     pullback_triggered=pullback_hit,
                 )
+                horizon_hits = [str(h.get("name") or "") for h in horizon_plugin_hits if str(h.get("name") or "")]
         except Exception as _e:
             LOG.debug("Horizon Stage A eval skipped for %s: %s", ticker, _e)
             horizon_hits = []
+            horizon_plugin_hits = []
         horizon_ok = bool(horizon_hits)
 
         if not stage2_ok and not pead_ok and not horizon_ok:
@@ -1455,6 +1459,15 @@ def _scan_stage_a_one(
             "entry_family": entry_family,
             "executable": _pead_primary_is_executable(entry_family),
             "horizon_hits": list(horizon_hits),
+            "horizon_plugin_hits": [
+                {
+                    "name": str(h.get("name") or ""),
+                    "raw_score": h.get("raw_score"),
+                    "meta": h.get("meta") if isinstance(h.get("meta"), dict) else {},
+                }
+                for h in horizon_plugin_hits
+                if isinstance(h, dict)
+            ],
             "pead_beat": (pead_eval or {}).get("pead_beat") if pead_eval else None,
             "pead_surprise_pct": (pead_eval or {}).get("pead_surprise_pct") if pead_eval else None,
             "data_provider": provider,
@@ -2296,7 +2309,12 @@ def _apply_post_stage_b_chain(
         min_conv = get_learned_min_conviction(skill_dir)
         if min_conv is not None:
             before = list(signals)
-            signals = [s for s in signals if (s.get("mirofish_conviction") or 0) >= min_conv]
+            signals = [
+                s
+                for s in signals
+                if str(s.get("entry_family") or "") == "horizon"
+                or (s.get("mirofish_conviction") or 0) >= min_conv
+            ]
             if len(before) > len(signals):
                 diagnostics["self_study_filtered"] = len(before) - len(signals)
                 LOG.info(
@@ -2514,10 +2532,38 @@ def _apply_post_stage_b_chain(
             record_shadow_evidence(signals, diagnostics, skill_dir)
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Prob-rank cohort skipped: %s", e)
-    signals.sort(
-        key=lambda s: s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
-        reverse=True,
-    )
+    try:
+        from core.horizon_strategies import partition_live_and_research, research_score_from_plugins
+
+        live_book, research_book = partition_live_and_research(signals)
+        for row in research_book:
+            plugins = row.get("strategy_plugins") if isinstance(row.get("strategy_plugins"), list) else []
+            row["research_score"] = research_score_from_plugins(plugins)
+            row["sort_score"] = float(row.get("research_score") or 0.0)
+            row["rank_basis"] = "research_score"
+        live_book.sort(
+            key=lambda s: s.get("sort_score")
+            or s.get(live_sort_key)
+            or s.get("composite_score")
+            or s.get("rank_score")
+            or 0.0,
+            reverse=True,
+        )
+        research_book.sort(key=lambda s: float(s.get("research_score") or 0.0), reverse=True)
+        diagnostics["live_signal_count"] = len(live_book)
+        diagnostics["research_signal_count"] = len(research_book)
+        diagnostics["ranked_on_research_score"] = int(not live_book and bool(research_book))
+        signals = live_book + research_book if live_book else research_book
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Live/research rank split skipped: %s", e)
+        signals.sort(
+            key=lambda s: s.get("sort_score")
+            or s.get(live_sort_key)
+            or s.get("composite_score")
+            or s.get("rank_score")
+            or 0.0,
+            reverse=True,
+        )
 
     # De-correlation guard: keep the final top-N from loading up on one sector
     # and, when history is available, on names that have moved together.
@@ -2607,11 +2653,28 @@ def _apply_post_stage_b_chain(
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Correlation guard skipped: %s", e)
 
-    if top_n > 0 and len(signals) > top_n:
-        diagnostics["top_n_applied"] = len(signals) - top_n
-        before_top_n = list(signals)
-        signals = signals[:top_n]
-        _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
+    if top_n > 0:
+        try:
+            from core.horizon_strategies import partition_live_and_research
+
+            live_book, research_book = partition_live_and_research(signals)
+            if len(live_book) > top_n:
+                diagnostics["top_n_applied"] = len(live_book) - top_n
+                before_top_n = list(signals)
+                live_book = live_book[:top_n]
+                signals = live_book + research_book if live_book else research_book
+                _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
+            elif not live_book and len(research_book) > top_n:
+                diagnostics["top_n_applied"] = len(research_book) - top_n
+                before_top_n = list(signals)
+                signals = research_book[:top_n]
+                _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
+        except Exception:
+            if len(signals) > top_n:
+                diagnostics["top_n_applied"] = len(signals) - top_n
+                before_top_n = list(signals)
+                signals = signals[:top_n]
+                _tag_shortlist_drop(before_top_n, signals, "trimmed_top_n")
 
     if regime_v2_snapshot is not None:
         for s in signals:
@@ -3008,16 +3071,23 @@ def scan_for_signals_detailed(
 
         allow_bear_regime = bool(get_scan_allow_bear_regime(skill_dir))
         fail_closed_on_outage = bool(get_risk_fail_closed_on_data_outage(skill_dir))
+        try:
+            from core.scan_catalog import selected_strategies_bypass_bull_regime
+
+            counter_trend_bypass = selected_strategies_bypass_bull_regime(strategy_ids)
+        except Exception:
+            counter_trend_bypass = False
         regime_bullish, regime_ctx = is_market_regime_bullish(auth, skill_dir)
         diagnostics["regime_bullish"] = regime_bullish
         diagnostics["scan_allow_bear_regime"] = allow_bear_regime
+        diagnostics["regime_counter_trend_bypass"] = int(bool(counter_trend_bypass))
         diagnostics["regime_fail_closed_mode"] = fail_closed_on_outage
         diagnostics["spy_price"] = regime_ctx.get("spy_price")
         diagnostics["spy_sma_200"] = regime_ctx.get("spy_sma_200")
         diagnostics["regime_data_unavailable"] = int(bool(regime_ctx.get("data_unavailable")))
         diagnostics["regime_history_bars"] = regime_ctx.get("regime_history_bars")
         diagnostics["regime_history_provider"] = regime_ctx.get("regime_history_provider")
-        if not regime_bullish and not allow_bear_regime:
+        if not regime_bullish and not allow_bear_regime and not counter_trend_bypass:
             data_unavailable = bool(regime_ctx.get("data_unavailable"))
             diagnostics["scan_blocked"] = 1
             if data_unavailable:
@@ -3040,8 +3110,9 @@ def scan_for_signals_detailed(
                 send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
                 LOG.info("Regime gate blocked scan: SPY below 200 SMA")
             return [], diagnostics
-        if not regime_bullish and allow_bear_regime:
-            LOG.info("Regime gate override active: scan continues while SPY below 200 SMA")
+        if not regime_bullish and (allow_bear_regime or counter_trend_bypass):
+            if counter_trend_bypass and not allow_bear_regime:
+                LOG.info("Regime gate bypass: counter-trend research sleeves only")
     except Exception as e:
         from config import get_risk_fail_closed_on_data_outage
 
@@ -3556,6 +3627,21 @@ def scan_for_signals_detailed(
     horizon_only = [
         c for c in stage_a_candidates if str(c.get("entry_family") or "") == "horizon"
     ]
+    try:
+        from core.horizon_strategies import cap_cross_section_horizon
+
+        capped = cap_cross_section_horizon(horizon_only)
+        if len(capped) < len(horizon_only):
+            diagnostics["horizon_cross_section_trimmed"] = len(horizon_only) - len(capped)
+            keep = {str(c.get("ticker") or "") for c in capped}
+            horizon_only = capped
+            stage_a_candidates = [
+                c
+                for c in stage_a_candidates
+                if str(c.get("entry_family") or "") != "horizon" or str(c.get("ticker") or "") in keep
+            ]
+    except Exception as e:
+        LOG.debug("Horizon cross-section cap skipped: %s", e)
     horizon_only.sort(key=_executable_stage_a_sort_key)
     diagnostics["horizon_admitted"] = len(horizon_only)
     horizon_extra: list[dict[str, Any]] = []

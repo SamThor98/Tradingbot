@@ -5,6 +5,7 @@ from core.scan_catalog import (
     catalog_fields_for_signal,
     filter_signals_for_scan_selection,
     resolve_strategy_ids,
+    selected_strategies_bypass_bull_regime,
     signal_matches_strategy_ids,
 )
 
@@ -26,14 +27,32 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
     assert universes["sp1500"]["available"] is True
     assert universes["nasdaq100"]["available"] is True
     assert universes["russell2000"]["available"] is False
+    assert payload["notes"]["one_thesis"]
+    by_tf = {t["id"]: t.get("default_strategy_id") for t in payload["timeframes"]}
+    assert by_tf == {
+        "intraday": "breakout_confirm",
+        "daily": "trend_breakout",
+        "weekly": "weekly_swing",
+        "monthly": "monthly_position",
+    }
+
+
+def test_counter_trend_only_bypasses_bull_regime() -> None:
+    assert selected_strategies_bypass_bull_regime(["st_reversal_5d"]) is True
+    assert selected_strategies_bypass_bull_regime(["st_reversal_5d", "weekly_reversal"]) is True
+    assert selected_strategies_bypass_bull_regime(["trend_breakout", "st_reversal_5d"]) is False
+    assert selected_strategies_bypass_bull_regime([]) is False
+    assert selected_strategies_bypass_bull_regime(["weekly_swing"]) is False
 
 
 def test_resolve_strategy_ids_defaults_to_timeframe() -> None:
     weekly = resolve_strategy_ids([], scan_timeframe="weekly")
-    assert weekly[0] == "weekly_swing"
-    assert set(weekly) >= {"weekly_swing", "weekly_vcp", "weekly_breakout"}
+    assert weekly == ["weekly_swing"]
     assert resolve_strategy_ids(["nope"], scan_timeframe=None) == []
     assert resolve_strategy_ids(["trend_breakout", "trend_breakout"]) == ["trend_breakout"]
+    assert resolve_strategy_ids([], scan_timeframe="daily") == ["trend_breakout"]
+    assert resolve_strategy_ids([], scan_timeframe="monthly") == ["monthly_position"]
+    assert resolve_strategy_ids([], scan_timeframe="intraday") == ["breakout_confirm"]
 
 
 def test_filter_weekly_sleeve_matches_triggered_plugin_not_live_breakout() -> None:

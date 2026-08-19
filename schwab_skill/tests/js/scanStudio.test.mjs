@@ -11,7 +11,7 @@ globalThis.localStorage = {
 };
 
 const { state } = await import("../../webapp/static/modules/state.js");
-const { readScanStudioBody, scanStudioProgressLabel } = await import(
+const { readScanStudioBody, scanStudioProgressLabel, primaryStrategyIdForTimeframe } = await import(
   "../../webapp/static/panels/scanStudio.js"
 );
 
@@ -63,4 +63,18 @@ test("readScanStudioBody requires a selected strategy", () => {
 
 test("scanStudioProgressLabel names the universe", () => {
   assert.match(scanStudioProgressLabel(), /Nasdaq-100/);
+});
+
+test("primaryStrategyIdForTimeframe uses catalog default", () => {
+  state.scanCatalog.timeframes = [
+    { id: "weekly", display_name: "Weekly", default_strategy_id: "weekly_swing" },
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "weekly_swing", timeframe: "weekly", runnable: true },
+    { id: "weekly_reversal", timeframe: "weekly", runnable: true },
+    { id: "trend_breakout", timeframe: "daily", runnable: true },
+  ];
+  assert.equal(primaryStrategyIdForTimeframe("weekly"), "weekly_swing");
+  assert.equal(primaryStrategyIdForTimeframe("daily"), "trend_breakout");
 });

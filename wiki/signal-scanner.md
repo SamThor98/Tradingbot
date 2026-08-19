@@ -58,7 +58,7 @@ Every scan returns `(signals, diagnostics)` with counters: `stage2_fail`, `vcp_f
 - [[prediction-market]] — Stage B prediction-market overlay
 - [[backtest]] — historical replay that reuses these same Stage A/B rules
 - [[scan-catalog]] — timeframe / universe picker in front of this pipeline
-- [[horizon-strategies]] — extra sleeves dual-admit at Stage A when selected; horizon-only is non-executable
+- [[horizon-strategies]] — extra sleeves dual-admit at Stage A when selected; horizon-only is non-executable, ranked on `research_score`, and uses completed bars
 - [[feature-store]] — every emitted signal is recorded here
 
 ---

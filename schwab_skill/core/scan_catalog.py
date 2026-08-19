@@ -16,21 +16,25 @@ TIMEFRAMES: tuple[dict[str, str], ...] = (
         "id": "intraday",
         "display_name": "Intraday",
         "description": "Same-session confirmation of a daily setup using the live quote (and optional 5m/15m bars). Not a standalone minute-bar book.",
+        "default_strategy_id": "breakout_confirm",
     },
     {
         "id": "daily",
         "display_name": "Daily",
         "description": "Primary live engine: daily bars, Stage 2 + VCP, typical multi-week hold.",
+        "default_strategy_id": "trend_breakout",
     },
     {
         "id": "weekly",
         "display_name": "Weekly",
         "description": "Multi-week swing horizon. Evaluators resample the daily OHLCV the scanner already fetched (Friday week, 30-week SMA). Not a separate vendor weekly feed.",
+        "default_strategy_id": "weekly_swing",
     },
     {
         "id": "monthly",
         "display_name": "Monthly",
         "description": "Position-style horizon. Evaluators resample daily bars to month-end (10-month SMA). Not a separate vendor monthly feed.",
+        "default_strategy_id": "monthly_position",
     },
 )
 
@@ -79,7 +83,7 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "match_ids": _STRATEGY_ALIASES["gap_and_go"],
         "proxy_ids": (),
         "env_on_select": {},
-        "description": "Session-structure proxy on the latest daily bar: ≥1% opening gap that holds, close in the upper half of the range, volume vs the 50-day average, trend filter above the 200-day SMA. Shadow only — not a 1-minute gap-and-go book.",
+        "description": "Session-structure proxy on the last completed daily bar: ≥1% opening gap that holds, close in the upper half of the range, volume vs the 50-day average, trend filter above the 200-day SMA. Shadow only — not a 1-minute gap-and-go book. Daily low cannot prove an intraday fill.",
     },
     {
         "id": "range_expansion",
@@ -160,14 +164,14 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "weekly_vcp",
-        "display_name": "Weekly VCP",
+        "display_name": "Weekly volume dryness",
         "timeframe": "weekly",
         "status": "research",
         "runnable": True,
         "match_ids": _STRATEGY_ALIASES["weekly_vcp"],
         "proxy_ids": (),
         "env_on_select": {},
-        "description": "Multi-week volume contraction: last 5 weekly bars each print below the 10-week average volume, close above the 30-week SMA. Research only.",
+        "description": "Multi-week volume dryness: last 5 weekly bars each print below the 10-week average volume, close above the 30-week SMA. Not Minervini VCP (range contraction). Research only.",
     },
     {
         "id": "weekly_breakout",
@@ -215,7 +219,7 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "opening_range_breakout",
-        "display_name": "Opening range breakout (RVOL proxy)",
+        "display_name": "RVOL strong-close (ORB proxy)",
         "timeframe": "intraday",
         "status": "research",
         "runnable": True,
@@ -224,15 +228,15 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "high",
+            "strength": "proxy",
             "citations": ["Zarattini, Barbon & Aziz 2024 (Swiss Finance Institute / SSRN)"],
-            "caveat": "The paper uses 5-minute ORB on the top-20 relative-volume 'stocks in play'. This sleeve does not fetch 5-minute bars for the full universe; it is the daily RVOL + close-through-open/prior-high screen.",
+            "caveat": "The paper is 5-minute ORB on the top-20 relative-volume 'stocks in play'. This is a completed-daily RVOL ≥ 1.5× strong-close screen — not a 5-minute ORB engine and not an opening-range entry.",
         },
-        "description": "Daily-bar stocks-in-play proxy of 5-minute opening-range breakout: relative volume ≥ 1.5×, close above the open and prior high, close in the upper half of the range. Research only — not a 5-minute ORB engine.",
+        "description": "Completed-daily stocks-in-play proxy: relative volume ≥ 1.5×, close above the open and prior high, close in the upper half of the range. Not a 5-minute opening-range breakout.",
     },
     {
         "id": "st_reversal_5d",
-        "display_name": "5-day short-term reversal",
+        "display_name": "5-day loser bounce (screen)",
         "timeframe": "daily",
         "status": "research",
         "runnable": True,
@@ -241,15 +245,15 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "high",
+            "strength": "proxy",
             "citations": ["Jegadeesh 1990", "Lehmann 1990", "Avramov, Chordia, Goyal 2006"],
-            "caveat": "Academic profits concentrate in small, high-turnover, illiquid names. This long-only loser-bounce adds a 50-day volume floor; paper Sharpes will not survive your fills.",
+            "caveat": "The papers are cross-sectional loser portfolios. This is a single-name −8% formation then bounce, with a $2M ADV floor that removes the illiquid names where the paper edge concentrated. Not a WML book.",
         },
-        "description": "Long-only 1-week reversal: 5-session return ≤ −8%, today closes above yesterday (turn), 50-day average volume ≥ 200k. Research — not the live book.",
+        "description": "Long-only 1-week bounce screen: five completed sessions ending yesterday ≤ −8%, today's completed close turns up, 50-day dollar volume ≥ $2M. Research — not the live book.",
     },
     {
         "id": "overnight_gap_fade",
-        "display_name": "Overnight gap fade",
+        "display_name": "Gap-down recovery (EOD label)",
         "timeframe": "daily",
         "status": "research",
         "runnable": True,
@@ -258,15 +262,15 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "medium",
+            "strength": "proxy",
             "citations": ["Bogousslavsky 2021", "NY Fed / Liberty Street Economics overnight drift series"],
-            "caveat": "Overnight premium is close-to-open hold, and has been decaying since 2020. This sleeve is the long gap-down fade, distinct from gap-and-go continuation.",
+            "caveat": "Overnight premium is close-to-open hold and has been decaying since 2020. This sleeve labels a completed session where a ≥1.5% gap down recovered ≥50% — not an entry at the open.",
         },
-        "description": "Long-only fade of a ≥1.5% opening gap down: close recovers at least half the gap. Distinct from gap-and-go (gap-up continuation). Research only.",
+        "description": "EOD label of a ≥1.5% opening gap down that recovered at least half by the completed close. Distinct from gap-and-go. Not an open fade. Research only.",
     },
     {
         "id": "weekly_reversal",
-        "display_name": "Weekly loser reversal",
+        "display_name": "Weekly loser bounce (screen)",
         "timeframe": "weekly",
         "status": "research",
         "runnable": True,
@@ -275,15 +279,15 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "medium",
+            "strength": "proxy",
             "citations": ["Jegadeesh 1990", "Lehmann 1990", "Avramov et al. 2006"],
-            "caveat": "Same liquidity warning as the daily 5-day reversal: costs eat the edge in microcaps.",
+            "caveat": "Same construction warning as the daily bounce: this is a single-name screen on completed Friday bars, not a weekly loser portfolio, and costs eat the edge in microcaps.",
         },
-        "description": "Prior week's return ≤ −6% and this week closes above last week's close (loser bounce on Friday bars). Research only.",
+        "description": "Prior completed week's return ≤ −6% and this completed week closes above last week's close. Research only.",
     },
     {
         "id": "momentum_12_1",
-        "display_name": "12-1 momentum",
+        "display_name": "12-1 strength screen",
         "timeframe": "monthly",
         "status": "research",
         "runnable": True,
@@ -292,15 +296,15 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "high",
+            "strength": "proxy",
             "citations": ["Jegadeesh & Titman 1993", "Jegadeesh & Titman 2001 replication"],
-            "caveat": "The paper is cross-sectional winner-minus-loser. This is a single-name 12-1 strength screen (skip last month, ≥20% formation return, above 200-day SMA), not a WML portfolio.",
+            "caveat": "The paper is cross-sectional winner-minus-loser with a 1-month hold. This is a single-name 12-1 strength screen (skip last month, ≥20%, above SMA200), then top-10 of those hits in the current scan — not a WML portfolio.",
         },
-        "description": "12-month formation skipping the most recent month: return from 252 to 21 days ago ≥ 20%, last close above the 200-day SMA. Most replicated equity anomaly. Research — not LIVE.",
+        "description": "12-month formation skipping the most recent month: return from 252 to 21 days ago ≥ 20%, last completed close above the 200-day SMA. Single-name screen. Research — not LIVE.",
     },
     {
         "id": "tsmom_12m",
-        "display_name": "12-month time-series momentum",
+        "display_name": "12-month trend screen",
         "timeframe": "monthly",
         "status": "research",
         "runnable": True,
@@ -309,11 +313,11 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "env_on_select": {},
         "origin": "literature",
         "evidence": {
-            "strength": "high",
+            "strength": "proxy",
             "citations": ["Moskowitz, Ooi & Pedersen 2012"],
-            "caveat": "Original TSMOM is a diversified futures overlay (crisis alpha). This is the single-name analog: month-end close above the close 12 months earlier.",
+            "caveat": "Original TSMOM is a vol-scaled futures overlay (long/short). This is the single-name analog on completed month-end closes — close above the close 12 months earlier — not crisis alpha.",
         },
-        "description": "Month-end close above the close 12 months ago. Distinct from the 10-month SMA Faber sleeve. Research only.",
+        "description": "Completed month-end close above the close 12 months ago. Distinct from the 10-month SMA Faber sleeve. Research only.",
     },
 )
 
@@ -379,6 +383,16 @@ UNIVERSES: tuple[dict[str, Any], ...] = (
 DEFAULT_TIMEFRAME = "daily"
 DEFAULT_UNIVERSE = "sp1500"
 DEFAULT_STRATEGY_IDS: tuple[str, ...] = ("trend_breakout",)
+
+PRIMARY_STRATEGY_BY_TIMEFRAME: dict[str, str] = {
+    str(t["id"]): str(t["default_strategy_id"]) for t in TIMEFRAMES if t.get("default_strategy_id")
+}
+
+# Counter-trend research screens. A scan that selects only these may run when
+# SPY is below its 200 SMA; mixed or empty selection still uses the bull gate.
+COUNTER_TREND_STRATEGY_IDS: frozenset[str] = frozenset(
+    {"st_reversal_5d", "weekly_reversal", "overnight_gap_fade"}
+)
 
 # Operator-iterated sleeves. Literature rows are additive — never remove these ids.
 ITERATED_STRATEGY_IDS: frozenset[str] = frozenset(
@@ -446,11 +460,20 @@ def lookup_strategy(raw_id: str | None) -> dict[str, Any] | None:
 
 
 def default_strategy_ids_for_timeframe(timeframe: str | None) -> list[str]:
+    """One primary sleeve per tab. Paper / extra rows are opt-in."""
     tf = str(timeframe or "").strip().lower()
-    if tf not in _TIMEFRAME_IDS:
-        return list(DEFAULT_STRATEGY_IDS)
-    ids = [str(s["id"]) for s in STRATEGIES if s.get("timeframe") == tf and s.get("runnable")]
-    return ids or list(DEFAULT_STRATEGY_IDS)
+    primary = PRIMARY_STRATEGY_BY_TIMEFRAME.get(tf)
+    if primary and primary in _STRATEGY_BY_ID:
+        return [primary]
+    return list(DEFAULT_STRATEGY_IDS)
+
+
+def selected_strategies_bypass_bull_regime(strategy_ids: list[str] | None) -> bool:
+    """True when every selected id is a counter-trend research screen."""
+    selected = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    if not selected:
+        return False
+    return all(sid in COUNTER_TREND_STRATEGY_IDS for sid in selected)
 
 
 def resolve_strategy_ids(
@@ -505,14 +528,23 @@ def catalog_fields_for_signal(signal: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(signal, dict):
         family = signal.get("entry_family")
         plugins = signal.get("strategy_plugins") if isinstance(signal.get("strategy_plugins"), list) else []
+        best_score = -1.0
         for plugin in plugins:
             if not isinstance(plugin, dict) or not plugin.get("triggered"):
                 continue
             name = str(plugin.get("name") or "").strip().lower()
-            if name and name != "trend_breakout":
+            if not name or name == "trend_breakout":
+                continue
+            raw = plugin.get("raw_score")
+            try:
+                score = float(raw)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score > best_score:
+                best_score = score
                 triggered_name = name
-                if str(plugin.get("mode") or "").lower() != "live":
-                    break
+            elif triggered_name is None:
+                triggered_name = name
     row = None
     if str(family or "") == "horizon":
         row = lookup_strategy(str(triggered_name or "")) or lookup_strategy(str(top_shadow or ""))
@@ -610,5 +642,7 @@ def build_scan_catalog_payload() -> dict[str, Any]:
             "weekly_monthly": "Weekly/monthly sleeves resample the daily OHLCV already fetched (Friday weeks, month-end). They are research/shadow evaluators, not a separate vendor bar feed, and they do not promote to LIVE.",
             "plugin_promotion": "Selecting a shadow strategy filters results for this scan; it does not promote plugins to LIVE.",
             "strategy_merge": "Literature sleeves are additive. Iterated ids (Yours) are never removed when paper strategies are added.",
+            "one_thesis": "Each timeframe tab defaults to one primary sleeve. Paper rows are opt-in and are not batch-selected with their opposite.",
+            "completed_bars": "Research sleeves evaluate completed daily/weekly/monthly bars. Intraday live-quote overlay is breakout_confirm only.",
         },
     }

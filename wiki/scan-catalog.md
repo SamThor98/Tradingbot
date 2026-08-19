@@ -24,7 +24,7 @@ Live execution is still the daily [[signal-scanner]] (Stage 2 + VCP). Weekly and
 | `weekly` | Resampled Friday bars (30-week SMA family) |
 | `monthly` | Resampled month-end bars (10-month SMA family) |
 
-Selecting a weekly/monthly tab still runs the daily pipeline (`get_daily_history`) and stamps `diagnostics.scan_timeframe`. The difference is **which evaluators admit and filter**, not a second market-data engine.
+Selecting a weekly/monthly tab still runs the daily pipeline (`get_daily_history`) and stamps `diagnostics.scan_timeframe`. The difference is **which evaluators admit and filter**, not a second market-data engine. Each tab defaults to **one** primary sleeve; extra / Paper rows are opt-in so opposite theses are not OR-filtered together.
 
 ## Strategies
 
@@ -41,17 +41,17 @@ Canonical ids live in `core/scan_catalog.py` (`STRATEGIES`). Each row has `displ
 | `donchian_20` | daily | shadow | 20-day channel breakout + 200-day SMA |
 | `nr7_breakout` | daily | shadow | Fisher NR7 then close through that high |
 | `weekly_swing` | weekly | research | Weinstein weekly Stage 2 on resampled bars |
-| `weekly_vcp` | weekly | research | Multi-week volume contraction |
+| `weekly_vcp` | weekly | research | Weekly volume dryness (not Minervini VCP) |
 | `weekly_breakout` | weekly | research | Weekly close through prior week high |
 | `monthly_position` | monthly | research | Faber 10-month SMA timing |
 | `monthly_52w_high` | monthly | research | Month-end close near 52-week high |
 | `monthly_pullback` | monthly | research | Pullback that tags the 10-month SMA |
-| `opening_range_breakout` | intraday | research | **Paper.** Daily RVOL proxy of Zarattini et al. 2024 5-min ORB |
-| `st_reversal_5d` | daily | research | **Paper.** Jegadeesh/Lehmann 1-week loser bounce |
-| `overnight_gap_fade` | daily | research | **Paper.** Long fade of a gap down |
-| `weekly_reversal` | weekly | research | **Paper.** Weekly loser bounce |
-| `momentum_12_1` | monthly | research | **Paper.** Jegadeesh-Titman 12-1 strength screen |
-| `tsmom_12m` | monthly | research | **Paper.** Moskowitz et al. 12-month TSMOM analog |
+| `opening_range_breakout` | intraday | research | **Paper proxy.** Completed-daily RVOL strong-close — not 5-minute ORB |
+| `st_reversal_5d` | daily | research | **Paper proxy.** Single-name 5-day loser bounce + $2M ADV |
+| `overnight_gap_fade` | daily | research | **Paper proxy.** EOD gap-down recovery label |
+| `weekly_reversal` | weekly | research | **Paper proxy.** Weekly loser bounce on completed Friday bars |
+| `momentum_12_1` | monthly | research | **Paper proxy.** 12-1 strength screen, top-10 of scan hits |
+| `tsmom_12m` | monthly | research | **Paper proxy.** 12-month single-name trend screen |
 
 Literature rows are **additive**. Iterated ids stay in `ITERATED_STRATEGY_IDS` and show a **Yours** chip in Scan studio. Plugin promotion remains OFF → SHADOW → LIVE. Horizon-only names are `executable=false`.
 

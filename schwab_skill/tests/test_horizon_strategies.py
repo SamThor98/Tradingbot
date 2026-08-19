@@ -62,7 +62,7 @@ def _ohlcv(
 
 
 def test_gap_and_go_triggers_on_held_opening_gap() -> None:
-    n = 60
+    n = 220
     close = [100.0] * (n - 1) + [103.5]
     open_ = [100.0] * (n - 1) + [102.5]
     high = [101.0] * (n - 1) + [104.0]
@@ -76,7 +76,7 @@ def test_gap_and_go_triggers_on_held_opening_gap() -> None:
 
 
 def test_range_expansion_needs_wide_bar_and_prior_high() -> None:
-    n = 30
+    n = 60
     close = [100.0] * (n - 1) + [106.0]
     open_ = [100.0] * (n - 1) + [100.2]
     high = [101.0] * (n - 1) + [106.2]
@@ -87,7 +87,7 @@ def test_range_expansion_needs_wide_bar_and_prior_high() -> None:
 
 
 def test_donchian_20_breaks_prior_channel() -> None:
-    n = 40
+    n = 220
     close = [100.0] * (n - 1) + [108.0]
     high = [101.0] * (n - 1) + [108.5]
     low = [99.0] * (n - 1) + [107.0]
@@ -99,7 +99,7 @@ def test_donchian_20_breaks_prior_channel() -> None:
 
 
 def test_nr7_breakout_requires_narrow_bar_then_close_through() -> None:
-    n = 20
+    n = 60
     # Wide ranges, then a 0.2 NR7 bar, then a breakout close.
     high = [110.0] * (n - 2) + [100.2, 103.0]
     low = [90.0] * (n - 2) + [100.0, 100.1]
@@ -121,7 +121,7 @@ def test_weekly_swing_on_rising_weekly_structure() -> None:
 
 
 def test_monthly_faber_on_rising_ten_month_sma() -> None:
-    df = _ohlcv(n=280, start="2019-01-02")
+    df = _ohlcv(n=400, start="2018-01-02")
     monthly = resample_monthly(df)
     assert len(monthly) >= 12
     out = evaluate_monthly_position(df)
@@ -153,13 +153,13 @@ def test_evaluate_horizon_plugins_covers_catalog_sleeves() -> None:
 
 def test_dual_admit_selection_and_trigger_filter() -> None:
     assert selected_dual_admit_ids(["trend_breakout", "donchian_20"]) == ["donchian_20"]
-    n = 40
+    n = 220
     close = [100.0] * (n - 1) + [108.0]
     high = [101.0] * (n - 1) + [108.5]
     df = _ohlcv(n=n, close=close, high=high, low=[99.0] * (n - 1) + [107.0], open_=[100.0] * (n - 1) + [101.0])
-    hits = triggered_dual_admit_ids(df, ["donchian_20", "weekly_swing"])
+    hits = triggered_dual_admit_ids(df, ["donchian_20", "monthly_position"])
     assert "donchian_20" in hits
-    assert "weekly_swing" not in hits  # too few bars for weekly stage 2
+    assert "monthly_position" not in hits  # too few completed months
 
 
 def test_stage2_plugins_keep_live_breakout_and_add_shadow_sleeves() -> None:
@@ -208,8 +208,7 @@ def test_catalog_lists_multiple_strategies_per_timeframe() -> None:
 
 def test_weekly_default_ids_are_weekly_sleeves() -> None:
     ids = resolve_strategy_ids([], scan_timeframe="weekly")
-    assert ids[0] == "weekly_swing"
-    assert "weekly_vcp" in ids
+    assert ids == ["weekly_swing"]
     assert "trend_breakout" not in ids
 
 
@@ -285,10 +284,11 @@ def test_opening_range_breakout_needs_rvol_and_prior_high() -> None:
 def test_st_reversal_5d_loser_then_turn() -> None:
     n = 20
     close = [100.0] * (n - 6) + [100.0, 96.0, 93.0, 91.0, 90.0, 92.0]
-    volume = [300_000.0] * n
+    volume = [50_000.0] * n  # 50k * $100 = $5M ADV, above $2M floor
     out = evaluate_st_reversal_5d(_ohlcv(n=n, close=close, volume=volume))
     assert out["meta"]["turned_up"] is True
     assert out["triggered"] is True
+    assert out["meta"]["return_5d_pct"] <= -8.0
 
 
 def test_overnight_gap_fade_recovers_half_the_gap() -> None:
@@ -316,5 +316,104 @@ def test_momentum_12_1_on_year_long_uptrend() -> None:
 
 
 def test_tsmom_12m_on_rising_monthly_closes() -> None:
-    out = evaluate_tsmom_12m(_ohlcv(n=280, start="2019-01-02"))
+    out = evaluate_tsmom_12m(_ohlcv(n=400, start="2018-01-02"))
     assert out["triggered"] is True
+
+
+def test_donchian_fails_closed_without_sma200() -> None:
+    n = 40
+    close = [100.0] * (n - 1) + [108.0]
+    high = [101.0] * (n - 1) + [108.5]
+    out = evaluate_donchian_20(_ohlcv(n=n, close=close, high=high, low=[99.0] * (n - 1) + [107.0], open_=[100.0] * (n - 1) + [101.0]))
+    assert out["triggered"] is False
+
+
+def test_share_count_is_not_enough_liquidity() -> None:
+    n = 220
+    close = [1.0] * (n - 1) + [1.2]
+    high = [1.05] * (n - 1) + [1.25]
+    volume = [300_000.0] * n  # $300k ADV, below $2M
+    out = evaluate_donchian_20(
+        _ohlcv(n=n, close=close, high=high, low=[0.95] * (n - 1) + [1.15], open_=[1.0] * (n - 1) + [1.05], volume=volume)
+    )
+    assert out["meta"].get("liquid") is False
+    assert out["triggered"] is False
+
+
+def test_forming_session_is_dropped_before_close() -> None:
+    n = 220
+    hist = _ohlcv(n=n - 1)
+    today = pd.Timestamp("2026-08-19")
+    last = pd.DataFrame(
+        {"open": [101.0], "high": [108.5], "low": [107.0], "close": [108.0], "volume": [2_000_000.0]},
+        index=pd.DatetimeIndex([today]),
+    )
+    df = pd.concat([hist, last])
+    morning = pd.Timestamp("2026-08-19 10:00", tz="America/New_York")
+    after = pd.Timestamp("2026-08-19 16:30", tz="America/New_York")
+    assert evaluate_donchian_20(df, now=morning)["triggered"] is False
+    assert evaluate_donchian_20(df, now=after)["triggered"] is True
+
+
+def test_incomplete_week_is_dropped() -> None:
+    # Series ending Wednesday: the labeled Friday week is incomplete.
+    idx = pd.bdate_range("2021-01-04", "2021-10-06")  # Wednesday
+    n = len(idx)
+    close = [50.0 + i * 0.15 for i in range(n)]
+    df = pd.DataFrame(
+        {
+            "open": [c * 0.995 for c in close],
+            "high": [c * 1.01 for c in close],
+            "low": [c * 0.99 for c in close],
+            "close": close,
+            "volume": [1_000_000.0] * n,
+        },
+        index=idx,
+    )
+    last = pd.Timestamp(idx[-1])
+    assert last.dayofweek == 2  # Wednesday
+    weekly = resample_weekly(df, now=last + pd.Timedelta(hours=10))
+    assert not weekly.empty
+    assert pd.Timestamp(weekly.index[-1]).normalize() <= last.normalize()
+
+
+def test_partition_live_and_research_uses_plugin_score() -> None:
+    from core.horizon_strategies import partition_live_and_research
+
+    live, research = partition_live_and_research(
+        [
+            {"ticker": "AAPL", "entry_family": "stage2", "signal_score": 40.0, "executable": True},
+            {
+                "ticker": "MSFT",
+                "entry_family": "horizon",
+                "signal_score": 90.0,
+                "executable": False,
+                "strategy_plugins": [{"name": "weekly_swing", "triggered": True, "raw_score": 71.0, "mode": "shadow"}],
+            },
+        ]
+    )
+    assert [r["ticker"] for r in live] == ["AAPL"]
+    assert [r["ticker"] for r in research] == ["MSFT"]
+    assert research[0]["research_score"] == 71.0
+    assert research[0]["rank_basis"] == "research_score"
+
+
+def test_cap_cross_section_keeps_top_n_only() -> None:
+    from core.horizon_strategies import cap_cross_section_horizon
+
+    rows = []
+    for i in range(12):
+        rows.append(
+            {
+                "ticker": f"T{i:02d}",
+                "horizon_hits": ["momentum_12_1"],
+                "horizon_plugin_hits": [
+                    {"name": "momentum_12_1", "meta": {"formation_return_pct": float(i)}, "triggered": True}
+                ],
+            }
+        )
+    kept = cap_cross_section_horizon(rows, keep=10)
+    tickers = [r["ticker"] for r in kept]
+    assert len(tickers) == 10
+    assert "T00" not in tickers
+    assert "T11" in tickers

@@ -7,6 +7,9 @@ import { escapeHtml, safeText } from "./format.js";
 
 /** True when the scanner shortlist marked this row as eligible for staging. */
 export function isScanSignalStageable(sig = {}) {
+  if (sig.executable === false) return false;
+  const family = safeText(sig.entry_family || "").toLowerCase();
+  if (family === "horizon" || family === "pead_primary") return false;
   return safeText(sig._filter_status || "kept").toLowerCase() === "kept";
 }
 
@@ -65,6 +68,10 @@ export function renderSignalProvenanceChip(row = {}) {
 export function renderTradeableVerdict(sig = {}) {
   if (isScanSignalStageable(sig)) {
     return `<span class="scan-gate-chip scan-gate-chip--pass scan-tradeable-verdict" title="Eligible for staging">Tradeable</span>`;
+  }
+  const family = safeText(sig.entry_family || "").toLowerCase();
+  if (family === "horizon" || (sig.executable === false && family !== "stage2" && family !== "both")) {
+    return `<span class="scan-gate-chip scan-gate-chip--review scan-tradeable-verdict" title="Research sleeve — not executable">Research</span>`;
   }
   const reasons = Array.isArray(sig._filter_reasons) ? sig._filter_reasons : [];
   const status = safeText(sig._filter_status || "filtered").toLowerCase();

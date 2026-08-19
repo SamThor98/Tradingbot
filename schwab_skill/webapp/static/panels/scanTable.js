@@ -572,26 +572,34 @@ export function compareScanSignals(a, b, field, dir) {
 
 function getDefaultBreakoutRankValue(rawSig) {
   const row = normalizeScanSignal(rawSig);
-  const backendRank = optionalNum(row.composite_score ?? row.rank_score_v2 ?? row.rank_score);
-  if (backendRank !== null) {
-    return Math.min(Math.max(backendRank / 100, 0), 1);
+  const family = safeText(row.entry_family || "").toLowerCase();
+  const researchBook = family === "horizon" || row.executable === false;
+  if (researchBook) {
+    const research = optionalNum(row.research_score ?? row.sort_score) ?? 0;
+    return Math.min(Math.max(research / 100, 0), 1);
   }
-  const score = optionalNum(getCompositeScore(row)) ?? 0;
-  const pUp = optionalNum(getCalibratedPUp(row)) ?? 0;
-  const conviction = optionalNum(getConvictionScore(row)) ?? 0;
-  const flagged = optionalNum(row.flagged_days ?? row.days_flagged) ?? 0;
-  const latestVol = optionalNum(row.latest_volume);
-  const avgVol = optionalNum(row.avg_vol_50);
-  const volumeRatio =
-    latestVol !== null && avgVol !== null && avgVol > 0 ? latestVol / avgVol : 0;
-  // Default blend prioritizes freshness + volume confirmation, then model strength.
-  return (
-    (Math.min(flagged, 7) / 7) * 0.32 +
-    Math.min(volumeRatio / 2.0, 1.0) * 0.33 +
-    Math.min(score / 100, 1.0) * 0.2 +
-    Math.min(pUp, 1.0) * 0.1 +
-    Math.min((conviction + 100) / 200, 1.0) * 0.05
-  );
+  const backendRank = optionalNum(row.composite_score ?? row.rank_score_v2 ?? row.rank_score);
+  const live =
+    backendRank !== null
+      ? Math.min(Math.max(backendRank / 100, 0), 1)
+      : (() => {
+          const score = optionalNum(getCompositeScore(row)) ?? 0;
+          const pUp = optionalNum(getCalibratedPUp(row)) ?? 0;
+          const conviction = optionalNum(getConvictionScore(row)) ?? 0;
+          const flagged = optionalNum(row.flagged_days ?? row.days_flagged) ?? 0;
+          const latestVol = optionalNum(row.latest_volume);
+          const avgVol = optionalNum(row.avg_vol_50);
+          const volumeRatio =
+            latestVol !== null && avgVol !== null && avgVol > 0 ? latestVol / avgVol : 0;
+          return (
+            (Math.min(flagged, 7) / 7) * 0.32 +
+            Math.min(volumeRatio / 2.0, 1.0) * 0.33 +
+            Math.min(score / 100, 1.0) * 0.2 +
+            Math.min(pUp, 1.0) * 0.1 +
+            Math.min((conviction + 100) / 200, 1.0) * 0.05
+          );
+        })();
+  return 2 + live;
 }
 
 export function sortScanSignalsForRender(signals) {
