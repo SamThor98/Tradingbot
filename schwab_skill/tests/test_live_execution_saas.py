@@ -521,6 +521,54 @@ def test_scan_enqueue_routes_to_scan_queue(saas_client: TestClient, test_db: ses
     assert mock_async.call_args.kwargs.get("queue") == "scan"
 
 
+def test_scan_catalog_public_in_saas(saas_client: TestClient) -> None:
+    resp = saas_client.get("/api/scan-catalog")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("ok") is True
+    catalog = body.get("data") or {}
+    ids = {row["id"] for row in catalog.get("strategies") or []}
+    assert "trend_breakout" in ids
+    assert len(ids) == 20
+    assert catalog.get("defaults", {}).get("strategy_ids") == ["trend_breakout"]
+
+
+def test_scan_enqueue_forwards_scan_studio_body(saas_client: TestClient, test_db: sessionmaker) -> None:
+    db = test_db()
+    try:
+        _seed_user_with_schwab(db)
+    finally:
+        db.close()
+
+    class _Task:
+        id = "scan_studio_task_1"
+
+    with (
+        patch("webapp.main_saas._scan_rate_limit", return_value=None),
+        patch("webapp.main_saas._scan_daily_limit_check", return_value=None),
+        patch("webapp.main_saas.acquire_scan_cooldown", return_value=True),
+        patch("webapp.main_saas.scan_for_user.apply_async", return_value=_Task()) as mock_async,
+    ):
+        resp = saas_client.post(
+            "/api/scan?async_mode=true",
+            json={
+                "universe_preset": "nasdaq100",
+                "scan_timeframe": "daily",
+                "strategy_ids": ["trend_breakout"],
+            },
+            headers=_auth_header(),
+        )
+
+    assert resp.status_code == 200
+    assert resp.json().get("ok") is True
+    args = mock_async.call_args.kwargs.get("args") or ()
+    assert args[0] == "user_1"
+    opts = args[1]
+    assert opts["universe_preset"] == "nasdaq100"
+    assert opts["scan_timeframe"] == "daily"
+    assert opts["strategy_ids"] == ["trend_breakout"]
+
+
 def test_phase2_stage1_enqueue_routes_to_phase2_queue(saas_client: TestClient, test_db: sessionmaker) -> None:
     db = test_db()
     try:
@@ -677,6 +725,8 @@ def test_public_config_and_runtime_contract_in_saas(saas_client: TestClient) -> 
     assert data.get("scan_transport") == "celery"
     assert data.get("sse_enabled") is False
     assert data.get("ui_contract_version") == "2026-04-webapp-stabilization"
+    assert data.get("scan_studio", {}).get("enabled") is True
+    assert data.get("scan_studio", {}).get("live_book_strategy_id") == "trend_breakout"
     assert "api_key_value" not in data
 
     runtime = saas_client.get("/api/runtime-contract")

@@ -74,7 +74,7 @@ Literature rows are **additive**. Iterated ids stay in `ITERATED_STRATEGY_IDS` a
 - `GET /api/scan-catalog` — public, cheap read. Payload: `timeframes`, `strategies`, `universes`, `defaults`, `notes`.
 - `POST /api/scan` body extras: `universe_preset`, `scan_timeframe`, `strategy_ids`.
 
-Dashboard: `#scanStudioPanel` on the Today scan lane. Prefs persist in `tradingbot.scan.studio.v2`. The v1 key `tradingbot.scan.studio` is read once: universe and custom tickers are kept, but `strategy_ids` reset to that tab's `default_strategy_id` so leftover "select all" sessions do not OR every sleeve. Deep link: `?section=scanstudio`. Editorial visual language follows the Old Logan Figma DS (`ol/bg`, `ol/surface`, `ol/accent`, `ol/gold`): segmented horizon tabs, Yours vs Paper groups, gold rail on the selected primary. Live execution copy stays daily Stage 2 / VCP.
+Dashboard: `#scanStudioPanel` on the Today scan lane is the **live local operator control** (and the same static panel on SaaS). Prefs persist in `tradingbot.scan.studio.v2`. The v1 key `tradingbot.scan.studio` is read once: universe and custom tickers are kept, but `strategy_ids` reset to that tab's `default_strategy_id` so leftover "select all" sessions do not OR every sleeve. Deep link: `?section=scanstudio`. `GET /api/public-config` advertises `scan_studio.enabled` on both local and SaaS. Editorial visual language follows the Old Logan Figma DS (`ol/bg`, `ol/surface`, `ol/accent`, `ol/gold`). Live execution copy stays daily Stage 2 / VCP — extra sleeves remain shadow/research.
 
 ## Related Pages
 

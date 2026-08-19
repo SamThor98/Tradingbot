@@ -33,6 +33,16 @@ not cancel deploys or restart an otherwise healthy API process.
 
 If these 5 checks pass, the core production baseline is in place.
 
+## Scan studio (shipped)
+
+The hosted dashboard uses the same Scan studio panel as local (`#scanStudioPanel`).
+
+- `GET /api/scan-catalog` is public and cheap (timeframes, strategy copy, universes).
+- `GET /api/public-config` includes `scan_studio.enabled` plus the live-book id (`trend_breakout`).
+- `POST /api/scan` (JWT, Celery) accepts `universe_preset`, `scan_timeframe`, and `strategy_ids`. Extra sleeves stay shadow/research; they do **not** promote plugins to LIVE.
+
+No extra env vars. Custom ticker lists still cap at `SAAS_SCAN_MAX_CUSTOM_TICKERS` (default 40).
+
 ## Fastest safe path (operator checklist)
 
 Use this sequence for first deploys and incident recovery:

@@ -1,7 +1,7 @@
 ---
 source: Brain/API/SaaS Endpoints.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-08-19
 tags: [api, saas, endpoints]
 ---
 
@@ -15,8 +15,8 @@ tags: [api, saas, endpoints]
 |--------|------|------|-------------|
 | GET | `/api/auth/session` | JWT | Current session |
 | POST | `/api/credentials/schwab` | JWT | Upload Schwab tokens |
-| GET | `/api/scan-catalog` | None | Timeframes, strategy descriptions, named universes |
-| POST | `/api/scan` | JWT | Queue async scan (Celery) |
+| GET | `/api/scan-catalog` | None | Timeframes, strategy descriptions, named universes (Scan studio) |
+| POST | `/api/scan` | JWT | Queue async scan (Celery). Body may include `universe_preset`, `scan_timeframe`, `strategy_ids`. |
 | GET | `/api/scan/{task_id}` | JWT | Poll scan status |
 | GET | `/api/positions` | JWT | Current positions |
 | POST | `/api/settings/enable-live-trading` | JWT | Enable live execution |

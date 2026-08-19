@@ -495,6 +495,8 @@ class TestHealthAndStatus:
         assert data["data"]["sse_enabled"] is True
         assert data["data"]["scan_transport"] == "local_thread"
         assert data["data"]["ui_contract_version"] == "2026-04-webapp-stabilization"
+        assert data["data"]["scan_studio"]["enabled"] is True
+        assert data["data"]["scan_studio"]["live_book_strategy_id"] == "trend_breakout"
         assert "api_key_value" not in data["data"]
         assert data["data"]["supabase"] is None
 
@@ -530,6 +532,25 @@ class TestHealthAndStatus:
         assert [t["id"] for t in catalog["timeframes"]] == ["intraday", "daily", "weekly", "monthly"]
         assert any(s["id"] == "trend_breakout" for s in catalog["strategies"])
         assert any(u["id"] == "nasdaq100" and u["available"] for u in catalog["universes"])
+
+    @patch("webapp.main.run_scan")
+    def test_sync_scan_forwards_scan_studio_body(self, mock_scan, client: TestClient):
+        mock_scan.return_value = ScanRunResult(signals=FAKE_SIGNALS, diagnostics=FAKE_DIAGNOSTICS)
+        resp = client.post(
+            "/api/scan?async_mode=false",
+            json={
+                "universe_preset": "nasdaq100",
+                "scan_timeframe": "daily",
+                "strategy_ids": ["trend_breakout"],
+            },
+            headers=_auth_headers(),
+        )
+        data = resp.json()
+        assert data["ok"] is True
+        kwargs = mock_scan.call_args.kwargs
+        assert kwargs["universe_preset"] == "nasdaq100"
+        assert kwargs["scan_timeframe"] == "daily"
+        assert kwargs["strategy_ids"] == ["trend_breakout"]
 
     def test_static_pages(self, client: TestClient):
         resp = client.get("/")

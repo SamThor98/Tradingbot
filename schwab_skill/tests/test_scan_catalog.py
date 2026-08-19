@@ -5,6 +5,7 @@ from core.scan_catalog import (
     catalog_fields_for_signal,
     filter_signals_for_scan_selection,
     resolve_strategy_ids,
+    scan_studio_public_config,
     selected_strategies_bypass_bull_regime,
     signal_matches_strategy_ids,
 )
@@ -35,6 +36,14 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
         "weekly": "weekly_swing",
         "monthly": "monthly_position",
     }
+
+
+def test_scan_studio_public_config_advertises_live_book() -> None:
+    cfg = scan_studio_public_config()
+    assert cfg["enabled"] is True
+    assert cfg["live_book_strategy_id"] == "trend_breakout"
+    assert cfg["default_universe"] == "sp1500"
+    assert cfg["default_timeframe"] == "daily"
 
 
 def test_counter_trend_only_bypasses_bull_regime() -> None:

@@ -14,10 +14,10 @@ import { escapeHtml, safeText } from "../modules/format.js";
 
 const FALLBACK_CATALOG = Object.freeze({
   timeframes: [
-    { id: "intraday", display_name: "Intraday", description: "Live-quote confirmation of a daily setup." },
-    { id: "daily", display_name: "Daily", description: "Primary live engine on daily bars." },
-    { id: "weekly", display_name: "Weekly", description: "Multi-week horizon on the daily engine." },
-    { id: "monthly", display_name: "Monthly", description: "Position-style horizon on the daily engine." },
+    { id: "intraday", display_name: "Intraday", description: "Live-quote confirmation of a daily setup.", default_strategy_id: "breakout_confirm" },
+    { id: "daily", display_name: "Daily", description: "Primary live engine on daily bars.", default_strategy_id: "trend_breakout" },
+    { id: "weekly", display_name: "Weekly", description: "Multi-week horizon on the daily engine.", default_strategy_id: "weekly_swing" },
+    { id: "monthly", display_name: "Monthly", description: "Position-style horizon on the daily engine.", default_strategy_id: "monthly_position" },
   ],
   strategies: [
     {
@@ -26,6 +26,8 @@ const FALLBACK_CATALOG = Object.freeze({
       timeframe: "daily",
       status: "live",
       runnable: true,
+      origin: "iterated",
+      primary_for_timeframe: true,
       description: "Weinstein Stage 2 uptrend plus volume contraction. This is the live book.",
     },
   ],
@@ -363,6 +365,9 @@ export function bindScanStudio() {
   const root = document.getElementById("scanStudioPanel");
   if (!root || root.dataset.bound === "1") return;
   root.dataset.bound = "1";
+  if (!state.scanCatalog) state.scanCatalog = FALLBACK_CATALOG;
+  if (!state.scanStudioPrefs) state.scanStudioPrefs = loadScanStudioPrefs();
+  renderScanStudio();
   root.addEventListener("click", (ev) => {
     const btn = ev.target?.closest?.("[data-scan-timeframe]");
     if (!btn) return;

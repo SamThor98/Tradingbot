@@ -1774,6 +1774,12 @@ async def sse_events(
     )
 
 
+def _scan_studio_public_config() -> dict[str, Any]:
+    from core.scan_catalog import scan_studio_public_config
+
+    return scan_studio_public_config()
+
+
 @app.get("/api/public-config", response_model=ApiResponse)
 def public_config() -> ApiResponse:
     """Non-secret client config (optional Supabase browser sign-in)."""
@@ -1813,6 +1819,7 @@ def public_config() -> ApiResponse:
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
         "plugin_mode_writes_enabled": True,
+        "scan_studio": _scan_studio_public_config(),
     }
     if account_callback:
         data["schwab_account_callback_url"] = account_callback

@@ -1,7 +1,7 @@
 ---
 source: Brain/API/Local Dashboard Endpoints.md
 created: 2026-04-13
-updated: 2026-07-16
+updated: 2026-08-19
 tags: [api, local, endpoints]
 ---
 
@@ -15,7 +15,7 @@ tags: [api, local, endpoints]
 |--------|------|-------------|
 | GET | `/api/health/deep` | Full health: DB, tokens, quotes |
 | GET | `/api/scan-catalog` | Timeframes, strategy descriptions, named universes |
-| POST | `/api/scan` | Trigger scan (`universe_preset`, `scan_timeframe`, `strategy_ids` optional) |
+| POST | `/api/scan` | Trigger scan (`universe_preset`, `scan_timeframe`, `strategy_ids` from Scan studio) |
 | GET | `/api/scan/status` | Current/last scan status + signals |
 | GET | `/api/check/{ticker}` | Quick technical check |
 | GET | `/api/report/{ticker}` | Full multi-section report |

@@ -689,6 +689,12 @@ def login_page() -> HTMLResponse:
     )
 
 
+def _scan_studio_public_config() -> dict[str, Any]:
+    from core.scan_catalog import scan_studio_public_config
+
+    return scan_studio_public_config()
+
+
 @app.get("/api/public-config", response_model=ApiResponse)
 def public_config() -> ApiResponse:
     """Non-secret client config (e.g. Supabase URL + anon key for browser sign-in)."""
@@ -726,6 +732,7 @@ def public_config() -> ApiResponse:
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
         "plugin_mode_writes_enabled": False,
+        "scan_studio": _scan_studio_public_config(),
         # Helps hosted dashboards explain “works locally, not on Render” without exposing secrets.
         "auth_setup": {
             "supabase_sign_in_available": bool(url and anon),
@@ -1338,6 +1345,9 @@ def run_scan(
         detail={
             "task_id": task.id,
             "scan_universe_mode": scan_opts.get("universe_mode"),
+            "scan_universe_preset": scan_opts.get("universe_preset"),
+            "scan_timeframe": scan_opts.get("scan_timeframe"),
+            "scan_strategy_ids": list(scan_opts.get("strategy_ids") or []),
             "scan_custom_ticker_count": len(scan_opts.get("tickers") or []),
             "scan_has_strategy_overrides": bool(scan_opts.get("env_overrides")),
         },

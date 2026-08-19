@@ -646,3 +646,13 @@ def build_scan_catalog_payload() -> dict[str, Any]:
             "completed_bars": "Research sleeves evaluate completed daily/weekly/monthly bars. Intraday live-quote overlay is breakout_confirm only.",
         },
     }
+
+
+def scan_studio_public_config() -> dict[str, Any]:
+    """Cheap public-config slice so local and SaaS dashboards advertise Scan studio the same way."""
+    return {
+        "enabled": True,
+        "live_book_strategy_id": "trend_breakout",
+        "default_timeframe": DEFAULT_TIMEFRAME,
+        "default_universe": DEFAULT_UNIVERSE,
+    }
