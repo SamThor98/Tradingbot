@@ -157,7 +157,7 @@
             </p>
           </div>
           <div class="tab-landing-actions mode-header-actions">
-            <a id="screenContextCta" class="btn primary" href="#scanSection">Run scan</a>
+            <a id="screenContextCta" class="btn primary" href="#scanStudioPanel">Run scan</a>
             <span class="tab-landing-secondary">
               <a id="screenContextAltCta" class="tab-landing-link" href="#scanSection">Open scan table</a>
               <a id="screenContextAltCta2" class="tab-landing-link hidden" href="#backtestSection" hidden>Backtest</a>
@@ -171,8 +171,7 @@
           <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Auth check</span>
         </div>
         <nav class="mode-header-anchors section-nav tab-landing-anchors" aria-label="In-mode navigation">
-              <a href="#scanSection" data-nav-screens="operations">Run scan</a>
-              <a href="#scanStudioPanel" data-nav-screens="operations">Scan studio</a>
+              <a href="#scanStudioPanel" data-nav-screens="operations">Run scan</a>
           <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
           <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
           <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
@@ -262,6 +261,13 @@
         </div>
       </section>
 
+      <section id="scanStudioPanel" class="scan-studio card operations-surface" aria-label="Scan studio"></section>
+      <script type="module">
+        import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
+        bindScanStudio();
+        void loadScanCatalog();
+      </script>
+
       <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>
@@ -322,12 +328,6 @@
             <strong>Scan + shortlist</strong>
             <p id="scanLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 1 — run scan to load the shortlist.</p>
           </div>
-          <section id="scanStudioPanel" class="scan-studio" aria-label="Scan studio"></section>
-          <script type="module">
-            import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
-            bindScanStudio();
-            void loadScanCatalog();
-          </script>
           <div class="section-title">
             <h2>Scan results</h2>
             <div class="scan-title-meta">

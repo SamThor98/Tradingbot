@@ -182,3 +182,13 @@ def test_app_js_no_longer_inlines_oauth_query_cleanup(app_source: str) -> None:
     assert 'window.history.replaceState({}, "", u.pathname + (u.search ? u.search : ""))' not in app_source, (
         "old inline OAuth replaceState block re-introduced in app.js"
     )
+
+
+def test_scan_studio_sits_on_today_landing_not_behind_run_scan_tab() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    today = html.find('id="dashboardToday"')
+    studio = html.find('id="scanStudioPanel"')
+    workflow = html.find('id="workflowPrimary"')
+    assert today != -1 and studio != -1 and workflow != -1
+    assert today < studio < workflow, "Scan studio must paint on the Today landing, above the kanban"
+    assert html.count('id="scanStudioPanel"') == 1
