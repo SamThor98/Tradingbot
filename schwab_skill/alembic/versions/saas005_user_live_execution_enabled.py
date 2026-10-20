@@ -22,12 +22,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    insp = sa.inspect(conn)
-    if "users" not in insp.get_table_names():
-        return
-    cols = {c["name"] for c in insp.get_columns("users")}
-    if "live_execution_enabled" in cols:
-        return
     dialect = conn.dialect.name
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
@@ -45,25 +39,29 @@ def upgrade() -> None:
                     server_default=sa.text("0"),
                 )
             )
-    else:
-        # Postgres IF NOT EXISTS prevents duplicate-column races if multiple
-        # processes attempt migrations at the same time.
+    elif dialect == "postgresql":
+        # IF NOT EXISTS covers a race where two processes both pass the
+        # inspector check before either ALTER commits.
         op.execute(
             sa.text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                 "live_execution_enabled BOOLEAN DEFAULT false NOT NULL"
             )
         )
+    else:
+        op.add_column(
+            "users",
+            sa.Column(
+                "live_execution_enabled",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            ),
+        )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    insp = sa.inspect(conn)
-    if "users" not in insp.get_table_names():
-        return
-    cols = {c["name"] for c in insp.get_columns("users")}
-    if "live_execution_enabled" not in cols:
-        return
     dialect = conn.dialect.name
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
@@ -74,5 +72,7 @@ def downgrade() -> None:
     if dialect == "sqlite":
         with op.batch_alter_table("users", schema=None) as batch:
             batch.drop_column("live_execution_enabled")
-    else:
+    elif dialect == "postgresql":
         op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS live_execution_enabled"))
+    else:
+        op.drop_column("users", "live_execution_enabled")
