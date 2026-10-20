@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core import plugin_mode_workbench as wb
-from core.env_local import parse_env_file, upsert_env_file
+from core.env_local import parse_env_file
 
 
 @pytest.fixture(autouse=True)
