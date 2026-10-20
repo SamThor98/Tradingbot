@@ -575,9 +575,10 @@ def test_scan_enqueue_forwards_scan_studio_body(saas_client: TestClient, test_db
 
     assert resp.status_code == 200
     assert resp.json().get("ok") is True
-    args = mock_async.call_args.kwargs.get("args") or ()
-    assert args[0] == "user_1"
-    opts = args[1]
+    raw_args = mock_async.call_args.kwargs.get("args")
+    assert raw_args is not None and len(raw_args) >= 2
+    assert raw_args[0] == "user_1"
+    opts = raw_args[1]
     assert opts["universe_preset"] == "nasdaq100"
     assert opts["scan_timeframe"] == "daily"
     assert opts["strategy_ids"] == ["trend_breakout"]
