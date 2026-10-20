@@ -111,6 +111,44 @@ def test_hs256_requires_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "SUPABASE_JWT_SECRET" in str(ei.value.detail)
 
 
+def test_strict_claims_hs256_aud_iss(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_JWT_STRICT_CLAIMS", "1")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "sym")
+    monkeypatch.setenv("SUPABASE_URL", "https://abc.supabase.co")
+    monkeypatch.delenv("SUPABASE_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("SUPABASE_JWT_ISSUER", raising=False)
+    token = jwt.encode(
+        {
+            "sub": "u_strict",
+            "aud": "authenticated",
+            "iss": "https://abc.supabase.co/auth/v1",
+        },
+        "sym",
+        algorithm="HS256",
+    )
+    assert decode_supabase_jwt(token)["sub"] == "u_strict"
+
+
+def test_decode_es256_jwks_with_database_url_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Worker-style env: Supabase Postgres URL but no SUPABASE_URL; JWKS host still resolves."""
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://postgres:pw@db.abcdefghijklmnopqrs.supabase.co:5432/postgres",
+    )
+    priv = ec.generate_private_key(ec.SECP256R1(), default_backend())
+    pub = priv.public_key()
+    token = jwt.encode({"sub": "es_db"}, priv, algorithm="ES256")
+
+    mock_jwks = MagicMock()
+    sk = MagicMock()
+    sk.key = pub
+    mock_jwks.get_signing_key_from_jwt.return_value = sk
+    monkeypatch.setattr("webapp.security._jwks_client_for", lambda _url: mock_jwks)
+
+    assert decode_supabase_jwt(token)["sub"] == "es_db"
+
+
 def test_production_requires_audience_and_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "prod_secret")
