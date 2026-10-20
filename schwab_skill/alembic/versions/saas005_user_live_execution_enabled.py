@@ -39,6 +39,15 @@ def upgrade() -> None:
                     server_default=sa.text("0"),
                 )
             )
+    elif dialect == "postgresql":
+        # IF NOT EXISTS covers a race where two processes both pass the
+        # inspector check before either ALTER commits.
+        op.execute(
+            sa.text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "live_execution_enabled BOOLEAN DEFAULT false NOT NULL"
+            )
+        )
     else:
         op.add_column(
             "users",
@@ -63,5 +72,7 @@ def downgrade() -> None:
     if dialect == "sqlite":
         with op.batch_alter_table("users", schema=None) as batch:
             batch.drop_column("live_execution_enabled")
+    elif dialect == "postgresql":
+        op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS live_execution_enabled"))
     else:
         op.drop_column("users", "live_execution_enabled")
