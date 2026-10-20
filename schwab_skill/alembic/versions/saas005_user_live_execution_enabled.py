@@ -23,6 +23,14 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
+    if dialect == "postgresql":
+        # ADD COLUMN IF NOT EXISTS uses the same unqualified name resolution as
+        # plain ALTER TABLE, avoiding false negatives from Inspector vs. actual
+        # target table (search_path / multiple "users" / race with other writers).
+        op.execute(
+            sa.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS live_execution_enabled BOOLEAN DEFAULT false NOT NULL")
+        )
+        return
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
         return
@@ -54,6 +62,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
+    if dialect == "postgresql":
+        op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS live_execution_enabled"))
+        return
     insp = sa.inspect(conn)
     if "users" not in insp.get_table_names():
         return
