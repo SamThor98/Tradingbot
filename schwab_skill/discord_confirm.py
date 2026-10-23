@@ -51,6 +51,23 @@ def _friendly_error(prefix: str) -> str:
     return f"{prefix} Please try again in a moment."
 
 
+OPERATOR_HELP_TEXT = (
+    "**Available commands:**\n"
+    "`!ping` / `/ping` -- Check the bot is online\n"
+    "`!status` / `/status` -- Bot health, API status, last scan\n"
+    "`/top [n]` -- Ranked names from the latest scan (read-only, default 10)\n"
+    "`/picks [days]` -- Past picks vs SPY at 5/10/20d (read-only, default 10 days)\n"
+    "`/levels TICKER` -- Price, 50d/200d, ATR14, scan stop (read-only)\n"
+    "`!check TICKER` / `/check` -- Quick 3-line verdict (fast)\n"
+    "`!report TICKER [section]` / `/report` -- Full report "
+    "(or one section: tech, dcf, comps, health, edgar, mirofish)\n"
+    "`!scan` / `/scan` -- Run signal scanner (Stage 2 + VCP)\n"
+    "`!portfolio` / `/portfolio` -- Show positions with P/L\n"
+    "`!sectors` / `/sectors` -- Sector heatmap vs SPY\n"
+    "`!help` / `/help` -- Show this message"
+)
+
+
 # MiroFish agent display names
 AGENT_DISPLAY_NAMES = {
     "institutional_trend": "Institutional Trend-Follower",
@@ -586,6 +603,86 @@ def _run_bot_async(env: dict) -> None:
             async def ping(interaction: discord.Interaction):
                 await interaction.response.send_message("Pong - bot is online.", ephemeral=True)
 
+            @self.tree.command(name="help", description="List operator commands")
+            async def help_cmd(interaction: discord.Interaction):
+                await interaction.response.send_message(OPERATOR_HELP_TEXT, ephemeral=True)
+
+            @self.tree.command(name="top", description="Ranked names from the latest scan (read-only)")
+            @app_commands.describe(n="How many names to show (1-15, default 10)")
+            async def top_cmd(interaction: discord.Interaction, n: int = 10):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Top: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_top
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    text = await asyncio.to_thread(render_top, db_path, n=n)
+                    await interaction.followup.send(text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Top command failed: %s", e)
+                    try:
+                        await interaction.followup.send(_friendly_error("Top list failed."), ephemeral=False)
+                    except Exception:
+                        pass
+
+            @self.tree.command(name="picks", description="Past scan picks vs SPY (read-only)")
+            @app_commands.describe(days="How many calendar days of picks to score (1-90, default 10)")
+            async def picks_cmd(interaction: discord.Interaction, days: int = 10):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Picks: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_picks
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    text = await asyncio.to_thread(render_picks, db_path, days=days, skill_dir=SKILL_DIR)
+                    await interaction.followup.send(text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Picks command failed: %s", e)
+                    try:
+                        await interaction.followup.send(_friendly_error("Picks lookup failed."), ephemeral=False)
+                    except Exception:
+                        pass
+
+            @self.tree.command(name="levels", description="Price, SMAs, ATR, and scan stop (read-only)")
+            @app_commands.describe(ticker="Stock ticker symbol (e.g. AAPL)")
+            async def levels_cmd(interaction: discord.Interaction, ticker: str):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Levels: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_levels
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    view = await asyncio.to_thread(render_levels, ticker, db_path, skill_dir=SKILL_DIR)
+                    if view.embed:
+                        embed = discord.Embed.from_dict(view.embed)
+                        await interaction.followup.send(embed=embed, ephemeral=False)
+                    else:
+                        await interaction.followup.send(view.text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Levels command failed: %s", e)
+                    try:
+                        await interaction.followup.send(
+                            _friendly_error(f"Levels failed for **{ticker.upper()}**."),
+                            ephemeral=False,
+                        )
+                    except Exception:
+                        pass
+
             @self.tree.command(name="scan", description="Run a new signal scan (Stage 2 + VCP)")
             async def scan(interaction: discord.Interaction):
                 # Acknowledge within 3s — must run before any blocking work
@@ -793,18 +890,7 @@ def _run_bot_async(env: dict) -> None:
                 await message.reply("Pong - bot is online.")
 
             elif cmd == "help":
-                help_text = (
-                    "**Available commands:**\n"
-                    "`!ping` -- Check the bot is online\n"
-                    "`!status` -- Bot health, API status, last scan\n"
-                    "`!check TICKER` -- Quick 3-line verdict (fast)\n"
-                    "`!report TICKER [section]` -- Full report (or just one section: tech, dcf, comps, health, edgar, mirofish)\n"
-                    "`!scan` -- Run signal scanner (Stage 2 + VCP)\n"
-                    "`!portfolio` -- Show positions with P/L\n"
-                    "`!sectors` -- Sector heatmap vs SPY\n"
-                    "`!help` -- Show this message"
-                )
-                await message.reply(help_text)
+                await message.reply(OPERATOR_HELP_TEXT)
 
             elif cmd == "status":
                 try:
