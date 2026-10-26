@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -96,28 +97,29 @@ def _signal(ticker: str, price: float, sma: float, **extra: object) -> dict:
 
 def test_top_ranks_filters_and_week_setup(tmp_path: Path) -> None:
     path = _db(tmp_path)
+    signals: list[Any] = [
+        _signal("ZZZ", 110, 100),  # +10% extended
+        _signal("AAA", 101, 100),  # +1%
+        _signal("BBB", 108, 100),  # exactly 8% kept
+        _signal("CCC", 108.2, 100),  # just over 8%
+        _signal("DIS", 103, 100, forensic_flags=["altman_distress"]),
+        _signal("BUY", 102, 100, buyout_target=True),
+        _signal("LOW", 90, 100, forensic_altman=1.1),  # z-score alone is not a flag
+        {"ticker": "GAP"},
+        _signal(
+            "WS",
+            104,
+            100,
+            entry_family="horizon",
+            strategy_plugins=[{"name": "weekly_swing", "triggered": True}],
+        ),
+    ]
+    signals.append(_signal("MARK", 105, 100))
     blob = {
         "at": SCAN_AT,
-        "signals": [
-            _signal("ZZZ", 110, 100),  # +10% extended
-            _signal("AAA", 101, 100),  # +1%
-            _signal("BBB", 108, 100),  # exactly 8% kept
-            _signal("CCC", 108.2, 100),  # just over 8%
-            _signal("DIS", 103, 100, forensic_flags=["altman_distress"]),
-            _signal("BUY", 102, 100, buyout_target=True),
-            _signal("LOW", 90, 100, forensic_altman=1.1),  # z-score alone is not a flag
-            {"ticker": "GAP"},
-            _signal(
-                "WS",
-                104,
-                100,
-                entry_family="horizon",
-                strategy_plugins=[{"name": "weekly_swing", "triggered": True}],
-            ),
-        ],
+        "signals": signals,
         "diagnostics": {"known_buyout_targets": ["MARK"]},
     }
-    blob["signals"].append(_signal("MARK", 105, 100))
     _save_scan(path, blob)
     _save_result(
         path,
