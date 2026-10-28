@@ -1549,6 +1549,7 @@ def _scan_stage_a_one(
         shadow_only_admit = pead_only_admit or entry_family == "horizon"
 
         entry_timing_at_stage2 = None
+        sector_override_view: dict[str, Any] | None = None
         try:
             from config import get_entry_timing_shadow_mode
             from stage_analysis import evaluate_entry_timing_shadow
@@ -1566,6 +1567,8 @@ def _scan_stage_a_one(
                 payload["pead_primary_eval"] = pead_eval
             payload["strategy_pead_primary_mode"] = pead_configured
             payload["strategy_pead_primary_effective_mode"] = pead_mode_eff
+            if isinstance(sector_override_view, dict):
+                payload["sector_map_override"] = sector_override_view
             return payload
 
         vcp_ok = bool(check_vcp_volume(df, skill_dir))
@@ -1582,6 +1585,15 @@ def _scan_stage_a_one(
             )
 
         sector_etf = get_ticker_sector_etf(ticker, skill_dir=skill_dir)
+        try:
+            from sector_map_overrides import describe_sector_map_override
+
+            sector_override_view = describe_sector_map_override(
+                ticker, sector_etf, skill_dir=skill_dir
+            )
+        except Exception as _e:
+            LOG.debug("Sector map override view skipped for %s: %s", ticker, _e)
+            sector_override_view = None
         sector_unresolved = sector_etf is None
         sector_winning = sector_etf in winning_etfs if sector_etf is not None else False
         apply_sector_hard = sector_gate_mode == "hard" and not shadow_only_admit
@@ -1839,6 +1851,9 @@ def _scan_stage_a_one(
             "price": price,
             "sector_etf": sector_etf,
             "sector_winning": bool(sector_winning),
+            "sector_map_override": sector_override_view
+            if isinstance(sector_override_view, dict) and sector_override_view.get("mode") != "off"
+            else None,
             "breakout_confirmed": bool(price >= prior_high),
             "latest_volume": latest_volume,
             "avg_vol_50": avg_vol_50,
@@ -1926,6 +1941,11 @@ def _note_stage_a_outcome(
     if count_decision:
         _accumulate_provider_fallback_diagnostics(diagnostics, out)
         _accumulate_entry_shadow_stage2_diagnostics(diagnostics, out)
+        override_view = out.get("sector_map_override")
+        if isinstance(override_view, dict):
+            from sector_map_overrides import accumulate_sector_map_override_view
+
+            accumulate_sector_map_override_view(diagnostics, override_view)
     reason = str(out.get("reason") or "exceptions")
     if out.get("ok"):
         candidate = out.get("candidate") if isinstance(out.get("candidate"), dict) else {}
@@ -2539,6 +2559,7 @@ def _scan_stage_b_enrich(
             "price": round(float(candidate.get("price") or 0.0), 2),
             "sector_etf": candidate.get("sector_etf"),
             "sector_winning": bool(candidate.get("sector_winning")),
+            "sector_map_override": candidate.get("sector_map_override"),
             "sma_50": candidate.get("sma_50"),
             "sma_200": candidate.get("sma_200"),
             "mirofish_summary": mirofish_result.get("summary") if mirofish_result else None,
@@ -3908,6 +3929,11 @@ def scan_for_signals_detailed(
             "vcp_fail": 0,
             "no_sector_etf": 0,
             "sector_not_winning": 0,
+            "sector_map_override_mode": "off",
+            "sector_map_override_evaluated": 0,
+            "sector_map_override_disagree": 0,
+            "sector_map_override_applied": 0,
+            "sector_map_override_samples": [],
             "breakout_not_confirmed": 0,
             "exceptions": 0,
             "quality_gates_filtered": 0,
@@ -4501,6 +4527,12 @@ def scan_for_signals_detailed(
     regime_v2_entry_min_score = get_regime_v2_entry_min_score(skill_dir)
     diagnostics["scan_vcp_gate_mode"] = vcp_gate_mode
     diagnostics["scan_sector_gate_mode"] = sector_gate_mode
+    try:
+        from config import get_sector_map_override_mode
+
+        diagnostics["sector_map_override_mode"] = get_sector_map_override_mode(skill_dir)
+    except Exception:
+        diagnostics["sector_map_override_mode"] = "off"
     try:
         from config import get_entry_timing_shadow_mode, get_entry_timing_shadow_profile
 
