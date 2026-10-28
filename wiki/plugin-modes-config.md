@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Plugin Modes Config.md
 created: 2026-04-13
-updated: 2026-10-06
+updated: 2026-11-16
 tags: [config, plugins]
 ---
 
@@ -52,6 +52,12 @@ stays off. See [[plugin-modes]].
 | `REGIME_V2_SIZE_MULT_MED` | 0.7 | Size multiplier: medium regime |
 | `REGIME_V2_SIZE_MULT_LOW` | 0.4 | Size multiplier: low regime |
 
+## Sector Map Overrides
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `SECTOR_MAP_OVERRIDE_MODE` | off | off / shadow / live. Shadow keeps the yfinance ETF and records SPDR disagreements. Live uses Select Sector SPDR membership (snapshot 2026-10-27). See [[sector-strength]]. |
+
 ## Correlation Guard
 
 | Env Var | Default | Description |
@@ -72,7 +78,8 @@ stays off. See [[plugin-modes]].
 - [[plugin-modes]] — behavior descriptions and rollout sequence
 - [[execution-engine]] — where plugins hook in
 - [[canary-rollout]] — canary process for promotion
+- [[sector-strength]] — ticker ETF override map
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-10-28*
