@@ -393,6 +393,7 @@ def _prepare_context(
     watchlist: list[str] | None = None,
     skill_dir: Path | None = None,
 ) -> BacktestContext:
+    from sector_map_overrides import accumulate_sector_map_override_view, describe_sector_map_override
     from sector_strength import SECTOR_ETFS, get_ticker_sector_etf
 
     sd = skill_dir or SKILL_DIR
@@ -417,6 +418,11 @@ def _prepare_context(
         "history_provider_yfinance": 0,
         "history_provider_unknown": 0,
         "history_fallback_used": 0,
+        "sector_map_override_mode": "off",
+        "sector_map_override_evaluated": 0,
+        "sector_map_override_disagree": 0,
+        "sector_map_override_applied": 0,
+        "sector_map_override_samples": [],
         "history_reason_counts": {},
         "membership_filter_mode": "explicit_watchlist_override" if watchlist is not None else "live_watchlist",
         "membership_as_of_date": None,
@@ -492,6 +498,13 @@ def _prepare_context(
             sector_etf_by_ticker[ticker] = get_ticker_sector_etf(ticker, skill_dir=sd)
         except Exception:
             sector_etf_by_ticker[ticker] = None
+        try:
+            accumulate_sector_map_override_view(
+                data_integrity,
+                describe_sector_map_override(ticker, sector_etf_by_ticker[ticker], skill_dir=sd),
+            )
+        except Exception as exc:
+            LOG.debug("Sector map override diagnostics skipped for %s: %s", ticker, exc)
 
     sector_perf: dict[str, pd.DataFrame] = {}
     for sym in sorted(set(SECTOR_ETFS + ["SPY"])):

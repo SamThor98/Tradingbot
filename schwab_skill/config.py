@@ -749,6 +749,16 @@ def get_scan_sector_unresolved_penalty_points(skill_dir: Path | None = None) -> 
     return _get_float("SCAN_SECTOR_UNRESOLVED_PENALTY_POINTS", 6.0, skill_dir)
 
 
+def get_sector_map_override_mode(skill_dir: Path | None = None) -> str:
+    """Ticker-level Select Sector SPDR map (OFF|SHADOW|LIVE).
+
+    Default ``off`` keeps the yfinance sector-name ETF. ``shadow`` still
+    returns that ETF and records where SPDR membership disagrees. ``live``
+    returns the SPDR ETF for listed tickers. Invalid values fall back to ``off``.
+    """
+    return _get_mode("SECTOR_MAP_OVERRIDE_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
 # Scanner: allow scans to run even when SPY is below 200 SMA.
 def get_scan_allow_bear_regime(skill_dir: Path | None = None) -> bool:
     return _get_bool("SCAN_ALLOW_BEAR_REGIME", False, skill_dir)

@@ -65,6 +65,8 @@ COUNTER_PLAIN: dict[str, str] = {
     "would_move_stop": "would move stop",
     "would_time_stop": "would time-stop",
     "would_drop": "would have dropped",
+    "would_reassign": "would reassign sector",
+    "reassigned": "sector reassigned",
     "evaluated": "evaluated",
     "would_drop_any": "would have dropped",
     "stage2_would_filter": "uptrend shadow filters",
@@ -99,6 +101,7 @@ def _import_getters() -> dict[str, Callable[[Path | None], str]]:
         get_rank_filter_v2_mode,
         get_rank_score_v2_mode,
         get_regime_v2_mode,
+        get_sector_map_override_mode,
         get_signal_edge_shadow_mode,
         get_strategy_ensemble_mode,
         get_strategy_pead_primary_mode,
@@ -110,6 +113,7 @@ def _import_getters() -> dict[str, Callable[[Path | None], str]]:
         "confluence_gate": get_confluence_gate_mode,
         "correlation_guard": get_correlation_guard_mode,
         "regime_v2": get_regime_v2_mode,
+        "sector_map_override": get_sector_map_override_mode,
         "management_integrity": get_management_integrity_mode,
         "exit_manager": get_exit_manager_mode,
         "quality_gates": get_quality_gates_mode,
@@ -159,6 +163,14 @@ def _catalog_rows(g: dict[str, Callable[[Path | None], str]]) -> list[PluginSpec
             "scan+execution",
             purpose="Slows or blocks entries when the market regime score is weak.",
             evidence_key="regime_v2",
+        ),
+        PluginSpec(
+            "sector_map_override",
+            "Sector map overrides",
+            "SECTOR_MAP_OVERRIDE_MODE",
+            g["sector_map_override"],
+            "scan+execution",
+            purpose="Compares yfinance sector ETFs with Select Sector SPDR membership. Shadow records disagreements; live uses the SPDR ETF.",
         ),
         PluginSpec(
             "management_integrity",
@@ -631,6 +643,12 @@ def _plugin_counters(
             "exec_blocked": _i(events, "regime_v2_blocked"),
             "exec_sized": _i(events, "regime_v2_sized"),
         }
+    if plugin_id == "sector_map_override":
+        return {
+            "evaluated": _i(diag, "sector_map_override_evaluated"),
+            "would_reassign": _i(diag, "sector_map_override_disagree"),
+            "reassigned": _i(diag, "sector_map_override_applied"),
+        }
     if plugin_id == "management_integrity":
         mi = diag.get("management_integrity") if isinstance(diag.get("management_integrity"), dict) else {}
         return {
@@ -886,6 +904,7 @@ def _diag_mode_for(plugin_id: str, diag: dict[str, Any]) -> str | None:
         "confluence_gate": ("confluence_gate_mode",),
         "correlation_guard": ("correlation_guard_mode",),
         "regime_v2": ("regime_v2_mode",),
+        "sector_map_override": ("sector_map_override_mode",),
         "management_integrity": ("management_integrity",),
         "quality_gates": ("quality_gates_mode",),
         "rank_filter_v2": ("rank_filter_v2_mode",),

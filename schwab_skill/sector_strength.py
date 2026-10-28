@@ -24,6 +24,9 @@ SECTOR_TO_ETF: dict[str, str] = {
     "energy": "XLE",
     "healthcare": "XLV",
     "consumer cyclical": "XLY",  # Consumer Discretionary
+    # yfinance reports "Consumer Defensive" (singular). The plural key is kept
+    # so older cached labels still resolve.
+    "consumer defensive": "XLP",
     "consumer defensives": "XLP",  # Consumer Staples
     "consumer staples": "XLP",
     "basic materials": "XLB",
@@ -244,10 +247,22 @@ def get_winning_sector_etfs(
 def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | None:
     """Resolve ticker to sector ETF (e.g. AAPL -> XLK). Returns None if unknown.
 
-    A successful resolution is cached forever; a failed resolution is cached
-    for at most ``_UNRESOLVED_RETRY_HOURS`` (24h) so transient yfinance
+    A successful yfinance resolution is cached forever; a failed resolution is
+    cached for at most ``_UNRESOLVED_RETRY_HOURS`` (24h) so transient yfinance
     outages don't permanently disable sector-aware filtering for the ticker.
+
+    ``SECTOR_MAP_OVERRIDE_MODE=live`` replaces that ETF with Select Sector
+    SPDR membership when the ticker is listed. ``shadow`` and ``off`` keep
+    the yfinance result. The override is not written into the yfinance cache.
     """
+    base = _resolve_ticker_sector_etf_base(ticker, skill_dir)
+    from sector_map_overrides import apply_sector_map_override
+
+    return apply_sector_map_override(ticker, base, skill_dir)
+
+
+def _resolve_ticker_sector_etf_base(ticker: str, skill_dir: Path | None = None) -> str | None:
+    """Yfinance sector-name lookup. Does not apply SPDR overrides."""
     tkr = ticker.upper().strip()
     cache = _load_sector_cache(skill_dir)
     mapping = cache.get("sector_etf_by_ticker", {})
