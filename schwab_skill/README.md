@@ -407,6 +407,7 @@ Current plugin modes:
 - `EVENT_RISK_MODE`
 - `CORRELATION_GUARD_MODE` (config-ready)
 - `REGIME_V2_MODE`
+- `SECTOR_MAP_OVERRIDE_MODE` (default `off`; shadow compares yfinance to SPDR membership)
 
 Defaults: `EXEC_QUALITY_MODE` and `EVENT_RISK_MODE` were promoted to `live`
 (2026-Q2) — see `docs/RELEASE_NOTES_PLUGIN_PROMOTIONS.md` and the signed

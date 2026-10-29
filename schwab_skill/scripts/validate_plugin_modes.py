@@ -43,6 +43,7 @@ from config import (  # noqa: E402
     get_regime_v2_size_mult_low,
     get_regime_v2_size_mult_med,
     get_score_pts_sma_multiplier,
+    get_sector_map_override_mode,
 )
 from env_overrides import temporary_env  # noqa: E402
 
@@ -55,6 +56,7 @@ MODE_GETTERS = {
     "RANK_SCORE_V2_MODE": get_rank_score_v2_mode,
     "RANK_FILTER_V2_MODE": get_rank_filter_v2_mode,
     "ALLOCATOR_MODE": get_allocator_mode,
+    "SECTOR_MAP_OVERRIDE_MODE": get_sector_map_override_mode,
 }
 
 # Promoted defaults (2026-Q2): see docs/RELEASE_NOTES_PLUGIN_PROMOTIONS.md

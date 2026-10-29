@@ -749,6 +749,20 @@ def get_scan_sector_unresolved_penalty_points(skill_dir: Path | None = None) -> 
     return _get_float("SCAN_SECTOR_UNRESOLVED_PENALTY_POINTS", 6.0, skill_dir)
 
 
+def get_sector_map_override_mode(skill_dir: Path | None = None) -> str:
+    """Ticker-level sponsor sector map (OFF|SHADOW|LIVE).
+
+    The bundled file is a point-in-time classification (sponsor holdings as of
+    its ``as_of`` date), not a historical sector. Default ``off`` keeps the
+    yfinance sector-name ETF, including unresolved ``Consumer Defensive``.
+    ``shadow`` still returns that ETF and records disagreements. ``live``
+    returns the sponsor ETF for listed tickers, and applies the gated
+    ``Consumer Defensive`` → XLP alias when the name is unlisted. Invalid
+    values fall back to ``off``.
+    """
+    return _get_mode("SECTOR_MAP_OVERRIDE_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
 # Scanner: allow scans to run even when SPY is below 200 SMA.
 def get_scan_allow_bear_regime(skill_dir: Path | None = None) -> bool:
     return _get_bool("SCAN_ALLOW_BEAR_REGIME", False, skill_dir)
