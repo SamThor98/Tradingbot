@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Plugin Modes.md
 created: 2026-04-13
-updated: 2026-10-28
+updated: 2026-10-29
 tags: [strategy, plugins, risk]
 ---
 
@@ -25,7 +25,7 @@ tags: [strategy, plugins, risk]
 4. **Regime v2** (`REGIME_V2_MODE`) — score-based sizing
 5. **Correlation Guard** (`CORRELATION_GUARD_MODE`) — pairwise limits
 
-`SECTOR_MAP_OVERRIDE_MODE` is config-ready and defaults to `off`. It is not part of the rollout sequence above. Shadow records yfinance vs Select Sector SPDR disagreements; live uses the SPDR ETF. See [[sector-strength]].
+`SECTOR_MAP_OVERRIDE_MODE` is config-ready and defaults to `off`. It is not part of the rollout sequence above. The map is a point-in-time sponsor classification (not historical). Shadow records disagreements; live uses the sponsor ETF. See [[sector-strength]].
 
 ## Recommended Rollout Sequence
 

@@ -24,9 +24,6 @@ SECTOR_TO_ETF: dict[str, str] = {
     "energy": "XLE",
     "healthcare": "XLV",
     "consumer cyclical": "XLY",  # Consumer Discretionary
-    # yfinance reports "Consumer Defensive" (singular). The plural key is kept
-    # so older cached labels still resolve.
-    "consumer defensive": "XLP",
     "consumer defensives": "XLP",  # Consumer Staples
     "consumer staples": "XLP",
     "basic materials": "XLB",
@@ -76,7 +73,13 @@ def _save_sector_cache(data: dict[str, Any], skill_dir: Path | None = None) -> N
 _UNRESOLVED_RETRY_HOURS = 24.0
 
 
-def _cache_sector_mapping(ticker: str, sector_etf: str | None, skill_dir: Path | None = None) -> None:
+def _cache_sector_mapping(
+    ticker: str,
+    sector_etf: str | None,
+    skill_dir: Path | None = None,
+    *,
+    yahoo_sector: str | None = None,
+) -> None:
     import time
 
     data = _load_sector_cache(skill_dir)
@@ -91,7 +94,12 @@ def _cache_sector_mapping(ticker: str, sector_etf: str | None, skill_dir: Path |
     else:
         mapping[t] = None
         unresolved.add(t)
-        unresolved_meta[t] = {"timestamp": time.time()}
+        meta: dict[str, Any] = {"timestamp": time.time()}
+        # Remember the raw yfinance label so a later shadow/live read can apply
+        # the gated Consumer Defensive alias without treating it as the base ETF.
+        if yahoo_sector:
+            meta["yahoo_sector"] = yahoo_sector.strip().lower()
+        unresolved_meta[t] = meta
     data["unresolved"] = sorted(unresolved)
     _save_sector_cache(data, skill_dir)
 
@@ -251,32 +259,47 @@ def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | N
     cached for at most ``_UNRESOLVED_RETRY_HOURS`` (24h) so transient yfinance
     outages don't permanently disable sector-aware filtering for the ticker.
 
-    ``SECTOR_MAP_OVERRIDE_MODE=live`` replaces that ETF with Select Sector
-    SPDR membership when the ticker is listed. ``shadow`` and ``off`` keep
-    the yfinance result. The override is not written into the yfinance cache.
+    With ``SECTOR_MAP_OVERRIDE_MODE=off`` this is the yfinance sector-name map
+    only, including leaving yfinance's ``Consumer Defensive`` label unresolved.
+    ``shadow`` keeps that ETF and records disagreements. ``live`` may return a
+    sponsor-file ETF. The override is not written into the yfinance cache.
+
+    Sponsor membership is a point-in-time classification (the file's as-of
+    date), not the sector the stock had on earlier dates.
     """
-    base = _resolve_ticker_sector_etf_base(ticker, skill_dir)
-    from sector_map_overrides import apply_sector_map_override
+    base, yahoo_sector = _resolve_ticker_sector_etf_base(ticker, skill_dir)
+    from sector_map_overrides import apply_sector_map_override, note_yahoo_sector
 
-    return apply_sector_map_override(ticker, base, skill_dir)
+    note_yahoo_sector(ticker, yahoo_sector)
+    return apply_sector_map_override(ticker, base, skill_dir, yahoo_sector=yahoo_sector)
 
 
-def _resolve_ticker_sector_etf_base(ticker: str, skill_dir: Path | None = None) -> str | None:
-    """Yfinance sector-name lookup. Does not apply SPDR overrides."""
+def _resolve_ticker_sector_etf_base(
+    ticker: str, skill_dir: Path | None = None
+) -> tuple[str | None, str | None]:
+    """Yfinance sector-name lookup. Does not apply sponsor overrides.
+
+    Returns ``(etf, yahoo_sector)``. ``yahoo_sector`` is the lowercased
+    yfinance label when this call observed one, including on a fresh
+    unresolved cache hit that stored it.
+    """
     tkr = ticker.upper().strip()
     cache = _load_sector_cache(skill_dir)
     mapping = cache.get("sector_etf_by_ticker", {})
     if tkr in mapping:
         val = mapping.get(tkr)
         if isinstance(val, str) and val:
-            return val
+            return val, None
         # Cached unresolved: only honor if the failure is recent.
         if _is_unresolved_entry_fresh(tkr, skill_dir):
-            return None
+            meta = (cache.get("unresolved_meta") or {}).get(tkr) or {}
+            sector = meta.get("yahoo_sector") if isinstance(meta, dict) else None
+            remembered = sector.strip().lower() if isinstance(sector, str) and sector.strip() else None
+            return None, remembered
         # Otherwise fall through and re-attempt the lookup.
     if get_schwab_only_data():
         _cache_sector_mapping(tkr, None, skill_dir)
-        return None
+        return None, None
     try:
         import yfinance as yf
 
@@ -288,13 +311,18 @@ def _resolve_ticker_sector_etf_base(ticker: str, skill_dir: Path | None = None) 
         sector = (info.get("sector") or "").strip().lower()
         if not sector:
             _cache_sector_mapping(tkr, None, skill_dir)
-            return None
+            return None, None
         sector_etf = SECTOR_TO_ETF.get(sector)
-        _cache_sector_mapping(tkr, sector_etf, skill_dir)
-        return sector_etf
+        _cache_sector_mapping(
+            tkr,
+            sector_etf,
+            skill_dir,
+            yahoo_sector=sector if sector_etf is None else None,
+        )
+        return sector_etf, sector
     except Exception:
         _cache_sector_mapping(tkr, None, skill_dir)
-        return None
+        return None, None
 
 
 def get_sector_heatmap(

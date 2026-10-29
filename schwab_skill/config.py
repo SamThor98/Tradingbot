@@ -750,11 +750,15 @@ def get_scan_sector_unresolved_penalty_points(skill_dir: Path | None = None) -> 
 
 
 def get_sector_map_override_mode(skill_dir: Path | None = None) -> str:
-    """Ticker-level Select Sector SPDR map (OFF|SHADOW|LIVE).
+    """Ticker-level sponsor sector map (OFF|SHADOW|LIVE).
 
-    Default ``off`` keeps the yfinance sector-name ETF. ``shadow`` still
-    returns that ETF and records where SPDR membership disagrees. ``live``
-    returns the SPDR ETF for listed tickers. Invalid values fall back to ``off``.
+    The bundled file is a point-in-time classification (sponsor holdings as of
+    its ``as_of`` date), not a historical sector. Default ``off`` keeps the
+    yfinance sector-name ETF, including unresolved ``Consumer Defensive``.
+    ``shadow`` still returns that ETF and records disagreements. ``live``
+    returns the sponsor ETF for listed tickers, and applies the gated
+    ``Consumer Defensive`` → XLP alias when the name is unlisted. Invalid
+    values fall back to ``off``.
     """
     return _get_mode("SECTOR_MAP_OVERRIDE_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
 
