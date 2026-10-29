@@ -170,7 +170,7 @@ def _catalog_rows(g: dict[str, Callable[[Path | None], str]]) -> list[PluginSpec
             "SECTOR_MAP_OVERRIDE_MODE",
             g["sector_map_override"],
             "scan+execution",
-            purpose="Compares yfinance sector ETFs with Select Sector SPDR membership. Shadow records disagreements; live uses the SPDR ETF.",
+            purpose="Compares yfinance sector ETFs with point-in-time sponsor holdings. Shadow records disagreements; live uses the sponsor ETF.",
         ),
         PluginSpec(
             "management_integrity",
