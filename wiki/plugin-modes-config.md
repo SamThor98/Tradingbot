@@ -56,7 +56,7 @@ stays off. See [[plugin-modes]].
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `SECTOR_MAP_OVERRIDE_MODE` | off | off / shadow / live. Shadow keeps the yfinance ETF and records SPDR disagreements. Live uses Select Sector SPDR membership (snapshot 2026-10-27). See [[sector-strength]]. |
+| `SECTOR_MAP_OVERRIDE_MODE` | off | off / shadow / live. Point-in-time sponsor holdings (SPDR + IJH + IJR, as of 2026-10-27), not a historical map. Off keeps the yfinance ETF, including unresolved Consumer Defensive. Shadow records disagreements. Live uses the sponsor ETF and applies Consumer Defensive → XLP for unlisted names. See [[sector-strength]]. |
 
 ## Correlation Guard
 
