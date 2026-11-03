@@ -616,6 +616,12 @@ def run_scheduler() -> None:
                 if get_tab_agent_research_enabled(SKILL_DIR):
                     research = ResearchTabAgent().govern(SKILL_DIR)
                     log.info("Research tab agent govern: actions=%s", len(research.get("actions") or []))
+                from config import get_tab_agent_backtest_enabled
+                from core.backtest_tab_agent import BacktestTabAgent
+
+                if get_tab_agent_backtest_enabled(SKILL_DIR):
+                    backtest = BacktestTabAgent().govern(SKILL_DIR)
+                    log.info("Backtest tab agent govern: actions=%s", len(backtest.get("actions") or []))
             except Exception as e:
                 log.warning("Today tab agent govern failed: %s", e)
             if now.weekday() < 5:
@@ -986,7 +992,30 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
     schedule.every().minute.do(_run_tab_agent_propose_if_scheduled)
     schedule.every().minute.do(_run_debate_agent_propose_if_scheduled)
+    _last_backtest_agent_minute: int | None = None
+
+    def _run_backtest_agent_propose_if_scheduled() -> None:
+        """Sunday 18:35 ET: propose a shadow strategy-chat prompt. Off unless the flag is set."""
+        nonlocal _last_backtest_agent_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if not (now.weekday() == 6 and now.hour == 18 and now.minute == 35 and key != _last_backtest_agent_minute):
+            return
+        _last_backtest_agent_minute = key
+        try:
+            from config import get_tab_agent_backtest_enabled
+            from core.backtest_tab_agent import BacktestTabAgent
+
+            if not get_tab_agent_backtest_enabled(SKILL_DIR):
+                log.info("Backtest tab agent proposal skipped: TAB_AGENT_BACKTEST_ENABLED is off")
+                return
+            result = BacktestTabAgent().propose(SKILL_DIR)
+            log.info("Backtest tab agent proposals: created=%s", len(result.get("created") or []))
+        except Exception as e:
+            log.warning("Backtest tab agent proposal failed: %s", e)
+
     schedule.every().minute.do(_run_research_agent_propose_if_scheduled)
+    schedule.every().minute.do(_run_backtest_agent_propose_if_scheduled)
     try:
         from core.operator_notify_state import send_morning_brief_if_due
 

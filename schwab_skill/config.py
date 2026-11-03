@@ -2780,6 +2780,16 @@ def get_tab_agent_research_shadow_enabled(skill_dir: Path | None = None) -> bool
     return _get_bool("TAB_AGENT_RESEARCH_SHADOW_ENABLED", False, skill_dir)
 
 
+def get_tab_agent_backtest_enabled(skill_dir: Path | None = None) -> bool:
+    """Serve the strategy-chat prompt from the registry. Default off. Does not place orders."""
+    return _get_bool("TAB_AGENT_BACKTEST_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_backtest_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Keep a shadow strategy-chat prompt for scoring. Default off."""
+    return _get_bool("TAB_AGENT_BACKTEST_SHADOW_ENABLED", False, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)
