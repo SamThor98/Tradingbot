@@ -393,11 +393,17 @@ def score_prompt_versions(
         if ticker and day and (ticker, day) not in packet_index:
             packet_index[(ticker, day)] = packet
 
+    from core.tab_agent_replay import is_decision_prompt, non_decision_book
+
     stats: list[dict[str, Any]] = []
     for version in versions:
         vid = str(version.get("id") or "")
+        if not is_decision_prompt(tab_id, str(version.get("prompt_key") or "")):
+            stats.append(non_decision_book(version))
+            continue
         returns: list[float] = []
         dates: list[str] = []
+        decisions: list[str] = []
         seen: set[tuple[str, str]] = set()
         for use in by_version.get(vid, []):
             ticker = str(use.get("ticker") or "").upper()
@@ -413,13 +419,15 @@ def score_prompt_versions(
             if decision in {"cash", "no_trade", "pass", "abstain", "stay_in_cash"}:
                 dates.append(day)
                 returns.append(0.0)
+                decisions.append("cash")
                 continue
             parsed = _packet_return(packet_index.get((ticker, day)) or {}, horizon_days=config.horizon_days)
             if parsed is None:
                 continue
             dates.append(day)
             returns.append(parsed[1])
-        from core.tab_agent_replay import attach_replay
+            decisions.append("long")
+        from core.tab_agent_replay import attach_replay, decision_flags
 
         merged = attach_replay(
             returns,
@@ -429,6 +437,7 @@ def score_prompt_versions(
             version_id=vid,
             weight=config.replay_weight,
             since_ts=since_ts,
+            live_decisions=decisions,
         )
         book = evaluate_book(
             merged.returns,
@@ -445,6 +454,7 @@ def score_prompt_versions(
                 "parent": version.get("parent"),
             }
         )
+        book.update(decision_flags(merged.decisions))
         stats.append(book)
 
     by_id = {row["version_id"]: row for row in stats}
@@ -471,7 +481,7 @@ def score_prompt_versions(
                 "auto_promote": False,
             }
         )
-    return {
+    report = {
         "objective": config.as_dict(),
         "objective_id": OBJECTIVE_ID,
         "auto_promote": False,
@@ -479,6 +489,9 @@ def score_prompt_versions(
         "comparisons": comparisons,
         "winner_rule": config.as_dict()["statement"],
     }
+    from core.tab_agent_replay import annotate_tab_score
+
+    return annotate_tab_score(report, skill_dir, tab_id, config)
 
 
 class TabAgent(ABC):

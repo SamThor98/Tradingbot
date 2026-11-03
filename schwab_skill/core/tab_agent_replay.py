@@ -73,6 +73,49 @@ class ReplayBook:
     dates: list[str]
     weights: list[float] | None
     sources: list[str] | None
+    decisions: list[str] | None = None
+
+
+# These prompts explain, review, or falsify. They do not choose long versus cash.
+NON_DECISION_PROMPTS: dict[str, frozenset[str]] = {
+    "today": frozenset(
+        {
+            "grok_research",
+            "grok_reasoning",
+            "grok_code_review",
+            "grok_quant_analysis",
+            "grok_adversarial_review",
+        }
+    ),
+    "research": frozenset({"rationale"}),
+}
+DEGENERATE_MIN_N = 8
+
+
+def is_decision_prompt(tab_id: str, prompt_key: str | None) -> bool:
+    """True when this prompt is the long/cash choice the book should be scored on."""
+    return str(prompt_key or "") not in NON_DECISION_PROMPTS.get(str(tab_id or ""), frozenset())
+
+
+def non_decision_book(version: dict[str, Any]) -> dict[str, Any]:
+    """A prompt that never chooses a trade. Outcome metrics would only echo the baseline."""
+    return {
+        "version_id": str(version.get("id") or ""),
+        "prompt_key": version.get("prompt_key"),
+        "status": version.get("status"),
+        "parent": version.get("parent"),
+        "decision_prompt": False,
+        "scored": False,
+        "n": 0,
+        "n_live": 0,
+        "n_replay": 0,
+        "primary_metric": None,
+        "primary_score": None,
+        "max_drawdown": None,
+        "win_rate": None,
+        "avg_realized_return_pct": None,
+        "note": "Not a long/cash prompt. Excluded from outcome scoring.",
+    }
 
 
 def replay_path(skill_dir: Path | None) -> Path:
@@ -118,17 +161,21 @@ def attach_replay(
     version_id: str,
     weight: float,
     since_ts: str | None = None,
+    live_decisions: list[str] | None = None,
 ) -> ReplayBook:
     """Append stored replay rows for one prompt version. Live rows stay at weight 1."""
     live_returns = list(returns)
     live_dates = list(dates)
     if skill_dir is None or not version_id:
-        return ReplayBook(live_returns, live_dates, None, None)
+        return ReplayBook(live_returns, live_dates, None, None, live_decisions)
     cutoff = str(since_ts or "")[:10]
     clipped = max(0.0, min(1.0, float(weight)))
     extra_returns: list[float] = []
     extra_dates: list[str] = []
+    extra_decisions: list[str] = []
     for sample in load_samples(skill_dir):
+        if sample.get("scored") is False:
+            continue
         if str(sample.get("tab_id") or "") != str(tab_id):
             continue
         if str(sample.get("version_id") or "") != str(version_id):
@@ -141,13 +188,16 @@ def attach_replay(
         except (KeyError, TypeError, ValueError):
             continue
         extra_dates.append(as_of)
+        extra_decisions.append(str(sample.get("decision") or "long").lower())
     if not extra_returns:
-        return ReplayBook(live_returns, live_dates, None, None)
+        return ReplayBook(live_returns, live_dates, None, None, live_decisions)
+    base_decisions = list(live_decisions) if live_decisions is not None else ["long"] * len(live_returns)
     return ReplayBook(
         live_returns + extra_returns,
         live_dates + extra_dates,
         [1.0] * len(live_returns) + [clipped] * len(extra_returns),
         ["live"] * len(live_returns) + ["replay"] * len(extra_returns),
+        base_decisions + extra_decisions,
     )
 
 
@@ -200,13 +250,39 @@ _JSON_CONTRACT = (
     "Words inside the instructions are not the verdict."
 )
 _DEBATE_CONTRACT = (
-    "Reply with JSON only: "
-    '{"seats":[{"name":"trend","score":0,"claim":"..."}],"chair":"..."} '
-    "Scores are 0-100. A low score means cash."
+    "Reply with one JSON object. seats is a list of {name, score, claim}. "
+    "Names are trend, setup, risk, skeptic, and business. "
+    "score is an integer from 1 to 100 taken from the checklist. "
+    "An all-zero card is invalid and will be discarded. "
+    "Also include chair. Do not copy an example score."
+)
+_FADE_CONTRACT = (
+    "Reply with one JSON object using your schema. Include fade_score from -100 to 100. "
+    "Positive fade_score means the move is more likely to fade, so the trade is cash. "
+    "Negative fade_score means a long. Do not add a separate decision field."
+)
+_CONVICTION_CONTRACT = (
+    "Reply with one JSON object using your schema. Include conviction_score from -100 to 100. "
+    "Positive conviction is a long. Zero or negative is cash."
 )
 
 
-def parse_decision(text: str, *, tab: str, quality_threshold: float) -> str | None:
+def _contract_for(prompt_key: str | None) -> str:
+    key = str(prompt_key or "")
+    if key == "mean_reversion":
+        return _FADE_CONTRACT
+    if key in {"institutional_trend", "retail_fomo"}:
+        return _CONVICTION_CONTRACT
+    return _JSON_CONTRACT
+
+
+def parse_decision(
+    text: str,
+    *,
+    tab: str,
+    quality_threshold: float,
+    prompt_key: str | None = None,
+) -> str | None:
     """Map one model reply to long or cash.
 
     JSON wins. A quoted rubric (``HOLD OFF means stay in cash``) is not a
@@ -220,11 +296,30 @@ def parse_decision(text: str, *, tab: str, quality_threshold: float) -> str | No
         scored = _debate_score(text, payloads)
         if scored is not None:
             return "long" if scored >= float(quality_threshold) else "cash"
+    persona = _persona_decision(chosen, prompt_key)
+    if persona is not None:
+        return persona
     if chosen is not None:
         mapped = _decision_from_payload(chosen)
         if mapped is not None:
             return mapped
     return _last_explicit_verdict(text)
+
+
+def _usable_round(text: str) -> dict[str, Any] | None:
+    """A committee card with at least two scores that are not the all-zero template."""
+    from core.debate_committee import _parse_round
+
+    parsed = _parse_round(text)
+    if not isinstance(parsed, dict):
+        return None
+    seats = parsed.get("seats") if isinstance(parsed.get("seats"), dict) else {}
+    scores = [
+        float(seat["score"]) for seat in seats.values() if isinstance(seat, dict) and seat.get("score") is not None
+    ]
+    if len(scores) < 2 or _all_zero(scores):
+        return None
+    return parsed
 
 
 def committee_median(text: str) -> float | None:
@@ -260,6 +355,33 @@ def _preferred_payload(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
         if any(key in payload for key in ("decision", "verdict", "seats", "score")):
             return payload
     return payloads[-1] if payloads else None
+
+
+def _all_zero(scores: list[float]) -> bool:
+    return bool(scores) and all(abs(score) < 1e-9 for score in scores)
+
+
+def _persona_decision(payload: dict[str, Any] | None, prompt_key: str | None) -> str | None:
+    """Map a persona's own schema. Mean-reversion fade is not the generic long/cash contract."""
+    if not isinstance(payload, dict):
+        return None
+    key = str(prompt_key or "")
+    if key == "mean_reversion" or (key == "" and "fade_score" in payload and "conviction_score" not in payload):
+        if "fade_score" not in payload:
+            return None
+        try:
+            fade = float(payload["fade_score"])
+        except (TypeError, ValueError):
+            return None
+        # Positive fade means the extension is more likely to reverse. That is cash.
+        return "cash" if fade > 0 else "long"
+    if "conviction_score" in payload and key in {"", "institutional_trend", "retail_fomo"}:
+        try:
+            conviction = float(payload["conviction_score"])
+        except (TypeError, ValueError):
+            return None
+        return "long" if conviction > 0 else "cash"
+    return None
 
 
 def _decision_from_payload(payload: dict[str, Any]) -> str | None:
@@ -314,7 +436,7 @@ def _debate_score(text: str, payloads: list[dict[str, Any]]) -> float | None:
         if parsed is None:
             continue
         scores = [float(seat["score"]) for seat in parsed["seats"].values() if seat.get("score") is not None]
-        if len(scores) >= 2:
+        if len(scores) >= 2 and not _all_zero(scores):
             return float(statistics.median(scores))
     for payload in reversed(payloads):
         if "seats" in payload or payload.get("score") is None:
@@ -375,6 +497,58 @@ def truncate_history(frame: Any, created: datetime, horizon_days: int) -> Any | 
     return frame.iloc[:end].copy()
 
 
+def _derive_stop_pct(frame: Any, entry_pos: int, entry: float, skill_dir: Path | None) -> tuple[float, str]:
+    """ATR stop on bars through the entry. Same clamps as the live adaptive stop."""
+    from config import (
+        get_adaptive_stop_atr_mult,
+        get_adaptive_stop_base_pct,
+        get_adaptive_stop_enabled,
+        get_adaptive_stop_max_pct,
+        get_adaptive_stop_min_pct,
+        get_adaptive_stop_trend_lookback,
+    )
+
+    base = float(get_adaptive_stop_base_pct(skill_dir))
+    if not get_adaptive_stop_enabled(skill_dir):
+        return max(0.01, base), "base_pct"
+    min_pct = float(get_adaptive_stop_min_pct(skill_dir))
+    max_pct = float(get_adaptive_stop_max_pct(skill_dir))
+    mult = float(get_adaptive_stop_atr_mult(skill_dir))
+    lookback = max(10, int(get_adaptive_stop_trend_lookback(skill_dir)))
+
+    def _clamp(value: float) -> float:
+        return max(min_pct, min(max_pct, value))
+
+    prefix = frame.iloc[: int(entry_pos) + 1]
+    columns = getattr(prefix, "columns", [])
+    if len(prefix) < 15 or "high" not in columns or "low" not in columns or "close" not in columns:
+        return _clamp(base), "base_pct"
+    try:
+        highs = [float(value) for value in prefix["high"].tolist()]
+        lows = [float(value) for value in prefix["low"].tolist()]
+        closes = [float(value) for value in prefix["close"].tolist()]
+    except (TypeError, ValueError):
+        return _clamp(base), "base_pct"
+    true_ranges: list[float] = []
+    for index in range(1, len(closes)):
+        true_ranges.append(
+            max(highs[index] - lows[index], abs(highs[index] - closes[index - 1]), abs(lows[index] - closes[index - 1]))
+        )
+    if len(true_ranges) < 14 or entry <= 0:
+        return _clamp(base), "base_pct"
+    atr = sum(true_ranges[-14:]) / 14.0
+    if atr <= 0:
+        return _clamp(base), "base_pct"
+    stop_pct = (atr / entry) * mult
+    if len(closes) > lookback and closes[-(lookback + 1)] > 0:
+        trend = closes[-1] / closes[-(lookback + 1)] - 1.0
+        if trend < -0.03:
+            stop_pct *= 1.2
+        elif trend > 0.06:
+            stop_pct *= 0.9
+    return _clamp(stop_pct), "atr"
+
+
 def scale_out_return(
     case: dict[str, Any],
     frame: Any,
@@ -384,8 +558,8 @@ def scale_out_return(
 ) -> dict[str, Any] | None:
     """20-day scale-out on history that ends at the horizon.
 
-    A missing stop is left missing. The shared labeler then uses a fixed-horizon
-    return instead of inventing an R multiple.
+    A missing stored stop is derived from ATR on bars up to the entry, using the
+    same clamps as the live adaptive stop. Bars after the horizon stay out.
     """
     from core.outcome_backfill import _load_exit_params, label_packet_horizons
 
@@ -404,10 +578,25 @@ def scale_out_return(
         "side": "long",
         "outcome": {"label": "pending"},
     }
+    stop_source = "stored"
     if case.get("stop_pct") not in (None, ""):
         packet["stop_pct"] = case.get("stop_pct")
-    if case.get("stop_price") not in (None, ""):
+    elif case.get("stop_price") not in (None, ""):
         packet["stop_price"] = case.get("stop_price")
+    else:
+        from core.outcome_backfill import _locate_entry
+
+        entry_pos = _locate_entry(window, created)
+        entry = case.get("entry_price")
+        try:
+            entry_value = float(entry) if entry not in (None, "") else float(window["close"].iloc[entry_pos or 0])
+        except (TypeError, ValueError, IndexError):
+            entry_value = 0.0
+        if entry_pos is None or entry_value <= 0:
+            stop_source = "none"
+        else:
+            derived, stop_source = _derive_stop_pct(window, int(entry_pos), entry_value, skill_dir)
+            packet["stop_pct"] = derived
     label_packet_horizons(packet, history_provider=lambda _ticker: window, params=params, now=now)
     outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
     if str(outcome.get("label") or "pending") in {"pending", "unknown", ""}:
@@ -418,6 +607,7 @@ def scale_out_return(
         return {
             "realized_return_pct": float(outcome["realized_return_pct"]),
             "exit_model": str(outcome.get("exit_model") or "scale_out"),
+            "stop_source": stop_source,
         }
     except (TypeError, ValueError, KeyError):
         return None
@@ -534,6 +724,7 @@ def run_replay(
     history_provider: Callable[[str], Any] | None = None,
     versions: list[dict[str, Any]] | None = None,
     progress_every: int = 10,
+    prompt_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Score matured scans with the live prompt and any shadow. Dry-run only estimates.
 
@@ -554,6 +745,8 @@ def run_replay(
         clock = clock.replace(tzinfo=timezone.utc)
     config = load_objective(root)
     chosen = list(versions) if versions is not None else _live_and_shadow(root, tab_id)
+    if prompt_keys and tab_id != "debate":
+        chosen = [row for row in chosen if str(row.get("prompt_key") or "") in prompt_keys]
     cases = collect_cases(
         root,
         since=since_dt,
@@ -595,6 +788,7 @@ def run_replay(
         "parse_failures": 0,
         "parse_retries": 0,
         "skipped_short": 0,
+        "skipped_non_decision": 0,
         "truncated": estimated > cap,
         "source": "replay",
         "replay_weight": config.replay_weight,
@@ -611,6 +805,10 @@ def run_replay(
         report["ok"] = False
         report["error"] = "no_live_or_shadow_prompt"
         return report
+    if tab_id != "debate":
+        report["skipped_non_decision"] = len(cases) * sum(
+            1 for row in ordered if not is_decision_prompt(tab_id, str(row.get("prompt_key") or ""))
+        )
     caller = complete or _default_complete
     provider = history_provider or _default_history(root)
     history_cache: dict[str, Any] = {}
@@ -673,7 +871,8 @@ def _print_progress(report: dict[str, Any], done: int, total: int) -> None:
 
 def _version_passes(tab: str, versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if tab != "debate":
-        return [{"calls": 1, "versions": [row]} for row in versions]
+        decision_rows = [row for row in versions if is_decision_prompt(tab, str(row.get("prompt_key") or ""))]
+        return [{"calls": 1, "versions": [row]} for row in decision_rows]
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in versions:
         groups.setdefault(str(row.get("status") or "live"), []).append(row)
@@ -736,11 +935,16 @@ def _store_sample(
         "as_of": case["as_of"],
         "decision": decision,
         "realized_return_pct": realized,
+        "counterfactual_return_pct": float(labeled["realized_return_pct"]),
         "horizon_days": config.horizon_days,
         "exit_model": labeled.get("exit_model") or "scale_out",
+        "stop_source": labeled.get("stop_source") or "stored",
+        "scored": True,
         "weight": config.replay_weight,
         "created_at": clock.isoformat(),
     }
+    if extra and extra.get("raw_reply"):
+        sample["raw_reply"] = str(extra.pop("raw_reply"))[:800]
     if extra:
         sample.update(extra)
     append_sample(skill_dir, sample)
@@ -801,7 +1005,8 @@ def _decide_text(
     state: dict[str, Any],
     cap: int,
 ) -> tuple[str | None, str]:
-    decision = parse_decision(text, tab=tab, quality_threshold=threshold)
+    prompt_key = str(version.get("prompt_key") or "")
+    decision = parse_decision(text, tab=tab, quality_threshold=threshold, prompt_key=prompt_key)
     if decision is not None or state["stop"]:
         return decision, text
     _log_parse_failure(tab, version, case, text, retry=False)
@@ -809,7 +1014,7 @@ def _decide_text(
     retried = _call_model(
         caller,
         system,
-        user + "\n\nThe previous reply did not parse. " + _JSON_CONTRACT,
+        user + "\n\nThe previous reply did not parse. " + _contract_for(prompt_key),
         report=report,
         state=state,
         cap=cap,
@@ -818,7 +1023,7 @@ def _decide_text(
         report["parse_failures"] += 1
         report["skipped_unparsed"] += 1
         return None, text
-    decision = parse_decision(retried, tab=tab, quality_threshold=threshold)
+    decision = parse_decision(retried, tab=tab, quality_threshold=threshold, prompt_key=prompt_key)
     if decision is None:
         _log_parse_failure(tab, version, case, retried, retry=True)
         report["parse_failures"] += 1
@@ -845,18 +1050,21 @@ def _run_prompt_case(
     clock: datetime,
 ) -> None:
     payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
-    user = json.dumps(payload, default=str) + "\n" + _JSON_CONTRACT
     for block in passes:
         for version in block["versions"]:
             if state["stop"]:
                 return
+            if not is_decision_prompt(tab_id, str(version.get("prompt_key") or "")):
+                report["skipped_non_decision"] += 1
+                continue
             if _sample_key(version, case) in seen:
                 report["skipped_duplicate"] += 1
                 continue
+            user = json.dumps(payload, default=str) + "\n" + _contract_for(str(version.get("prompt_key") or ""))
             text = _call_model(caller, str(version.get("text") or ""), user, report=report, state=state, cap=cap)
             if text is None:
                 return
-            decision, _raw = _decide_text(
+            decision, raw = _decide_text(
                 text,
                 tab=tab_id,
                 threshold=float(config.quality_threshold),
@@ -884,6 +1092,7 @@ def _run_prompt_case(
                 clock=clock,
                 seen=seen,
                 report=report,
+                extra={"raw_reply": raw},
             )
 
 
@@ -901,7 +1110,7 @@ def _run_debate_case(
     cap: int,
     clock: datetime,
 ) -> None:
-    from core.debate_committee import _ROUND1, _ROUND2, _SYSTEM, _cap_moves, _parse_round
+    from core.debate_committee import _ROUND1, _ROUND2, _SYSTEM, _cap_moves
 
     payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
     threshold = float(config.quality_threshold)
@@ -920,7 +1129,7 @@ def _run_debate_case(
         raw1 = _call_model(caller, system, user1, report=report, state=state, cap=cap)
         if raw1 is None:
             return
-        parsed1 = _parse_round(raw1)
+        parsed1 = _usable_round(raw1)
         if parsed1 is None and not state["stop"]:
             _log_parse_failure("debate", by_key.get("round1") or versions[0], case, raw1, retry=False)
             report["parse_retries"] += 1
@@ -932,7 +1141,7 @@ def _run_debate_case(
                 state=state,
                 cap=cap,
             )
-            parsed1 = _parse_round(raw1 or "")
+            parsed1 = _usable_round(raw1 or "")
         if parsed1 is None:
             report["parse_failures"] += 1
             report["skipped_unparsed"] += 1
@@ -966,7 +1175,7 @@ def _run_debate_case(
                 threshold=threshold,
             )
             return
-        parsed2 = _parse_round(raw2)
+        parsed2 = _usable_round(raw2)
         if parsed2 is None and not state["stop"]:
             _log_parse_failure("debate", by_key.get("round2") or versions[0], case, raw2 or "", retry=False)
             report["parse_retries"] += 1
@@ -978,7 +1187,7 @@ def _run_debate_case(
                 state=state,
                 cap=cap,
             )
-            parsed2 = _parse_round(raw2 or "")
+            parsed2 = _usable_round(raw2 or "")
         if parsed2 is None:
             report["parse_failures"] += 1
             _log_parse_failure("debate", by_key.get("round2") or versions[0], case, raw2 or "", retry=True)
@@ -986,7 +1195,7 @@ def _run_debate_case(
         else:
             final = _cap_moves(parsed1, parsed2)
         scores = [float(seat["score"]) for seat in final["seats"].values() if seat.get("score") is not None]
-        if len(scores) < 2:
+        if len(scores) < 2 or _all_zero(scores):
             report["parse_failures"] += 1
             report["skipped_unparsed"] += 1
             continue
@@ -1098,3 +1307,182 @@ def _parse_dt(raw: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def decision_flags(decisions: list[str] | None) -> dict[str, Any]:
+    """Flag a book whose every call was the same side. That score is the baseline."""
+    labels = [item for item in (decisions or []) if item in {"long", "cash"}]
+    if len(labels) < DEGENERATE_MIN_N:
+        return {"decision_prompt": True, "degenerate": False, "scored": True}
+    if len(set(labels)) > 1:
+        return {"decision_prompt": True, "degenerate": False, "scored": True, "decision_variance": 1}
+    reason = "all_long" if "long" in labels else "all_cash"
+    return {
+        "decision_prompt": True,
+        "degenerate": True,
+        "scored": True,
+        "decision_variance": 0,
+        "degenerate_reason": reason,
+        "note": "Every decision was the same side, so this Sortino matches buy-every-scan or stay-in-cash.",
+    }
+
+
+def exit_fallback_stats(skill_dir: Path | None, tab_id: str) -> dict[str, Any]:
+    rows = [
+        row
+        for row in load_samples(skill_dir)
+        if str(row.get("tab_id") or "") == tab_id and row.get("scored") is not False
+    ]
+    count = len(rows)
+    if not count:
+        return {"n": 0, "exit_fallback_rate": None, "derived_stop_rate": None}
+    fixed = sum(1 for row in rows if str(row.get("exit_model") or "").startswith("fixed_horizon"))
+    derived = sum(1 for row in rows if row.get("stop_source") in {"atr", "base_pct"})
+    return {
+        "n": count,
+        "exit_fallback_rate": round(fixed / count, 4),
+        "derived_stop_rate": round(derived / count, 4),
+    }
+
+
+def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) -> dict[str, Any]:
+    """One long per scan date, using the scale-out the prompt could have taken."""
+    from core.tab_agent_objective import evaluate_book
+
+    chosen: dict[tuple[str, str], float] = {}
+    for row in load_samples(skill_dir):
+        if str(row.get("tab_id") or "") != tab_id or row.get("scored") is False:
+            continue
+        key = (str(row.get("ticker") or ""), str(row.get("as_of") or "")[:10])
+        if not key[0] or len(key[1]) < 10 or key in chosen:
+            continue
+        raw = row.get("counterfactual_return_pct")
+        if raw is None and str(row.get("decision") or "") == "long":
+            raw = row.get("realized_return_pct")
+        try:
+            if raw is None:
+                continue
+            chosen[key] = float(raw)
+        except (TypeError, ValueError):
+            continue
+    dates = [key[1] for key in chosen]
+    returns = list(chosen.values())
+    book = evaluate_book(returns, dates, config=config)
+    book["name"] = "buy_every_scan"
+    book["prompt_key"] = "buy_every_scan"
+    return book
+
+
+def annotate_tab_score(report: dict[str, Any], skill_dir: Path | None, tab_id: str, config: Any) -> dict[str, Any]:
+    """Attach the buy-every-scan baseline, edge, and exit fallback rate."""
+    baseline = buy_every_scan_baseline(skill_dir, tab_id, config)
+    base_score = baseline.get("primary_score")
+    for row in report.get("versions") or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("decision_prompt") is False:
+            row["edge_vs_baseline"] = None
+            continue
+        score = row.get("primary_score")
+        if score is None or base_score is None:
+            row["edge_vs_baseline"] = None
+        else:
+            row["edge_vs_baseline"] = round(float(score) - float(base_score), 6)
+    report["baseline"] = baseline
+    report["exit_fallback"] = exit_fallback_stats(skill_dir, tab_id)
+    return report
+
+
+def rescore_replay(
+    skill_dir: Path,
+    *,
+    tab: str | None = None,
+    history_provider: Callable[[str], Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Relabel stored rows without a model call.
+
+    Non-decision prompts and all-zero debate cards stop counting. Rows that
+    used a fixed hold get a derived stop when price history is available.
+    Mean-reversion rows with no fade_score still need a fresh model call.
+    """
+    root = Path(skill_dir)
+    rows = load_samples(root)
+    clock = now or datetime.now(timezone.utc)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=timezone.utc)
+    provider = history_provider or _default_history(root)
+    cache: dict[str, Any] = {}
+    needs: set[str] = set()
+    summary = {
+        "ok": True,
+        "rows": 0,
+        "non_decision": 0,
+        "zero_debate_unscored": 0,
+        "relabeled": 0,
+        "needs_llm": [],
+        "llm_calls": 0,
+    }
+    for row in rows:
+        tab_id = str(row.get("tab_id") or "")
+        if tab and tab_id != tab:
+            continue
+        summary["rows"] += 1
+        key = str(row.get("prompt_key") or "")
+        if not is_decision_prompt(tab_id, key):
+            row["scored"] = False
+            row["non_decision"] = True
+            summary["non_decision"] += 1
+            continue
+        if tab_id == "debate" and not row.get("raw_reply"):
+            try:
+                score = float(row.get("debate_score"))
+            except (TypeError, ValueError):
+                score = 0.0
+            if score == 0.0 and str(row.get("decision") or "") == "cash":
+                row["scored"] = False
+                row["echo_zero"] = True
+                summary["zero_debate_unscored"] += 1
+                needs.add("debate")
+                continue
+        if key == "mean_reversion" and row.get("fade_score") is None and not row.get("raw_reply"):
+            row["scored"] = False
+            row["needs_native_parse"] = True
+            needs.add("today:mean_reversion")
+            continue
+        if str(row.get("stop_source") or "") == "stored" and str(row.get("exit_model") or "") == "scale_out":
+            continue
+        created = _parse_dt(str(row.get("as_of") or "") + "T00:00:00+00:00")
+        ticker = str(row.get("ticker") or "")
+        if created is None or not ticker:
+            continue
+        if ticker not in cache:
+            try:
+                cache[ticker] = provider(ticker)
+            except Exception as exc:
+                LOG.warning("Rescore history failed for %s: %s", ticker, exc)
+                cache[ticker] = None
+        labeled = scale_out_return(
+            {
+                "ticker": ticker,
+                "created_at": created,
+                "entry_price": row.get("entry_price"),
+                "stop_pct": row.get("stop_pct"),
+                "stop_price": row.get("stop_price"),
+            },
+            cache.get(ticker),
+            root,
+            now=clock,
+        )
+        if labeled is None:
+            continue
+        row["counterfactual_return_pct"] = labeled["realized_return_pct"]
+        row["exit_model"] = labeled["exit_model"]
+        row["stop_source"] = labeled.get("stop_source")
+        if str(row.get("decision") or "") == "long":
+            row["realized_return_pct"] = labeled["realized_return_pct"]
+        summary["relabeled"] += 1
+    summary["needs_llm"] = sorted(needs)
+    text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    replay_path(root).write_text(text, encoding="utf-8")
+    return summary

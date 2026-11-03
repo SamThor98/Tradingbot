@@ -134,19 +134,26 @@ class DebateTabAgent(TabAgent):
                 }
             )
         objective = config.as_dict()
-        return {
-            "tab_id": self.tab_id,
-            "objective": objective,
-            "objective_id": OBJECTIVE_ID,
-            "auto_promote": False,
-            "winner_rule": objective["statement"],
-            "versions": stats,
-            "comparisons": comparisons,
-            "join_note": (
-                "Committee rows join a decision packet on packet_id when present, otherwise ticker plus as_of date. "
-                "Scores at or above 60 are the endorsed book. Scores below 50 are the pass counterfactual."
-            ),
-        }
+        from core.tab_agent_replay import annotate_tab_score
+
+        return annotate_tab_score(
+            {
+                "tab_id": self.tab_id,
+                "objective": objective,
+                "objective_id": OBJECTIVE_ID,
+                "auto_promote": False,
+                "winner_rule": objective["statement"],
+                "versions": stats,
+                "comparisons": comparisons,
+                "join_note": (
+                    "Committee rows join a decision packet on packet_id when present, otherwise ticker plus as_of date. "
+                    "Scores at or above 60 are the endorsed book. Scores below 50 are the pass counterfactual."
+                ),
+            },
+            skill_dir,
+            self.tab_id,
+            config,
+        )
 
     def propose(
         self,
@@ -285,6 +292,7 @@ def _version_book(
     vid = str(version.get("id") or "")
     endorsed: list[float] = []
     endorsed_dates: list[str] = []
+    decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
     seen: set[tuple[str, str]] = set()
@@ -311,13 +319,15 @@ def _version_book(
         if score >= bar:
             endorsed.append(ret)
             endorsed_dates.append(day)
+            decisions.append("long")
         elif score < PASS_BELOW:
             # The decision was cash. Score 0, and keep the skipped long as a counterfactual.
             endorsed.append(0.0)
             endorsed_dates.append(day)
+            decisions.append("cash")
             passes.append(ret)
             passes_dates.append(day)
-    from core.tab_agent_replay import attach_replay
+    from core.tab_agent_replay import attach_replay, decision_flags
 
     merged = attach_replay(
         endorsed,
@@ -327,8 +337,10 @@ def _version_book(
         version_id=vid,
         weight=config.replay_weight,
         since_ts=since_ts,
+        live_decisions=decisions,
     )
     book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
+    book.update(decision_flags(merged.decisions))
     book.update(
         {
             "version_id": vid,

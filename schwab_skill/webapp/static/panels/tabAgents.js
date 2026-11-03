@@ -18,7 +18,7 @@ function versionLine(row, actions) {
     ? `<span class="pill">${escapeHtml(row.review.verdict)}</span> <span class="muted small">${escapeHtml(row.review.reviewer || "")}</span>`
     : "<span class='muted small'>No verdict yet</span>";
   return `<p><span class="pill">${escapeHtml(row.status || "")}</span> <code>${escapeHtml(row.id || "")}</code></p>
-    <p class="muted small">n=${row.n ?? "—"} (live ${row.n_live ?? row.n ?? "—"}, replay ${row.n_replay ?? 0}) ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}</p>
+    <p class="muted small">n=${row.n ?? "—"} (live ${row.n_live ?? row.n ?? "—"}, replay ${row.n_replay ?? 0}) ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} edge=${num(row.edge_vs_baseline)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}${row.decision_prompt === false ? " non-decision" : row.degenerate ? " no-variance" : ""}</p>
     <p class="muted small">${review}</p>
     <p class="muted small">${escapeHtml(row.rationale || "")}</p>
     <div class="inline-form compact">${actions}</div>`;
