@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -164,41 +165,190 @@ def pit_payload(signal: dict[str, Any], as_of: str) -> dict[str, Any]:
             payload[key] = signal[key]
         elif key in refs:
             payload[key] = refs[key]
+    grade = signal.get("debate_grade") if isinstance(signal.get("debate_grade"), dict) else {}
+    for key in ("qual_trend", "qual_setup", "qual_asymmetry", "qual_crowding", "qual_business", "qual_raw"):
+        if signal.get(key) is not None:
+            payload[key] = signal.get(key)
+        elif grade.get(key) is not None:
+            payload[key] = grade.get(key)
+    if "vcp" not in payload and signal.get("vcp_present") is not None:
+        payload["vcp"] = bool(signal.get("vcp_present"))
+    if "stage_2" not in payload and signal.get("stage2") is not None:
+        payload["stage_2"] = bool(signal.get("stage2"))
+    if payload.get("signal_score") is None:
+        for key in ("signal_score", "rank_score", "composite_score", "score"):
+            if signal.get(key) is not None:
+                payload["signal_score"] = signal.get(key)
+                break
+            if refs.get(key) is not None:
+                payload["signal_score"] = refs.get(key)
+                break
     return payload
 
 
+_VERDICT_RE = re.compile(r"\b(STRONG SETUP|WATCH|HOLD OFF|NO TRADE|STAY IN CASH|ENDORSE)\b", re.IGNORECASE)
+_BOILERPLATE_RE = re.compile(
+    r"\b(means|requires|is valid|never|do not|don't|otherwise|no short|not a short)\b",
+    re.IGNORECASE,
+)
+_SHORT_RE = re.compile(r"\b(go short|short sell|buy\s+(?:a\s+|the\s+)?puts?|recommend a short)\b", re.IGNORECASE)
+_SCORE_RE = re.compile(r"(?:debate[_\s-]*score|score)\s*[:=]?\s*(-?\d{1,3}(?:\.\d+)?)", re.IGNORECASE)
+_JSON_CONTRACT = (
+    "Reply with one JSON object and no other verdict. "
+    '{"decision":"long"|"cash","verdict":"STRONG SETUP"|"WATCH"|"HOLD OFF"} '
+    "decision is long for STRONG SETUP and WATCH, and cash for HOLD OFF. "
+    "Words inside the instructions are not the verdict."
+)
+_DEBATE_CONTRACT = (
+    "Reply with JSON only: "
+    '{"seats":[{"name":"trend","score":0,"claim":"..."}],"chair":"..."} '
+    "Scores are 0-100. A low score means cash."
+)
+
+
 def parse_decision(text: str, *, tab: str, quality_threshold: float) -> str | None:
-    """Map one model reply to long or cash. A short suggestion is rejected."""
-    if _suggests_short(text):
+    """Map one model reply to long or cash.
+
+    JSON wins. A quoted rubric (``HOLD OFF means stay in cash``) is not a
+    verdict. Debate uses the median seat score, not the first ``score`` field.
+    """
+    payloads = _json_objects(text)
+    chosen = _preferred_payload(payloads)
+    if _recommends_short(text, chosen):
         return None
     if tab == "debate":
-        match = re.search(r"(?:debate[_\s-]*score|score)\s*[:=]?\s*(\d{1,3})", text, re.IGNORECASE)
-        if match:
-            score = int(match.group(1))
-            if score <= 100:
-                return "long" if score >= float(quality_threshold) else "cash"
-    upper = text.upper()
-    if "HOLD OFF" in upper or "NO TRADE" in upper or "STAY IN CASH" in upper:
-        return "cash"
-    if "STRONG SETUP" in upper or re.search(r"\bWATCH\b", upper) or re.search(r"\bENDORSE\b", upper):
+        scored = _debate_score(text, payloads)
+        if scored is not None:
+            return "long" if scored >= float(quality_threshold) else "cash"
+    if chosen is not None:
+        mapped = _decision_from_payload(chosen)
+        if mapped is not None:
+            return mapped
+    return _last_explicit_verdict(text)
+
+
+def committee_median(text: str) -> float | None:
+    """Median of parsed seat scores. None when the reply has no committee JSON."""
+    return _debate_score(text, _json_objects(text))
+
+
+def _json_objects(text: str) -> list[dict[str, Any]]:
+    raw = str(text or "")
+    found: list[dict[str, Any]] = []
+    start: int | None = None
+    depth = 0
+    for index, char in enumerate(raw):
+        if char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    payload = json.loads(raw[start : index + 1])
+                except json.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict):
+                    found.append(payload)
+                start = None
+    return found
+
+
+def _preferred_payload(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for payload in reversed(payloads):
+        if any(key in payload for key in ("decision", "verdict", "seats", "score")):
+            return payload
+    return payloads[-1] if payloads else None
+
+
+def _decision_from_payload(payload: dict[str, Any]) -> str | None:
+    decision = str(payload.get("decision") or "").strip().lower().replace("-", "_")
+    if decision in {"long", "buy", "endorse"}:
         return "long"
-    if re.search(r"\bCASH\b", upper):
+    if decision in {"cash", "hold", "hold_off", "pass", "no_trade"}:
         return "cash"
+    verdict = _verdict_word(str(payload.get("verdict") or ""))
+    if verdict is not None:
+        return verdict
     return None
 
 
+def _verdict_word(token: str) -> str | None:
+    word = " ".join(token.upper().split())
+    if word in {"HOLD OFF", "NO TRADE", "STAY IN CASH", "CASH"}:
+        return "cash"
+    if word in {"STRONG SETUP", "WATCH", "ENDORSE", "LONG"}:
+        return "long"
+    return None
+
+
+def _last_explicit_verdict(text: str) -> str | None:
+    """Last verdict token that is not a definition inside the prompt rubric."""
+    found: list[str] = []
+    for line in str(text or "").splitlines() or [str(text or "")]:
+        if _BOILERPLATE_RE.search(line):
+            continue
+        hits = _VERDICT_RE.findall(line)
+        if hits:
+            found.append(hits[-1])
+    if not found:
+        for piece in re.split(r"[\n.]", str(text or "")):
+            if _BOILERPLATE_RE.search(piece):
+                continue
+            hits = _VERDICT_RE.findall(piece)
+            if hits:
+                found.append(hits[-1])
+    if not found:
+        return None
+    return _verdict_word(found[-1])
+
+
+def _debate_score(text: str, payloads: list[dict[str, Any]]) -> float | None:
+    from core.debate_committee import _parse_round
+
+    for payload in reversed(payloads):
+        if "seats" not in payload:
+            continue
+        parsed = _parse_round(json.dumps(payload))
+        if parsed is None:
+            continue
+        scores = [float(seat["score"]) for seat in parsed["seats"].values() if seat.get("score") is not None]
+        if len(scores) >= 2:
+            return float(statistics.median(scores))
+    for payload in reversed(payloads):
+        if "seats" in payload or payload.get("score") is None:
+            continue
+        try:
+            score = float(payload["score"])
+        except (TypeError, ValueError):
+            continue
+        if 0 <= score <= 100:
+            return score
+    match = _SCORE_RE.search(str(text or ""))
+    if match and not payloads:
+        try:
+            score = float(match.group(1))
+        except ValueError:
+            return None
+        if 0 <= score <= 100:
+            return score
+    return None
+
+
+def _recommends_short(text: str, payload: dict[str, Any] | None) -> bool:
+    if payload is not None and str(payload.get("decision") or "").strip().lower() in {"short", "put"}:
+        return True
+    for line in str(text or "").splitlines() or [str(text or "")]:
+        if _BOILERPLATE_RE.search(line):
+            continue
+        if _SHORT_RE.search(line):
+            return True
+    return False
+
+
 def _suggests_short(text: str) -> bool:
-    upper = text.upper()
-    if "SHORT" not in upper and "INVERSE" not in upper and "PUT" not in upper:
-        return False
-    cleaned = (
-        upper.replace("NO SHORT", "")
-        .replace("NEVER SHORT", "")
-        .replace("DON'T SHORT", "")
-        .replace("DO NOT SHORT", "")
-        .replace("NOT A SHORT", "")
-    )
-    return "SHORT" in cleaned or "INVERSE" in cleaned or re.search(r"\bPUT\b", cleaned) is not None
+    return _recommends_short(text, _preferred_payload(_json_objects(text)))
 
 
 def maturity_calendar_days(horizon_days: int) -> int:
@@ -308,12 +458,7 @@ def collect_cases(
             entry = signal.get("price")
         if entry is None:
             entry = refs.get("price")
-        stop = signal.get("stop_pct")
-        if stop is None:
-            stop = refs.get("stop_pct")
-        stop_price = signal.get("stop_price")
-        if stop_price is None:
-            stop_price = refs.get("stop_price")
+        stop, stop_price = _stop_fields(signal, refs, entry)
         cases.append(
             {
                 "ticker": symbol,
@@ -347,6 +492,33 @@ def collect_cases(
     return cases
 
 
+def _stop_fields(signal: dict[str, Any], refs: dict[str, Any], entry: Any) -> tuple[Any, Any]:
+    """Read a stored stop. ``stop`` may be a price or a percent; do not invent one."""
+    stop_pct = signal.get("stop_pct")
+    if stop_pct is None:
+        stop_pct = refs.get("stop_pct")
+    stop_price = signal.get("stop_price")
+    if stop_price is None:
+        stop_price = refs.get("stop_price")
+    if stop_pct is not None or stop_price is not None:
+        return stop_pct, stop_price
+    raw = signal.get("stop")
+    if raw is None:
+        raw = refs.get("stop")
+    try:
+        number = float(raw) if raw is not None else None
+        entry_price = float(entry) if entry is not None else None
+    except (TypeError, ValueError):
+        return stop_pct, stop_price
+    if number is None:
+        return stop_pct, stop_price
+    if entry_price and 0 < number < entry_price:
+        return None, number
+    if 0 < number <= 100:
+        return number, None
+    return stop_pct, stop_price
+
+
 def run_replay(
     skill_dir: Path,
     *,
@@ -361,8 +533,14 @@ def run_replay(
     complete: Callable[[str, str], str] | None = None,
     history_provider: Callable[[str], Any] | None = None,
     versions: list[dict[str, Any]] | None = None,
+    progress_every: int = 10,
 ) -> dict[str, Any]:
-    """Score matured scans with the live prompt and any shadow. Dry-run only estimates."""
+    """Score matured scans with the live prompt and any shadow. Dry-run only estimates.
+
+    Already stored ``(version, ticker, day)`` rows are skipped, so a second run
+    resumes. Debate prices one committee (round 1 then round 2) and writes a
+    sample for system, round1, and round2 from that median score.
+    """
     from config import get_tab_agent_replay_usd_per_call
     from core.tab_agent_objective import load_objective
 
@@ -385,10 +563,17 @@ def run_replay(
         user_id=user_id,
         limit=limit,
     )
-    calls_each = CALLS_PER_CASE[tab_id]
-    estimated = len(cases) * len(chosen) * calls_each
+    ordered = sorted(
+        chosen, key=lambda row: (0 if row.get("status") == "live" else 1, str(row.get("prompt_key") or ""))
+    )
+    passes = _version_passes(tab_id, ordered)
+    seen = {
+        (str(row.get("version_id")), str(row.get("ticker")), str(row.get("as_of"))[:10]) for row in load_samples(root)
+    }
+    estimated = _remaining_calls(cases, passes, seen)
     price = get_tab_agent_replay_usd_per_call(root)
     cap = max(0, int(max_llm_calls))
+    calls_each = 2 if tab_id == "debate" else 1
     report: dict[str, Any] = {
         "ok": True,
         "dry_run": bool(dry_run),
@@ -407,13 +592,18 @@ def run_replay(
         "skipped_unlabeled": 0,
         "skipped_duplicate": 0,
         "skipped_unparsed": 0,
+        "parse_failures": 0,
+        "parse_retries": 0,
         "skipped_short": 0,
         "truncated": estimated > cap,
         "source": "replay",
         "replay_weight": config.replay_weight,
         "min_live_samples": config.min_live_samples,
         "caveat": CAVEAT,
-        "estimate_note": "Dry-run assumes every matured case can be labeled. A live run skips cases whose price window is short.",
+        "estimate_note": (
+            "The estimate skips rows already stored and assumes every remaining case can be labeled. "
+            "One parse retry per failed reply is extra and still stops at max_llm_calls."
+        ),
     }
     if dry_run:
         return report
@@ -424,73 +614,425 @@ def run_replay(
     caller = complete or _default_complete
     provider = history_provider or _default_history(root)
     history_cache: dict[str, Any] = {}
-    seen = {
-        (str(row.get("version_id")), str(row.get("ticker")), str(row.get("as_of"))[:10]) for row in load_samples(root)
-    }
-    used = 0
-    ordered = sorted(
-        chosen, key=lambda row: (0 if row.get("status") == "live" else 1, str(row.get("prompt_key") or ""))
-    )
-    for case in cases:
+    state = {"used": 0, "stop": False}
+    every = max(0, int(progress_every))
+    for index, case in enumerate(cases, start=1):
+        if state["stop"]:
+            break
         labeled = _cached_label(case, provider, history_cache, root, clock)
         if labeled is None:
             report["skipped_unlabeled"] += 1
-            continue
-        for version in ordered:
-            key = (str(version.get("id") or ""), str(case["ticker"]), str(case["as_of"]))
-            if key in seen:
+        elif tab_id == "debate":
+            _run_debate_case(
+                root,
+                case,
+                passes,
+                labeled,
+                config=config,
+                caller=caller,
+                seen=seen,
+                report=report,
+                state=state,
+                cap=cap,
+                clock=clock,
+            )
+        else:
+            _run_prompt_case(
+                root,
+                case,
+                passes,
+                labeled,
+                tab_id=tab_id,
+                config=config,
+                caller=caller,
+                seen=seen,
+                report=report,
+                state=state,
+                cap=cap,
+                clock=clock,
+            )
+        report["llm_calls"] = state["used"]
+        if every and index % every == 0:
+            _print_progress(report, index, len(cases))
+    report["llm_calls"] = state["used"]
+    report["truncated"] = bool(state["stop"])
+    if every and (not cases or len(cases) % every != 0):
+        _print_progress(report, len(cases), len(cases))
+    return report
+
+
+def _print_progress(report: dict[str, Any], done: int, total: int) -> None:
+    cost = round(float(report.get("llm_calls") or 0) * float(report.get("usd_per_call") or 0), 4)
+    print(
+        f"replay progress cases={done}/{total} llm_calls={report.get('llm_calls')} "
+        f"cost_usd={cost} stored={report.get('stored')} "
+        f"parse_failures={report.get('parse_failures')} skipped_duplicate={report.get('skipped_duplicate')}",
+        flush=True,
+    )
+
+
+def _version_passes(tab: str, versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if tab != "debate":
+        return [{"calls": 1, "versions": [row]} for row in versions]
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in versions:
+        groups.setdefault(str(row.get("status") or "live"), []).append(row)
+    passes: list[dict[str, Any]] = []
+    for status in ("live", "shadow"):
+        rows = groups.pop(status, None)
+        if rows:
+            passes.append({"calls": 2, "versions": rows})
+    for rows in groups.values():
+        if rows:
+            passes.append({"calls": 2, "versions": rows})
+    return passes
+
+
+def _remaining_calls(
+    cases: list[dict[str, Any]],
+    passes: list[dict[str, Any]],
+    seen: set[tuple[str, str, str]],
+) -> int:
+    total = 0
+    for case in cases:
+        ticker = str(case.get("ticker") or "")
+        day = str(case.get("as_of") or "")[:10]
+        for block in passes:
+            if any((str(row.get("id") or ""), ticker, day) not in seen for row in block["versions"]):
+                total += int(block["calls"])
+    return total
+
+
+def _sample_key(version: dict[str, Any], case: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(version.get("id") or ""), str(case.get("ticker") or ""), str(case.get("as_of") or "")[:10])
+
+
+def _store_sample(
+    skill_dir: Path,
+    case: dict[str, Any],
+    version: dict[str, Any],
+    *,
+    tab_id: str,
+    decision: str,
+    labeled: dict[str, Any],
+    config: Any,
+    clock: datetime,
+    seen: set[tuple[str, str, str]],
+    report: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> None:
+    key = _sample_key(version, case)
+    if key in seen:
+        report["skipped_duplicate"] += 1
+        return
+    realized = 0.0 if decision == "cash" else float(labeled["realized_return_pct"])
+    sample = {
+        "source": "replay",
+        "tab_id": tab_id,
+        "prompt_key": version.get("prompt_key"),
+        "version_id": version.get("id"),
+        "role": version.get("status"),
+        "ticker": case["ticker"],
+        "as_of": case["as_of"],
+        "decision": decision,
+        "realized_return_pct": realized,
+        "horizon_days": config.horizon_days,
+        "exit_model": labeled.get("exit_model") or "scale_out",
+        "weight": config.replay_weight,
+        "created_at": clock.isoformat(),
+    }
+    if extra:
+        sample.update(extra)
+    append_sample(skill_dir, sample)
+    seen.add(key)
+    report["stored"] += 1
+
+
+def _call_model(
+    caller: Callable[[str, str], str],
+    system: str,
+    user: str,
+    *,
+    report: dict[str, Any],
+    state: dict[str, Any],
+    cap: int,
+) -> str | None:
+    if state["used"] + 1 > cap:
+        state["stop"] = True
+        report["truncated"] = True
+        report["llm_calls"] = state["used"]
+        return None
+    try:
+        text = str(caller(system, user) or "")
+    except Exception as exc:
+        LOG.warning("Replay LLM call failed: %s", exc)
+        report["ok"] = False
+        report["error"] = str(exc)
+        state["stop"] = True
+        return None
+    state["used"] += 1
+    report["llm_calls"] = state["used"]
+    return text
+
+
+def _log_parse_failure(tab: str, version: dict[str, Any], case: dict[str, Any], raw: str, *, retry: bool) -> None:
+    LOG.warning(
+        "Replay parse %s tab=%s prompt_key=%s ticker=%s as_of=%s raw=%s",
+        "retry failed" if retry else "failed",
+        tab,
+        version.get("prompt_key"),
+        case.get("ticker"),
+        case.get("as_of"),
+        str(raw or "")[:500],
+    )
+
+
+def _decide_text(
+    text: str,
+    *,
+    tab: str,
+    threshold: float,
+    case: dict[str, Any],
+    version: dict[str, Any],
+    caller: Callable[[str, str], str],
+    system: str,
+    user: str,
+    report: dict[str, Any],
+    state: dict[str, Any],
+    cap: int,
+) -> tuple[str | None, str]:
+    decision = parse_decision(text, tab=tab, quality_threshold=threshold)
+    if decision is not None or state["stop"]:
+        return decision, text
+    _log_parse_failure(tab, version, case, text, retry=False)
+    report["parse_retries"] += 1
+    retried = _call_model(
+        caller,
+        system,
+        user + "\n\nThe previous reply did not parse. " + _JSON_CONTRACT,
+        report=report,
+        state=state,
+        cap=cap,
+    )
+    if retried is None:
+        report["parse_failures"] += 1
+        report["skipped_unparsed"] += 1
+        return None, text
+    decision = parse_decision(retried, tab=tab, quality_threshold=threshold)
+    if decision is None:
+        _log_parse_failure(tab, version, case, retried, retry=True)
+        report["parse_failures"] += 1
+        report["skipped_unparsed"] += 1
+        if _suggests_short(retried):
+            report["skipped_short"] += 1
+            report["skipped_unparsed"] -= 1
+    return decision, retried
+
+
+def _run_prompt_case(
+    skill_dir: Path,
+    case: dict[str, Any],
+    passes: list[dict[str, Any]],
+    labeled: dict[str, Any],
+    *,
+    tab_id: str,
+    config: Any,
+    caller: Callable[[str, str], str],
+    seen: set[tuple[str, str, str]],
+    report: dict[str, Any],
+    state: dict[str, Any],
+    cap: int,
+    clock: datetime,
+) -> None:
+    payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
+    user = json.dumps(payload, default=str) + "\n" + _JSON_CONTRACT
+    for block in passes:
+        for version in block["versions"]:
+            if state["stop"]:
+                return
+            if _sample_key(version, case) in seen:
                 report["skipped_duplicate"] += 1
                 continue
-            if used + calls_each > cap:
-                report["truncated"] = True
-                report["llm_calls"] = used
-                return report
-            payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, case["as_of"])
-            user = json.dumps(payload, default=str)
-            texts: list[str] = []
-            try:
-                for step in range(calls_each):
-                    prompt_user = user if step == 0 else user + "\n\nPrior round:\n" + texts[-1][:2000]
-                    texts.append(str(caller(str(version.get("text") or ""), prompt_user) or ""))
-                    used += 1
-            except Exception as exc:
-                LOG.warning("Replay LLM call failed: %s", exc)
-                report["ok"] = False
-                report["error"] = str(exc)
-                report["llm_calls"] = used
-                return report
-            decision = parse_decision(
-                texts[-1] if texts else "", tab=tab_id, quality_threshold=config.quality_threshold
+            text = _call_model(caller, str(version.get("text") or ""), user, report=report, state=state, cap=cap)
+            if text is None:
+                return
+            decision, _raw = _decide_text(
+                text,
+                tab=tab_id,
+                threshold=float(config.quality_threshold),
+                case=case,
+                version=version,
+                caller=caller,
+                system=str(version.get("text") or ""),
+                user=user,
+                report=report,
+                state=state,
+                cap=cap,
             )
-            report["llm_calls"] = used
-            if decision is None:
-                if texts and _suggests_short(texts[-1]):
-                    report["skipped_short"] += 1
-                else:
-                    report["skipped_unparsed"] += 1
+            if decision is None or state["stop"] and decision is None:
                 continue
-            realized = 0.0 if decision == "cash" else float(labeled["realized_return_pct"])
-            sample = {
-                "source": "replay",
-                "tab_id": tab_id,
-                "prompt_key": version.get("prompt_key"),
-                "version_id": version.get("id"),
-                "role": version.get("status"),
-                "ticker": case["ticker"],
-                "as_of": case["as_of"],
-                "decision": decision,
-                "realized_return_pct": realized,
-                "horizon_days": config.horizon_days,
-                "exit_model": labeled.get("exit_model") or "scale_out",
-                "weight": config.replay_weight,
-                "created_at": clock.isoformat(),
-            }
-            append_sample(root, sample)
-            seen.add(key)
-            report["stored"] += 1
-    report["llm_calls"] = used
-    report["truncated"] = False
-    return report
+            if decision is None:
+                continue
+            _store_sample(
+                skill_dir,
+                case,
+                version,
+                tab_id=tab_id,
+                decision=decision,
+                labeled=labeled,
+                config=config,
+                clock=clock,
+                seen=seen,
+                report=report,
+            )
+
+
+def _run_debate_case(
+    skill_dir: Path,
+    case: dict[str, Any],
+    passes: list[dict[str, Any]],
+    labeled: dict[str, Any],
+    *,
+    config: Any,
+    caller: Callable[[str, str], str],
+    seen: set[tuple[str, str, str]],
+    report: dict[str, Any],
+    state: dict[str, Any],
+    cap: int,
+    clock: datetime,
+) -> None:
+    from core.debate_committee import _ROUND1, _ROUND2, _SYSTEM, _cap_moves, _parse_round
+
+    payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
+    threshold = float(config.quality_threshold)
+    for block in passes:
+        versions = list(block["versions"])
+        if all(_sample_key(row, case) in seen for row in versions):
+            report["skipped_duplicate"] += len(versions)
+            continue
+        if state["stop"]:
+            return
+        by_key = {str(row.get("prompt_key") or ""): row for row in versions}
+        system = str((by_key.get("system") or {}).get("text") or _SYSTEM)
+        round1 = str((by_key.get("round1") or {}).get("text") or _ROUND1)
+        round2 = str((by_key.get("round2") or {}).get("text") or _ROUND2)
+        user1 = round1 + "\n" + json.dumps(payload, default=str) + "\n" + _DEBATE_CONTRACT
+        raw1 = _call_model(caller, system, user1, report=report, state=state, cap=cap)
+        if raw1 is None:
+            return
+        parsed1 = _parse_round(raw1)
+        if parsed1 is None and not state["stop"]:
+            _log_parse_failure("debate", by_key.get("round1") or versions[0], case, raw1, retry=False)
+            report["parse_retries"] += 1
+            raw1 = _call_model(
+                caller,
+                system,
+                user1 + "\n\nThe previous reply did not parse. " + _DEBATE_CONTRACT,
+                report=report,
+                state=state,
+                cap=cap,
+            )
+            parsed1 = _parse_round(raw1 or "")
+        if parsed1 is None:
+            report["parse_failures"] += 1
+            report["skipped_unparsed"] += 1
+            _log_parse_failure("debate", by_key.get("round1") or versions[0], case, raw1 or "", retry=True)
+            continue
+        prior = {
+            "chair": parsed1.get("chair"),
+            "seats": [
+                {"name": name, "score": seat.get("score"), "claim": seat.get("claim")}
+                for name, seat in (parsed1.get("seats") or {}).items()
+            ],
+        }
+        user2 = round2 + "\n" + json.dumps({**payload, "round1": prior}, default=str) + "\n" + _DEBATE_CONTRACT
+        raw2 = _call_model(caller, system, user2, report=report, state=state, cap=cap)
+        if raw2 is None:
+            final = parsed1
+            scores = [float(seat["score"]) for seat in final["seats"].values() if seat.get("score") is not None]
+            if len(scores) < 2:
+                report["skipped_unparsed"] += 1
+                continue
+            _store_debate_samples(
+                skill_dir,
+                case,
+                versions,
+                scores,
+                labeled=labeled,
+                config=config,
+                clock=clock,
+                seen=seen,
+                report=report,
+                threshold=threshold,
+            )
+            return
+        parsed2 = _parse_round(raw2)
+        if parsed2 is None and not state["stop"]:
+            _log_parse_failure("debate", by_key.get("round2") or versions[0], case, raw2 or "", retry=False)
+            report["parse_retries"] += 1
+            raw2 = _call_model(
+                caller,
+                system,
+                user2 + "\n\nThe previous reply did not parse. " + _DEBATE_CONTRACT,
+                report=report,
+                state=state,
+                cap=cap,
+            )
+            parsed2 = _parse_round(raw2 or "")
+        if parsed2 is None:
+            report["parse_failures"] += 1
+            _log_parse_failure("debate", by_key.get("round2") or versions[0], case, raw2 or "", retry=True)
+            final = parsed1
+        else:
+            final = _cap_moves(parsed1, parsed2)
+        scores = [float(seat["score"]) for seat in final["seats"].values() if seat.get("score") is not None]
+        if len(scores) < 2:
+            report["parse_failures"] += 1
+            report["skipped_unparsed"] += 1
+            continue
+        _store_debate_samples(
+            skill_dir,
+            case,
+            versions,
+            scores,
+            labeled=labeled,
+            config=config,
+            clock=clock,
+            seen=seen,
+            report=report,
+            threshold=threshold,
+        )
+
+
+def _store_debate_samples(
+    skill_dir: Path,
+    case: dict[str, Any],
+    versions: list[dict[str, Any]],
+    scores: list[float],
+    *,
+    labeled: dict[str, Any],
+    config: Any,
+    clock: datetime,
+    seen: set[tuple[str, str, str]],
+    report: dict[str, Any],
+    threshold: float,
+) -> None:
+    median = float(statistics.median(scores))
+    decision = "long" if median >= threshold else "cash"
+    for version in versions:
+        _store_sample(
+            skill_dir,
+            case,
+            version,
+            tab_id="debate",
+            decision=decision,
+            labeled=labeled,
+            config=config,
+            clock=clock,
+            seen=seen,
+            report=report,
+            extra={"debate_score": round(median, 6)},
+        )
 
 
 def _cached_label(
@@ -499,7 +1041,7 @@ def _cached_label(
     cache: dict[str, Any],
     skill_dir: Path,
     now: datetime,
-) -> float | None:
+) -> dict[str, Any] | None:
     ticker = str(case.get("ticker") or "")
     if ticker not in cache:
         try:

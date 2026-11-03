@@ -13,6 +13,8 @@ From ``schwab_skill/``::
 
     python scripts/tab_agent_replay.py --tab research --since 2026-01-01 --dry-run
     python scripts/tab_agent_replay.py --tab today --since 2026-01-01 --limit 20 --max-llm-calls 25
+
+A second run skips cases already stored in ``.tab_agent_replay.jsonl``.
 """
 
 from __future__ import annotations
@@ -49,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
         help="SQLite scan_results file. Default: <skill-dir>/webapp/webapp.db.",
     )
     parser.add_argument("--user-id", default="local")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=10,
+        help="Print calls, cost, and parse failures every N cases. 0 silences the ticker.",
+    )
     args = parser.parse_args(argv)
 
     from core.tab_agent_replay import run_replay
@@ -62,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         max_llm_calls=args.max_llm_calls,
         db_path=args.db,
         user_id=args.user_id,
+        progress_every=args.progress_every,
     )
     print(
         f"estimated_llm_calls={report['estimated_llm_calls']} "
