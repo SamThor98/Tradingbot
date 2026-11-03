@@ -626,7 +626,11 @@ def get_tab_agent(tab_id: str) -> TabAgent:
         from core.today_tab_agent import TodayTabAgent
 
         return TodayTabAgent()
-    known = "today"
+    if key == "debate":
+        from core.debate_tab_agent import DebateTabAgent
+
+        return DebateTabAgent()
+    known = "today, debate"
     raise TabAgentError(
         f"Unknown tab agent {tab_id!r}. Registered tabs: {known}. "
         "Other tabs plug in by subclassing TabAgent and adding a branch in get_tab_agent."

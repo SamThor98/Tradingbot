@@ -292,6 +292,20 @@
         bindTodayTabAgent();
       </script>
 
+      <section id="debateTabAgent" class="card operations-surface" aria-label="Debate committee agent">
+        <div class="section-title">
+          <h3>Debate committee</h3>
+          <small class="muted">Approve/pass prompts. Revisions stay pending until you approve them. Logged calls never place orders.</small>
+        </div>
+        <div class="inline-form compact">
+          <button id="debateAgentRefreshBtn" type="button" class="btn small secondary">Refresh</button>
+          <button id="debateAgentProposeBtn" type="button" class="btn small secondary">Propose revision</button>
+        </div>
+        <div id="debateTabAgentPanel" class="performance-panel" aria-live="polite">
+          <div class="report-empty">Loading debate prompts…</div>
+        </div>
+      </section>
+
       <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>

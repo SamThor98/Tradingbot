@@ -808,6 +808,33 @@ def run_scheduler() -> None:
         except Exception as e:
             log.warning("Today tab agent proposal failed: %s", e)
 
+    _last_debate_agent_minute: int | None = None
+
+    def _run_debate_agent_propose_if_scheduled() -> None:
+        """Sunday 18:25 ET: propose debate prompt revisions. Never approves them."""
+        nonlocal _last_debate_agent_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if not (now.weekday() == 6 and now.hour == 18 and now.minute == 25 and key != _last_debate_agent_minute):
+            return
+        _last_debate_agent_minute = key
+        try:
+            from config import get_tab_agent_debate_enabled
+
+            if not get_tab_agent_debate_enabled(SKILL_DIR):
+                log.info("Debate tab agent proposal skipped: TAB_AGENT_DEBATE_ENABLED is off")
+                return
+            from core.debate_tab_agent import DebateTabAgent
+
+            result = DebateTabAgent().propose(SKILL_DIR)
+            log.info(
+                "Debate tab agent proposals: created=%s skipped=%s",
+                len(result.get("created") or []),
+                len(result.get("skipped") or []),
+            )
+        except Exception as e:
+            log.warning("Debate tab agent proposal failed: %s", e)
+
     schedule.every().minute.do(_run_morning_brief_if_scheduled)
     schedule.every().minute.do(_run_pead_warm_if_scheduled)
     schedule.every().minute.do(_run_signal_scan_if_scheduled)
@@ -820,6 +847,7 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_book_eod_snapshot_if_scheduled)
     schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
     schedule.every().minute.do(_run_tab_agent_propose_if_scheduled)
+    schedule.every().minute.do(_run_debate_agent_propose_if_scheduled)
     build_morning_brief()
 
     try:

@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         choices=("status", "score", "propose", "approve", "reject", "shadow", "rollback"),
     )
-    parser.add_argument("--tab", default="today", help="Tab id. Registered: today.")
+    parser.add_argument("--tab", default="today", help="Tab id. Registered: today, debate.")
     parser.add_argument("--version-id", default="", help="Required for approve, reject, shadow, and rollback.")
     parser.add_argument("--prompt-key", default="", help="Optional single persona key for propose.")
     parser.add_argument("--skill-dir", type=Path, default=SKILL_DIR)

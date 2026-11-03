@@ -67,6 +67,7 @@ Comparisons stay `insufficient_sample` until both sides have at least `TAB_AGENT
 - [[signal-scanner]] — Stage B calls MiroFish during a scan
 - [[feature-flags]] — `TAB_AGENT_*` switches
 - [[frontend-route-contract]] — `?section=today-agent`
+- [[debate-tab-agent]] — same lifecycle for the debate committee
 
 ---
 

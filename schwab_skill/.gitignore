@@ -59,6 +59,7 @@ cockpit_observability_metrics.json
 decision_packets.json
 .tab_agent_registry.json
 .tab_agent_attributions.jsonl
+.debate_committee_log.jsonl
 strategy_state.json
 strategy_chat_log.jsonl
 

@@ -42,6 +42,7 @@ That imports `scan_results` rows still in `webapp/webapp.db` (local user) since 
 - [[feature-flags]] — `DECISION_PACKET_*` env vars
 - [[local-dashboard-endpoints]] — cockpit review and backfill routes
 - [[today-tab-agent]] — grades persona prompts on these labeled packets
+- [[debate-tab-agent]] — grades committee approve/pass calls on these packets
 
 ---
 

@@ -60,6 +60,7 @@ Default landing: `operations` (Today).
 | `scan`, `candidates` | `scanSection` | operations |
 | `scanstudio`, `scan-studio` | `scanStudioPanel` | operations |
 | `todayagent`, `today-agent` | `todayTabAgent` | operations |
+| `debateagent`, `debate-agent` | `debateTabAgent` | operations |
 | `peadcanary`, `canary`, `pead-canary` | `peadCanarySection` | operations |
 | `pending`, `queue`, `approvals`, `trades` | `pendingSection` | operations |
 | `workflow` | `workflowPrimary` | operations |

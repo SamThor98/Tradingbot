@@ -347,6 +347,12 @@ def run_scan_outcome_pass(
         )
     except Exception as exc:
         LOG.warning("Scan outcome backfill failed: %s", exc)
+    try:
+        from core.debate_committee import review_signals
+
+        review_signals(skill_dir or Path("."), signals, now=now)
+    except Exception as exc:
+        LOG.warning("Debate committee review skipped: %s", exc)
     LOG.info(
         "Scan outcome pass: recorded=%s skipped_duplicate=%s resolved=%s/%s skipped=%s",
         recorded.get("recorded"),

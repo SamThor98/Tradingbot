@@ -3039,16 +3039,28 @@ def _tab_agent_call(tab_id: str, action: str, version_id: str) -> ApiResponse:
 def tab_agent_status(tab_id: str) -> ApiResponse:
     """Prompt versions and outcome scores for one dashboard tab agent."""
     try:
-        from config import get_tab_agent_shadow_enabled, get_tab_agent_today_enabled
+        from config import (
+            get_tab_agent_debate_enabled,
+            get_tab_agent_debate_shadow_enabled,
+            get_tab_agent_shadow_enabled,
+            get_tab_agent_today_enabled,
+        )
         from core.tab_agent import TabAgentError, get_tab_agent
 
         agent = get_tab_agent(tab_id)
         payload = agent.status(SKILL_DIR)
         payload["score"] = agent.score(SKILL_DIR)
-        enabled = bool(get_tab_agent_today_enabled(SKILL_DIR)) if tab_id == "today" else False
+        if tab_id == "debate":
+            enabled = bool(get_tab_agent_debate_enabled(SKILL_DIR))
+            shadow_enabled = bool(get_tab_agent_debate_shadow_enabled(SKILL_DIR))
+            payload["effect"] = "log_only"
+        else:
+            enabled = bool(get_tab_agent_today_enabled(SKILL_DIR)) if tab_id == "today" else False
+            shadow_enabled = bool(get_tab_agent_shadow_enabled(SKILL_DIR)) if tab_id == "today" else False
+            payload["effect"] = "prompts"
         payload["enabled"] = enabled
         payload["applied_to_scans"] = enabled
-        payload["shadow_enabled"] = bool(get_tab_agent_shadow_enabled(SKILL_DIR)) if tab_id == "today" else False
+        payload["shadow_enabled"] = shadow_enabled
         payload["auto_promote"] = False
         return _ok(payload)
     except TabAgentError as exc:

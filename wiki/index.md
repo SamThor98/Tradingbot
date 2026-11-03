@@ -61,6 +61,7 @@ tags: [wiki, index, catalog]
 - [[hypothesis-ledger]] — Decision quality tracking
 - [[decision-packet-outcomes]] — Scan and approval packets labeled at a trading-day horizon
 - [[today-tab-agent]] — Versioned Today-tab prompts scored on those outcomes; approval is manual
+- [[debate-tab-agent]] — Debate committee prompts scored on the same packets; approval is manual
 - [[self-study]] — Automated trade outcome analysis
 - [[evolve-logic]] — Post-mortem feature → threshold tuner
 

@@ -86,13 +86,20 @@ function scoreLine(score) {
     <p class="muted small">${comparisons || "No comparison yet."}</p>`;
 }
 
-function render(data) {
-  const panel = document.getElementById("todayTabAgentPanel");
+function render(data, panelId) {
+  const panel = document.getElementById(panelId);
   if (!panel) return;
-  const applied = data.applied_to_scans ? "On: scans use the live registry prompt." : "Off: scans still use the built-in personas until TAB_AGENT_TODAY_ENABLED=true.";
+  const applied = data.effect === "log_only"
+    ? (data.enabled
+      ? "On: after each scan the committee logs approve/pass. It does not change scan decisions or place orders."
+      : "Off: no committee LLM calls until TAB_AGENT_DEBATE_ENABLED=true.")
+    : (data.applied_to_scans
+      ? "On: scans use the live registry prompt."
+      : "Off: scans still use the built-in personas until TAB_AGENT_TODAY_ENABLED=true.");
+  const shadowFlag = data.effect === "log_only" ? "TAB_AGENT_DEBATE_SHADOW_ENABLED" : "TAB_AGENT_SHADOW_ENABLED";
   const shadow = data.shadow_enabled
-    ? "Shadow calls are enabled."
-    : "Shadow calls are off (TAB_AGENT_SHADOW_ENABLED). Marking a version shadow does not change decisions.";
+    ? "Shadow calls are enabled and are not used as the live decision."
+    : `Shadow calls are off (${shadowFlag}). Marking a version shadow does not add LLM calls.`;
   const prompts = (data.prompts || [])
     .map((group) => {
       const retired = (group.retired || []).slice(-3).map((row) => versionBlock(row, actionButtons(row))).join("");
@@ -104,48 +111,54 @@ function render(data) {
         ${retired}`;
     })
     .join("");
+  const cal = data.score && data.score.calibration;
+  const passes = data.score && data.score.passes;
+  const extra = cal
+    ? `<p class="muted small">Calibration ${escapeHtml(cal.verdict || "")}: ECE ${cal.ece == null ? "—" : cal.ece} on n=${cal.n}. Pass counterfactual ${escapeHtml((passes && passes.verdict) || "")}: win rate ${passes && passes.win_rate != null ? `${(Number(passes.win_rate) * 100).toFixed(1)}%` : "—"} (n=${passes ? passes.n : 0}).</p>`
+    : "";
   panel.innerHTML = `<p class="muted small">${escapeHtml(applied)} ${escapeHtml(shadow)}</p>
     ${scoreLine(data.score)}
+    ${extra}
     ${prompts || "<p class='muted'>No prompts seeded.</p>"}`;
 }
 
-async function refreshTodayTabAgent() {
-  const panel = document.getElementById("todayTabAgentPanel");
+async function refreshTabAgent(tab, panelId) {
+  const panel = document.getElementById(panelId);
   if (!panel) return;
-  const out = await api.get("/api/tab-agent/today");
+  const out = await api.get(`/api/tab-agent/${tab}`);
   if (!out.ok) {
-    panel.innerHTML = `<p class="error">${escapeHtml(out.error || "Could not load the Today agent.")}</p>`;
+    panel.innerHTML = `<p class="error">${escapeHtml(out.error || "Could not load the agent.")}</p>`;
     return;
   }
-  render(out.data || {});
+  render(out.data || {}, panelId);
 }
 
-async function postAction(action, versionId) {
-  const out = await api.post(`/api/tab-agent/today/${action}`, { version_id: versionId });
+async function postAction(tab, panelId, action, versionId) {
+  const out = await api.post(`/api/tab-agent/${tab}/${action}`, { version_id: versionId });
   if (!out.ok) {
-    const panel = document.getElementById("todayTabAgentPanel");
+    const panel = document.getElementById(panelId);
     if (panel) {
       panel.insertAdjacentHTML("afterbegin", `<p class="error">${escapeHtml(out.error || "Request failed.")}</p>`);
     }
     return;
   }
-  await refreshTodayTabAgent();
+  await refreshTabAgent(tab, panelId);
 }
 
-export function bindTodayTabAgent() {
-  const refreshBtn = document.getElementById("todayAgentRefreshBtn");
-  const proposeBtn = document.getElementById("todayAgentProposeBtn");
-  const panel = document.getElementById("todayTabAgentPanel");
-  if (refreshBtn) refreshBtn.addEventListener("click", () => void refreshTodayTabAgent());
+function bindOne(tab, refreshId, proposeId, panelId) {
+  const refreshBtn = document.getElementById(refreshId);
+  const proposeBtn = document.getElementById(proposeId);
+  const panel = document.getElementById(panelId);
+  if (refreshBtn) refreshBtn.addEventListener("click", () => void refreshTabAgent(tab, panelId));
   if (proposeBtn) {
     proposeBtn.addEventListener("click", async () => {
       proposeBtn.disabled = true;
       try {
-        const out = await api.post("/api/tab-agent/today/propose", {});
+        const out = await api.post(`/api/tab-agent/${tab}/propose`, {});
         if (!out.ok && panel) {
           panel.insertAdjacentHTML("afterbegin", `<p class="error">${escapeHtml(out.error || "Proposal failed.")}</p>`);
         }
-        await refreshTodayTabAgent();
+        await refreshTabAgent(tab, panelId);
       } finally {
         proposeBtn.disabled = false;
       }
@@ -155,8 +168,13 @@ export function bindTodayTabAgent() {
     panel.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-agent-action]");
       if (!btn) return;
-      void postAction(btn.getAttribute("data-agent-action"), btn.getAttribute("data-version-id"));
+      void postAction(tab, panelId, btn.getAttribute("data-agent-action"), btn.getAttribute("data-version-id"));
     });
   }
-  void refreshTodayTabAgent();
+  void refreshTabAgent(tab, panelId);
+}
+
+export function bindTodayTabAgent() {
+  bindOne("today", "todayAgentRefreshBtn", "todayAgentProposeBtn", "todayTabAgentPanel");
+  bindOne("debate", "debateAgentRefreshBtn", "debateAgentProposeBtn", "debateTabAgentPanel");
 }

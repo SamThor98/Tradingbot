@@ -62,6 +62,9 @@ tags: [config, features, flags]
 | `TAB_AGENT_TODAY_ENABLED` | false | Serve Today persona prompts from the version registry |
 | `TAB_AGENT_SHADOW_ENABLED` | false | Run a shadow prompt beside live without changing conviction |
 | `TAB_AGENT_MIN_SAMPLES` | 30 | Minimum labeled outcomes before a prompt comparison is readable |
+| `TAB_AGENT_DEBATE_ENABLED` | false | Log debate-committee calls after scans. Does not place orders |
+| `TAB_AGENT_DEBATE_SHADOW_ENABLED` | false | Extra shadow committee call. Off means zero extra LLM calls |
+| `TAB_AGENT_DEBATE_MAX_NAMES` | 5 | Kept names reviewed per scan |
 
 ## Forensic & PEAD
 
@@ -94,6 +97,7 @@ See [[probabilistic-ranking-research-architecture]].
 - [[signal-scanner]] — where flags take effect
 - [[decision-packet-outcomes]] — packet recording and outcome horizon
 - [[today-tab-agent]] — opt-in prompt agent for the Today tab
+- [[debate-tab-agent]] — opt-in debate committee agent
 - [[probabilistic-ranking-research-architecture]] — research platform
 
 ---

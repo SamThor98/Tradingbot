@@ -32,6 +32,7 @@ guardrail_trades.json
 .counterfactual_*.jsonl
 .tab_agent_registry.json
 .tab_agent_attributions.jsonl
+.debate_committee_log.jsonl
 .scan_outcomes.json
 .token_cache.json
 strategy_state.json

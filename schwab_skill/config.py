@@ -2207,6 +2207,22 @@ def get_tab_agent_min_samples(skill_dir: Path | None = None) -> int:
     return max(5, min(5000, val))
 
 
+def get_tab_agent_debate_enabled(skill_dir: Path | None = None) -> bool:
+    """Log debate-committee calls after scans. Off by default. Never places orders."""
+    return _get_bool("TAB_AGENT_DEBATE_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_debate_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Extra shadow committee call. Off means zero extra LLM calls."""
+    return _get_bool("TAB_AGENT_DEBATE_SHADOW_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_debate_max_names(skill_dir: Path | None = None) -> int:
+    """Cap of kept names the committee reviews per scan."""
+    val = _get_int("TAB_AGENT_DEBATE_MAX_NAMES", 5, skill_dir)
+    return max(1, min(20, val))
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)
