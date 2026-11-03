@@ -606,6 +606,12 @@ def run_scheduler() -> None:
                 if get_tab_agent_debate_enabled(SKILL_DIR):
                     debate = DebateTabAgent().govern(SKILL_DIR)
                     log.info("Debate tab agent govern: actions=%s", len(debate.get("actions") or []))
+                from config import get_tab_agent_research_enabled
+                from core.research_tab_agent import ResearchTabAgent
+
+                if get_tab_agent_research_enabled(SKILL_DIR):
+                    research = ResearchTabAgent().govern(SKILL_DIR)
+                    log.info("Research tab agent govern: actions=%s", len(research.get("actions") or []))
             except Exception as e:
                 log.warning("Today tab agent govern failed: %s", e)
             if now.weekday() < 5:
@@ -943,9 +949,32 @@ def run_scheduler() -> None:
         except Exception as e:
             log.warning("Debate tab agent proposal failed: %s", e)
 
+    _last_research_agent_minute: int | None = None
+
+    def _run_research_agent_propose_if_scheduled() -> None:
+        """Sunday 18:30 ET: propose a shadow quick-check prompt. Off unless the flag is set."""
+        nonlocal _last_research_agent_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if not (now.weekday() == 6 and now.hour == 18 and now.minute == 30 and key != _last_research_agent_minute):
+            return
+        _last_research_agent_minute = key
+        try:
+            from config import get_tab_agent_research_enabled
+            from core.research_tab_agent import ResearchTabAgent
+
+            if not get_tab_agent_research_enabled(SKILL_DIR):
+                log.info("Research tab agent proposal skipped: TAB_AGENT_RESEARCH_ENABLED is off")
+                return
+            result = ResearchTabAgent().propose(SKILL_DIR)
+            log.info("Research tab agent proposals: created=%s", len(result.get("created") or []))
+        except Exception as e:
+            log.warning("Research tab agent proposal failed: %s", e)
+
     schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
     schedule.every().minute.do(_run_tab_agent_propose_if_scheduled)
     schedule.every().minute.do(_run_debate_agent_propose_if_scheduled)
+    schedule.every().minute.do(_run_research_agent_propose_if_scheduled)
     build_morning_brief()
 
     try:

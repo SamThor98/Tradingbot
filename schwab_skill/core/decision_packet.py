@@ -136,6 +136,11 @@ def build_packet(
             "state": execu.get("state"),
             "stop_pct": _f(sig.get("stop_pct")),
             "stop_price": _f(sig.get("stop_price") or sig.get("stop")),
+            "verdict": sig.get("verdict"),
+            "rationale": sig.get("rationale"),
+            "prompt_version": sig.get("prompt_version"),
+            "prompt_key": sig.get("prompt_key"),
+            "stated_confidence": _f(sig.get("stated_confidence")),
         },
         provenance=Provenance(source="computed", as_of=as_of, confidence="high"),
     )

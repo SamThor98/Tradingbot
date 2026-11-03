@@ -31,7 +31,9 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "propose", "approve", "reject", "rollback", "promote"):
         cmd = sub.add_parser(name, help=f"{name} one tab agent")
-        cmd.add_argument("--tab", required=True, choices=("today", "debate"))
+        from core.tab_agent_override import TABS
+
+        cmd.add_argument("--tab", required=True, choices=TABS)
         cmd.add_argument("--version", default="", help="Prompt version id. Optional when only one candidate exists.")
         cmd.add_argument("--skill-dir", type=Path, default=SKILL_DIR)
         if name == "propose":

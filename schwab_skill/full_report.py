@@ -1217,18 +1217,26 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
     # dashboard renders a degraded state instead of "Fresh".
     has_price_data = (df is not None and not df.empty) and bool(tech.current_price)
 
-    if not has_price_data:
-        verdict = "NO DATA"
-        color = 0x95A5A6
-    elif tech.stage_2 and tech.vcp and tech.signal_score >= 60:
-        verdict = "STRONG SETUP"
-        color = 0x2ECC71
-    elif tech.stage_2:
-        verdict = "WATCH"
-        color = 0xF39C12
-    else:
-        verdict = "HOLD OFF"
-        color = 0xE74C3C
+    try:
+        from core.research_quick_check import resolve_quick_check_decision
+
+        decision = resolve_quick_check_decision(
+            ticker=ticker,
+            has_price_data=has_price_data,
+            stage_2=bool(tech.stage_2),
+            vcp=bool(tech.vcp),
+            signal_score=float(tech.signal_score or 0.0),
+            skill_dir=skill_dir,
+        )
+    except Exception as exc:
+        LOG.debug("Quick-check decision fallback for %s: %s", ticker, exc)
+        decision = {
+            "verdict": "NO DATA" if not has_price_data else ("WATCH" if tech.stage_2 else "HOLD OFF"),
+            "rationale": "",
+            "prompt_version": "builtin",
+        }
+    verdict = str(decision.get("verdict") or "HOLD OFF")
+    color = {"NO DATA": 0x95A5A6, "STRONG SETUP": 0x2ECC71, "WATCH": 0xF39C12}.get(verdict, 0xE74C3C)
 
     price_str = f"${tech.current_price:,.2f}" if tech.current_price else ""
 
@@ -1262,10 +1270,11 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
         embed["provider"] = hist_meta.get("provider")
         embed["used_fallback"] = bool(hist_meta.get("used_fallback"))
 
+    grade_signal: dict[str, Any] = {}
     try:
         from core.debate_grade import attach_debate_grade, stamp_checklist_fields
 
-        grade_signal: dict[str, Any] = {
+        grade_signal = {
             "ticker": ticker,
             "price": tech.current_price or None,
             "sma_50": tech.sma_50 or None,
@@ -1316,6 +1325,26 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
             "value": "Unavailable",
             "inline": True,
         })
+
+    embed["quick_check"] = {
+        "verdict": verdict,
+        "rationale": decision.get("rationale"),
+        "prompt_version": decision.get("prompt_version"),
+    }
+    if skill_dir is not None:
+        try:
+            from core.research_quick_check import record_quick_check_packet
+
+            stop_pct = grade_signal.get("stop_pct") if isinstance(grade_signal, dict) else None
+            record_quick_check_packet(
+                skill_dir,
+                ticker=ticker,
+                price=tech.current_price or None,
+                stop_pct=stop_pct,
+                decision=decision,
+            )
+        except Exception as exc:
+            LOG.debug("Quick-check packet skipped for %s: %s", ticker, exc)
 
     return embed
 

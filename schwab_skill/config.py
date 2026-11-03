@@ -2770,6 +2770,16 @@ def get_tab_agent_debate_shadow_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("TAB_AGENT_DEBATE_SHADOW_ENABLED", True, skill_dir)
 
 
+def get_tab_agent_research_enabled(skill_dir: Path | None = None) -> bool:
+    """Serve Research quick-check prompts from the registry. Default off."""
+    return _get_bool("TAB_AGENT_RESEARCH_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_research_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Score a shadow quick-check prompt beside the live verdict. Default off."""
+    return _get_bool("TAB_AGENT_RESEARCH_SHADOW_ENABLED", False, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)
