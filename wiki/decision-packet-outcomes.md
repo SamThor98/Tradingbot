@@ -41,6 +41,7 @@ That imports `scan_results` rows still in `webapp/webapp.db` (local user) since 
 - [[hypothesis-ledger]] — separate decision-quality ledger
 - [[feature-flags]] — `DECISION_PACKET_*` env vars
 - [[local-dashboard-endpoints]] — cockpit review and backfill routes
+- [[today-tab-agent]] — grades persona prompts on these labeled packets
 
 ---
 

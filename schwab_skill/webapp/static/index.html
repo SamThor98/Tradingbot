@@ -274,6 +274,24 @@
         void loadScanCatalog();
       </script>
 
+      <section id="todayTabAgent" class="card operations-surface" aria-label="Today tab agent">
+        <div class="section-title">
+          <h3>Today agent</h3>
+          <small class="muted">Persona prompts for the scan. Revisions stay pending until you approve them.</small>
+        </div>
+        <div class="inline-form compact">
+          <button id="todayAgentRefreshBtn" type="button" class="btn small secondary">Refresh</button>
+          <button id="todayAgentProposeBtn" type="button" class="btn small secondary">Propose revision</button>
+        </div>
+        <div id="todayTabAgentPanel" class="performance-panel" aria-live="polite">
+          <div class="report-empty">Loading prompt versions…</div>
+        </div>
+      </section>
+      <script type="module">
+        import { bindTodayTabAgent } from "/static/panels/todayTabAgent.js?v=__APP_VERSION__";
+        bindTodayTabAgent();
+      </script>
+
       <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>

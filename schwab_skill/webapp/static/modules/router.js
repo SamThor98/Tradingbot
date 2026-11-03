@@ -66,6 +66,8 @@ export const SECTION_ALIASES = Object.freeze({
   candidates: "scanSection",
   scanstudio: "scanStudioPanel",
   "scan-studio": "scanStudioPanel",
+  todayagent: "todayTabAgent",
+  "today-agent": "todayTabAgent",
   peadcanary: "peadCanarySection",
   canary: "peadCanarySection",
   "pead-canary": "peadCanarySection",

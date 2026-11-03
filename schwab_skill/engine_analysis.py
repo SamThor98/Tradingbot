@@ -471,6 +471,42 @@ def _parse_agent_response(text: str) -> dict[str, Any]:
     }
 
 
+def _persona_systems(skill_dir: Path) -> tuple[dict[str, str], dict[str, str], list[dict[str, str]]]:
+    """Live and shadow persona prompts. Built-ins when the Today agent is off."""
+    try:
+        from core.today_tab_agent import resolve_for_scan
+
+        return resolve_for_scan(skill_dir)
+    except Exception as exc:
+        LOG.debug("Today tab agent unavailable, using built-in personas: %s", exc)
+        return dict(AGENT_SYSTEMS), {}, []
+
+
+def _shadow_persona_votes(prompt: str, systems: dict[str, str], env: dict) -> list[dict[str, Any]]:
+    """Score shadow prompts without returning them to the live vote mix."""
+    if not systems:
+        return []
+    votes: list[dict[str, Any]] = []
+    for name, system in systems.items():
+        try:
+            parsed = _parse_agent_response(_call_llm(prompt, system, env))
+            cont = float(parsed.get("continuation_probability", 0.5))
+            bull = float(parsed.get("bull_trap_probability", 0.5))
+        except Exception as exc:
+            LOG.debug("Shadow persona %s failed: %s", name, exc)
+            continue
+        votes.append(
+            {
+                "name": name,
+                "role": "shadow",
+                "score": int(round(max(-100.0, min(100.0, (cont - bull) * 100.0)))),
+                "continuation_probability": cont,
+                "bull_trap_probability": bull,
+            }
+        )
+    return votes
+
+
 # Agent system prompts (personas)
 AGENT_SYSTEMS = {
     "institutional_trend": (
@@ -646,7 +682,9 @@ class MarketSimulation:
         # callers can render it as "—" / "unavailable" instead.
         llm_response_count = 0
 
-        for name, system in AGENT_SYSTEMS.items():
+        live_systems, shadow_systems, prompt_bindings = _persona_systems(self.skill_dir)
+
+        for name, system in live_systems.items():
             text = _call_llm(prompt, system, self._env)
             if (text or "").strip():
                 llm_response_count += 1
@@ -824,7 +862,23 @@ class MarketSimulation:
             "bull_trap_probability": float(overall_bull),
             "seed_fingerprint": seed_fingerprint,
             "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
+            "prompt_versions": prompt_bindings,
+            # Shadow votes are recorded for scoring only. They are not inputs
+            # to conviction_score, continuation_probability, or bull_trap_probability.
+            "shadow_agent_votes": _shadow_persona_votes(prompt, shadow_systems, self._env),
         }
+        if prompt_bindings:
+            try:
+                from core.tab_agent import record_scan_prompt_use
+
+                record_scan_prompt_use(
+                    self.skill_dir,
+                    tab_id="today",
+                    ticker=self.ticker,
+                    bindings=prompt_bindings,
+                )
+            except Exception as exc:
+                LOG.debug("Prompt attribution skipped for %s: %s", self.ticker, exc)
         _persist_simulation(sim_id, result, self.skill_dir)
         return result
 

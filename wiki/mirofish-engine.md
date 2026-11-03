@@ -52,6 +52,7 @@ contains:
 - [[meta-policy]] — How MiroFish output is folded into the final score
 - [[feature-store]] — Where reliability buckets live
 - [[signal-scanner]] — Stage B integration point
+- [[today-tab-agent]] — versions the three persona prompts; shadow votes stay out of conviction
 
 ---
 *Last compiled: 2026-04-17*

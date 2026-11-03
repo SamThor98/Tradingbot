@@ -30,6 +30,8 @@ guardrail_trades.json
 .hypothesis_ledger*.json
 .counterfactual_*.json
 .counterfactual_*.jsonl
+.tab_agent_registry.json
+.tab_agent_attributions.jsonl
 .scan_outcomes.json
 .token_cache.json
 strategy_state.json

@@ -60,6 +60,7 @@ tags: [wiki, index, catalog]
 - [[plugin-modes]] — Execution, exit, event risk, regime, correlation plugins
 - [[hypothesis-ledger]] — Decision quality tracking
 - [[decision-packet-outcomes]] — Scan and approval packets labeled at a trading-day horizon
+- [[today-tab-agent]] — Versioned Today-tab prompts scored on those outcomes; approval is manual
 - [[self-study]] — Automated trade outcome analysis
 - [[evolve-logic]] — Post-mortem feature → threshold tuner
 

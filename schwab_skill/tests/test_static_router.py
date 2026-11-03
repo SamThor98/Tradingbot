@@ -74,6 +74,8 @@ EXPECTED_ALIASES = {
     "candidates": "scanSection",
     "scanstudio": "scanStudioPanel",
     "scan-studio": "scanStudioPanel",
+    "todayagent": "todayTabAgent",
+    "today-agent": "todayTabAgent",
     "peadcanary": "peadCanarySection",
     "canary": "peadCanarySection",
     "pead-canary": "peadCanarySection",

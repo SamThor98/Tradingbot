@@ -2187,6 +2187,26 @@ def get_decision_packet_scan_recording_enabled(skill_dir: Path | None = None) ->
     return _get_bool("DECISION_PACKET_SCAN_RECORDING_ENABLED", True, skill_dir)
 
 
+def get_tab_agent_today_enabled(skill_dir: Path | None = None) -> bool:
+    """Serve Today-tab persona prompts from the version registry.
+
+    Off by default. Built-in MiroFish prompts stay in force until this is on.
+    Approving a revision still requires an explicit approve call.
+    """
+    return _get_bool("TAB_AGENT_TODAY_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Run a shadow prompt beside the live one without changing conviction."""
+    return _get_bool("TAB_AGENT_SHADOW_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_min_samples(skill_dir: Path | None = None) -> int:
+    """Minimum labeled outcomes before a prompt comparison is treated as readable."""
+    val = _get_int("TAB_AGENT_MIN_SAMPLES", 30, skill_dir)
+    return max(5, min(5000, val))
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)

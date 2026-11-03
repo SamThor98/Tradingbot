@@ -55,6 +55,14 @@ tags: [config, features, flags]
 | `DECISION_PACKET_SCAN_RECORDING_ENABLED` | true | Record one staged packet per kept scan signal per UTC day |
 | `DECISION_PACKET_HORIZON_DAYS` | 10 | Trading days until a pending packet is labeled win/loss/scratch |
 
+## Today tab agent
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `TAB_AGENT_TODAY_ENABLED` | false | Serve Today persona prompts from the version registry |
+| `TAB_AGENT_SHADOW_ENABLED` | false | Run a shadow prompt beside live without changing conviction |
+| `TAB_AGENT_MIN_SAMPLES` | 30 | Minimum labeled outcomes before a prompt comparison is readable |
+
 ## Forensic & PEAD
 
 | Env Var | Default | Description |
@@ -85,6 +93,7 @@ See [[probabilistic-ranking-research-architecture]].
 - [[guardrails]] — kill switches
 - [[signal-scanner]] — where flags take effect
 - [[decision-packet-outcomes]] — packet recording and outcome horizon
+- [[today-tab-agent]] — opt-in prompt agent for the Today tab
 - [[probabilistic-ranking-research-architecture]] — research platform
 
 ---
