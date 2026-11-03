@@ -13,7 +13,7 @@ from typing import Any
 from core.tab_agent import STATUS_PENDING, STATUS_RETIRED, STATUS_SHADOW, TabAgentError, get_tab_agent
 from core.tab_agent_review import read_verdict, write_verdict
 
-TABS = ("today", "debate")
+TABS = ("today", "debate", "research")
 VERDICT_STATUSES = {STATUS_PENDING, STATUS_SHADOW}
 PROMOTE_STATUSES = {STATUS_PENDING, STATUS_SHADOW}
 
@@ -21,7 +21,7 @@ PROMOTE_STATUSES = {STATUS_PENDING, STATUS_SHADOW}
 def _tab(tab_id: str) -> str:
     key = str(tab_id or "").strip().lower()
     if key not in TABS:
-        raise TabAgentError(f"Unknown tab {tab_id!r}. Use today or debate.")
+        raise TabAgentError(f"Unknown tab {tab_id!r}. Use {', '.join(TABS)}.")
     return key
 
 

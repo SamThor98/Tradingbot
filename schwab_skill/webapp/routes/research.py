@@ -2199,7 +2199,7 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
 @router.get("/api/check/{ticker}", response_model=ApiResponse)
 def check_ticker(ticker: str) -> ApiResponse:
     try:
-        data = quick_check(ticker.upper().strip())
+        data = quick_check(ticker.upper().strip(), skill_dir=SKILL_DIR)
         return _ok(data)
     except Exception as e:
         return _err_response("check", e)

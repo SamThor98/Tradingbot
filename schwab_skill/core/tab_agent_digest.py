@@ -31,6 +31,18 @@ def _tab_ids() -> list[str]:
         tabs.append("debate")
     except Exception:
         pass
+    for name, module in (
+        ("research", "core.research_tab_agent"),
+        ("backtest", "core.backtest_tab_agent"),
+        ("system", "core.system_tab_agent"),
+    ):
+        try:
+            import importlib
+
+            importlib.import_module(module)
+        except Exception:
+            continue
+        tabs.append(name)
     return tabs
 
 
