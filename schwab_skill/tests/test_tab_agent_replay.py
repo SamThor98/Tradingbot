@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -335,3 +336,271 @@ def test_cli_dry_run_prints_the_estimate(tmp_path, capsys, monkeypatch) -> None:
     assert "estimated_cost_usd=" in captured.out
     assert "model may already know" in captured.out
     assert not replay_path(tmp_path).exists()
+
+
+def test_json_verdict_beats_a_rubric_echo() -> None:
+    echoed = (
+        "HOLD OFF means stay in cash. Never suggest a short, an inverse ETF, or an option. "
+        "Cash is valid.\n"
+        '{"decision":"long","verdict":"STRONG SETUP"}'
+    )
+    assert parse_decision(echoed, tab="research", quality_threshold=60) == "long"
+    template = "AAPL is WATCH. Chart stage2=yes. Cash is valid. No short."
+    assert parse_decision(template, tab="research", quality_threshold=60) == "long"
+    boilerplate = "HOLD OFF means stay in cash. Cash is valid. No short."
+    assert parse_decision(boilerplate, tab="research", quality_threshold=60) is None
+
+
+def test_debate_median_ignores_the_first_seat() -> None:
+    seats = json.dumps(
+        {
+            "seats": [
+                {"name": "trend", "score": 10, "claim": "weak"},
+                {"name": "setup", "score": 90, "claim": "ok"},
+                {"name": "risk", "score": 90, "claim": "ok"},
+                {"name": "skeptic", "score": 90, "claim": "ok"},
+                {"name": "business", "score": 90, "claim": "ok"},
+            ],
+            "chair": "long",
+        }
+    )
+    assert parse_decision(seats, tab="debate", quality_threshold=60) == "long"
+
+
+def test_low_win_rate_with_a_positive_average_is_one_large_winner() -> None:
+    """Fifteen cash zeros and one +83.84% scale-out: 6.25% wins, +5.24% average."""
+    returns = [0.0] * 15 + [83.84]
+    dates = [f"2026-01-{index + 1:02d}" for index in range(16)]
+    book = evaluate_book(returns, dates, config=ObjectiveConfig(min_samples=5))
+    assert book["win_rate"] == 0.0625
+    assert book["avg_realized_return_pct"] == 5.24
+    assert book["max_drawdown"] == 0.0
+
+
+def _rising_frame() -> pd.DataFrame:
+    index = pd.bdate_range("2026-06-01", periods=30)
+    close = [100.0 + (2 * i) for i in range(30)]
+    return pd.DataFrame(
+        {"close": close, "high": [price + 1 for price in close], "low": [price - 1 for price in close]},
+        index=index,
+    )
+
+
+def _stopped_frame() -> pd.DataFrame:
+    index = pd.bdate_range("2026-06-01", periods=30)
+    close = [100.0] + [90.0] * 29
+    high = [101.0] + [91.0] * 29
+    low = [99.0] + [88.0] * 29
+    return pd.DataFrame({"close": close, "high": high, "low": low}, index=index)
+
+
+def test_missing_stop_does_not_flatten_the_label(monkeypatch) -> None:
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "20")
+    created = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    missing = scale_out_return(
+        {"ticker": "AAPL", "created_at": created, "entry_price": 100.0},
+        _rising_frame(),
+        None,
+        now=now,
+    )
+    assert missing is not None
+    assert missing["exit_model"] == "fixed_horizon_no_stop"
+    assert missing["realized_return_pct"] > 0
+    priced = scale_out_return(
+        {"ticker": "AAPL", "created_at": created, "entry_price": 100.0, "stop_price": 92.0},
+        _rising_frame(),
+        None,
+        now=now,
+    )
+    assert priced is not None
+    assert priced["exit_model"] == "scale_out"
+    assert priced["realized_return_pct"] > 0
+
+
+def test_research_replay_scores_a_winner_and_a_loser(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "20")
+    monkeypatch.setenv("TAB_AGENT_REPLAY_WEIGHT", "0.5")
+    for ticker, day in (("WIN", 1), ("LOSE", 2)):
+        decision_packet.record_scan_packets(
+            tmp_path,
+            [{"ticker": ticker, "price": 100, "stop_pct": 0.08, "stage_2": True, "vcp": True, "signal_score": 80}],
+            created_at=datetime(2026, 6, day, tzinfo=timezone.utc),
+        )
+    agent = ResearchTabAgent()
+    registry = agent.registry(tmp_path)
+    versions = [row for row in registry.versions("research") if row.get("status") == "live"]
+
+    def _history(ticker: str) -> pd.DataFrame:
+        return _stopped_frame() if ticker == "LOSE" else _rising_frame()
+
+    report = run_replay(
+        tmp_path,
+        tab="research",
+        since="2026-01-01",
+        max_llm_calls=10,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=lambda _system, _user: '{"decision":"long","verdict":"STRONG SETUP"}',
+        history_provider=_history,
+        versions=versions,
+        progress_every=0,
+    )
+    assert report["stored"] == 4
+    by_ticker: dict[str, float] = {}
+    for row in load_samples(tmp_path):
+        by_ticker[str(row["ticker"])] = float(row["realized_return_pct"])
+    assert by_ticker["WIN"] > 0
+    assert by_ticker["LOSE"] < 0
+    score = agent.score(tmp_path, registry=registry)
+    for row in score["versions"]:
+        if row.get("status") != "live":
+            continue
+        assert row["n_replay"] == 2
+        assert row["n_live"] == 0
+        assert row["win_rate"] == 0.5
+        assert row["avg_realized_return_pct"] not in (0, None)
+        assert row["sortino"] not in (0, None)
+        assert row["max_drawdown"] < 0
+
+
+def test_parse_failure_retries_once_and_logs_the_raw_reply(tmp_path, caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    calls: list[str] = []
+
+    def _complete(_system: str, user: str) -> str:
+        calls.append(user)
+        if len(calls) == 1:
+            return "The chart looks interesting, but I will not name a setup."
+        return '{"decision":"cash","verdict":"HOLD OFF"}'
+
+    report = run_replay(
+        tmp_path,
+        tab="research",
+        since="2026-01-01",
+        max_llm_calls=5,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=_complete,
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=[{"id": "rationale-1", "prompt_key": "rationale", "text": "template", "status": "live"}],
+        progress_every=0,
+    )
+    assert report["parse_retries"] == 1
+    assert report["parse_failures"] == 0
+    assert report["llm_calls"] == 2
+    assert report["stored"] == 1
+    assert load_samples(tmp_path)[0]["decision"] == "cash"
+    assert "will not name a setup" in caplog.text
+
+
+def test_debate_round2_is_stored_from_the_median(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08, "qual_trend": 80, "qual_setup": 80}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    versions = [
+        {"id": "sys", "prompt_key": "system", "text": "Score the checklist.", "status": "live"},
+        {"id": "r1", "prompt_key": "round1", "text": "First round. Score each seat.", "status": "live"},
+        {
+            "id": "r2",
+            "prompt_key": "round2",
+            "text": "Second round. Move each score by at most 15 points from round1.",
+            "status": "live",
+        },
+    ]
+
+    def _seats(first: int) -> str:
+        return json.dumps(
+            {
+                "seats": [
+                    {"name": "trend", "score": first, "claim": "ok"},
+                    {"name": "setup", "score": 90, "claim": "ok"},
+                    {"name": "risk", "score": 90, "claim": "ok"},
+                    {"name": "skeptic", "score": 90, "claim": "ok"},
+                    {"name": "business", "score": 90, "claim": "ok"},
+                ],
+                "chair": "long",
+            }
+        )
+
+    users: list[str] = []
+
+    def _complete(_system: str, user: str) -> str:
+        users.append(user)
+        return _seats(10 if len(users) == 1 else 90)
+
+    dry = run_replay(
+        tmp_path,
+        tab="debate",
+        since="2026-01-01",
+        dry_run=True,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        versions=versions,
+        progress_every=0,
+    )
+    assert dry["estimated_llm_calls"] == 2
+    report = run_replay(
+        tmp_path,
+        tab="debate",
+        since="2026-01-01",
+        max_llm_calls=6,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=_complete,
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=versions,
+        progress_every=0,
+    )
+    assert report["stored"] == 3
+    assert report["llm_calls"] == 2
+    assert "Second round" in users[1]
+    rows = load_samples(tmp_path)
+    assert {row["prompt_key"] for row in rows} == {"system", "round1", "round2"}
+    assert {row["decision"] for row in rows} == {"long"}
+    assert {row["debate_score"] for row in rows} == {90.0}
+    assert all(float(row["realized_return_pct"]) > 0 for row in rows)
+
+
+def test_progress_printer_and_resume_skips_stored_cases(tmp_path, capsys) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    version = {"id": "live-1", "prompt_key": "verdict_rules", "text": "rules", "status": "live"}
+    calls: list[int] = []
+
+    def _complete(_system: str, _user: str) -> str:
+        calls.append(1)
+        return '{"decision":"long","verdict":"STRONG SETUP"}'
+
+    kwargs = {
+        "tab": "today",
+        "since": "2026-01-01",
+        "max_llm_calls": 5,
+        "now": datetime(2026, 11, 3, tzinfo=timezone.utc),
+        "db_path": tmp_path / "missing.db",
+        "complete": _complete,
+        "history_provider": lambda _ticker: _rising_frame(),
+        "versions": [version],
+        "progress_every": 1,
+    }
+    first = run_replay(tmp_path, **kwargs)
+    printed = capsys.readouterr().out
+    assert first["stored"] == 1
+    assert "replay progress" in printed
+    assert "llm_calls=1" in printed
+    assert "parse_failures=0" in printed
+    second = run_replay(tmp_path, **kwargs)
+    assert second["llm_calls"] == 0
+    assert second["skipped_duplicate"] == 1
+    assert second["estimated_llm_calls"] == 0
+    assert calls == [1]
