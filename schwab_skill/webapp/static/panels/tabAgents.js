@@ -18,7 +18,7 @@ function versionLine(row, actions) {
     ? `<span class="pill">${escapeHtml(row.review.verdict)}</span> <span class="muted small">${escapeHtml(row.review.reviewer || "")}</span>`
     : "<span class='muted small'>No verdict yet</span>";
   return `<p><span class="pill">${escapeHtml(row.status || "")}</span> <code>${escapeHtml(row.id || "")}</code></p>
-    <p class="muted small">n=${row.n ?? "—"} ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}</p>
+    <p class="muted small">n=${row.n ?? "—"} (live ${row.n_live ?? row.n ?? "—"}, replay ${row.n_replay ?? 0}) ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}</p>
     <p class="muted small">${review}</p>
     <p class="muted small">${escapeHtml(row.rationale || "")}</p>
     <div class="inline-form compact">${actions}</div>`;
@@ -45,7 +45,7 @@ function renderDigest(digest) {
       const live = (tab.live || [])
         .map(
           (row) =>
-            `${row.prompt_key || ""} ${row.version_id || ""} n=${row.n ?? "—"} ${row.primary_metric || ""}=${row.primary_score ?? "—"}`,
+            `${row.prompt_key || ""} ${row.version_id || ""} n=${row.n ?? "—"} live ${row.n_live ?? "—"} replay ${row.n_replay ?? 0} ${row.primary_metric || ""}=${row.primary_score ?? "—"}`,
         )
         .join("; ");
       const events = (tab.events || []).map((row) => row.action).join(", ") || "none";
@@ -81,7 +81,7 @@ function render(board) {
       const waiting = tab.pending_reviews || [];
       const waitingText = waiting.length
         ? waiting
-            .map((row) => `${row.prompt_key || ""} ${row.id || ""} n=${row.n ?? "—"}`)
+            .map((row) => `${row.prompt_key || ""} ${row.id || ""} n=${row.n ?? "—"} live ${row.n_live ?? "—"} replay ${row.n_replay ?? 0}`)
             .join("; ")
         : "None";
       return `<section class="card">

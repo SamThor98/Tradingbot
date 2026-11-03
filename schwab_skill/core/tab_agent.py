@@ -374,6 +374,7 @@ def score_prompt_versions(
     attributions: list[dict[str, Any]] | None = None,
     skill_dir: Path | None = None,
     since_ts: str | None = None,
+    tab_id: str = "today",
 ) -> dict[str, Any]:
     """Score each version on the shared risk-adjusted objective."""
     config = load_objective(skill_dir)
@@ -418,7 +419,24 @@ def score_prompt_versions(
                 continue
             dates.append(day)
             returns.append(parsed[1])
-        book = evaluate_book(returns, dates, config=config)
+        from core.tab_agent_replay import attach_replay
+
+        merged = attach_replay(
+            returns,
+            dates,
+            skill_dir=skill_dir,
+            tab_id=tab_id,
+            version_id=vid,
+            weight=config.replay_weight,
+            since_ts=since_ts,
+        )
+        book = evaluate_book(
+            merged.returns,
+            merged.dates,
+            config=config,
+            weights=merged.weights,
+            sources=merged.sources,
+        )
         book.update(
             {
                 "version_id": vid,
