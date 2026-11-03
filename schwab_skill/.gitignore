@@ -98,3 +98,6 @@ research_store/models/
 Thumbs.db
 .vscode/
 .idea/
+
+# local .env backups
+.env.bak-*
