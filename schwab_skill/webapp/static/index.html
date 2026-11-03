@@ -845,6 +845,19 @@
           import { bindTodayTabAgent } from "/static/panels/todayTabAgent.js?v=__APP_VERSION__";
           bindTodayTabAgent();
         </script>
+        <details id="debateTabAgent" class="today-fold operations-surface">
+          <summary class="today-fold-summary">
+            <span>Debate agent</span>
+            <span class="muted today-fold-hint">Committee prompts. Auto-promotes on the same risk-adjusted score.</span>
+          </summary>
+          <section class="card operations-surface" aria-label="Debate prompt agent">
+            <div class="inline-form compact">
+              <button id="debateAgentRefreshBtn" type="button" class="btn small secondary">Refresh</button>
+              <button id="debateAgentProposeBtn" type="button" class="btn small secondary">Propose revision</button>
+            </div>
+            <div id="debateTabAgentPanel" aria-live="polite"><p class="muted small">Loading debate prompts…</p></div>
+          </section>
+        </details>
         </div>
       <section id="settledLessonsSection" class="card settled-lessons-card operations-surface" aria-label="Settled lessons" data-state="loading">
         <details id="settledLessonsFold" class="today-fold">

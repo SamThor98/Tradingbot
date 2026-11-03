@@ -2760,6 +2760,16 @@ def get_tab_agent_shadow_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("TAB_AGENT_SHADOW_ENABLED", True, skill_dir)
 
 
+def get_tab_agent_debate_enabled(skill_dir: Path | None = None) -> bool:
+    """Version and govern the debate committee prompts. Default on. Does not place orders."""
+    return _get_bool("TAB_AGENT_DEBATE_ENABLED", True, skill_dir)
+
+
+def get_tab_agent_debate_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Run a shadow committee prompt beside the live one. Off means no extra LLM calls."""
+    return _get_bool("TAB_AGENT_DEBATE_SHADOW_ENABLED", True, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)

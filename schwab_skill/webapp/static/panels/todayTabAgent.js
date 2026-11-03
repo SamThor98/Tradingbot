@@ -11,12 +11,10 @@ function num(value, digits = 3) {
   return Number.isFinite(n) ? n.toFixed(digits) : "—";
 }
 
-function render(data, changes) {
-  const panel = document.getElementById("todayTabAgentPanel");
+function renderInto(panelId, data, changes, onText) {
+  const panel = document.getElementById(panelId);
   if (!panel) return;
-  const on = data.enabled
-    ? "On: shadow candidates run beside live and auto-promote only when they beat the risk-adjusted score without a worse drawdown."
-    : "Off: built-in MiroFish and Grok prompts stay in force (TAB_AGENT_TODAY_ENABLED=false).";
+  const on = onText;
   const versions = (data.score && data.score.versions) || [];
   const rows = versions
     .map((row) => `<tr>
@@ -75,33 +73,51 @@ function render(data, changes) {
     ${prompts}`;
 }
 
-async function refresh() {
-  const panel = document.getElementById("todayTabAgentPanel");
+async function refresh(tab, panelId, onText) {
+  const panel = document.getElementById(panelId);
   if (!panel) return;
   const [out, changes] = await Promise.all([
-    api.get("/api/tab-agent/today"),
+    api.get(`/api/tab-agent/${tab}`),
     api.get("/api/tab-agent/changes"),
   ]);
   if (!out.ok) {
-    panel.innerHTML = `<p class="error">${escapeHtml(out.error || "Could not load the Today agent.")}</p>`;
+    panel.innerHTML = `<p class="error">${escapeHtml(out.error || "Could not load the agent.")}</p>`;
     return;
   }
-  render(out.data || {}, (changes.data && changes.data.changes) || []);
+  const rows = ((changes.data && changes.data.changes) || []).filter((row) => row.tab_id === tab);
+  renderInto(panelId, out.data || {}, rows, onText);
+}
+
+function bind(tab, refreshId, proposeId, panelId, onText) {
+  document.getElementById(refreshId)?.addEventListener("click", () => void refresh(tab, panelId, onText));
+  document.getElementById(proposeId)?.addEventListener("click", async () => {
+    await api.post(`/api/tab-agent/${tab}/propose`, {});
+    await refresh(tab, panelId, onText);
+  });
+  document.getElementById(panelId)?.addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-agent-action]");
+    if (!btn) return;
+    await api.post(`/api/tab-agent/${tab}/${btn.getAttribute("data-agent-action")}`, {
+      version_id: btn.getAttribute("data-version-id"),
+    });
+    await refresh(tab, panelId, onText);
+  });
+  void refresh(tab, panelId, onText);
 }
 
 export function bindTodayTabAgent() {
-  document.getElementById("todayAgentRefreshBtn")?.addEventListener("click", () => void refresh());
-  document.getElementById("todayAgentProposeBtn")?.addEventListener("click", async () => {
-    await api.post("/api/tab-agent/today/propose", {});
-    await refresh();
-  });
-  document.getElementById("todayTabAgentPanel")?.addEventListener("click", async (event) => {
-    const btn = event.target.closest("[data-agent-action]");
-    if (!btn) return;
-    await api.post(`/api/tab-agent/today/${btn.getAttribute("data-agent-action")}`, {
-      version_id: btn.getAttribute("data-version-id"),
-    });
-    await refresh();
-  });
-  void refresh();
+  bind(
+    "today",
+    "todayAgentRefreshBtn",
+    "todayAgentProposeBtn",
+    "todayTabAgentPanel",
+    "Shadow candidates auto-promote only when they beat the risk-adjusted score without a worse drawdown.",
+  );
+  bind(
+    "debate",
+    "debateAgentRefreshBtn",
+    "debateAgentProposeBtn",
+    "debateTabAgentPanel",
+    "Committee shadow prompts auto-promote on the same objective. They do not change qual_raw, signal_score, or orders.",
+  );
 }
