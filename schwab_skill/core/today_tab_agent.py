@@ -108,7 +108,13 @@ class TodayTabAgent(TabAgent):
         catalog.update(_grok_catalog())
         return catalog
 
-    def score(self, skill_dir: Path, *, registry: PromptRegistry | None = None) -> dict[str, Any]:
+    def score(
+        self,
+        skill_dir: Path,
+        *,
+        registry: PromptRegistry | None = None,
+        since_ts: str | None = None,
+    ) -> dict[str, Any]:
         from core.decision_packet import load_packets
 
         reg = registry or self.registry(skill_dir)
@@ -117,6 +123,7 @@ class TodayTabAgent(TabAgent):
             packets=load_packets(skill_dir),
             attributions=load_attributions(skill_dir, tab_id=self.tab_id),
             skill_dir=skill_dir,
+            since_ts=since_ts,
         )
         report["tab_id"] = self.tab_id
         return report
@@ -144,8 +151,8 @@ class TodayTabAgent(TabAgent):
             if live is None:
                 skipped.append({"prompt_key": key, "reason": "no_live_prompt"})
                 continue
-            if any(row.get("status") == STATUS_PENDING for row in reg.versions(self.tab_id, key)):
-                skipped.append({"prompt_key": key, "reason": "pending_exists"})
+            if any(row.get("status") in {STATUS_PENDING, "shadow"} for row in reg.versions(self.tab_id, key)):
+                skipped.append({"prompt_key": key, "reason": "candidate_exists"})
                 continue
             stat = next((row for row in score.get("versions") or [] if row.get("version_id") == live.get("id")), {})
             user = (
@@ -174,7 +181,7 @@ class TodayTabAgent(TabAgent):
                     text=parsed["text"],
                     parent=str(live.get("id") or "") or None,
                     rationale=parsed["rationale"],
-                    status=STATUS_PENDING,
+                    status="shadow",
                 )
             )
         return {"tab_id": self.tab_id, "created": created, "skipped": skipped, "auto_promote": False, "score": score}

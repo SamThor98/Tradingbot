@@ -11,12 +11,12 @@ function num(value, digits = 3) {
   return Number.isFinite(n) ? n.toFixed(digits) : "—";
 }
 
-function render(data) {
+function render(data, changes) {
   const panel = document.getElementById("todayTabAgentPanel");
   if (!panel) return;
   const on = data.enabled
-    ? "On: scans and Grok use the live registry text."
-    : "Off: built-in MiroFish and Grok prompts stay in force until TAB_AGENT_TODAY_ENABLED=true.";
+    ? "On: shadow candidates run beside live and auto-promote only when they beat the risk-adjusted score without a worse drawdown."
+    : "Off: built-in MiroFish and Grok prompts stay in force (TAB_AGENT_TODAY_ENABLED=false).";
   const versions = (data.score && data.score.versions) || [];
   const rows = versions
     .map((row) => `<tr>
@@ -58,7 +58,15 @@ function render(data) {
       return `<h4>${escapeHtml(group.prompt_key)}</h4>${bits}`;
     })
     .join("");
-  panel.innerHTML = `<p class="muted small">${escapeHtml(on)} ${escapeHtml((data.score && data.score.winner_rule) || "")} Auto-promote is off.</p>
+  const feed = (changes || [])
+    .slice()
+    .reverse()
+    .slice(0, 8)
+    .map((row) => `<pre class="small">${escapeHtml(row.summary || "")}</pre>`)
+    .join("");
+  panel.innerHTML = `<p class="muted small">${escapeHtml(on)} ${escapeHtml((data.score && data.score.winner_rule) || "")} Manual approve and rollback stay available.</p>
+    <h4>Change reports</h4>
+    ${feed || "<p class='muted small'>No promotions or rollbacks yet.</p>"}
     <div class="table-wrap"><table>
       <thead><tr><th>Version</th><th>Prompt</th><th>n</th><th>Sample</th><th>Sortino/Sharpe</th><th>Max DD</th><th>DD days</th><th>Win rate</th><th>Avg return</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -70,12 +78,15 @@ function render(data) {
 async function refresh() {
   const panel = document.getElementById("todayTabAgentPanel");
   if (!panel) return;
-  const out = await api.get("/api/tab-agent/today");
+  const [out, changes] = await Promise.all([
+    api.get("/api/tab-agent/today"),
+    api.get("/api/tab-agent/changes"),
+  ]);
   if (!out.ok) {
     panel.innerHTML = `<p class="error">${escapeHtml(out.error || "Could not load the Today agent.")}</p>`;
     return;
   }
-  render(out.data || {});
+  render(out.data || {}, (changes.data && changes.data.changes) || []);
 }
 
 export function bindTodayTabAgent() {

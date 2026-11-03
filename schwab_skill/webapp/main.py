@@ -3655,6 +3655,34 @@ def _tab_agent_call(tab_id: str, action: str, version_id: str) -> ApiResponse:
         return _err(f"tab_agent_{action}", e)
 
 
+@app.get("/api/tab-agent/changes", response_model=ApiResponse)
+def tab_agent_changes(limit: int = 20) -> ApiResponse:
+    """Human-readable promotion and rollback reports for Sam."""
+    try:
+        from core.tab_agent_governor import load_change_reports
+
+        rows = load_change_reports(SKILL_DIR, limit=max(1, min(100, int(limit))))
+        return _ok({"changes": rows, "count": len(rows)})
+    except Exception as e:
+        return _err("tab_agent_changes", e)
+
+
+@app.post("/api/tab-agent/{tab_id}/govern", response_model=ApiResponse)
+def tab_agent_govern(
+    tab_id: str,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Run the autonomous promote/rollback pass. Does not place orders."""
+    try:
+        from core.tab_agent import TabAgentError, get_tab_agent
+
+        return _ok(get_tab_agent(tab_id).govern(SKILL_DIR))
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err("tab_agent_govern", e)
+
+
 @app.get("/api/tab-agent/{tab_id}", response_model=ApiResponse)
 def tab_agent_status(tab_id: str) -> ApiResponse:
     """Prompt versions and the shared risk-adjusted score for one tab agent."""

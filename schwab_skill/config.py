@@ -2689,13 +2689,13 @@ def get_tab_agent_drawdown_duration_tolerance_days(skill_dir: Path | None = None
 
 
 def get_tab_agent_today_enabled(skill_dir: Path | None = None) -> bool:
-    """Serve Today prompts from the registry. Off keeps the built-in MiroFish and Grok text."""
-    return _get_bool("TAB_AGENT_TODAY_ENABLED", False, skill_dir)
+    """Serve Today prompts from the registry. Default on. Set false to freeze the built-ins."""
+    return _get_bool("TAB_AGENT_TODAY_ENABLED", True, skill_dir)
 
 
 def get_tab_agent_shadow_enabled(skill_dir: Path | None = None) -> bool:
-    """Run a shadow Today prompt beside live without changing conviction."""
-    return _get_bool("TAB_AGENT_SHADOW_ENABLED", False, skill_dir)
+    """Run shadow candidates beside live. They do not change conviction until promoted."""
+    return _get_bool("TAB_AGENT_SHADOW_ENABLED", True, skill_dir)
 
 
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:

@@ -594,6 +594,15 @@ def run_scheduler() -> None:
             except Exception as e:
                 log.warning("Decision-packet backfill failed: %s", e)
             try:
+                from config import get_tab_agent_today_enabled
+                from core.today_tab_agent import TodayTabAgent
+
+                if get_tab_agent_today_enabled(SKILL_DIR):
+                    governed = TodayTabAgent().govern(SKILL_DIR)
+                    log.info("Today tab agent govern: actions=%s", len(governed.get("actions") or []))
+            except Exception as e:
+                log.warning("Today tab agent govern failed: %s", e)
+            try:
                 from core.research_close import run_research_close
 
                 result = run_research_close(SKILL_DIR)

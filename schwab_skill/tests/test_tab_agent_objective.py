@@ -96,13 +96,11 @@ def test_propose_stays_pending_and_scan_path_stays_builtin(tmp_path: Path, monke
     revised = original + " Prefer smoother equity curves over raw win rate."
     proposed = agent.propose(
         tmp_path,
-        llm=lambda _system, _user: json.dumps(
-            {"text": revised, "rationale": "Sortino first. Sample may be small."}
-        ),
+        llm=lambda _system, _user: json.dumps({"text": revised, "rationale": "Sortino first. Sample may be small."}),
         prompt_key=key,
     )
     assert proposed["auto_promote"] is False
-    assert proposed["created"][0]["status"] == "pending"
+    assert proposed["created"][0]["status"] == "shadow"
     assert agent.registry(tmp_path).live_version("today", key)["text"] == original
     agent.approve(tmp_path, proposed["created"][0]["id"])
     assert agent.registry(tmp_path).live_version("today", key)["text"] == revised
@@ -111,3 +109,95 @@ def test_propose_stays_pending_and_scan_path_stays_builtin(tmp_path: Path, monke
     assert agent.registry(tmp_path).live_version("today", key)["text"] == original
     with pytest.raises(TabAgentError):
         agent.reject(tmp_path, agent.registry(tmp_path).live_version("today", key)["id"])
+
+
+def _book(version_id: str, status: str, primary: float, drawdown: float, parent: str | None = None) -> dict:
+    return {
+        "version_id": version_id,
+        "prompt_key": "institutional_trend",
+        "status": status,
+        "parent": parent,
+        "n": 40,
+        "sufficient": True,
+        "primary_metric": "sortino",
+        "primary_score": primary,
+        "primary_unbounded": False,
+        "max_drawdown": drawdown,
+        "max_drawdown_duration_days": 3,
+        "win_rate": 0.5,
+        "avg_realized_return_pct": 0.4,
+    }
+
+
+def test_govern_promotes_shadow_and_writes_a_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_TODAY_ENABLED", "true")
+    agent = TodayTabAgent()
+    key = "institutional_trend"
+    live = agent.registry(tmp_path).live_version("today", key)
+    created = agent.propose(
+        tmp_path,
+        llm=lambda _s, _u: json.dumps(
+            {"text": live["text"] + " Shadow candidate for a smoother curve.", "rationale": "Cut the crash days."}
+        ),
+        prompt_key=key,
+    )
+    shadow_id = created["created"][0]["id"]
+    live_stats = _book(live["id"], "live", 0.2, -0.04)
+    shadow_stats = _book(shadow_id, "shadow", 0.9, -0.04, parent=live["id"])
+
+    def fake_score(_skill_dir, registry=None, since_ts=None):
+        return {
+            "versions": [live_stats, shadow_stats],
+            "comparisons": [
+                {
+                    "version_id": shadow_id,
+                    "prompt_key": key,
+                    "edge_vs_live": "better_than_live",
+                    "auto_promote": False,
+                }
+            ],
+            "winner_rule": "risk adjusted",
+        }
+
+    agent.score = fake_score  # type: ignore[method-assign]
+    result = agent.govern(tmp_path)
+    assert result["actions"][0]["action"] == "auto_promote"
+    assert agent.registry(tmp_path).live_version("today", key)["id"] == shadow_id
+    text = (tmp_path / ".tab_agent_changes.jsonl").read_text(encoding="utf-8")
+    assert "AUTO_PROMOTE" in text
+    assert "maxDD=" in text
+    assert "No order" not in text or "No order" in text
+
+
+def test_govern_does_not_promote_on_drawdown_or_small_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_TODAY_ENABLED", "true")
+    agent = TodayTabAgent()
+    key = "grok_research"
+    live = agent.registry(tmp_path).live_version("today", key)
+    created = agent.propose(
+        tmp_path,
+        llm=lambda _s, _u: json.dumps(
+            {"text": live["text"] + " Do not chase win rate.", "rationale": "Win rate is secondary."}
+        ),
+        prompt_key=key,
+    )
+    shadow_id = created["created"][0]["id"]
+
+    def fake_score(_skill_dir, registry=None, since_ts=None):
+        return {
+            "versions": [],
+            "comparisons": [
+                {"version_id": shadow_id, "prompt_key": key, "edge_vs_live": "drawdown_worse", "auto_promote": False},
+                {
+                    "version_id": shadow_id,
+                    "prompt_key": key,
+                    "edge_vs_live": "insufficient_sample",
+                    "auto_promote": False,
+                },
+            ],
+        }
+
+    agent.score = fake_score  # type: ignore[method-assign]
+    result = agent.govern(tmp_path)
+    assert result["actions"] == []
+    assert agent.registry(tmp_path).live_version("today", key)["id"] == live["id"]

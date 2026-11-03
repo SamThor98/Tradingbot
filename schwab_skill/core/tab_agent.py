@@ -148,7 +148,9 @@ class PromptRegistry:
         status: str = STATUS_PENDING,
     ) -> dict[str, Any]:
         if status == STATUS_LIVE:
-            raise TabAgentError("New versions are pending until explicitly approved.")
+            raise TabAgentError(
+                "New versions start in shadow and are promoted only by the objective or a manual override."
+            )
         data = self._read()
         row = {
             "id": uuid.uuid4().hex[:12],
@@ -199,6 +201,32 @@ class PromptRegistry:
                     other["status"] = STATUS_RETIRED
             row["status"] = STATUS_LIVE
 
+        return self._mutate(tab_id, version_id, _apply)
+
+    def promote(
+        self, tab_id: str, version_id: str, *, predecessor_stats: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Make a shadow or pending version live and remember the predecessor book."""
+        target = self.get(tab_id, version_id)
+        if target is None:
+            raise TabAgentError(f"Unknown prompt version: {version_id}")
+        live = self.live_version(tab_id, str(target.get("prompt_key") or ""))
+        predecessor_id = None if live is None or live.get("id") == version_id else live.get("id")
+
+        def _apply(row: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+            for other in rows:
+                if other.get("id") != version_id and other.get("status") == STATUS_LIVE:
+                    other["status"] = STATUS_RETIRED
+            row["status"] = STATUS_LIVE
+            if predecessor_id:
+                row["predecessor_id"] = predecessor_id
+                row["promoted_at"] = utc_now_iso()
+                row["predecessor_stats"] = dict(predecessor_stats or {})
+
+        if target.get("status") == STATUS_LIVE:
+            return target
+        if target.get("status") not in (STATUS_PENDING, STATUS_SHADOW):
+            raise TabAgentError(f"Version {version_id} is {target.get('status')} and cannot be promoted.")
         return self._mutate(tab_id, version_id, _apply)
 
     def reject(self, tab_id: str, version_id: str) -> dict[str, Any]:
@@ -329,6 +357,7 @@ def score_prompt_versions(
     packets: list[dict[str, Any]],
     attributions: list[dict[str, Any]] | None = None,
     skill_dir: Path | None = None,
+    since_ts: str | None = None,
 ) -> dict[str, Any]:
     """Score each version on the shared risk-adjusted objective."""
     config = load_objective(skill_dir)
@@ -356,6 +385,8 @@ def score_prompt_versions(
         for use in by_version.get(vid, []):
             ticker = str(use.get("ticker") or "").upper()
             day = str(use.get("day") or "")
+            if since_ts and str(use.get("created_at") or "") < since_ts:
+                continue
             if not ticker or not day or (ticker, day) in seen:
                 continue
             seen.add((ticker, day))
@@ -418,7 +449,13 @@ class TabAgent(ABC):
         """Built-in prompt text keyed by prompt id."""
 
     @abstractmethod
-    def score(self, skill_dir: Path, *, registry: PromptRegistry | None = None) -> dict[str, Any]:
+    def score(
+        self,
+        skill_dir: Path,
+        *,
+        registry: PromptRegistry | None = None,
+        since_ts: str | None = None,
+    ) -> dict[str, Any]:
         """Grade versions. Must not promote anything."""
 
     @abstractmethod
@@ -440,7 +477,34 @@ class TabAgent(ABC):
         return reg
 
     def approve(self, skill_dir: Path, version_id: str) -> dict[str, Any]:
-        return self.registry(skill_dir).approve(self.tab_id, version_id)
+        """Manual override. Promotes even when the sample gate has not passed."""
+        from core.tab_agent_governor import write_change_report
+
+        reg = self.registry(skill_dir)
+        target = reg.get(self.tab_id, version_id)
+        if target is None:
+            raise TabAgentError(f"Unknown prompt version: {version_id}")
+        row = reg.promote(self.tab_id, version_id, predecessor_stats={})
+        write_change_report(
+            skill_dir,
+            {
+                "tab_id": self.tab_id,
+                "action": "manual_approve",
+                "prompt_key": target.get("prompt_key"),
+                "version_id": version_id,
+                "why": "Operator override. The sample gate was not required.",
+                "before": {},
+                "after": {},
+                "what_changed": str(target.get("rationale") or "Analysis prompt replaced by hand."),
+                "sample_size": None,
+            },
+        )
+        return row
+
+    def govern(self, skill_dir: Path) -> dict[str, Any]:
+        from core.tab_agent_governor import govern_agent
+
+        return govern_agent(self, skill_dir)
 
     def reject(self, skill_dir: Path, version_id: str) -> dict[str, Any]:
         return self.registry(skill_dir).reject(self.tab_id, version_id)

@@ -60,6 +60,9 @@ guardrail_trades.json
 execution_safety_metrics.json
 cockpit_observability_metrics.json
 decision_packets.json
+.tab_agent_registry.json
+.tab_agent_attributions.jsonl
+.tab_agent_changes.jsonl
 strategy_state.json
 strategy_chat_log.jsonl
 
