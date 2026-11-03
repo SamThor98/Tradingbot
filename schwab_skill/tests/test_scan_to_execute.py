@@ -112,6 +112,8 @@ def client(test_db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> TestClient
     # signals=AAPL/MSFT" stale state on their dashboard). Bind SessionLocal to
     # the test's in-memory engine so worker threads stay isolated too.
     monkeypatch.setattr(webapp_main, "SessionLocal", test_db)
+    # Scan completion records decision packets and may fetch daily history.
+    monkeypatch.setattr(webapp_main, "_record_scan_outcomes", lambda *_args, **_kwargs: None)
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

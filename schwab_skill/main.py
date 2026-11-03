@@ -387,7 +387,7 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
     try:
         from core.outcome_backfill import run_local_backfill
 
-        backfill = run_local_backfill(skill_dir, horizon_days=10)
+        backfill = run_local_backfill(skill_dir)
         log.info(
             "FP report backfill: resolved=%s/%s", backfill.get("resolved"), backfill.get("total")
         )
@@ -582,6 +582,18 @@ def run_scheduler() -> None:
         if now.hour == 16 and now.minute == 0 and key != _last_self_study_minute:
             _last_self_study_minute = key
             try:
+                from core.outcome_backfill import run_local_backfill
+
+                bf = run_local_backfill(SKILL_DIR)
+                log.info(
+                    "Decision-packet backfill: resolved=%s/%s skipped=%s",
+                    bf.get("resolved"),
+                    bf.get("total"),
+                    bf.get("skipped"),
+                )
+            except Exception as e:
+                log.warning("Decision-packet backfill failed: %s", e)
+            try:
                 from core.research_close import run_research_close
 
                 result = run_research_close(SKILL_DIR)
@@ -638,8 +650,13 @@ def run_scheduler() -> None:
             try:
                 from core.outcome_backfill import run_local_backfill
 
-                bf = run_local_backfill(SKILL_DIR, horizon_days=10)
-                log.info("Decision-packet backfill: resolved=%s/%s", bf.get("resolved"), bf.get("total"))
+                bf = run_local_backfill(SKILL_DIR)
+                log.info(
+                    "Decision-packet backfill: resolved=%s/%s skipped=%s",
+                    bf.get("resolved"),
+                    bf.get("total"),
+                    bf.get("skipped"),
+                )
             except Exception as e:
                 log.warning("Decision-packet backfill failed: %s", e)
             try:
