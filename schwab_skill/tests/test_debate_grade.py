@@ -281,6 +281,7 @@ def test_committee_writes_debate_score_without_changing_qual_raw(monkeypatch) ->
 
     monkeypatch.setattr("config.get_debate_committee_mode", lambda skill_dir=None: "shadow")
     monkeypatch.setattr("config.get_debate_committee_max_per_scan", lambda skill_dir=None: 1)
+    monkeypatch.setattr("config.get_tab_agent_debate_enabled", lambda skill_dir=None: False)
     monkeypatch.setattr("config.get_debate_grade_mode", lambda skill_dir=None: "shadow")
 
     def _payload(scores: dict[str, float | None]) -> str:

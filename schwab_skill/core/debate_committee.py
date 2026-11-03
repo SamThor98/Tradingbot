@@ -29,8 +29,14 @@ _SYSTEM = (
     "Reply with JSON only: "
     '{"seats":[{"name":"trend","score":0,"claim":"..."}],"chair":"..."}. '
     "Seat names are trend, setup, risk, skeptic, business. Scores are 0-100. "
-    "If qual_business is null, the business seat score must be null."
+    "If qual_business is null, the business seat score must be null. "
+    "Long-only equities: never recommend a short, an inverse ETF, or an option. "
+    "A low score means no trade and stay in cash. "
+    "Do not penalize market cap. Weight a clean chart, fundamentals, sector strength, "
+    "and a tight stop above any earnings or news catalyst."
 )
+_ROUND1 = "First round. Score each seat from the checklist numbers."
+_ROUND2 = "Second round. Move each score by at most 15 points from round1."
 
 CompleteFn = Callable[[str], str]
 
@@ -107,7 +113,39 @@ def _force_business_abstain(parsed: dict[str, Any], grade: dict[str, Any]) -> No
             seats["business"]["claim"] = "Abstained."
 
 
-def _prompt(signal: dict[str, Any], grade: dict[str, Any], prior: dict[str, Any] | None) -> str:
+def prompt_catalog() -> dict[str, str]:
+    """Built-in analysis prompts. The tab agent versions these and nothing else."""
+    return {"system": _SYSTEM, "round1": _ROUND1, "round2": _ROUND2}
+
+
+def _headers(skill_dir: Path | None) -> tuple[str, str, str]:
+    """Live system and round headers. Built-ins unless the debate agent is enabled."""
+    if skill_dir is None:
+        return _SYSTEM, _ROUND1, _ROUND2
+    try:
+        from config import get_tab_agent_debate_enabled
+
+        if not get_tab_agent_debate_enabled(skill_dir):
+            return _SYSTEM, _ROUND1, _ROUND2
+        from core.debate_tab_agent import live_prompt_text
+
+        system = live_prompt_text(skill_dir, "system") or _SYSTEM
+        round1 = live_prompt_text(skill_dir, "round1") or _ROUND1
+        round2 = live_prompt_text(skill_dir, "round2") or _ROUND2
+        return system, round1, round2
+    except Exception as exc:
+        LOG.debug("Debate prompt registry unavailable: %s", exc)
+        return _SYSTEM, _ROUND1, _ROUND2
+
+
+def _prompt(
+    signal: dict[str, Any],
+    grade: dict[str, Any],
+    prior: dict[str, Any] | None,
+    skill_dir: Path | None = None,
+    *,
+    headers: tuple[str, str, str] | None = None,
+) -> str:
     payload = {
         "ticker": signal.get("ticker"),
         "qual_trend": grade.get("qual_trend"),
@@ -120,10 +158,11 @@ def _prompt(signal: dict[str, Any], grade: dict[str, Any], prior: dict[str, Any]
         "stop_pct": signal.get("stop_pct"),
         "checklist": grade.get("seats"),
     }
+    _system, round1, round2 = headers or _headers(skill_dir)
     if prior is None:
-        header = "First round. Score each seat from the checklist numbers."
+        header = round1
     else:
-        header = "Second round. Move each score by at most 15 points from round1."
+        header = round2
         payload["round1"] = {
             "chair": prior.get("chair"),
             "seats": [
@@ -134,12 +173,13 @@ def _prompt(signal: dict[str, Any], grade: dict[str, Any], prior: dict[str, Any]
     return header + "\n" + json.dumps(payload, default=str)
 
 
-def _default_complete(prompt: str) -> str:
+def _default_complete(prompt: str, skill_dir: Path | None = None) -> str:
     from core.llm_endpoint import resolve_llm_endpoint
 
     endpoint = resolve_llm_endpoint()
     if not endpoint.api_key:
         return ""
+    system, _round1, _round2 = _headers(skill_dir)
     try:
         from openai import OpenAI
 
@@ -152,7 +192,7 @@ def _default_complete(prompt: str) -> str:
         resp = client.chat.completions.create(
             model=endpoint.model,
             messages=[
-                {"role": "system", "content": _SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=400,
@@ -181,7 +221,12 @@ def maybe_attach_committee(
 ) -> dict[str, Any]:
     """One JSON round and one revision on a stable sample of shadow scans."""
     from agent_intelligence import compute_vote_disagreement
-    from config import get_debate_committee_max_per_scan, get_debate_committee_mode
+    from config import (
+        get_debate_committee_max_per_scan,
+        get_debate_committee_mode,
+        get_tab_agent_debate_enabled,
+        get_tab_agent_debate_max_names,
+    )
     from core.debate_grade import refresh_display_caps
 
     diag = diagnostics if isinstance(diagnostics, dict) else {}
@@ -197,23 +242,43 @@ def maybe_attach_committee(
     if complete is None and not _endpoint_ready():
         diag["debate_committee_skipped_no_key"] = int(diag.get("debate_committee_skipped_no_key", 0) or 0) + 1
         return signal
-    max_n = get_debate_committee_max_per_scan(skill_dir)
     ran = int(diag.get("debate_committee_ran", 0) or 0)
-    if ran >= max_n:
-        return signal
     ticker = str(signal.get("ticker") or "")
-    if not force and not _in_sample(ticker):
-        return signal
+    try:
+        agent_on = get_tab_agent_debate_enabled(skill_dir)
+    except Exception:
+        agent_on = False
+    if agent_on:
+        from core.tab_agent_objective import clears_quality_bar, load_objective
 
-    caller = complete or _default_complete
+        gate = load_objective(skill_dir)
+        try:
+            qual = float(grade.get("qual_raw"))
+        except (TypeError, ValueError):
+            qual = None
+        if not clears_quality_bar(qual, config=gate):
+            diag["debate_committee_below_quality"] = int(diag.get("debate_committee_below_quality", 0) or 0) + 1
+            return signal
+        cap = get_tab_agent_debate_max_names(skill_dir)
+        if cap > 0 and ran >= cap:
+            return signal
+    else:
+        max_n = get_debate_committee_max_per_scan(skill_dir)
+        if ran >= max_n:
+            return signal
+        if not force and not _in_sample(ticker):
+            return signal
+
+    caller = complete or (lambda text: _default_complete(text, skill_dir))
     raw_before = grade.get("qual_raw")
     score_before = signal.get("signal_score")
-    first = _parse_round(caller(_prompt(signal, grade, None)))
+    live_headers = _headers(skill_dir)
+    first = _parse_round(caller(_prompt(signal, grade, None, skill_dir, headers=live_headers)))
     if first is None:
         diag["debate_committee_parse_failed"] = int(diag.get("debate_committee_parse_failed", 0) or 0) + 1
         return signal
     _force_business_abstain(first, grade)
-    second = _parse_round(caller(_prompt(signal, grade, first)))
+    second = _parse_round(caller(_prompt(signal, grade, first, skill_dir, headers=live_headers)))
     final = _cap_moves(first, second) if second is not None else first
     _force_business_abstain(final, grade)
 
@@ -246,26 +311,116 @@ def maybe_attach_committee(
     if signal.get("signal_score") != score_before:
         signal["signal_score"] = score_before
     diag["debate_committee_ran"] = ran + 1
-    log_committee_sample(signal, grade, skill_dir)
+    shadow_score = _shadow_debate_score(signal, grade, skill_dir, caller)
+    log_committee_sample(signal, grade, skill_dir, shadow_debate_score=shadow_score)
     return signal
+
+
+def _shadow_debate_score(
+    signal: dict[str, Any],
+    grade: dict[str, Any],
+    skill_dir: Path | None,
+    caller: CompleteFn,
+) -> float | None:
+    """Extra shadow rounds. The returned score is for the log only."""
+    if skill_dir is None:
+        return None
+    try:
+        from config import get_tab_agent_debate_enabled, get_tab_agent_debate_shadow_enabled
+
+        if not (get_tab_agent_debate_enabled(skill_dir) and get_tab_agent_debate_shadow_enabled(skill_dir)):
+            return None
+        from core.debate_tab_agent import shadow_headers
+
+        headers = shadow_headers(skill_dir)
+    except Exception as exc:
+        LOG.debug("Debate shadow prompts unavailable: %s", exc)
+        return None
+    if headers is None:
+        return None
+    try:
+        first = _parse_round(caller(_prompt(signal, grade, None, skill_dir, headers=headers)))
+        if first is None:
+            return None
+        _force_business_abstain(first, grade)
+        second = _parse_round(caller(_prompt(signal, grade, first, skill_dir, headers=headers)))
+        final = _cap_moves(first, second) if second is not None else first
+        scored = [seat for seat in final["seats"].values() if seat.get("score") is not None]
+        if len(scored) < 2:
+            return None
+        return round(float(statistics.median(float(seat["score"]) for seat in scored)), 6)
+    except Exception as exc:
+        LOG.debug("Debate shadow round failed: %s", exc)
+        return None
+
+
+def _prompt_version_ids(skill_dir: Path | None) -> dict[str, str]:
+    if skill_dir is None:
+        return {"system": "builtin", "round1": "builtin", "round2": "builtin"}
+    try:
+        from config import get_tab_agent_debate_enabled
+
+        if not get_tab_agent_debate_enabled(skill_dir):
+            return {"system": "builtin", "round1": "builtin", "round2": "builtin"}
+        from core.debate_tab_agent import live_version_ids
+
+        return live_version_ids(skill_dir)
+    except Exception as exc:
+        LOG.debug("Debate prompt version ids unavailable: %s", exc)
+        return {"system": "builtin", "round1": "builtin", "round2": "builtin"}
+
+
+def _packet_id_for(skill_dir: Path | None, ticker: str, day: str) -> str | None:
+    if skill_dir is None or not ticker or not day:
+        return None
+    try:
+        from core.decision_packet import load_packets
+        from core.tab_agent import utc_day
+
+        staged = None
+        other = None
+        for packet in load_packets(skill_dir):
+            if str(packet.get("ticker") or "").upper() != ticker:
+                continue
+            if utc_day(packet.get("created_at")) != day:
+                continue
+            if packet.get("kind") == "staged" and staged is None:
+                staged = packet
+            elif other is None:
+                other = packet
+        chosen = staged or other
+        if not chosen:
+            return None
+        packet_id = str(chosen.get("packet_id") or "").strip()
+        return packet_id or None
+    except Exception as exc:
+        LOG.debug("Debate packet id lookup failed: %s", exc)
+        return None
 
 
 def log_committee_sample(
     signal: dict[str, Any],
     grade: dict[str, Any],
     skill_dir: Path | None,
+    *,
+    shadow_debate_score: float | None = None,
 ) -> None:
     """Append one sampled score. Scans write this. The backtest does not."""
     if skill_dir is None or grade.get("debate_score") is None:
         return
     path = Path(skill_dir) / COMMITTEE_LOG_FILE
+    as_of = datetime.now(timezone.utc).date().isoformat()
+    ticker = str(signal.get("ticker") or "").upper()
     row = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "as_of": datetime.now(timezone.utc).date().isoformat(),
-        "ticker": str(signal.get("ticker") or "").upper(),
+        "as_of": as_of,
+        "ticker": ticker,
         "debate_score": grade.get("debate_score"),
         "qual_disagreement": grade.get("qual_disagreement"),
         "disagreement_source": "votes",
+        "prompt_versions": _prompt_version_ids(skill_dir),
+        "packet_id": _packet_id_for(skill_dir, ticker, as_of),
+        "shadow_debate_score": shadow_debate_score,
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,6 +428,28 @@ def log_committee_sample(
             handle.write(json.dumps(row, default=str) + "\n")
     except Exception as exc:
         LOG.warning("Debate committee log write failed for %s: %s", row.get("ticker"), exc)
+
+
+def load_debate_log(skill_dir: Path | str | None) -> list[dict[str, Any]]:
+    if skill_dir is None:
+        return []
+    path = Path(skill_dir) / COMMITTEE_LOG_FILE
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception as exc:
+        LOG.warning("Debate committee log read failed: %s", exc)
+        return []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
 
 
 def lookup_committee_sample(
