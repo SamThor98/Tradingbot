@@ -1609,6 +1609,20 @@ def _prune_local_scan_results(
         db.rollback()
 
 
+def _record_scan_outcomes(signals: list[dict[str, Any]] | None, diagnostics: Any) -> None:
+    """Snapshot kept signals and label matured packets. Never fails the scan."""
+    try:
+        from core.outcome_backfill import run_scan_outcome_pass
+
+        run_scan_outcome_pass(
+            SKILL_DIR,
+            signals,
+            diagnostics=diagnostics if isinstance(diagnostics, dict) else None,
+        )
+    except Exception as exc:
+        LOG.warning("Scan outcome pass failed: %s", exc)
+
+
 def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None:
     try:
         _sse_publish("scan_started", {"job_id": job_id})
@@ -1690,6 +1704,7 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                     "strategy_summary": strategy_summary,
                 },
             )
+            _record_scan_outcomes(signals, diagnostics)
     except Exception as e:
         with _scan_lock:
             if _scan_job.get("job_id") == job_id:
@@ -2521,6 +2536,7 @@ def scan(
         }
         _save_last_scan(db, last_scan)
         _harvest_experiment_scan(diagnostics, signals, now_iso)
+        _record_scan_outcomes(signals, diagnostics)
         return _ok(
             {
                 "signals_found": len(signals),
@@ -3618,11 +3634,11 @@ def cockpit_review() -> ApiResponse:
 def cockpit_review_backfill(
     _auth: dict[str, str] = Depends(require_api_key_if_set),
 ) -> ApiResponse:
-    """Resolve matured decision packets with realized 10-day returns."""
+    """Label matured packets: 20-day scale-out primary, 10-day early, 40-day position."""
     try:
         from core import outcome_backfill
 
-        return _ok(outcome_backfill.run_local_backfill(SKILL_DIR, horizon_days=10))
+        return _ok(outcome_backfill.run_local_backfill(SKILL_DIR, force=True))
     except Exception as e:
         return _err("cockpit_review_backfill", e)
 

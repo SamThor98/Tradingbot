@@ -19,13 +19,20 @@ OutcomeLabel = Literal["win", "loss", "scratch", "pending", "unknown"]
 
 
 class PacketOutcome(BaseModel):
-    """Backfilled when the trade resolves."""
+    """Backfilled when the trade resolves.
+
+    ``realized_return_pct`` is the primary horizon. ``by_horizon`` also keeps
+    the early close-to-close mark and the longer scale-out mark. Labeling
+    never submits an order.
+    """
 
     label: OutcomeLabel = "pending"
     realized_return_pct: float | None = None
     horizon_days: int | None = None
     realized_slippage_bps: float | None = None
     resolved_at: datetime | None = None
+    exit_model: str | None = None
+    by_horizon: dict[str, Any] | None = None
 
 
 class DecisionPacket(BaseModel):

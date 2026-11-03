@@ -5113,6 +5113,16 @@ def run_scan_and_notify(skill_dir: Path | None = None, send_summary: bool = True
         )
     except Exception:
         LOG.warning("Experiment harvest after scan failed", exc_info=True)
+    try:
+        from core.outcome_backfill import run_scan_outcome_pass
+
+        run_scan_outcome_pass(
+            skill_dir,
+            signals,
+            diagnostics=diagnostics if isinstance(diagnostics, dict) else None,
+        )
+    except Exception as exc:
+        LOG.warning("Decision-packet outcome pass failed: %s", exc)
     return len(signals)
 
 
