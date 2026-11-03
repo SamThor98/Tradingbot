@@ -580,7 +580,11 @@ def get_tab_agent(tab_id: str) -> TabAgent:
         from core.backtest_tab_agent import BacktestTabAgent
 
         return BacktestTabAgent()
+    if key == "system":
+        from core.system_tab_agent import SystemTabAgent
+
+        return SystemTabAgent()
     raise TabAgentError(
-        f"Unknown tab agent {tab_id!r}. Registered tabs: today, debate, research, backtest. "
+        f"Unknown tab agent {tab_id!r}. Registered tabs: today, debate, research, backtest, system. "
         "Other tabs plug in by subclassing TabAgent and adding a branch in get_tab_agent."
     )
