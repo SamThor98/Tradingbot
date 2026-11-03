@@ -82,6 +82,8 @@ EXPECTED_ALIASES = {
     "operator-desk": "operatorAgentsSection",
     "grok": "grokReviewSection",
     "grok-review": "grokReviewSection",
+    "todayagent": "todayTabAgent",
+    "today-agent": "todayTabAgent",
     "peadcanary": "peadCanarySection",
     "canary": "peadCanarySection",
     "pead-canary": "peadCanarySection",

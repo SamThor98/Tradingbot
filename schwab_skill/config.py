@@ -2662,6 +2662,42 @@ def get_decision_packet_scan_recording_enabled(skill_dir: Path | None = None) ->
     return _get_bool("DECISION_PACKET_SCAN_RECORDING_ENABLED", True, skill_dir)
 
 
+def get_tab_agent_objective_metric(skill_dir: Path | None = None) -> str:
+    """Primary score for every tab agent: sortino (default) or sharpe."""
+    raw = _env_value("TAB_AGENT_OBJECTIVE", _load_env(skill_dir)).strip().lower()
+    if raw in ("sortino", "sharpe"):
+        return raw
+    return "sortino"
+
+
+def get_tab_agent_min_samples(skill_dir: Path | None = None) -> int:
+    """Minimum labeled 10-day outcomes before a prompt comparison is readable."""
+    val = _get_int("TAB_AGENT_MIN_SAMPLES", 30, skill_dir)
+    return max(5, min(5000, val))
+
+
+def get_tab_agent_drawdown_tolerance(skill_dir: Path | None = None) -> float:
+    """Absolute equity-fraction a candidate may worsen max drawdown and still be preferred."""
+    val = _get_float("TAB_AGENT_DRAWDOWN_TOLERANCE", 0.02, skill_dir)
+    return max(0.0, min(0.5, val))
+
+
+def get_tab_agent_drawdown_duration_tolerance_days(skill_dir: Path | None = None) -> int:
+    """Extra underwater days allowed before a longer drawdown blocks a preference."""
+    val = _get_int("TAB_AGENT_DRAWDOWN_DURATION_TOLERANCE_DAYS", 10, skill_dir)
+    return max(0, min(252, val))
+
+
+def get_tab_agent_today_enabled(skill_dir: Path | None = None) -> bool:
+    """Serve Today prompts from the registry. Off keeps the built-in MiroFish and Grok text."""
+    return _get_bool("TAB_AGENT_TODAY_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Run a shadow Today prompt beside live without changing conviction."""
+    return _get_bool("TAB_AGENT_SHADOW_ENABLED", False, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)

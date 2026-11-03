@@ -504,6 +504,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "scanStudioPanel",
     "operatorAgentsSection",
     "grokReviewSection",
+    "todayTabAgent",
     "workflowPrimary",
     "scanSection",
     "scanDetailPanel",
