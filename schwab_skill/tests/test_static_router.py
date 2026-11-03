@@ -86,6 +86,8 @@ EXPECTED_ALIASES = {
     "today-agent": "todayTabAgent",
     "debateagent": "debateTabAgent",
     "debate-agent": "debateTabAgent",
+    "tabagents": "tabAgentsSection",
+    "tab-agents": "tabAgentsSection",
     "peadcanary": "peadCanarySection",
     "canary": "peadCanarySection",
     "pead-canary": "peadCanarySection",
