@@ -100,4 +100,6 @@ def test_short_sp1500_label_shows_the_loaded_count() -> None:
         "result_summary": {"membership_input_universe": 100},
     }
     attach_run_labels(item)
-    assert item["display_label"].endswith("· 100 names")
+    label = item["display_label"]
+    assert isinstance(label, str)
+    assert label.endswith("· 100 names")

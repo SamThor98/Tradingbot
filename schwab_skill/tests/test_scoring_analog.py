@@ -212,9 +212,16 @@ def test_load_analog_artifact_rejects_empty_rows(tmp_path: Path) -> None:
 
 
 def test_fit_bounds_are_p1_p99() -> None:
-    raws = [{"close_vs_sma200_pct": float(i) / 100.0} for i in range(100)]
+    raws: list[dict[str, float | None]] = [{"close_vs_sma200_pct": float(i) / 100.0} for i in range(100)]
     for row in raws:
-        row.update({"pct_from_52w_high": None, "volume_points": None, "pts_mirofish": None, "p_up_calibrated": None})
+        row.update(
+            {
+                "pct_from_52w_high": None,
+                "volume_points": None,
+                "pts_mirofish": None,
+                "p_up_calibrated": None,
+            }
+        )
     bounds = fit_feature_bounds(raws)
     assert bounds["close_vs_sma200_pct"]["lo"] == pytest.approx(0.01, abs=0.02)
     assert bounds["close_vs_sma200_pct"]["hi"] == pytest.approx(0.98, abs=0.02)

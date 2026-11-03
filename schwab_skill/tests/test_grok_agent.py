@@ -270,8 +270,8 @@ def test_usage_list_price_is_grok_47_only() -> None:
 
 class _Sink:
     def __init__(self) -> None:
-        self.cursor = []
-        self.github = []
+        self.cursor: list[object] = []
+        self.github: list[object] = []
 
     def submit_cursor(self, task):
         self.cursor.append(task)

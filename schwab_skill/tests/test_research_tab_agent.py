@@ -24,7 +24,7 @@ def _decision(**kwargs: object) -> dict:
         stop_pct=0.07,
     )
     base.update(kwargs)
-    return resolve_quick_check_decision(**base)  # type: ignore[arg-type]
+    return resolve_quick_check_decision(**base)
 
 
 def test_builtin_rules_match_the_old_verdict_and_record_a_packet(tmp_path: Path) -> None:

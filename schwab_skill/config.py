@@ -153,6 +153,21 @@ def _get_mode(
 PLUGIN_MODE_VALUES = {"off", "shadow", "live"}
 
 
+def get_self_study_mode(skill_dir: Path | None = None) -> str:
+    """Self-study rollout. ``SELF_STUDY_MODE`` wins over legacy ``SELF_STUDY_ENABLED``.
+
+    Missing config is off. ``SELF_STUDY_ENABLED=true`` with no mode means live.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("SELF_STUDY_MODE", env).strip().lower()
+    if raw in PLUGIN_MODE_VALUES:
+        return raw
+    legacy = _env_value("SELF_STUDY_ENABLED", env).strip().lower()
+    if legacy in {"1", "true", "yes", "on"}:
+        return "live"
+    return "off"
+
+
 def get_pred_market_enabled(skill_dir: Path | None = None) -> bool:
     """Enable prediction-market metadata enrichment."""
     return _get_bool("PRED_MARKET_ENABLED", False, skill_dir)

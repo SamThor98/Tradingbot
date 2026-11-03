@@ -134,7 +134,7 @@ def test_prepare_entry_refuses_a_buy_without_a_price(tmp_path: Path, monkeypatch
         order_type="MARKET",
         limit_price=None,
         price_hint=None,
-        auth=None,  # type: ignore[arg-type]
+        auth=None,
         skill_dir=tmp_path,
     )
     assert isinstance(prepared, str)
@@ -162,7 +162,7 @@ def test_prepare_entry_wraps_a_limit_buy(tmp_path: Path, monkeypatch: pytest.Mon
         order_type="LIMIT",
         limit_price=50.0,
         price_hint=None,
-        auth=None,  # type: ignore[arg-type]
+        auth=None,
         skill_dir=tmp_path,
     )
     assert isinstance(prepared, tuple)
@@ -217,7 +217,7 @@ def test_stop_replace_does_not_cancel(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     result = _install_protective_stop(
         orders_url="https://api.example/orders",
-        auth=None,  # type: ignore[arg-type]
+        auth=None,
         skill_dir=tmp_path,
         ticker="AAPL",
         pos={"stop_order_id": "OLDSTOP", "stop_attached": True},
@@ -237,7 +237,7 @@ def test_ambiguous_stop_id_does_not_send_a_second_stop(tmp_path: Path, monkeypat
     monkeypatch.setattr("execution._submit_broker_order", lambda **kwargs: called.append(kwargs["method"]))
     result = _install_protective_stop(
         orders_url="https://api.example/orders",
-        auth=None,  # type: ignore[arg-type]
+        auth=None,
         skill_dir=tmp_path,
         ticker="AAPL",
         pos={"stop_order_id": AMBIGUOUS_ORDER_ID},

@@ -69,7 +69,7 @@ def test_shadow_beats_live_only_on_its_own_oos_runs(tmp_path, monkeypatch: pytes
     )
     shadow_id = created["created"][0]["id"]
     reg = agent.registry(tmp_path)
-    reg._mutate(  # type: ignore[attr-defined]
+    reg._mutate(
         "backtest",
         shadow_id,
         lambda row, _rows: row.__setitem__("created_at", "2026-06-01T00:00:00+00:00"),

@@ -344,8 +344,10 @@ def backfill_s1_from_scan_artifact(
     require_dq_ok: bool = True,
 ) -> dict[str, int]:
     """Replay one saved PEAD scan into the paper S1 ledger."""
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    diag = payload.get("diagnostics_pead") if isinstance(payload.get("diagnostics_pead"), dict) else {}
+    raw_summary = payload.get("summary")
+    summary = raw_summary if isinstance(raw_summary, dict) else {}
+    raw_diag = payload.get("diagnostics_pead")
+    diag = raw_diag if isinstance(raw_diag, dict) else {}
     dq = str(diag.get("data_quality") or summary.get("data_quality") or "").strip().lower()
     if require_dq_ok and dq != "ok":
         return {"appended": 0, "skipped": 0, "errors": 0}

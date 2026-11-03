@@ -86,7 +86,7 @@ def test_exit_manager_shadow_counts_without_replacing_exit(monkeypatch) -> None:
 
     monkeypatch.setattr("config.get_exit_manager_mode", lambda *_a, **_k: "shadow")
     monkeypatch.setattr("backtest_intelligence.simulate_exit_with_manager", _sim)
-    diag = {}
+    diag: dict[str, int] = {}
     out_idx, reason = backtest._plan_exit_manager_for_entry(df, 0, 1, 0.05, Path("."), diag)
     assert out_idx is None and reason is None
     assert diag["exit_manager_simulated"] == 1
