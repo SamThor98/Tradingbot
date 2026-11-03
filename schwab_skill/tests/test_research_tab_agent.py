@@ -107,6 +107,19 @@ def test_enabled_prompt_can_raise_the_strong_setup_bar(tmp_path: Path, monkeypat
     assert decision["prompt_version"] == shadow_id
 
 
+def test_research_agent_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import get_tab_agent_research_enabled
+    from tests.conftest import isolate_repo_dotenv
+
+    monkeypatch.setenv("TAB_AGENT_RESEARCH_ENABLED", "true")
+    monkeypatch.setattr(
+        "config._load_env",
+        lambda skill_dir=None: {"TAB_AGENT_RESEARCH_ENABLED": "true"},
+    )
+    isolate_repo_dotenv(monkeypatch, "TAB_AGENT_RESEARCH_ENABLED", "TAB_AGENT_RESEARCH_SHADOW_ENABLED")
+    assert get_tab_agent_research_enabled() is False
+
+
 def test_agent_off_keeps_the_builtin_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAB_AGENT_RESEARCH_ENABLED", "false")
     decision = resolve_quick_check_decision(

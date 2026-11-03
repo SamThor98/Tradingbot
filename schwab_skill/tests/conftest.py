@@ -18,6 +18,20 @@ import pytest
 _PRISTINE_ENVIRON = dict(os.environ)
 
 
+def isolate_repo_dotenv(monkeypatch: pytest.MonkeyPatch, *keys: str) -> None:
+    """Drop process overrides and ignore the repo ``.env`` for these keys.
+
+    ``_env_value`` reads ``os.environ`` first and then the skill ``.env``.
+    A default-off assertion has to clear both, or a local flag leaks in.
+    """
+    for key in keys:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr("config._load_env", lambda skill_dir=None: {})
+    from config import clear_env_cache
+
+    clear_env_cache()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _pristine_process_env() -> Iterator[None]:
     """Undo import-time `.env` promotion so config getters are deterministic."""

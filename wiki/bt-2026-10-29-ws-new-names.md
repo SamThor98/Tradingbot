@@ -1,4 +1,7 @@
 ---
+source: experiments/backtester/debate_2026_10_29.py
+created: 2026-10-29
+updated: 2026-10-29
 title: "Backtest 2026-10-29: new weekly_swing names HRB, FIZZ, DFIN"
 date: 2026-10-29
 type: backtest

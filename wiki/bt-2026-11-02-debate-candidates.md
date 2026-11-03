@@ -1,4 +1,7 @@
 ---
+source: experiments/backtester/debate_2026_11_02.py
+created: 2026-11-02
+updated: 2026-11-02
 title: "Backtest 2026-11-02: debate candidates (WS, TB, lookahead-free both; bank cluster)"
 date: 2026-11-02
 type: backtest

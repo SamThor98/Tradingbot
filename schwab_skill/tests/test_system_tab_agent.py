@@ -23,7 +23,14 @@ def _packet(ticker: str, confidence: float, label: str, ret: float, day: str) ->
 
 
 def test_system_agent_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TAB_AGENT_SYSTEM_ENABLED", raising=False)
+    from tests.conftest import isolate_repo_dotenv
+
+    monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
+    monkeypatch.setattr(
+        "config._load_env",
+        lambda skill_dir=None: {"TAB_AGENT_SYSTEM_ENABLED": "true"},
+    )
+    isolate_repo_dotenv(monkeypatch, "TAB_AGENT_SYSTEM_ENABLED")
     assert get_tab_agent_system_enabled() is False
 
 

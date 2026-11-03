@@ -105,6 +105,19 @@ def test_shadow_beats_live_only_on_its_own_oos_runs(tmp_path, monkeypatch: pytes
     assert "diff" in request
 
 
+def test_backtest_agent_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import get_tab_agent_backtest_enabled
+    from tests.conftest import isolate_repo_dotenv
+
+    monkeypatch.setenv("TAB_AGENT_BACKTEST_ENABLED", "true")
+    monkeypatch.setattr(
+        "config._load_env",
+        lambda skill_dir=None: {"TAB_AGENT_BACKTEST_ENABLED": "true"},
+    )
+    isolate_repo_dotenv(monkeypatch, "TAB_AGENT_BACKTEST_ENABLED", "TAB_AGENT_BACKTEST_SHADOW_ENABLED")
+    assert get_tab_agent_backtest_enabled() is False
+
+
 def test_flag_off_keeps_the_builtin_prompt_and_skips_attribution(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAB_AGENT_BACKTEST_ENABLED", "false")
     assert live_prompt_text(tmp_path) is None
