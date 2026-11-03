@@ -2172,6 +2172,21 @@ def get_counterfactual_max_horizon_days(skill_dir: Path | None = None) -> int:
     return max(1, min(252, val))
 
 
+def get_decision_packet_horizon_days(skill_dir: Path | None = None) -> int:
+    """Trading-day horizon used to label decision-packet outcomes.
+
+    Default 10 matches the loop that already labeled the on-disk book.
+    Set ``DECISION_PACKET_HORIZON_DAYS=20`` to grade on the strategy hold.
+    """
+    val = _get_int("DECISION_PACKET_HORIZON_DAYS", 10, skill_dir)
+    return max(1, min(60, val))
+
+
+def get_decision_packet_scan_recording_enabled(skill_dir: Path | None = None) -> bool:
+    """Record one staged packet per kept scan signal (ticker, UTC day)."""
+    return _get_bool("DECISION_PACKET_SCAN_RECORDING_ENABLED", True, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)

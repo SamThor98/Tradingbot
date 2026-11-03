@@ -4048,6 +4048,16 @@ def run_scan_and_notify(skill_dir: Path | None = None, send_summary: bool = True
                     "data_quality_reasons": diagnostics.get("data_quality_reasons") or [],
                 },
             )
+    try:
+        from core.outcome_backfill import run_scan_outcome_pass
+
+        run_scan_outcome_pass(
+            skill_dir,
+            signals,
+            diagnostics=diagnostics if isinstance(diagnostics, dict) else None,
+        )
+    except Exception as exc:
+        LOG.warning("Decision-packet outcome pass failed: %s", exc)
     return len(signals)
 
 

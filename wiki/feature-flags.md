@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Feature Flags.md
 created: 2026-04-13
-updated: 2026-07-17
+updated: 2026-11-03
 tags: [config, features, flags]
 ---
 
@@ -48,6 +48,13 @@ tags: [config, features, flags]
 | `HYPOTHESIS_SELF_STUDY_MERGE` | false | Include in self-study output |
 | `HYPOTHESIS_PROMOTION_GUARD_ENABLED` | false | Gate promotions on hit rate |
 
+## Decision packets
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `DECISION_PACKET_SCAN_RECORDING_ENABLED` | true | Record one staged packet per kept scan signal per UTC day |
+| `DECISION_PACKET_HORIZON_DAYS` | 10 | Trading days until a pending packet is labeled win/loss/scratch |
+
 ## Forensic & PEAD
 
 | Env Var | Default | Description |
@@ -77,6 +84,7 @@ See [[probabilistic-ranking-research-architecture]].
 - [[plugin-modes-config]] — plugin env vars
 - [[guardrails]] — kill switches
 - [[signal-scanner]] — where flags take effect
+- [[decision-packet-outcomes]] — packet recording and outcome horizon
 - [[probabilistic-ranking-research-architecture]] — research platform
 
 ---

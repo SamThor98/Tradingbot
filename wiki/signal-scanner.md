@@ -60,6 +60,7 @@ Every scan returns `(signals, diagnostics)` with counters: `stage2_fail`, `vcp_f
 - [[scan-catalog]] — timeframe / universe picker in front of this pipeline
 - [[horizon-strategies]] — extra sleeves dual-admit at Stage A when selected; horizon-only is non-executable, ranked on `research_score`, and uses completed bars
 - [[feature-store]] — every emitted signal is recorded here
+- [[decision-packet-outcomes]] — kept signals become staged packets and later get a win/loss label
 
 ---
 

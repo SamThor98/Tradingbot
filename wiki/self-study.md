@@ -29,6 +29,7 @@ Runs at 4:00 PM ET via `main.py` scheduler. Manual: `python scripts/run_self_stu
 ## Related Pages
 
 - [[hypothesis-ledger]] — complementary decision quality tracking
+- [[decision-packet-outcomes]] — packet labeling that also runs on the 16:00 ET self-study slot
 - [[advisory-model]] — calibration data
 - [[system-overview]] — learning loop
 

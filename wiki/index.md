@@ -1,7 +1,7 @@
 ---
 source: n/a (wiki catalog)
 created: 2026-04-30
-updated: 2026-08-19
+updated: 2026-11-03
 tags: [wiki, index, catalog]
 ---
 
@@ -59,6 +59,7 @@ tags: [wiki, index, catalog]
 - [[adaptive-stops]] — ATR-based trailing stop sizing
 - [[plugin-modes]] — Execution, exit, event risk, regime, correlation plugins
 - [[hypothesis-ledger]] — Decision quality tracking
+- [[decision-packet-outcomes]] — Scan and approval packets labeled at a trading-day horizon
 - [[self-study]] — Automated trade outcome analysis
 - [[evolve-logic]] — Post-mortem feature → threshold tuner
 

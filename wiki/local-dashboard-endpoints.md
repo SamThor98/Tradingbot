@@ -44,6 +44,7 @@ tags: [api, local, endpoints]
 - [[saas-endpoints]] — SaaS equivalent
 - [[tenant-dashboard-endpoints]] — per-tenant routes
 - [[scan-catalog]] — `/api/scan-catalog` payload
+- [[decision-packet-outcomes]] — `/api/cockpit/review/backfill` and scan-time packet recording
 
 ---
 
