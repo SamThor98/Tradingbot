@@ -1,13 +1,15 @@
 """Shared objective for every tab agent: risk-adjusted return and a smooth equity curve.
 
-Win rate and average return are diagnostics. A candidate is preferred only when
-its configured risk-adjusted score (Sortino by default, or Sharpe) is higher
-and max drawdown depth and duration do not worsen beyond the configured
-tolerances. ``auto_promote`` is never set here.
+Win rate and average return are diagnostics. A candidate is preferred when its
+Sortino (default) or Sharpe of primary scale-out returns is higher and its max
+drawdown is not deeper than the absolute guardrail (default 20%). Drawdown
+duration is reported and does not veto. Cash is a scored 0% outcome. Shorts
+and options are out of the book. Market cap is not a penalty.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,15 +18,45 @@ from typing import Any
 
 OBJECTIVE_ID = "risk_adjusted_equity"
 PRIMARY_METRICS = ("sortino", "sharpe")
+POLICY_FILE = ".tab_agent_policy.json"
+CASH_DECISIONS = {"cash", "no_trade", "pass", "abstain", "stay_in_cash"}
+SHORT_DECISIONS = {"short", "option", "put", "call", "inverse"}
+
+SIGNAL_PRIORITIES = (
+    "Clean chart setup and price action, strong fundamentals, sector and market strength, "
+    "and a tight stop with good reward-to-risk are high weight. A catalyst (earnings or news) "
+    "is the lowest priority and only a tiebreaker."
+)
+LONG_ONLY_RULE = (
+    "Long-only equities. Never suggest a short, an inverse ETF, or an option. "
+    "No trade / stay in cash is a valid scored outcome in a weak regime: cash is a 0% return "
+    "and it avoids drawdown."
+)
+LIQUIDITY_RULE = (
+    "Do not penalize market cap. A name qualifies at any capitalization when it clears the "
+    "liquidity gate (average dollar volume and spread). Tune those thresholds only inside "
+    "the configured bounds. Do not impose a top-N; surface every name that clears the quality threshold."
+)
 
 
 @dataclass(frozen=True)
 class ObjectiveConfig:
     metric: str = "sortino"
     min_samples: int = 30
-    drawdown_tolerance: float = 0.02
+    drawdown_tolerance: float = 0.20
     drawdown_duration_tolerance_days: int = 10
-    horizon_days: int = 10
+    horizon_days: int = 20
+    min_avg_dollar_volume: float = 20_000_000.0
+    max_spread_pct: float = 0.01
+    adv_min_bound: float = 5_000_000.0
+    adv_max_bound: float = 100_000_000.0
+    spread_min_bound: float = 0.002
+    spread_max_bound: float = 0.03
+    quality_threshold: float = 60.0
+    quality_min_bound: float = 40.0
+    quality_max_bound: float = 90.0
+    max_names: int = 0
+    review_wait_hours: int = 48
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -32,32 +64,158 @@ class ObjectiveConfig:
             "metric": self.metric,
             "min_samples": self.min_samples,
             "drawdown_tolerance": self.drawdown_tolerance,
+            "drawdown_guardrail": f"Block only when max drawdown is deeper than {self.drawdown_tolerance:.0%}.",
             "drawdown_duration_tolerance_days": self.drawdown_duration_tolerance_days,
             "horizon_days": self.horizon_days,
+            "exit_model": "scale_out",
+            "long_only": True,
+            "cash_is_scored": True,
+            "market_cap_penalty": False,
+            "min_avg_dollar_volume": self.min_avg_dollar_volume,
+            "max_spread_pct": self.max_spread_pct,
+            "adv_bounds": [self.adv_min_bound, self.adv_max_bound],
+            "spread_bounds": [self.spread_min_bound, self.spread_max_bound],
+            "quality_threshold": self.quality_threshold,
+            "quality_bounds": [self.quality_min_bound, self.quality_max_bound],
+            "max_names": self.max_names,
+            "max_names_unlimited": self.max_names <= 0,
+            "review_wait_hours": self.review_wait_hours,
+            "signal_priorities": SIGNAL_PRIORITIES,
             "statement": (
-                "Prefer the prompt book with the higher risk-adjusted score of per-trade "
-                f"{self.horizon_days}-day returns ({self.metric}) whose max drawdown and "
-                "drawdown duration are not materially worse."
+                f"Prefer the long-only book with the higher {self.metric} of {self.horizon_days}-day "
+                "scale-out returns. Cash is a 0% outcome. Block a book only when max drawdown is "
+                f"deeper than {self.drawdown_tolerance:.0%}. {SIGNAL_PRIORITIES} {LIQUIDITY_RULE}"
             ),
         }
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _read_policy(skill_dir: Path | None) -> dict[str, Any]:
+    if skill_dir is None:
+        return {}
+    path = Path(skill_dir) / POLICY_FILE
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def load_objective(skill_dir: Path | None = None) -> ObjectiveConfig:
     from config import (
         get_decision_packet_horizon_days,
+        get_tab_agent_adv_bounds,
+        get_tab_agent_debate_max_names,
         get_tab_agent_drawdown_duration_tolerance_days,
         get_tab_agent_drawdown_tolerance,
+        get_tab_agent_max_spread_pct,
+        get_tab_agent_min_avg_dollar_volume,
         get_tab_agent_min_samples,
         get_tab_agent_objective_metric,
+        get_tab_agent_quality_bounds,
+        get_tab_agent_quality_threshold,
+        get_tab_agent_review_wait_hours,
+        get_tab_agent_spread_bounds,
     )
 
+    adv_low, adv_high = get_tab_agent_adv_bounds(skill_dir)
+    spread_low, spread_high = get_tab_agent_spread_bounds(skill_dir)
+    quality_low, quality_high = get_tab_agent_quality_bounds(skill_dir)
+    policy = _read_policy(skill_dir)
+
+    def _num(value: Any, default: float) -> float:
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    adv = _num(policy.get("min_avg_dollar_volume"), get_tab_agent_min_avg_dollar_volume(skill_dir))
+    spread = _num(policy.get("max_spread_pct"), get_tab_agent_max_spread_pct(skill_dir))
+    quality = _num(policy.get("quality_threshold"), get_tab_agent_quality_threshold(skill_dir))
     return ObjectiveConfig(
         metric=get_tab_agent_objective_metric(skill_dir),
         min_samples=get_tab_agent_min_samples(skill_dir),
         drawdown_tolerance=get_tab_agent_drawdown_tolerance(skill_dir),
         drawdown_duration_tolerance_days=get_tab_agent_drawdown_duration_tolerance_days(skill_dir),
         horizon_days=get_decision_packet_horizon_days(skill_dir),
+        min_avg_dollar_volume=_clamp(adv, adv_low, adv_high),
+        max_spread_pct=_clamp(spread, spread_low, spread_high),
+        adv_min_bound=adv_low,
+        adv_max_bound=adv_high,
+        spread_min_bound=spread_low,
+        spread_max_bound=spread_high,
+        quality_threshold=_clamp(quality, quality_low, quality_high),
+        quality_min_bound=quality_low,
+        quality_max_bound=quality_high,
+        max_names=get_tab_agent_debate_max_names(skill_dir),
+        review_wait_hours=get_tab_agent_review_wait_hours(skill_dir),
     )
+
+
+def apply_policy_update(skill_dir: Path | str, proposal: dict[str, Any]) -> dict[str, Any]:
+    """Clamp an agent proposal onto the liquidity and quality bounds and store it."""
+    root = Path(skill_dir)
+    current = load_objective(root)
+    updated = {
+        "min_avg_dollar_volume": current.min_avg_dollar_volume,
+        "max_spread_pct": current.max_spread_pct,
+        "quality_threshold": current.quality_threshold,
+    }
+    if proposal.get("min_avg_dollar_volume") is not None:
+        updated["min_avg_dollar_volume"] = _clamp(
+            float(proposal["min_avg_dollar_volume"]), current.adv_min_bound, current.adv_max_bound
+        )
+    if proposal.get("max_spread_pct") is not None:
+        updated["max_spread_pct"] = _clamp(
+            float(proposal["max_spread_pct"]), current.spread_min_bound, current.spread_max_bound
+        )
+    if proposal.get("quality_threshold") is not None:
+        updated["quality_threshold"] = _clamp(
+            float(proposal["quality_threshold"]), current.quality_min_bound, current.quality_max_bound
+        )
+    updated["market_cap_penalty"] = False
+    updated["max_names"] = current.max_names
+    path = root / POLICY_FILE
+    path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    return updated
+
+
+def liquidity_decision(
+    avg_dollar_volume: float | None,
+    spread_pct: float | None,
+    *,
+    config: ObjectiveConfig,
+) -> str:
+    """Return pass, fail, or unknown. Market cap is not an input."""
+    if avg_dollar_volume is None and spread_pct is None:
+        return "unknown"
+    if avg_dollar_volume is not None and float(avg_dollar_volume) < config.min_avg_dollar_volume:
+        return "fail"
+    if spread_pct is not None and float(spread_pct) > config.max_spread_pct:
+        return "fail"
+    if avg_dollar_volume is None or spread_pct is None:
+        return "unknown"
+    return "pass"
+
+
+def clears_quality_bar(score: float | None, *, config: ObjectiveConfig) -> bool:
+    if score is None:
+        return False
+    return float(score) >= float(config.quality_threshold)
+
+
+def name_cap(config: ObjectiveConfig) -> int | None:
+    """None means every name that clears the quality bar is kept."""
+    if int(config.max_names) <= 0:
+        return None
+    return int(config.max_names)
 
 
 def _stdev(values: list[float]) -> float:
@@ -204,12 +362,7 @@ def compare_books(
             return "worse_than_live"
         return "no_separation"
     cand_dd = float(candidate.get("max_drawdown") or 0.0)
-    base_dd = float(baseline.get("max_drawdown") or 0.0)
-    # More negative is worse. Tolerance is an absolute equity fraction.
-    if cand_dd < base_dd - float(config.drawdown_tolerance):
+    # Absolute guardrail. A 8% dip does not lose to a 2% dip when Sortino is higher.
+    if cand_dd < -float(config.drawdown_tolerance):
         return "drawdown_worse"
-    cand_days = int(candidate.get("max_drawdown_duration_days") or 0)
-    base_days = int(baseline.get("max_drawdown_duration_days") or 0)
-    if cand_days > base_days + int(config.drawdown_duration_tolerance_days):
-        return "drawdown_duration_worse"
     return "better_than_live"

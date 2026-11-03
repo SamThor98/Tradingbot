@@ -602,6 +602,14 @@ def run_scheduler() -> None:
                     log.info("Today tab agent govern: actions=%s", len(governed.get("actions") or []))
             except Exception as e:
                 log.warning("Today tab agent govern failed: %s", e)
+            if now.weekday() < 5:
+                try:
+                    from core.tab_agent_digest import write_daily_digest
+
+                    digest = write_daily_digest(SKILL_DIR, now.date())
+                    log.info("Tab agent digest: %s errors=%s", digest.get("day"), len(digest.get("errors") or []))
+                except Exception as e:
+                    log.warning("Tab agent digest failed: %s", e)
             try:
                 from core.research_close import run_research_close
 

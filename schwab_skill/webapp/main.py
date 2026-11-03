@@ -3655,6 +3655,27 @@ def _tab_agent_call(tab_id: str, action: str, version_id: str) -> ApiResponse:
         return _err(f"tab_agent_{action}", e)
 
 
+@app.get("/api/tab-agent/digest", response_model=ApiResponse)
+def tab_agent_digest(day: str | None = None) -> ApiResponse:
+    """Daily tab-agent digest. Writes the file if today's copy is missing."""
+    try:
+        from datetime import date as date_cls
+
+        from core.tab_agent_digest import read_digest, write_daily_digest
+
+        stamp = (day or "")[:10]
+        if stamp:
+            date_cls.fromisoformat(stamp)
+        payload = read_digest(SKILL_DIR, stamp or None)
+        if payload is None and not stamp:
+            payload = write_daily_digest(SKILL_DIR)
+        if payload is None:
+            return _ok({"day": stamp, "tabs": [], "errors": [], "missing": True})
+        return _ok(payload)
+    except Exception as e:
+        return _err("tab_agent_digest", e)
+
+
 @app.get("/api/tab-agent/changes", response_model=ApiResponse)
 def tab_agent_changes(limit: int = 20) -> ApiResponse:
     """Human-readable promotion and rollback reports for Sam."""

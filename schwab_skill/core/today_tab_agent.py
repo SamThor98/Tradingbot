@@ -2,8 +2,8 @@
 
 The scan brief itself is a local template. The LLM prompts on this tab are
 ``engine_analysis.AGENT_SYSTEMS`` and ``core.grok_agent._ROLE_PROMPTS``.
-Both are seeded into one registry. The agent is off until
-``TAB_AGENT_TODAY_ENABLED`` is set, and proposals stay pending.
+Both are seeded into one registry. Shadow candidates are scored on the shared
+objective and promoted only after the review gate. The agent never places orders.
 """
 
 from __future__ import annotations
@@ -19,9 +19,16 @@ LOG = logging.getLogger(__name__)
 
 IMPROVER_SYSTEM = (
     "You revise one system prompt used by the Today scanner or Grok review. "
-    "The objective is a higher risk-adjusted score of 10-day trade returns "
-    "and a smoother equity curve, not a higher win rate. "
-    "You do not place orders. Return one JSON object with keys text and rationale. "
+    "The objective is a higher Sortino or Sharpe of the 20-day scale-out return "
+    "(half off at 2R, the rest trailed) and a smoother equity curve. Win rate is not the goal. "
+    "Long-only equities. Never suggest a short, inverse ETF, or option. "
+    "No trade / stay in cash is a valid outcome in a weak regime and scores as 0%, which avoids drawdown. "
+    "Do not penalize market cap. Liquidity is average dollar volume and spread, tuned only inside the stated bounds. "
+    "Do not cap the number of names. Optimize the quality threshold, not a top-N. "
+    "Clean chart and price action, fundamentals, sector and market strength, and a tight stop with good reward-to-risk "
+    "are high weight. Catalysts and news are the lowest-priority tiebreaker. "
+    "You do not place orders or change size. Return one JSON object with keys text and rationale. "
+    "Optional keys: min_avg_dollar_volume, max_spread_pct, quality_threshold. "
     "rationale must say when the sample is too small to prove an edge."
 )
 
@@ -174,20 +181,33 @@ class TodayTabAgent(TabAgent):
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
                 continue
-            created.append(
-                reg.add_version(
-                    self.tab_id,
-                    prompt_key=key,
-                    text=parsed["text"],
-                    parent=str(live.get("id") or "") or None,
-                    rationale=parsed["rationale"],
-                    status="shadow",
-                )
+            if any(parsed.get(field) is not None for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")):
+                from core.tab_agent_objective import apply_policy_update
+
+                apply_policy_update(skill_dir, parsed)
+            row = reg.add_version(
+                self.tab_id,
+                prompt_key=key,
+                text=parsed["text"],
+                parent=str(live.get("id") or "") or None,
+                rationale=parsed["rationale"],
+                status="shadow",
             )
+            from core.tab_agent_review import write_review_request
+
+            write_review_request(
+                skill_dir,
+                tab_id=self.tab_id,
+                version=row,
+                parent_text=str(live.get("text") or ""),
+                score_row=stat,
+                objective=score.get("objective") if isinstance(score.get("objective"), dict) else None,
+            )
+            created.append(row)
         return {"tab_id": self.tab_id, "created": created, "skipped": skipped, "auto_promote": False, "score": score}
 
 
-def parse_prompt_proposal(raw: str) -> dict[str, str] | None:
+def parse_prompt_proposal(raw: str) -> dict[str, Any] | None:
     import json
 
     text = (raw or "").strip()
@@ -206,7 +226,11 @@ def parse_prompt_proposal(raw: str) -> dict[str, str] | None:
     rationale = str(data.get("rationale") or "").strip() or "Revised for risk-adjusted return. Sample may be too small."
     if len(body) < 40:
         return None
-    return {"text": body, "rationale": rationale}
+    parsed: dict[str, Any] = {"text": body, "rationale": rationale}
+    for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold"):
+        if data.get(field) is not None:
+            parsed[field] = data.get(field)
+    return parsed
 
 
 def _default_llm(system: str, user: str) -> str:

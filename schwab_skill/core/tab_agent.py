@@ -338,14 +338,30 @@ def load_attributions(skill_dir: Path | str, *, tab_id: str | None = None) -> li
 
 def _packet_return(packet: dict[str, Any], *, horizon_days: int) -> tuple[str, float] | None:
     outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
-    label = str(outcome.get("label") or "pending").lower()
+    chosen = outcome
+    by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
+    try:
+        top_horizon = int(outcome.get("horizon_days"))
+    except (TypeError, ValueError):
+        top_horizon = None
+    if top_horizon != int(horizon_days) and str(horizon_days) in by_horizon:
+        nested = by_horizon.get(str(horizon_days))
+        if isinstance(nested, dict):
+            chosen = nested
+    label = str(chosen.get("label") or "pending").lower()
     if label in ("pending", "unknown", ""):
         return None
-    horizon = outcome.get("horizon_days")
-    if horizon is None or int(horizon) != int(horizon_days):
+    side = str(packet.get("side") or packet.get("direction") or "long").lower()
+    if side in {"short", "option", "put", "call"}:
         return None
     try:
-        ret = float(outcome.get("realized_return_pct"))
+        horizon = int(chosen.get("horizon_days"))
+    except (TypeError, ValueError):
+        return None
+    if horizon != int(horizon_days):
+        return None
+    try:
+        ret = float(chosen.get("realized_return_pct"))
     except (TypeError, ValueError):
         return None
     return label, ret
@@ -390,6 +406,13 @@ def score_prompt_versions(
             if not ticker or not day or (ticker, day) in seen:
                 continue
             seen.add((ticker, day))
+            decision = str(use.get("decision") or use.get("role") or "").lower()
+            if decision in {"short", "option", "put", "call", "inverse"}:
+                continue
+            if decision in {"cash", "no_trade", "pass", "abstain", "stay_in_cash"}:
+                dates.append(day)
+                returns.append(0.0)
+                continue
             parsed = _packet_return(packet_index.get((ticker, day)) or {}, horizon_days=config.horizon_days)
             if parsed is None:
                 continue

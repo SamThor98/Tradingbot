@@ -68,17 +68,26 @@ def test_small_sample_is_insufficient() -> None:
     assert compare_books(cand, live, config=config) == "insufficient_sample"
 
 
-def test_longer_drawdown_blocks_an_otherwise_better_book() -> None:
-    config = _config(drawdown_tolerance=0.05, drawdown_duration_tolerance_days=5)
+def test_longer_drawdown_inside_the_guardrail_does_not_block() -> None:
+    config = _config(drawdown_tolerance=0.20, drawdown_duration_tolerance_days=5)
     live_returns = [0.6, -0.4] * 12
     live_dates = _dates(len(live_returns))
-    # Stronger drift, one small dip, then a long flat stretch that stays underwater.
     cand_returns = [2.0] * 10 + [-0.8] + [0.0] * 18 + [2.0] * 6
     cand_dates = _dates(len(cand_returns))
     live = evaluate_book(live_returns, live_dates, config=config)
     cand = evaluate_book(cand_returns, cand_dates, config=config)
     assert cand["max_drawdown_duration_days"] > live["max_drawdown_duration_days"] + 5
-    assert compare_books(cand, live, config=config) == "drawdown_duration_worse"
+    assert cand["max_drawdown"] > -0.20
+    assert compare_books(cand, live, config=config) == "better_than_live"
+
+
+def test_drawdown_past_twenty_percent_blocks_a_higher_sortino() -> None:
+    config = _config(drawdown_tolerance=0.20)
+    live = evaluate_book([0.5, -0.45] * 16, _dates(32), config=config)
+    cand = evaluate_book([1.2] * 28 + [-22.0], _dates(29), config=config)
+    assert cand["primary_score"] > live["primary_score"]
+    assert cand["max_drawdown"] < -0.20
+    assert compare_books(cand, live, config=config) == "drawdown_worse"
 
 
 def test_propose_stays_pending_and_scan_path_stays_builtin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,6 +151,12 @@ def test_govern_promotes_shadow_and_writes_a_report(tmp_path: Path, monkeypatch:
         prompt_key=key,
     )
     shadow_id = created["created"][0]["id"]
+    from core.tab_agent_review import verdict_path
+
+    verdict_path(tmp_path, "today", shadow_id).write_text(
+        json.dumps({"verdict": "approve", "notes": "quant ok", "reviewer": "quant"}),
+        encoding="utf-8",
+    )
     live_stats = _book(live["id"], "live", 0.2, -0.04)
     shadow_stats = _book(shadow_id, "shadow", 0.9, -0.04, parent=live["id"])
 
@@ -201,3 +216,78 @@ def test_govern_does_not_promote_on_drawdown_or_small_sample(tmp_path: Path, mon
     result = agent.govern(tmp_path)
     assert result["actions"] == []
     assert agent.registry(tmp_path).live_version("today", key)["id"] == live["id"]
+
+
+def test_govern_waits_for_a_review_verdict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_TODAY_ENABLED", "true")
+    agent = TodayTabAgent()
+    key = "institutional_trend"
+    live = agent.registry(tmp_path).live_version("today", key)
+    created = agent.propose(
+        tmp_path,
+        llm=lambda _s, _u: json.dumps(
+            {"text": live["text"] + " Wait for the reviewer.", "rationale": "Metrics are not the only gate."}
+        ),
+        prompt_key=key,
+    )
+    shadow_id = created["created"][0]["id"]
+    request = json.loads((tmp_path / ".tab_agent_reviews" / f"today-{shadow_id}.json").read_text(encoding="utf-8"))
+    assert "diff" in request
+    assert request["version_id"] == shadow_id
+
+    def fake_score(_skill_dir, registry=None, since_ts=None):
+        return {
+            "versions": [_book(live["id"], "live", 0.2, -0.04), _book(shadow_id, "shadow", 0.9, -0.04, live["id"])],
+            "comparisons": [
+                {"version_id": shadow_id, "prompt_key": key, "edge_vs_live": "better_than_live", "auto_promote": False}
+            ],
+        }
+
+    agent.score = fake_score  # type: ignore[method-assign]
+    waiting = agent.govern(tmp_path)
+    assert waiting["actions"] == []
+    assert agent.registry(tmp_path).live_version("today", key)["id"] == live["id"]
+
+
+def test_policy_thresholds_stay_inside_bounds(tmp_path: Path) -> None:
+    from core.tab_agent_objective import apply_policy_update, liquidity_decision, load_objective
+
+    stored = apply_policy_update(
+        tmp_path,
+        {"min_avg_dollar_volume": 1.0, "max_spread_pct": 0.5, "quality_threshold": 99},
+    )
+    assert stored["min_avg_dollar_volume"] == 5_000_000.0
+    assert stored["max_spread_pct"] == 0.03
+    assert stored["quality_threshold"] == 90.0
+    assert stored["market_cap_penalty"] is False
+    config = load_objective(tmp_path)
+    assert liquidity_decision(1_000_000, 0.001, config=config) == "fail"
+    assert liquidity_decision(30_000_000, 0.005, config=config) == "pass"
+    assert config.max_names == 0
+
+
+def test_cash_decision_scores_as_zero(tmp_path: Path) -> None:
+    from core.tab_agent import score_prompt_versions
+
+    versions = [{"id": "v1", "prompt_key": "institutional_trend", "status": "live", "parent": None}]
+    attributions = [
+        {"version_id": "v1", "ticker": "CASH", "day": "2026-06-01", "decision": "cash", "created_at": "2026-06-01"},
+        {"version_id": "v1", "ticker": "AAPL", "day": "2026-06-02", "decision": "short", "created_at": "2026-06-02"},
+    ]
+    report = score_prompt_versions(versions=versions, packets=[], attributions=attributions, skill_dir=tmp_path)
+    book = report["versions"][0]
+    assert book["n"] == 1
+    assert book["avg_realized_return_pct"] == 0.0
+
+
+def test_digest_writes_markdown_and_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_TODAY_ENABLED", "true")
+    from core.tab_agent_digest import write_daily_digest
+
+    TodayTabAgent().registry(tmp_path)
+    payload = write_daily_digest(tmp_path)
+    assert (tmp_path / ".tab_agent_digest" / f"{payload['day']}.md").exists()
+    assert (tmp_path / ".tab_agent_digest" / f"{payload['day']}.json").exists()
+    text = (tmp_path / ".tab_agent_digest" / f"{payload['day']}.md").read_text(encoding="utf-8")
+    assert "today" in text
+    assert "No order" in text

@@ -147,6 +147,8 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
 
     score = agent.score(skill_dir)
     by_id = {row.get("version_id"): row for row in score.get("versions") or []}
+    from core.tab_agent_review import review_gate
+
     for comparison in score.get("comparisons") or []:
         if comparison.get("edge_vs_live") != "better_than_live":
             continue
@@ -154,10 +156,42 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
         candidate = reg.get(agent.tab_id, version_id)
         if candidate is None or candidate.get("status") != STATUS_SHADOW:
             continue
+        gate = review_gate(
+            skill_dir,
+            agent.tab_id,
+            candidate,
+            wait_hours=config.review_wait_hours,
+        )
+        if gate == "rejected":
+            reg.reject(agent.tab_id, version_id)
+            actions.append(
+                write_change_report(
+                    skill_dir,
+                    {
+                        "tab_id": agent.tab_id,
+                        "action": "review_reject",
+                        "prompt_key": candidate.get("prompt_key"),
+                        "version_id": version_id,
+                        "why": "External review verdict rejected this prompt. Metrics were not enough.",
+                        "before": _brief(by_id.get(version_id) or {}),
+                        "after": {},
+                        "what_changed": "Shadow prompt retired. No order, size, or execution setting was changed.",
+                        "sample_size": (by_id.get(version_id) or {}).get("n"),
+                    },
+                )
+            )
+            continue
+        if gate == "waiting":
+            continue
         prompt_key = str(candidate.get("prompt_key") or "")
         live = reg.live_version(agent.tab_id, prompt_key)
         if live is None:
             continue
+        why = (
+            "Shadow beat live on the risk-adjusted objective inside the drawdown guardrail, "
+            "with a sufficient sample, and the reviewer "
+            + ("approved it." if gate == "approved" else f"left no verdict for {config.review_wait_hours}h.")
+        )
         reg.promote(
             agent.tab_id,
             version_id,
@@ -172,7 +206,7 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
                     "prompt_key": prompt_key,
                     "version_id": version_id,
                     "predecessor_id": live.get("id"),
-                    "why": "Shadow beat live on the risk-adjusted objective with a sufficient sample and without a materially worse drawdown.",
+                    "why": why,
                     "before": _brief(by_id.get(live.get("id")) or {}),
                     "after": _brief(by_id.get(version_id) or {}),
                     "what_changed": str(candidate.get("rationale") or "Analysis prompt text replaced."),
