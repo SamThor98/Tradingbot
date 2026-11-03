@@ -1,4 +1,4 @@
-﻿---
+---
 source: experiments/backtester/results_r2_SP1500_now_2026-10-20.json
 created: 2026-10-20
 updated: 2026-10-20

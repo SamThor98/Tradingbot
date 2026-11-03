@@ -167,14 +167,19 @@ def test_desk_brief_uses_stored_backtest_and_posts_discord(tmp_path: Path) -> No
         }
     )
     sent: list[dict] = []
+
+    def _send(embed: dict) -> bool:
+        sent.append(embed)
+        return True
+
     brief = run_operator_desk(
-        tools,  # type: ignore[arg-type]
+        tools,
         skill_dir=tmp_path,
         run_scan=True,
         queue_backtest=True,
         notify_discord=True,
         today=date(2026, 10, 6),
-        sender=lambda embed: sent.append(embed) or True,
+        sender=_send,
     )
     assert "does not clear promotion" in brief["text"]
     assert "AAA" in brief["text"]
@@ -187,13 +192,20 @@ def test_desk_brief_uses_stored_backtest_and_posts_discord(tmp_path: Path) -> No
     assert "AAA" in posted["Setups"]
     assert "Ranked by signal_score" not in posted["Setups"]
     assert all(len(field["value"]) <= 1024 for field in sent[0]["fields"])
-    assert tools.posts[0][1]["universe_preset"] == "sp1500"
-    assert tools.posts[0][1]["strategy_overrides"]["signal_universe_mode"] == "broad"
-    assert tools.posts[0][1]["strategy_overrides"]["quality_watchlist_prefilter_enabled"] is False
-    assert "trend_breakout" in tools.posts[0][1]["strategy_ids"]
-    assert "pead_primary" in tools.posts[0][1]["strategy_ids"]
+    scan_body = tools.posts[0][1]
+    assert isinstance(scan_body, dict)
+    assert scan_body["universe_preset"] == "sp1500"
+    overrides = scan_body["strategy_overrides"]
+    assert isinstance(overrides, dict)
+    assert overrides["signal_universe_mode"] == "broad"
+    assert overrides["quality_watchlist_prefilter_enabled"] is False
+    assert "trend_breakout" in scan_body["strategy_ids"]
+    assert "pead_primary" in scan_body["strategy_ids"]
     assert tools.posts[1][0] == "/api/backtest-runs"
-    spec = tools.posts[1][1]["spec"]
+    queued = tools.posts[1][1]
+    assert isinstance(queued, dict)
+    spec = queued["spec"]
+    assert isinstance(spec, dict)
     assert spec["start_date"] == "2025-10-05"
     assert spec["end_date"] == "2026-10-05"
     assert "buy" not in brief["text"].lower()
@@ -282,7 +294,7 @@ def test_in_process_scan_status_skips_http_while_the_job_is_active() -> None:
     previous = set_local_scan_status(reader)
     try:
         result = run_scan_agent(
-            _Tools(),  # type: ignore[arg-type]
+            _Tools(),
             run_scan=True,
             timeout_s=30,
             sleeper=lambda _s: None,
@@ -317,7 +329,7 @@ def test_idle_local_snapshot_still_reads_http_for_last_scan() -> None:
 
     previous = set_local_scan_status(lambda: {"status": "idle", "signals": []})
     try:
-        result = run_scan_agent(_Tools(), run_scan=False, timeout_s=5, sleeper=lambda _s: None, clock=lambda: 0)  # type: ignore[arg-type]
+        result = run_scan_agent(_Tools(), run_scan=False, timeout_s=5, sleeper=lambda _s: None, clock=lambda: 0)
     finally:
         set_local_scan_status(previous)
     assert result["ok"] is True
@@ -620,14 +632,19 @@ def test_dropped_status_check_is_retried_and_stays_off_discord(tmp_path: Path) -
             return {"ok": True, "data": {"job_id": "job1", "status": "running"}, "error": None}
 
     sent: list[dict] = []
+
+    def _send(embed: dict) -> bool:
+        sent.append(embed)
+        return True
+
     brief = run_operator_desk(
-        _Blip(),  # type: ignore[arg-type]
+        _Blip(),
         skill_dir=tmp_path,
         run_scan=True,
         notify_discord=True,
         sleeper=lambda _s: None,
         clock=lambda: 0,
-        sender=lambda embed: sent.append(embed) or True,
+        sender=_send,
     )
     assert brief["scan"]["ok"] is True
     assert "AAA" in brief["text"]

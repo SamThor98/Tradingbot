@@ -1,3 +1,10 @@
+---
+source: scan desk handoff 2026-10-23 (job 0a12065e50); no /raw doc
+created: 2026-10-23
+updated: 2026-10-23
+tags: [trade-verdict, debate, no-trade]
+---
+
 # Trade Verdict - 2026-10-23
 
 **Verdict:** No trade today. Conviction 4/5.

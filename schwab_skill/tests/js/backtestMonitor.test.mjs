@@ -107,8 +107,15 @@ test("finished tape re-ranks across runs and ignores a live partial", () => {
       result_summary: {
         trade_ranks: {
           closed: 10,
-          best: [{ ticker: "CCC", net_return_pct: 40, exit_date: "2024-03-02", exit_reason: "trailing_stop" }],
-          worst: [{ ticker: "DDD", net_return_pct: -30, exit_date: "2024-03-03", exit_reason: "sma50_break" }],
+          best: [
+            { ticker: "CCC", net_return_pct: 40, exit_date: "2024-03-02", exit_reason: "trailing_stop" },
+            { ticker: "MMM", net_return_pct: 5, exit_date: "2024-03-04", exit_reason: "time_exit" },
+            { ticker: "NNN", net_return_pct: 4, exit_date: "2024-03-05", exit_reason: "time_exit" },
+          ],
+          worst: [
+            { ticker: "DDD", net_return_pct: -30, exit_date: "2024-03-03", exit_reason: "sma50_break" },
+            { ticker: "PPP", net_return_pct: -2, exit_date: "2024-03-06", exit_reason: "time_exit" },
+          ],
         },
       },
     },

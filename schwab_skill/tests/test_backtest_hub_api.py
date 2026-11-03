@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-SKILL_DIR = Path(__file__).resolve().parents[1]
-if str(SKILL_DIR) not in sys.path:
-    sys.path.insert(0, str(SKILL_DIR))
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +13,8 @@ from sqlalchemy.pool import StaticPool
 from webapp.backtest_hub import _open_research_card, resolve_artifact_path
 from webapp.db import Base
 from webapp.models import User
+
+SKILL_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_resolve_artifact_path_rejects_traversal_and_secrets(tmp_path: Path) -> None:

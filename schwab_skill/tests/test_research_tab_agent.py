@@ -24,7 +24,7 @@ def _decision(**kwargs: object) -> dict:
         stop_pct=0.07,
     )
     base.update(kwargs)
-    return resolve_quick_check_decision(**base)  # type: ignore[arg-type]
+    return resolve_quick_check_decision(**base)
 
 
 def test_builtin_rules_match_the_old_verdict_and_record_a_packet(tmp_path: Path) -> None:
@@ -105,6 +105,19 @@ def test_enabled_prompt_can_raise_the_strong_setup_bar(tmp_path: Path, monkeypat
     )
     assert decision["verdict"] == "WATCH"
     assert decision["prompt_version"] == shadow_id
+
+
+def test_research_agent_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import get_tab_agent_research_enabled
+    from tests.conftest import isolate_repo_dotenv
+
+    monkeypatch.setenv("TAB_AGENT_RESEARCH_ENABLED", "true")
+    monkeypatch.setattr(
+        "config._load_env",
+        lambda skill_dir=None: {"TAB_AGENT_RESEARCH_ENABLED": "true"},
+    )
+    isolate_repo_dotenv(monkeypatch, "TAB_AGENT_RESEARCH_ENABLED", "TAB_AGENT_RESEARCH_SHADOW_ENABLED")
+    assert get_tab_agent_research_enabled() is False
 
 
 def test_agent_off_keeps_the_builtin_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

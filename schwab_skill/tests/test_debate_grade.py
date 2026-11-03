@@ -244,7 +244,9 @@ def test_dossier_grade_line_uses_filing_date_only(monkeypatch) -> None:
         },
     }
     attach_dossier_grade(dossier)
-    grade = dossier["debate_grade"]
+    grade_raw = dossier["debate_grade"]
+    assert isinstance(grade_raw, dict)
+    grade = grade_raw
     assert grade["qual_trend"] == 100.0
     assert grade["qual_business"] == 0.0
     assert grade["qual_raw"] == 100.0

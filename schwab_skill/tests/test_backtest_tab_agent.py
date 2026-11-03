@@ -69,7 +69,7 @@ def test_shadow_beats_live_only_on_its_own_oos_runs(tmp_path, monkeypatch: pytes
     )
     shadow_id = created["created"][0]["id"]
     reg = agent.registry(tmp_path)
-    reg._mutate(  # type: ignore[attr-defined]
+    reg._mutate(
         "backtest",
         shadow_id,
         lambda row, _rows: row.__setitem__("created_at", "2026-06-01T00:00:00+00:00"),
@@ -103,6 +103,19 @@ def test_shadow_beats_live_only_on_its_own_oos_runs(tmp_path, monkeypatch: pytes
     assert edge["edge_vs_live"] == "better_than_live"
     request = (tmp_path / ".tab_agent_reviews" / f"backtest-{shadow_id}.json").read_text(encoding="utf-8")
     assert "diff" in request
+
+
+def test_backtest_agent_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import get_tab_agent_backtest_enabled
+    from tests.conftest import isolate_repo_dotenv
+
+    monkeypatch.setenv("TAB_AGENT_BACKTEST_ENABLED", "true")
+    monkeypatch.setattr(
+        "config._load_env",
+        lambda skill_dir=None: {"TAB_AGENT_BACKTEST_ENABLED": "true"},
+    )
+    isolate_repo_dotenv(monkeypatch, "TAB_AGENT_BACKTEST_ENABLED", "TAB_AGENT_BACKTEST_SHADOW_ENABLED")
+    assert get_tab_agent_backtest_enabled() is False
 
 
 def test_flag_off_keeps_the_builtin_prompt_and_skips_attribution(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

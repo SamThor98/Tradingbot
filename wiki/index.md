@@ -89,6 +89,9 @@ tags: [wiki, index, catalog]
 - [[scan-quality-2026-10-27]] - Scan desk readout: Stage 2 ran (1176 fail), 37 signals, 5 executable, both-shadow 10-23 filtered names lead; 10-26 had no standard scan
 - [[scan-quality-2026-10-28]] - Scan desk readout: Stage 2 ran (1178 fail), 32 signals, 4 executable (all filtered out), 12 WS-only qualifiers, both-shadow cohorts all below SPY
 - [[scan-quality-2026-10-29]] - Scan desk readout: Schwab primary data down (all 1503 on yfinance fallback), Stage 2 ran (1161 fail), 33 signals, 3 executable both-names (all stretched), 12 WS-only qualifiers
+- [[scan-quality-2026-11-02]] - Scan desk on-demand rerun: Schwab data healthy, ranked table and both-tracking
+- [[alex-strategy]] - Shelved RSI mean-reversion research sleeve; does not change the live Stage 2 scanner
+- [[signal-edge-ledger]] - Signed scoreboard in signal_edge_ledger.json: floors, regime_v2_only, overlays_neutral
 - [[pead]] — Post-earnings announcement drift scoring
 - [[forensic-accounting]] — Sloan, Beneish, Altman financial checks
 - [[quality-gates]] — Weak signal filtering modes

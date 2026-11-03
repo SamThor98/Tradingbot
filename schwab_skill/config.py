@@ -153,6 +153,21 @@ def _get_mode(
 PLUGIN_MODE_VALUES = {"off", "shadow", "live"}
 
 
+def get_self_study_mode(skill_dir: Path | None = None) -> str:
+    """Self-study rollout. ``SELF_STUDY_MODE`` wins over legacy ``SELF_STUDY_ENABLED``.
+
+    Missing config is off. ``SELF_STUDY_ENABLED=true`` with no mode means live.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("SELF_STUDY_MODE", env).strip().lower()
+    if raw in PLUGIN_MODE_VALUES:
+        return raw
+    legacy = _env_value("SELF_STUDY_ENABLED", env).strip().lower()
+    if legacy in {"1", "true", "yes", "on"}:
+        return "live"
+    return "off"
+
+
 def get_pred_market_enabled(skill_dir: Path | None = None) -> bool:
     """Enable prediction-market metadata enrichment."""
     return _get_bool("PRED_MARKET_ENABLED", False, skill_dir)
@@ -1540,6 +1555,12 @@ def get_exit_partial_tp_fraction(skill_dir: Path | None = None) -> float:
 def get_exit_breakeven_after_partial(skill_dir: Path | None = None) -> bool:
     """Move residual stop to breakeven after partial fill."""
     return _get_bool("EXIT_BREAKEVEN_AFTER_PARTIAL", True, skill_dir)
+
+
+def get_barrier_profit_r_multiple(skill_dir: Path | None = None) -> float:
+    """Profit target in R for triple-barrier labels. Default 2R. Does not place orders."""
+    val = _get_float("BARRIER_PROFIT_R_MULTIPLE", 2.0, skill_dir)
+    return max(0.5, min(10.0, val))
 
 
 def get_exit_max_hold_days(skill_dir: Path | None = None) -> int:

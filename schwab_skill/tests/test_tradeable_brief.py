@@ -56,6 +56,11 @@ def test_slot_is_weekday_0830_chicago() -> None:
 
 def test_tick_posts_once_and_names_tradeable_rows(tmp_path: Path) -> None:
     sent: list[dict] = []
+
+    def _remember(embed: dict) -> bool:
+        sent.append(embed)
+        return True
+
     scan = {
         "at": "2026-10-09T13:10:00+00:00",
         "diagnostics": {"data_quality": "degraded", "data_quality_reasons": ["bars_stale"]},
@@ -75,14 +80,14 @@ def test_tick_posts_once_and_names_tradeable_rows(tmp_path: Path) -> None:
         tmp_path,
         now,
         scan_reader=lambda: scan,
-        sender=lambda embed: sent.append(embed) or True,
+        sender=_remember,
     )
     assert (
         tick_tradeable_brief(
             tmp_path,
             now,
             scan_reader=lambda: scan,
-            sender=lambda embed: sent.append(embed) or True,
+            sender=_remember,
         )
         is False
     )

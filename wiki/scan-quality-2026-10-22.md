@@ -1,4 +1,4 @@
-﻿---
+---
 source: schwab_skill/webapp/webapp.db (scan_results job 23576331d4, app_state last_scan); yfinance closes through 2026-10-21
 created: 2026-10-22
 updated: 2026-10-22

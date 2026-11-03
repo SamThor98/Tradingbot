@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -197,9 +198,14 @@ def test_load_blend_artifact_reads_relative_path(tmp_path) -> None:
 
 
 def test_shipped_artifact_is_loadable_and_leakage_free() -> None:
-    """The committed blend must load and must not carry the leaked ML feature."""
-    artifact = load_blend_artifact()
-    assert artifact is not None, "research_store/models/historical_rank_blend.json missing"
+    """The committed blend fixture must load and must not carry the leaked ML feature.
+
+    The fitted file under research_store/models is gitignored, so CI loads the
+    shape fixture instead of a local operator artifact.
+    """
+    skill = Path(__file__).resolve().parents[1]
+    artifact = load_blend_artifact(skill, "tests/fixtures/historical_rank_blend.json")
+    assert artifact is not None, "tests/fixtures/historical_rank_blend.json missing"
     assert artifact["weights"], "shipped blend has no weights"
     assert "ml_expected_return_norm" not in artifact["weights"]
     worst = artifact.get("fit", {}).get("oos_ic_worst_era")
@@ -213,7 +219,8 @@ def test_shipped_artifact_is_loadable_and_leakage_free() -> None:
 
 def test_shipped_artifact_resolves_the_book_instead_of_saturating() -> None:
     """A ranker that pins much of the book at 100 cannot discriminate."""
-    artifact = load_blend_artifact()
+    skill = Path(__file__).resolve().parents[1]
+    artifact = load_blend_artifact(skill, "tests/fixtures/historical_rank_blend.json")
     assert artifact is not None
     resolution = artifact.get("fit", {}).get("score_resolution") or {}
     assert resolution.get("share_at_max") is not None

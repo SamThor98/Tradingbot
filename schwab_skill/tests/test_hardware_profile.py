@@ -48,7 +48,7 @@ def _facts(**overrides: object) -> HostFacts:
         token_files_present=True,
     )
     base.update(overrides)
-    return HostFacts(**base)  # type: ignore[arg-type]
+    return HostFacts(**base)
 
 
 def test_recommend_profile_warns_on_usb_wifi_only_accepted() -> None:

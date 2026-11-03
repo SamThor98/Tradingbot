@@ -174,7 +174,7 @@ def test_govern_promotes_shadow_and_writes_a_report(tmp_path: Path, monkeypatch:
             "winner_rule": "risk adjusted",
         }
 
-    agent.score = fake_score  # type: ignore[method-assign]
+    agent.score = fake_score
     result = agent.govern(tmp_path)
     assert result["actions"][0]["action"] == "auto_promote"
     assert agent.registry(tmp_path).live_version("today", key)["id"] == shadow_id
@@ -212,7 +212,7 @@ def test_govern_does_not_promote_on_drawdown_or_small_sample(tmp_path: Path, mon
             ],
         }
 
-    agent.score = fake_score  # type: ignore[method-assign]
+    agent.score = fake_score
     result = agent.govern(tmp_path)
     assert result["actions"] == []
     assert agent.registry(tmp_path).live_version("today", key)["id"] == live["id"]
@@ -243,7 +243,7 @@ def test_govern_waits_for_a_review_verdict(tmp_path: Path, monkeypatch: pytest.M
             ],
         }
 
-    agent.score = fake_score  # type: ignore[method-assign]
+    agent.score = fake_score
     waiting = agent.govern(tmp_path)
     assert waiting["actions"] == []
     assert agent.registry(tmp_path).live_version("today", key)["id"] == live["id"]

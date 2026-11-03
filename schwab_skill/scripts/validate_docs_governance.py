@@ -37,10 +37,11 @@ class Finding:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _frontmatter(md: str) -> dict[str, str]:
+    md = md.lstrip("\ufeff")
     if not md.startswith("---\n"):
         return {}
     parts = md.split("\n---\n", 1)

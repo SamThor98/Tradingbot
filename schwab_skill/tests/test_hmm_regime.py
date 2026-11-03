@@ -27,7 +27,7 @@ def _bars(n_each: int = 140, seed: int = 7) -> pd.DataFrame:
         for shock in rng.normal(drift, vol, n_each):
             price *= float(np.exp(shock))
             closes.append(price)
-    close = np.asarray(closes, dtype=float)
+    close: np.ndarray = np.asarray(closes, dtype=float)
     index = pd.bdate_range("2016-01-04", periods=len(close))
     span = 0.01 + 0.01 * (np.arange(len(close)) % 7) / 6.0
     volume = np.full(len(close), 1_000_000.0)

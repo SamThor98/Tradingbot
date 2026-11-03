@@ -160,7 +160,7 @@ def test_forest_ranks_one_neighbor_after_four_family_screens() -> None:
                 _result(pf=1.05, trades=40),
                 run_id=f"s{idx}",
                 family="stage2",
-                knob=next(iter(ov)),
+                knob=next(iter(ov)) if isinstance(ov, dict) else "",
                 direction="down",
                 parent_run_id="a",
             )

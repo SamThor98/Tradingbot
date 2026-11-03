@@ -87,12 +87,17 @@ class _Response:
 
 def test_backfill_refuses_a_placeholder_user_agent(tmp_path) -> None:
     calls: list[str] = []
+
+    def _refuse(*_args: object, **_kwargs: object) -> _Response:
+        calls.append("hit")
+        return _Response({})
+
     result = backfill_filing_archive(
         ["AAPL"],
         skill_dir=tmp_path,
         user_agent="SchwabTradingBot contact@example.com",
         sleep_s=0,
-        get=lambda *_args, **_kwargs: calls.append("hit") or _Response({}),
+        get=_refuse,
     )
     assert result["ok"] is False
     assert calls == []

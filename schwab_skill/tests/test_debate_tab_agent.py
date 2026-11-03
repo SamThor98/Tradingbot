@@ -96,7 +96,9 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
     extra_packet["packet_id"] = "pkt2"
     extra_packet["ticker"] = "NVDA"
     extra_packet["created_at"] = "2026-06-04T15:00:00+00:00"
-    extra_packet["outcome"] = dict(packet["outcome"])
+    outcome = packet["outcome"]
+    assert isinstance(outcome, dict)
+    extra_packet["outcome"] = dict(outcome)
     overwrite_packets(tmp_path, [packet, extra_packet])
     with log.open("a", encoding="utf-8") as handle:
         handle.write(

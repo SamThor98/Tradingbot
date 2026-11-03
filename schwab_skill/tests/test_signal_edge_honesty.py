@@ -59,7 +59,9 @@ def test_measured_era_still_averages() -> None:
 
 
 def test_committed_gate_ranking_drops_empty_books() -> None:
-    payload = json.loads((SKILL_DIR / "phase1_progress_signal_gate.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (SKILL_DIR / "tests" / "fixtures" / "phase1_progress_signal_gate.json").read_text(encoding="utf-8")
+    )
     ranked = {row["config_id"] for row in payload["ranking"]}
     unranked = {row["config_id"] for row in payload["unranked_insufficient_sample"]}
     assert ranked.isdisjoint(EMPTY_CONFIGS)
