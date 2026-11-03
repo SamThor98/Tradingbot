@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from datetime import date
 from pathlib import Path
 
@@ -116,10 +117,18 @@ def test_apply_score_stack_rank_score_caps_on_high_risk() -> None:
     assert float(out["composite_score_raw"]) > float(out["composite_score"])
 
 
-def test_historical_rank_cohort_stamps_raw_blend() -> None:
+def test_historical_rank_cohort_stamps_raw_blend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import clear_env_cache
     from signal_scanner import _apply_historical_rank_cohort
 
-    skill = Path(__file__).resolve().parents[1]
+    artifact = tmp_path / "historical_rank_blend.json"
+    artifact.write_text(
+        json.dumps({"model_id": "test-blend", "weights": {"trend_norm": 1.0}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HISTORICAL_RANK_MODE", "shadow")
+    monkeypatch.setenv("HISTORICAL_RANK_ARTIFACT", str(artifact))
+    clear_env_cache()
     rows = [
         {
             "ticker": "AAA",
@@ -130,7 +139,7 @@ def test_historical_rank_cohort_stamps_raw_blend() -> None:
             "forensic_flags": ["beneish_manipulator"],
         }
     ]
-    out = _apply_historical_rank_cohort(rows, {}, skill)
+    out = _apply_historical_rank_cohort(rows, {}, tmp_path)
     assert out[0].get("historical_rank") is not None
     assert float(out[0]["historical_rank_raw"]) + 1e-9 >= float(out[0]["historical_rank"])
 
