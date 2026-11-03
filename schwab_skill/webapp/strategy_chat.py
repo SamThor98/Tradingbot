@@ -128,9 +128,19 @@ def execute_strategy_tool(
         if not isinstance(spec_obj, dict):
             return {"ok": False, "error": "spec must be an object"}
         try:
-            return create_and_queue_backtest(db, user_id, spec_obj)
+            queued = create_and_queue_backtest(db, user_id, spec_obj)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+        if queued.get("ok") and queued.get("run_id"):
+            try:
+                from pathlib import Path
+
+                from core.backtest_tab_agent import note_queued_run
+
+                note_queued_run(Path(__file__).resolve().parent.parent, str(queued["run_id"]))
+            except Exception:
+                pass
+        return queued
     if name == "consult_grok":
         from core.hybrid_orchestrator import dispatch_orchestrator_tool
 
@@ -150,7 +160,18 @@ def strategy_chat_system(recent: str) -> str:
     """System prompt. The Grok hint is present only when the tool is available."""
     from config import get_grok_agent_mode
 
-    base = STRATEGY_CHAT_SYSTEM + "\n\n" + recent
+    base_text = STRATEGY_CHAT_SYSTEM
+    try:
+        from pathlib import Path
+
+        from core.backtest_tab_agent import live_prompt_text
+
+        override = live_prompt_text(Path(__file__).resolve().parent.parent)
+        if override:
+            base_text = override
+    except Exception:
+        base_text = STRATEGY_CHAT_SYSTEM
+    base = base_text + "\n\n" + recent
     if get_grok_agent_mode() == "off":
         return base
     return base + _GROK_TOOL_HINT

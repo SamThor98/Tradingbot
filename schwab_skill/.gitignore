@@ -66,6 +66,7 @@ decision_packets.json
 .tab_agent_digest/
 .tab_agent_reviews/
 .tab_agent_policy.json
+.tab_agent_backtest_runs.jsonl
 strategy_state.json
 strategy_chat_log.jsonl
 
