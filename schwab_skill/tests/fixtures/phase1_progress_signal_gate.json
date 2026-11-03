@@ -1,0 +1,36 @@
+{
+  "ranking": [
+    {
+      "config_id": "control_legacy",
+      "pf_mean_treatment": 1.1,
+      "sample_status": "measured"
+    }
+  ],
+  "unranked_insufficient_sample": [
+    {
+      "config_id": "breakout_vol_120",
+      "pf_mean_treatment": null,
+      "sample_status": "insufficient_sample"
+    },
+    {
+      "config_id": "confluence_both",
+      "pf_mean_treatment": null,
+      "sample_status": "insufficient_sample"
+    },
+    {
+      "config_id": "confluence_either",
+      "pf_mean_treatment": null,
+      "sample_status": "insufficient_sample"
+    },
+    {
+      "config_id": "signal_gate_combo",
+      "pf_mean_treatment": null,
+      "sample_status": "insufficient_sample"
+    },
+    {
+      "config_id": "vcp_pre_breakout",
+      "pf_mean_treatment": null,
+      "sample_status": "insufficient_sample"
+    }
+  ]
+}

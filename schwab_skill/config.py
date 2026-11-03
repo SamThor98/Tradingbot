@@ -1557,6 +1557,12 @@ def get_exit_breakeven_after_partial(skill_dir: Path | None = None) -> bool:
     return _get_bool("EXIT_BREAKEVEN_AFTER_PARTIAL", True, skill_dir)
 
 
+def get_barrier_profit_r_multiple(skill_dir: Path | None = None) -> float:
+    """Profit target in R for triple-barrier labels. Default 2R. Does not place orders."""
+    val = _get_float("BARRIER_PROFIT_R_MULTIPLE", 2.0, skill_dir)
+    return max(0.5, min(10.0, val))
+
+
 def get_exit_max_hold_days(skill_dir: Path | None = None) -> int:
     """Maximum hold days before forcing a time-stop exit."""
     return _get_int("EXIT_MAX_HOLD_DAYS", 40, skill_dir)

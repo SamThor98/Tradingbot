@@ -1,0 +1,18 @@
+{
+  "model_id": "fixture-shape",
+  "note": "Loader contract fixture. Not a fitted historical book.",
+  "weights": {
+    "trend_norm": 0.6,
+    "volume_norm": 0.4
+  },
+  "feature_bounds": {
+    "close_vs_sma200_pct": [0.0, 0.4],
+    "volume_points": [0.0, 20.0]
+  },
+  "fit": {
+    "oos_ic_worst_era": 0.02,
+    "score_resolution": {
+      "share_at_max": 0.0
+    }
+  }
+}
