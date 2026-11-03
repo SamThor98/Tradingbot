@@ -13,7 +13,7 @@ from typing import Any
 from core.tab_agent import STATUS_PENDING, STATUS_RETIRED, STATUS_SHADOW, TabAgentError, get_tab_agent
 from core.tab_agent_review import read_verdict, write_verdict
 
-TABS = ("today", "debate", "research", "backtest")
+TABS = ("today", "debate", "research", "backtest", "system")
 VERDICT_STATUSES = {STATUS_PENDING, STATUS_SHADOW}
 PROMOTE_STATUSES = {STATUS_PENDING, STATUS_SHADOW}
 

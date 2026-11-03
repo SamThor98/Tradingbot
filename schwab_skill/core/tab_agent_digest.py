@@ -107,6 +107,7 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                     for row in events
                 ],
                 "errors": [],
+                "calibration": score.get("calibration") if isinstance(score.get("calibration"), dict) else None,
             }
         )
     return {
@@ -160,6 +161,22 @@ def _markdown(payload: dict[str, Any]) -> str:
             )
             if event.get("why"):
                 lines.append(f"  {event.get('why')}")
+        calibration = tab.get("calibration") if isinstance(tab.get("calibration"), dict) else None
+        if calibration:
+            lines.append("")
+            lines.append("Calibration:")
+            for name, row in (calibration.get("by_tab") or {}).items():
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    f"- {name} n={row.get('n')} brier={row.get('brier')} "
+                    f"miscalibrated={row.get('miscalibrated')}"
+                )
+                for gap in row.get("gaps") or []:
+                    lines.append(
+                        f"  {gap.get('bin')} stated={gap.get('mean_confidence')} "
+                        f"realized={gap.get('frequency')} gap={gap.get('gap')}"
+                    )
         lines.append("")
     if payload.get("errors"):
         lines.append("## Errors")

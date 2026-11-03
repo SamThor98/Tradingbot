@@ -2790,6 +2790,48 @@ def get_tab_agent_backtest_shadow_enabled(skill_dir: Path | None = None) -> bool
     return _get_bool("TAB_AGENT_BACKTEST_SHADOW_ENABLED", False, skill_dir)
 
 
+def get_tab_agent_system_enabled(skill_dir: Path | None = None) -> bool:
+    """Let the system agent revise confidence wording. Default off. Does not place orders."""
+    return _get_bool("TAB_AGENT_SYSTEM_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_system_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Score a shadow confidence wording beside the live one. Default off."""
+    return _get_bool("TAB_AGENT_SYSTEM_SHADOW_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_confidence_high_min(skill_dir: Path | None = None) -> float:
+    """Stated confidence at or above this takes the labeled long return."""
+    low, high = get_tab_agent_confidence_high_bounds(skill_dir)
+    val = _get_float("TAB_AGENT_CONFIDENCE_HIGH_MIN", 0.70, skill_dir)
+    return max(low, min(high, val))
+
+
+def get_tab_agent_confidence_high_bounds(skill_dir: Path | None = None) -> tuple[float, float]:
+    """Inclusive bounds for the high-confidence cutoff."""
+    low = _get_float("TAB_AGENT_CONFIDENCE_HIGH_MIN_BOUND", 0.55, skill_dir)
+    high = _get_float("TAB_AGENT_CONFIDENCE_HIGH_MAX_BOUND", 0.90, skill_dir)
+    if high < low:
+        low, high = high, low
+    return low, high
+
+
+def get_tab_agent_confidence_low_max(skill_dir: Path | None = None) -> float:
+    """Stated confidence at or below this stays in cash."""
+    low, high = get_tab_agent_confidence_low_bounds(skill_dir)
+    val = _get_float("TAB_AGENT_CONFIDENCE_LOW_MAX", 0.40, skill_dir)
+    return max(low, min(high, val))
+
+
+def get_tab_agent_confidence_low_bounds(skill_dir: Path | None = None) -> tuple[float, float]:
+    """Inclusive bounds for the low-confidence cutoff."""
+    low = _get_float("TAB_AGENT_CONFIDENCE_LOW_MIN_BOUND", 0.15, skill_dir)
+    high = _get_float("TAB_AGENT_CONFIDENCE_LOW_MAX_BOUND", 0.55, skill_dir)
+    if high < low:
+        low, high = high, low
+    return low, high
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)
