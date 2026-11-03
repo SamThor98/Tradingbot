@@ -55,7 +55,9 @@ class ResearchTabAgent(TabAgent):
         if since_ts:
             packets = [row for row in packets if str(row.get("created_at") or "") >= since_ts]
         versions = reg.versions(self.tab_id)
-        stats = [_version_book(version, packets, config) for version in versions]
+        stats = [
+            _version_book(version, packets, config, skill_dir=skill_dir, since_ts=since_ts) for version in versions
+        ]
         by_id = {row["version_id"]: row for row in stats}
         comparisons = []
         for row in stats:
@@ -137,7 +139,10 @@ class ResearchTabAgent(TabAgent):
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
                 continue
-            if any(parsed.get(field) is not None for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")):
+            if any(
+                parsed.get(field) is not None
+                for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")
+            ):
                 from core.tab_agent_objective import apply_policy_update
 
                 apply_policy_update(skill_dir, parsed)
@@ -195,7 +200,14 @@ def _decision_return(packet: dict[str, Any], verdict: str | None, config: Any) -
     return str(packet.get("created_at") or "")[:10], ret
 
 
-def _version_book(version: dict[str, Any], packets: list[dict[str, Any]], config: Any) -> dict[str, Any]:
+def _version_book(
+    version: dict[str, Any],
+    packets: list[dict[str, Any]],
+    config: Any,
+    *,
+    skill_dir: Path | None = None,
+    since_ts: str | None = None,
+) -> dict[str, Any]:
     vid = str(version.get("id") or "")
     key = str(version.get("prompt_key") or "")
     returns: list[float] = []
@@ -218,7 +230,18 @@ def _version_book(version: dict[str, Any], packets: list[dict[str, Any]], config
             continue
         dates.append(parsed[0])
         returns.append(parsed[1])
-    book = evaluate_book(returns, dates, config=config)
+    from core.tab_agent_replay import attach_replay
+
+    merged = attach_replay(
+        returns,
+        dates,
+        skill_dir=skill_dir,
+        tab_id="research",
+        version_id=vid,
+        weight=config.replay_weight,
+        since_ts=since_ts,
+    )
+    book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
     book.update(
         {
             "version_id": vid,

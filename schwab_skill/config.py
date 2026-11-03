@@ -2676,6 +2676,34 @@ def get_tab_agent_min_samples(skill_dir: Path | None = None) -> int:
     return max(5, min(5000, val))
 
 
+def get_tab_agent_replay_weight(skill_dir: Path | None = None) -> float:
+    """Weight of a historical replay sample relative to one live sample. Default 0.5."""
+    raw = _env_value("TAB_AGENT_REPLAY_WEIGHT", _load_env(skill_dir))
+    if not str(raw).strip():
+        return 0.5
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 0.5
+    return max(0.0, min(1.0, value))
+
+
+def get_tab_agent_min_live_samples(skill_dir: Path | None = None) -> int:
+    """Live outcomes required before a replay-boosted book can be preferred.
+
+    Replay rows count toward ``TAB_AGENT_MIN_SAMPLES`` at ``TAB_AGENT_REPLAY_WEIGHT``.
+    They do not replace this live floor.
+    """
+    val = _get_int("TAB_AGENT_MIN_LIVE_SAMPLES", 10, skill_dir)
+    return max(1, min(5000, val))
+
+
+def get_tab_agent_replay_usd_per_call(skill_dir: Path | None = None) -> float:
+    """Planning price for one replay LLM call. Dry-run multiplies this by the call count."""
+    val = _get_float("TAB_AGENT_REPLAY_USD_PER_CALL", 0.01, skill_dir)
+    return max(0.0, min(10.0, val))
+
+
 def get_tab_agent_drawdown_tolerance(skill_dir: Path | None = None) -> float:
     """Absolute max-drawdown guardrail. Default 20%. Values below 20% are raised.
 

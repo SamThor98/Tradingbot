@@ -105,7 +105,10 @@ class DebateTabAgent(TabAgent):
         events = _filter_since(load_debate_log(skill_dir), since_ts)
         packets = load_packets(skill_dir)
         versions = reg.versions(self.tab_id)
-        stats = [_version_book(version, events, packets, config) for version in versions]
+        stats = [
+            _version_book(version, events, packets, config, skill_dir=skill_dir, since_ts=since_ts)
+            for version in versions
+        ]
         by_id = {row["version_id"]: row for row in stats}
         comparisons = []
         for row in stats:
@@ -114,7 +117,11 @@ class DebateTabAgent(TabAgent):
             baseline = by_id.get(str(row.get("parent") or ""))
             if baseline is None:
                 baseline = next(
-                    (item for item in stats if item.get("prompt_key") == row.get("prompt_key") and item.get("status") == "live"),
+                    (
+                        item
+                        for item in stats
+                        if item.get("prompt_key") == row.get("prompt_key") and item.get("status") == "live"
+                    ),
                     None,
                 )
             comparisons.append(
@@ -189,7 +196,10 @@ class DebateTabAgent(TabAgent):
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
                 continue
-            if any(parsed.get(field) is not None for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")):
+            if any(
+                parsed.get(field) is not None
+                for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")
+            ):
                 from core.tab_agent_objective import apply_policy_update
 
                 apply_policy_update(skill_dir, parsed)
@@ -262,7 +272,15 @@ def _joined_return(event: dict[str, Any], packets: list[dict[str, Any]], *, hori
         return None
 
 
-def _version_book(version: dict[str, Any], events: list[dict[str, Any]], packets: list[dict[str, Any]], config: Any) -> dict[str, Any]:
+def _version_book(
+    version: dict[str, Any],
+    events: list[dict[str, Any]],
+    packets: list[dict[str, Any]],
+    config: Any,
+    *,
+    skill_dir: Path | None = None,
+    since_ts: str | None = None,
+) -> dict[str, Any]:
     key = str(version.get("prompt_key") or "")
     vid = str(version.get("id") or "")
     endorsed: list[float] = []
@@ -299,7 +317,18 @@ def _version_book(version: dict[str, Any], events: list[dict[str, Any]], packets
             endorsed_dates.append(day)
             passes.append(ret)
             passes_dates.append(day)
-    book = evaluate_book(endorsed, endorsed_dates, config=config)
+    from core.tab_agent_replay import attach_replay
+
+    merged = attach_replay(
+        endorsed,
+        endorsed_dates,
+        skill_dir=skill_dir,
+        tab_id="debate",
+        version_id=vid,
+        weight=config.replay_weight,
+        since_ts=since_ts,
+    )
+    book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
     book.update(
         {
             "version_id": vid,

@@ -20,7 +20,7 @@ function renderInto(panelId, data, changes, onText) {
     .map((row) => `<tr>
       <td><code>${escapeHtml(row.version_id)}</code></td>
       <td>${escapeHtml(row.prompt_key || "")}</td>
-      <td>${row.n}</td>
+      <td>${row.n ?? "—"} <span class="muted small">live ${row.n_live ?? row.n ?? "—"} / replay ${row.n_replay ?? 0}</span></td>
       <td>${row.sufficient ? "readable" : "insufficient"}</td>
       <td>${row.primary_unbounded ? "unbounded" : num(row.primary_score)}</td>
       <td>${num(row.max_drawdown, 3)}</td>

@@ -41,9 +41,7 @@ def resolve_version(
         if row is None:
             raise TabAgentError(f"Unknown prompt version: {wanted}")
         if row.get("status") not in allowed:
-            raise TabAgentError(
-                f"Version {wanted} is {row.get('status')}; expected {' or '.join(sorted(allowed))}."
-            )
+            raise TabAgentError(f"Version {wanted} is {row.get('status')}; expected {' or '.join(sorted(allowed))}.")
         return row
     matches = [row for row in reg.versions(tab) if row.get("status") in allowed]
     if len(matches) == 1:
@@ -87,6 +85,8 @@ def _brief_version(
         "rationale": version.get("rationale"),
         "created_at": version.get("created_at"),
         "n": row.get("n"),
+        "n_live": row.get("n_live"),
+        "n_replay": row.get("n_replay"),
         "primary_metric": row.get("primary_metric"),
         "primary_score": row.get("primary_score"),
         "max_drawdown": row.get("max_drawdown"),

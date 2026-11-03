@@ -80,6 +80,8 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "prompt_key": row.get("prompt_key"),
                 "version_id": row.get("version_id"),
                 "n": row.get("n"),
+                "n_live": row.get("n_live"),
+                "n_replay": row.get("n_replay"),
                 "primary_metric": row.get("primary_metric"),
                 "primary_score": row.get("primary_score"),
                 "max_drawdown": row.get("max_drawdown"),
@@ -140,7 +142,8 @@ def _markdown(payload: dict[str, Any]) -> str:
         for row in tab.get("live") or []:
             lines.append(
                 f"- {row.get('prompt_key')} {row.get('version_id')} "
-                f"n={row.get('n')} {row.get('primary_metric')}={row.get('primary_score')} "
+                f"n={row.get('n')} live={row.get('n_live')} replay={row.get('n_replay')} "
+                f"{row.get('primary_metric')}={row.get('primary_score')} "
                 f"maxDD={row.get('max_drawdown')}"
             )
         if not tab.get("live"):
@@ -169,8 +172,7 @@ def _markdown(payload: dict[str, Any]) -> str:
                 if not isinstance(row, dict):
                     continue
                 lines.append(
-                    f"- {name} n={row.get('n')} brier={row.get('brier')} "
-                    f"miscalibrated={row.get('miscalibrated')}"
+                    f"- {name} n={row.get('n')} brier={row.get('brier')} miscalibrated={row.get('miscalibrated')}"
                 )
                 for gap in row.get("gaps") or []:
                     lines.append(

@@ -57,6 +57,8 @@ class ObjectiveConfig:
     quality_max_bound: float = 90.0
     max_names: int = 0
     review_wait_hours: int = 48
+    replay_weight: float = 0.5
+    min_live_samples: int = 10
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +82,8 @@ class ObjectiveConfig:
             "max_names": self.max_names,
             "max_names_unlimited": self.max_names <= 0,
             "review_wait_hours": self.review_wait_hours,
+            "replay_weight": self.replay_weight,
+            "min_live_samples": self.min_live_samples,
             "signal_priorities": SIGNAL_PRIORITIES,
             "statement": (
                 f"Prefer the long-only book with the higher {self.metric} of {self.horizon_days}-day "
@@ -115,10 +119,12 @@ def load_objective(skill_dir: Path | None = None) -> ObjectiveConfig:
         get_tab_agent_drawdown_tolerance,
         get_tab_agent_max_spread_pct,
         get_tab_agent_min_avg_dollar_volume,
+        get_tab_agent_min_live_samples,
         get_tab_agent_min_samples,
         get_tab_agent_objective_metric,
         get_tab_agent_quality_bounds,
         get_tab_agent_quality_threshold,
+        get_tab_agent_replay_weight,
         get_tab_agent_review_wait_hours,
         get_tab_agent_spread_bounds,
     )
@@ -156,6 +162,8 @@ def load_objective(skill_dir: Path | None = None) -> ObjectiveConfig:
         quality_max_bound=quality_high,
         max_names=get_tab_agent_debate_max_names(skill_dir),
         review_wait_hours=get_tab_agent_review_wait_hours(skill_dir),
+        replay_weight=get_tab_agent_replay_weight(skill_dir),
+        min_live_samples=get_tab_agent_min_live_samples(skill_dir),
     )
 
 
@@ -233,6 +241,23 @@ def _downside_deviation(values: list[float]) -> float:
     return math.sqrt(sum(squares) / len(squares))
 
 
+def _weighted_stdev(values: list[float], weights: list[float]) -> float:
+    weight_sum = sum(weights)
+    if weight_sum <= 0 or len(values) < 2:
+        return 0.0
+    mean = sum(weight * value for weight, value in zip(weights, values, strict=False)) / weight_sum
+    var = sum(weight * (value - mean) ** 2 for weight, value in zip(weights, values, strict=False)) / weight_sum
+    return math.sqrt(var)
+
+
+def _weighted_downside(values: list[float], weights: list[float]) -> float:
+    weight_sum = sum(weights)
+    if weight_sum <= 0:
+        return 0.0
+    squares = sum(weight * min(value, 0.0) ** 2 for weight, value in zip(weights, values, strict=False))
+    return math.sqrt(squares / weight_sum)
+
+
 def _ratio(mean: float, scale: float) -> float | None:
     if scale > 1e-12:
         return mean / scale
@@ -307,22 +332,54 @@ def evaluate_book(
     dates: list[str] | None = None,
     *,
     config: ObjectiveConfig,
+    weights: list[float] | None = None,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Score one ordered book of per-trade percent returns."""
-    pairs = list(zip(dates or [""] * len(returns_pct), returns_pct, strict=False))
-    pairs.sort(key=lambda item: (item[0] or "",))
-    ordered_dates = [item[0] for item in pairs]
-    fractions = [float(item[1]) / 100.0 for item in pairs]
+    """Score one ordered book of per-trade percent returns.
+
+    ``sources`` marks ``replay`` rows. They count toward ``n`` and ``min_samples``.
+    Their equity and ratio contribution is ``weight`` (default 1, live). A weight
+    below 1 pulls the mean toward the live rows.
+    """
+    raw_weights = list(weights) if weights is not None else [1.0] * len(returns_pct)
+    raw_sources = list(sources) if sources is not None else ["live"] * len(returns_pct)
+    while len(raw_weights) < len(returns_pct):
+        raw_weights.append(1.0)
+    while len(raw_sources) < len(returns_pct):
+        raw_sources.append("live")
+    triples = list(zip(dates or [""] * len(returns_pct), returns_pct, raw_weights, raw_sources, strict=False))
+    triples.sort(key=lambda item: (item[0] or "",))
+    ordered_dates = [item[0] for item in triples]
+    fractions = [float(item[1]) / 100.0 for item in triples]
+    weights_sorted = [max(0.0, float(item[2])) for item in triples]
+    sources_sorted = ["replay" if str(item[3]) == "replay" else "live" for item in triples]
     n = len(fractions)
+    n_replay = sum(1 for source in sources_sorted if source == "replay")
+    n_live = n - n_replay
     wins = sum(1 for value in fractions if value > 0.005)
-    mean = sum(fractions) / n if n else 0.0
-    sharpe = _ratio(mean, _stdev(fractions)) if n else None
-    sortino = _ratio(mean, _downside_deviation(fractions)) if n else None
+    uniform = weights is None or all(abs(weight - 1.0) <= 1e-9 for weight in weights_sorted)
+    if uniform or n == 0:
+        mean = sum(fractions) / n if n else 0.0
+        sharpe = _ratio(mean, _stdev(fractions)) if n else None
+        sortino = _ratio(mean, _downside_deviation(fractions)) if n else None
+        path = equity_path(fractions)
+    else:
+        weight_sum = sum(weights_sorted)
+        mean = (
+            sum(weight * value for weight, value in zip(weights_sorted, fractions, strict=False)) / weight_sum
+            if weight_sum
+            else 0.0
+        )
+        sharpe = _ratio(mean, _weighted_stdev(fractions, weights_sorted)) if n else None
+        sortino = _ratio(mean, _weighted_downside(fractions, weights_sorted)) if n else None
+        path = equity_path([value * weight for value, weight in zip(fractions, weights_sorted, strict=False)])
     primary = sortino if config.metric == "sortino" else sharpe
-    path = equity_path(fractions)
     dd = drawdown_stats(path, ordered_dates)
     return {
         "n": n,
+        "n_live": n_live,
+        "n_replay": n_replay,
+        "replay_weight": config.replay_weight,
         "sufficient": n >= config.min_samples,
         "primary_metric": config.metric,
         "primary_score": None if primary is None else round(primary, 6),
@@ -348,6 +405,13 @@ def _primary_rank(stats: dict[str, Any]) -> tuple[int, float]:
     return (0, float(score))
 
 
+def _replay_without_live_floor(stats: dict[str, Any], config: ObjectiveConfig) -> bool:
+    """Replay can fill min_samples. Promotion still needs the live floor."""
+    if int(stats.get("n_replay") or 0) <= 0:
+        return False
+    return int(stats.get("n_live") or 0) < int(config.min_live_samples)
+
+
 def compare_books(
     candidate: dict[str, Any],
     baseline: dict[str, Any] | None,
@@ -357,6 +421,8 @@ def compare_books(
     """Return the preference label. Never an instruction to promote."""
     if baseline is None or candidate.get("n", 0) < config.min_samples or baseline.get("n", 0) < config.min_samples:
         return "insufficient_sample"
+    if _replay_without_live_floor(candidate, config) or _replay_without_live_floor(baseline, config):
+        return "insufficient_live_sample"
     if _primary_rank(candidate) <= _primary_rank(baseline):
         if _primary_rank(candidate) < _primary_rank(baseline):
             return "worse_than_live"
