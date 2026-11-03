@@ -207,6 +207,65 @@ def test_run_scan_outcome_pass_records_and_labels(tmp_path) -> None:
     assert stored[0]["outcome"]["label"] == "win"
 
 
+def test_scale_out_primary_keeps_fixed_early_signal(tmp_path) -> None:
+    created = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    packet = _pending("AAPL", created, price=100.0)
+    packet["refs"]["stop_pct"] = 0.05
+    decision_packet.overwrite_packets(tmp_path, [packet])
+    rows = [{"close": 100.0, "high": 101.0, "low": 99.0} for _ in range(50)]
+    rows[4] = {"close": 111.0, "high": 112.0, "low": 109.0}
+    rows[5] = {"close": 109.0, "high": 111.0, "low": 108.0}
+    rows[6] = {"close": 108.0, "high": 109.0, "low": 106.0}
+    hist = pd.DataFrame(rows, index=pd.date_range("2026-06-01", periods=50, freq="D"))
+
+    outcome_backfill.run_local_backfill(
+        tmp_path,
+        history_provider=lambda _t: hist,
+        now=datetime(2026, 8, 15, tzinfo=timezone.utc),
+        force=True,
+    )
+    stored = decision_packet.load_packets(tmp_path)[0]["outcome"]
+    assert stored["horizon_days"] == 20
+    assert stored["exit_model"] == "scale_out"
+    assert stored["realized_return_pct"] == 8.5
+    primary = stored["by_horizon"]["20"]
+    assert primary["scale_fraction"] == 0.5
+    assert primary["scale_price"] == 110.0
+    assert primary["runner_reason"] == "trail"
+    assert primary["runner_exit_price"] == 107.0
+    assert stored["by_horizon"]["10"]["exit_model"] == "fixed_horizon"
+    assert stored["by_horizon"]["40"]["exit_model"] == "scale_out"
+
+
+def test_scale_out_without_a_stop_stays_a_fixed_horizon(tmp_path) -> None:
+    created = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    packet = _pending("AAPL", created, price=100.0)
+    decision_packet.overwrite_packets(tmp_path, [packet])
+    closes = [100.0 + i for i in range(50)]
+    hist = _history("2026-06-01", closes)
+    outcome_backfill.run_local_backfill(
+        tmp_path,
+        history_provider=lambda _t: hist,
+        now=datetime(2026, 8, 15, tzinfo=timezone.utc),
+        force=True,
+    )
+    stored = decision_packet.load_packets(tmp_path)[0]["outcome"]
+    assert stored["exit_model"] == "fixed_horizon_no_stop"
+    assert stored["horizon_days"] == 20
+    assert stored["realized_return_pct"] == 20.0
+    assert stored["by_horizon"]["10"]["exit_model"] == "fixed_horizon"
+
+
+def test_scan_packet_keeps_stop_for_labeling(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAPL", "price": 50, "stop_pct": 0.08, "signal_score": 70}],
+        created_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+    )
+    stored = decision_packet.load_packets(tmp_path)[0]
+    assert stored["refs"]["stop_pct"] == 0.08
+
+
 def test_load_scan_results_since_and_import(tmp_path) -> None:
     db_path = tmp_path / "webapp.db"
     conn = sqlite3.connect(db_path)

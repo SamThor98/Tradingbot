@@ -2609,12 +2609,52 @@ def get_counterfactual_max_horizon_days(skill_dir: Path | None = None) -> int:
 
 
 def get_decision_packet_horizon_days(skill_dir: Path | None = None) -> int:
-    """Trading-day horizon used to label decision-packet outcomes.
+    """Primary outcome horizon. Default 20 trading days (about four weeks)."""
+    val = _get_int("DECISION_PACKET_HORIZON_DAYS", 20, skill_dir)
+    return max(1, min(120, val))
 
-    Default 10 matches the loop that already labeled the on-disk book.
-    """
-    val = _get_int("DECISION_PACKET_HORIZON_DAYS", 10, skill_dir)
+
+def get_decision_packet_early_horizon_days(skill_dir: Path | None = None) -> int:
+    """Early-signal horizon. Fixed close-to-close, not the promotion label."""
+    val = _get_int("DECISION_PACKET_EARLY_HORIZON_DAYS", 10, skill_dir)
     return max(1, min(60, val))
+
+
+def get_decision_packet_position_horizon_days(skill_dir: Path | None = None) -> int:
+    """Longer swing/position horizon recorded beside the 20-day primary."""
+    val = _get_int("DECISION_PACKET_POSITION_HORIZON_DAYS", 40, skill_dir)
+    return max(1, min(120, val))
+
+
+def get_decision_packet_exit_model(skill_dir: Path | None = None) -> str:
+    """How primary and position horizons are labeled.
+
+    ``scale_out`` sells a fraction at the R target and trails the rest.
+    ``fixed_horizon`` keeps the old close-to-close mark. The early horizon
+    stays close-to-close either way. This does not place orders.
+    """
+    raw = _env_value("DECISION_PACKET_EXIT_MODEL", _load_env(skill_dir)).strip().lower()
+    if raw in {"fixed", "fixed_horizon"}:
+        return "fixed_horizon"
+    return "scale_out"
+
+
+def get_decision_packet_scale_out_fraction(skill_dir: Path | None = None) -> float:
+    """Share sold at the R target. The rest is trailed. Default one half."""
+    val = _get_float("DECISION_PACKET_SCALE_OUT_FRACTION", 0.5, skill_dir)
+    return max(0.05, min(0.95, val))
+
+
+def get_decision_packet_scale_out_target_r(skill_dir: Path | None = None) -> float:
+    """R multiple that triggers the partial sale. Default 2R."""
+    val = _get_float("DECISION_PACKET_SCALE_OUT_TARGET_R", 2.0, skill_dir)
+    return max(0.5, min(10.0, val))
+
+
+def get_decision_packet_scale_out_trail_r(skill_dir: Path | None = None) -> float:
+    """Trail distance, in R, under the high after the partial. Default 1R."""
+    val = _get_float("DECISION_PACKET_SCALE_OUT_TRAIL_R", 1.0, skill_dir)
+    return max(0.25, min(5.0, val))
 
 
 def get_decision_packet_scan_recording_enabled(skill_dir: Path | None = None) -> bool:

@@ -3634,7 +3634,7 @@ def cockpit_review() -> ApiResponse:
 def cockpit_review_backfill(
     _auth: dict[str, str] = Depends(require_api_key_if_set),
 ) -> ApiResponse:
-    """Resolve matured decision packets at the configured trading-day horizon (default 10)."""
+    """Label matured packets: 20-day scale-out primary, 10-day early, 40-day position."""
     try:
         from core import outcome_backfill
 
