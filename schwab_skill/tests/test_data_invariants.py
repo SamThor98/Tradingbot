@@ -54,6 +54,11 @@ def test_apply_score_stack_emits_rank_score_metadata() -> None:
     out = _apply_score_stack(copy.deepcopy(row))
     assert isinstance(out.get("rank_score"), (int, float))
     assert 0.0 <= float(out["rank_score"]) <= 100.0
+    assert "ev_10d" not in out
+    assert out.get("score_stack_version") == "v3_direct_no_ev"
+    stale = _apply_score_stack({**copy.deepcopy(row), "ev_10d": -0.2})
+    assert "ev_10d" not in stale
+    assert stale["rank_score"] == out["rank_score"]
     assert out.get("rank_basis") == "composite_quality_v3"
     assert out.get("pts_volume_rank") == 6.0
     assert out.get("volume_ratio") == 1.3
@@ -101,12 +106,33 @@ def test_apply_score_stack_rank_score_caps_on_high_risk() -> None:
         "recent_8k": False,
         "sec_risk_tag": "high",
         "forensic_flags": ["beneish_manipulator"],
+        "close_vs_sma200_pct": 0.25,
         "mirofish_disagreement": 0.0,
         "mirofish_conviction": 45.0,
     }
     out = _apply_score_stack(copy.deepcopy(row))
     assert float(out.get("rank_score", 100.0)) <= 45.0
     assert float(out.get("composite_score", 100.0)) <= 45.0
+    assert float(out["composite_score_raw"]) > float(out["composite_score"])
+
+
+def test_historical_rank_cohort_stamps_raw_blend() -> None:
+    from signal_scanner import _apply_historical_rank_cohort
+
+    skill = Path(__file__).resolve().parents[1]
+    rows = [
+        {
+            "ticker": "AAA",
+            "close_vs_sma200_pct": 0.25,
+            "reliability_score": 80.0,
+            "execution_score": 80.0,
+            "sec_risk_tag": "high",
+            "forensic_flags": ["beneish_manipulator"],
+        }
+    ]
+    out = _apply_historical_rank_cohort(rows, {}, skill)
+    assert out[0].get("historical_rank") is not None
+    assert float(out[0]["historical_rank_raw"]) + 1e-9 >= float(out[0]["historical_rank"])
 
 
 def test_forensic_snapshot_skipped_under_schwab_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

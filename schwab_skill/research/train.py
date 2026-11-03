@@ -129,6 +129,7 @@ def train_prob_rank_model(
     write: bool = True,
     era_weights: dict[str, float] | None = None,
     holdout_era: str | None = "recent_current",
+    splits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Expanding walk-forward LightGBM regressor.
@@ -156,7 +157,7 @@ def train_prob_rank_model(
             )
         )
 
-    folds = walk_forward_splits(work, ERA_BOUNDS, purge_days=purge_days)
+    folds = splits if splits is not None else walk_forward_splits(work, ERA_BOUNDS, purge_days=purge_days)
     fold_results: list[dict[str, Any]] = []
     oof_pred = np.full(len(work), np.nan, dtype=np.float64)
 
@@ -213,7 +214,7 @@ def train_prob_rank_model(
         fold_results.append(
             {
                 "fold_id": fold["fold_id"],
-                "test_era": fold["test_era"],
+                "test_era": fold.get("test_era") or fold.get("fold_id"),
                 "n_train": int(len(tr)),
                 "n_valid": int(len(va)),
                 "n_test": int(len(te)),

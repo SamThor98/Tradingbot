@@ -17,7 +17,8 @@
  *     scan-from-latest-backtest helper.
  *   - switchBacktestHubTab / refreshBacktestRuns: tab-switching + recent
  *     runs list, also called by the strategy-chat panel.
- *   - queueUserBacktest: the "Run backtest" button entrypoint.
+ *   - queueUserBacktest: the "Queue backtest" button in Edit settings.
+ *   - queueBacktestWindow: landing 5y/8y/2y one-click (sets dates and queues).
  *
  * Injected dependencies:
  *   - `setJobProgress`: shared scan/backtest progress-bar helper.
@@ -29,14 +30,17 @@ import { api } from "../modules/api.js";
 import {
   safeText,
   escapeHtml,
-  prettyJson,
   formatPercentPoints,
+  formatMoney,
 } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { humanizeKey } from "../modules/humanize.js";
 import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import { scrollStrategyChatToEnd, renderStrategyChatMessages } from "./strategyChat.js";
 import { renderBacktestEquityCharts, clearBacktestEquityCharts } from "./backtestCharts.js";
 import { setAsyncState, ASYNC_ERROR } from "../modules/asyncState.js";
+import { runDisplayTitle } from "./backtestLabels.js";
+import { loadScanCatalog, primaryStrategyIdForTimeframe } from "./scanStudio.js";
 
 /**
  * The backtest queue (`/api/backtest-runs*`) is served by both backends:
@@ -56,6 +60,190 @@ export function isBacktestQueueAvailable() {
 
 /** @deprecated Use isBacktestQueueAvailable — kept for any stale call sites. */
 export const isHostedBacktestAvailable = isBacktestQueueAvailable;
+
+export function normalizeBtUniverseValue(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (!v || v === "watchlist") return "sp1500";
+  if (v === "tickers") return "custom";
+  return v;
+}
+
+export function universeModeForPreset(preset) {
+  return normalizeBtUniverseValue(preset) === "custom" ? "tickers" : "watchlist";
+}
+
+function btCatalog() {
+  const live = state.scanCatalog;
+  if (live && typeof live === "object" && Array.isArray(live.strategies) && live.strategies.length) {
+    return live;
+  }
+  const el = document.getElementById("scanCatalogBootstrap");
+  if (el?.textContent) {
+    try {
+      const parsed = JSON.parse(el.textContent);
+      if (parsed && Array.isArray(parsed.strategies) && parsed.strategies.length) return parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    timeframes: [{ id: "daily", display_name: "Daily", description: "Primary live engine." }],
+    strategies: [
+      {
+        id: "trend_breakout",
+        display_name: "Stage 2 / VCP breakout",
+        timeframe: "daily",
+        status: "live",
+        runnable: true,
+        origin: "iterated",
+        description: "Weinstein Stage 2 plus volume contraction. This is the live book.",
+      },
+    ],
+    universes: [
+      { id: "sp1500", display_name: "S&P 1500", available: true, description: "Default live universe." },
+      { id: "custom", display_name: "Custom tickers", available: true, description: "Paste your own list." },
+    ],
+    defaults: { timeframe: "daily", universe_preset: "sp1500", strategy_ids: ["trend_breakout"] },
+  };
+}
+
+function btStatusHow(row) {
+  const status = String(row?.status || "research").toLowerCase();
+  if (status === "live") return "Live order-routing sleeve.";
+  if (status === "live_overlay") return "Confirms the live book. Overlay, not a separate book.";
+  if (status === "shadow") return "Replay uses the Scan studio evaluator. Does not go LIVE.";
+  return "Paper / research screen. Replay uses the Scan studio evaluator — not live.";
+}
+
+function readBtStrategyIdsFromDom() {
+  const boxes = document.querySelectorAll("#btStrategyBoard [data-bt-strategy]");
+  if (!boxes.length) return [];
+  return [...boxes]
+    .filter((el) => el.checked && !el.disabled)
+    .map((el) => String(el.getAttribute("data-bt-strategy") || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function btPrimaryStrategyId(timeframe) {
+  try {
+    const id = primaryStrategyIdForTimeframe?.(timeframe);
+    if (id) return String(id);
+  } catch {
+    /* catalog not ready */
+  }
+  const cat = btCatalog();
+  const tf = (cat.timeframes || []).find((row) => String(row.id) === String(timeframe));
+  return String(tf?.default_strategy_id || cat.defaults?.strategy_ids?.[0] || "trend_breakout");
+}
+
+export function mountBacktestComposerCatalog() {
+  const cat = btCatalog();
+  const hiddenUni = document.getElementById("btUniverse");
+  const preset = normalizeBtUniverseValue(hiddenUni?.value || cat.defaults?.universe_preset || "sp1500");
+  if (hiddenUni) hiddenUni.value = preset;
+  const uniMount = document.getElementById("btUniverseMount");
+  if (uniMount) {
+    const rows = Array.isArray(cat.universes) ? cat.universes : [];
+    uniMount.innerHTML = rows
+      .filter((u) => u.available !== false)
+      .map((u) => {
+        const selected = u.id === preset;
+        return `<label class="scan-studio-uni${selected ? " is-selected" : ""}">
+          <input type="radio" name="btUniverseRadio" value="${escapeHtml(u.id)}" ${selected ? "checked" : ""} />
+          <span class="scan-studio-uni-name">${escapeHtml(u.display_name || u.id)}</span>
+          <span class="scan-studio-uni-desc">${escapeHtml(u.description || "")}</span>
+        </label>`;
+      })
+      .join("");
+  }
+  const tfHidden = document.getElementById("btScanTimeframe");
+  let tf = String(tfHidden?.value || cat.defaults?.timeframe || "daily").toLowerCase();
+  const frames = Array.isArray(cat.timeframes) ? cat.timeframes : [];
+  if (!frames.some((row) => String(row.id) === tf) && frames.length) tf = String(frames[0].id);
+  if (tfHidden) tfHidden.value = tf;
+  const tfMount = document.getElementById("btTimeframeMount");
+  if (tfMount) {
+    tfMount.innerHTML = frames
+      .map((row) => {
+        const id = String(row.id || "");
+        const active = id === tf;
+        return `<button type="button" class="scan-studio-tf${active ? " is-active" : ""}" data-bt-timeframe="${escapeHtml(id)}" role="tab" aria-selected="${active ? "true" : "false"}">${escapeHtml(row.display_name || id)}</button>`;
+      })
+      .join("");
+  }
+  mountBtStrategyBoard(tf);
+  syncBtUniverseRow();
+  renderBacktestQueueNowSummary();
+}
+
+function mountBtStrategyBoard(timeframe) {
+  const board = document.getElementById("btStrategyBoard");
+  if (!board) return;
+  const cat = btCatalog();
+  const tf = String(timeframe || "daily");
+  const rows = (Array.isArray(cat.strategies) ? cat.strategies : []).filter(
+    (s) => String(s.timeframe || "") === tf,
+  );
+  const allowed = new Set(rows.map((row) => String(row.id || "")));
+  const selected = new Set(readBtStrategyIdsFromDom().filter((id) => allowed.has(id)));
+  if (!selected.size) {
+    const stored = String(board.dataset.selected || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((id) => allowed.has(id));
+    stored.forEach((id) => selected.add(id));
+  }
+  const primary = btPrimaryStrategyId(tf);
+  if (!selected.size && primary && allowed.has(primary)) selected.add(primary);
+  const yours = rows.filter((row) => String(row.origin || "iterated") !== "literature");
+  const paper = rows.filter((row) => String(row.origin || "") === "literature");
+  const renderCard = (row) => {
+    const id = String(row.id || "");
+    const checked = selected.has(id);
+    const disabled = row.available === false || row.runnable === false;
+    const status = String(row.status || "research").toLowerCase();
+    const mods = [
+      checked ? "is-selected" : "",
+      disabled ? "is-disabled" : "",
+      id === primary ? "scan-studio-strategy--primary" : "",
+      String(row.origin || "") === "literature" ? "scan-studio-strategy--paper" : "scan-studio-strategy--yours",
+      status === "live" || status === "live_overlay" ? "scan-studio-strategy--live" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return `<label class="scan-studio-strategy ${mods}">
+      <input class="scan-studio-strategy-input" type="checkbox" data-bt-strategy="${escapeHtml(id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      <span class="scan-studio-strategy-copy">
+        <span class="scan-studio-strategy-head">
+          <strong>${escapeHtml(row.display_name || id)}</strong>
+          <span class="scan-studio-selected-flag">Selected</span>
+        </span>
+        <span class="scan-studio-strategy-desc">${escapeHtml(row.description || "")}</span>
+        <span class="muted small scan-studio-strategy-how">${escapeHtml(btStatusHow(row))}</span>
+      </span>
+    </label>`;
+  };
+  const group = (title, hint, list, extra) => {
+    if (!list.length) return "";
+    return `<fieldset class="scan-studio-group${extra ? ` ${extra}` : ""}">
+      <legend class="scan-studio-group-head"><span class="scan-studio-kicker">${escapeHtml(title)}</span>
+        ${hint ? `<span class="muted small scan-studio-group-hint">${escapeHtml(hint)}</span>` : ""}</legend>
+      <div class="scan-studio-strategies">${list.map(renderCard).join("")}</div>
+    </fieldset>`;
+  };
+  board.innerHTML = `${group("Your strategies", "Check a row to include it in this replay.", yours, "")}
+    ${group("Paper screens", "Literature screens — opt-in only, not the live book.", paper, "scan-studio-group--paper")}`;
+  board.dataset.selected = [...selected].join(",");
+}
+
+export async function refreshBacktestComposerCatalog() {
+  try {
+    await loadScanCatalog();
+  } catch {
+    /* bootstrap catalog is enough */
+  }
+  mountBacktestComposerCatalog();
+}
 
 export function setDefaultBacktestDates() {
   const startEl = document.getElementById("btStart");
@@ -80,11 +268,23 @@ export function restoreBacktestFormFromStorage() {
       if (!el || val === undefined || val === null) return;
       el.value = String(val);
     };
-    setVal("btUniverse", o.universe);
+    setVal("btUniverse", normalizeBtUniverseValue(o.universe));
     setVal("btTickers", o.tickers);
     setVal("btTheory", o.theory);
     setVal("btStart", o.start);
     setVal("btEnd", o.end);
+    setVal("btScanTimeframe", o.timeframe || "daily");
+    if (Array.isArray(o.strategyIds)) {
+      const board = document.getElementById("btStrategyBoard");
+      if (board) board.dataset.selected = o.strategyIds.map((id) => String(id || "").toLowerCase()).join(",");
+    }
+    setVal("btStage252w", o.stage252w);
+    setVal("btStage2SmaDays", o.stage2SmaDays);
+    setVal("btVcpDays", o.vcpDays);
+    setVal("btVcpGateMode", o.vcpGateMode);
+    setVal("btQualityMinScore", o.qualityMinScore);
+    setVal("btQualityVolRatio", o.qualityVolRatio);
+    setVal("btQualityRequireVol", o.qualityRequireVol);
     setVal("btSlippage", o.slippage);
     setVal("btFeeShare", o.feeShare);
     setVal("btMinFee", o.minFee);
@@ -106,6 +306,7 @@ export function restoreBacktestFormFromStorage() {
     setVal("btExecQualityMode", o.execQualityMode);
     const skip = document.getElementById("btSkipMirofish");
     if (skip && typeof o.skipMirofish === "boolean") skip.checked = o.skipMirofish;
+    renderBacktestQueueNowSummary();
     return true;
   } catch {
     return false;
@@ -119,6 +320,15 @@ export function snapshotBacktestFormForStorage() {
     theory: document.getElementById("btTheory")?.value ?? "",
     start: document.getElementById("btStart")?.value ?? "",
     end: document.getElementById("btEnd")?.value ?? "",
+    timeframe: document.getElementById("btScanTimeframe")?.value ?? "daily",
+    strategyIds: readBtStrategyIdsFromDom(),
+    stage252w: document.getElementById("btStage252w")?.value ?? "",
+    stage2SmaDays: document.getElementById("btStage2SmaDays")?.value ?? "",
+    vcpDays: document.getElementById("btVcpDays")?.value ?? "",
+    vcpGateMode: document.getElementById("btVcpGateMode")?.value ?? "",
+    qualityMinScore: document.getElementById("btQualityMinScore")?.value ?? "",
+    qualityVolRatio: document.getElementById("btQualityVolRatio")?.value ?? "",
+    qualityRequireVol: document.getElementById("btQualityRequireVol")?.value ?? "",
     slippage: document.getElementById("btSlippage")?.value ?? "",
     feeShare: document.getElementById("btFeeShare")?.value ?? "",
     minFee: document.getElementById("btMinFee")?.value ?? "",
@@ -160,16 +370,50 @@ export function wireBacktestFormPersistence() {
   if (!root) return;
   root.addEventListener("input", schedulePersistBacktestForm);
   root.addEventListener("change", schedulePersistBacktestForm);
+  if (root.dataset.btComposerBound === "1") return;
+  root.dataset.btComposerBound = "1";
+  root.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (!t) return;
+    if (t.name === "btUniverseRadio") {
+      const hidden = document.getElementById("btUniverse");
+      if (hidden) hidden.value = normalizeBtUniverseValue(t.value);
+      syncBtUniverseRow();
+      mountBacktestComposerCatalog();
+      return;
+    }
+    if (t.hasAttribute?.("data-bt-strategy")) {
+      const board = document.getElementById("btStrategyBoard");
+      if (board) board.dataset.selected = readBtStrategyIdsFromDom().join(",");
+      t.closest(".scan-studio-strategy")?.classList.toggle("is-selected", Boolean(t.checked));
+    }
+    renderBacktestQueueNowSummary();
+  });
+  root.addEventListener("click", (ev) => {
+    const btn = ev.target?.closest?.("[data-bt-timeframe]");
+    if (!btn) return;
+    const tf = String(btn.getAttribute("data-bt-timeframe") || "").toLowerCase();
+    if (!tf) return;
+    const hidden = document.getElementById("btScanTimeframe");
+    if (hidden) hidden.value = tf;
+    mountBacktestComposerCatalog();
+    schedulePersistBacktestForm();
+    renderBacktestQueueNowSummary();
+  });
 }
 
 export function resetBacktestFormToDefaults() {
   localStorage.removeItem(BACKTEST_PREFS_KEY);
   const u = document.getElementById("btUniverse");
-  if (u) u.value = "watchlist";
+  if (u) u.value = "sp1500";
   const tick = document.getElementById("btTickers");
   if (tick) tick.value = "";
   const th = document.getElementById("btTheory");
   if (th) th.value = "";
+  const tf = document.getElementById("btScanTimeframe");
+  if (tf) tf.value = "daily";
+  const board = document.getElementById("btStrategyBoard");
+  if (board) board.dataset.selected = "trend_breakout";
   const s = document.getElementById("btStart");
   const e = document.getElementById("btEnd");
   if (s) s.value = "";
@@ -204,49 +448,51 @@ export function resetBacktestFormToDefaults() {
     "btEventRiskMode",
     "btExitManagerMode",
     "btExecQualityMode",
+    "btVcpGateMode",
+    "btQualityRequireVol",
   ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  ["btStage252w", "btStage2SmaDays", "btVcpDays", "btQualityMinScore", "btQualityVolRatio"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
   const skip = document.getElementById("btSkipMirofish");
   if (skip) skip.checked = false;
+  mountBacktestComposerCatalog();
   syncBtUniverseRow();
   setBtMetaMessage("Form reset to defaults. Queue when ready.");
   logEvent({ kind: "system", severity: "info", message: "Backtest form reset." });
 }
 
 export function setBacktestQueueUiBusy(busy) {
-  state.backtestQueueBusy = busy;
-  const btn = document.getElementById("btQueueBtn");
-  if (btn) btn.disabled = busy;
   const spin = document.getElementById("btMetaSpinner");
   const metaText = document.getElementById("btMetaText");
   if (spin) spin.classList.toggle("hidden", !busy);
-  if (metaText && busy && !metaText.dataset.sticky) metaText.textContent = "Running…";
-  if (busy) {
-    setResearchStatusStrip(
-      "backtestStatusStrip",
-      "loading",
-      "Backtest running.",
-      "Worker progress and results will appear in this panel.",
-    );
-  }
+  if (metaText && busy && !metaText.dataset.sticky) metaText.textContent = "Queueing…";
+  document.querySelectorAll("[data-bt-queue-years], #btQueueNowBtn, #btQueueBtn, #btQueueCopyBtn, #btQueueUseIndexBtn").forEach((btn) => {
+    if (btn) btn.disabled = Boolean(busy);
+  });
 }
 
 export function setBtMetaMessage(text, { sticky = false } = {}) {
   const metaText = document.getElementById("btMetaText");
-  if (!metaText) return;
-  metaText.textContent = text;
-  if (sticky) metaText.dataset.sticky = "1";
-  else delete metaText.dataset.sticky;
+  if (metaText) {
+    metaText.textContent = text;
+    if (sticky) metaText.dataset.sticky = "1";
+    else delete metaText.dataset.sticky;
+  }
+  const land = document.getElementById("btQueueNowStatus");
+  if (land) land.textContent = text || "";
 }
 
 export function syncBtUniverseRow() {
   const sel = document.getElementById("btUniverse");
   const row = document.getElementById("btTickersRow");
   if (!row) return;
-  const mode = sel?.value || "watchlist";
-  row.classList.toggle("hidden", mode !== "tickers");
+  const preset = normalizeBtUniverseValue(sel?.value || "sp1500");
+  row.classList.toggle("hidden", preset !== "custom");
 }
 
 export function applyBacktestPresetYears(years) {
@@ -260,6 +506,7 @@ export function applyBacktestPresetYears(years) {
   if (endEl) endEl.value = fmt(end);
   setBtMetaMessage(`Date range set to last ${years} year(s).`);
   schedulePersistBacktestForm();
+  renderBacktestQueueNowSummary();
 }
 
 export function collectBacktestOverrides() {
@@ -294,6 +541,13 @@ export function collectBacktestOverrides() {
   setNumber("btRiskPerTradePct", "backtest_risk_per_trade_pct");
   setNumber("btPositionSizePct", "backtest_position_size_pct");
   setNumber("btAdaptiveStopBasePct", "adaptive_stop_base_pct");
+  setNumber("btStage252w", "stage2_52w_pct");
+  setNumber("btStage2SmaDays", "stage2_sma_upward_days");
+  setNumber("btVcpDays", "vcp_days");
+  setNumber("btQualityMinScore", "quality_min_signal_score");
+  setNumber("btQualityVolRatio", "quality_breakout_volume_min_ratio");
+  setOnOffBool("btQualityRequireVol", "quality_require_breakout_volume");
+  setMode("btVcpGateMode", "scan_vcp_gate_mode");
   if (document.getElementById("btSkipMirofish")?.checked) o.skip_mirofish = true;
   const fm = document.getElementById("btForensicMode")?.value || "";
   if (fm === "disabled") o.forensic_enabled = false;
@@ -309,7 +563,8 @@ export function collectBacktestOverrides() {
 
 export function collectBacktestSpecFromForm() {
   const theory = document.getElementById("btTheory")?.value?.trim() || "";
-  const universe = document.getElementById("btUniverse")?.value || "watchlist";
+  const preset = normalizeBtUniverseValue(document.getElementById("btUniverse")?.value || "sp1500");
+  const custom = preset === "custom";
   const tickersRaw = document.getElementById("btTickers")?.value || "";
   const tickers = tickersRaw
     .split(/[\s,]+/)
@@ -321,10 +576,19 @@ export function collectBacktestSpecFromForm() {
   const fee = Number(document.getElementById("btFeeShare")?.value);
   const minf = Number(document.getElementById("btMinFee")?.value);
   const adv = Number(document.getElementById("btMaxAdv")?.value);
+  const timeframe = String(document.getElementById("btScanTimeframe")?.value || "daily").toLowerCase();
+  let strategyIds = readBtStrategyIdsFromDom();
+  if (!strategyIds.length) {
+    const primary = btPrimaryStrategyId(timeframe);
+    if (primary) strategyIds = [primary];
+  }
   const spec = {
     schema_version: 1,
-    universe_mode: universe === "tickers" ? "tickers" : "watchlist",
-    tickers: universe === "tickers" ? tickers : [],
+    universe_mode: custom ? "tickers" : "watchlist",
+    universe_preset: preset,
+    tickers: custom ? tickers : [],
+    scan_timeframe: timeframe,
+    strategy_ids: strategyIds,
     start_date: start,
     end_date: end,
   };
@@ -336,6 +600,89 @@ export function collectBacktestSpecFromForm() {
   const ov = collectBacktestOverrides();
   if (ov) spec.overrides = ov;
   return spec;
+}
+
+const PF_MEAN_GATE = 1.2;
+
+function coercePf(value) {
+  if (value === "inf" || value === Infinity) return Infinity;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatPf(value) {
+  const n = coercePf(value);
+  if (n === Infinity) return "∞";
+  if (n === null) return "—";
+  return n.toFixed(2);
+}
+
+function pfTone(value) {
+  const n = coercePf(value);
+  if (n === null) return "neutral";
+  if (n >= PF_MEAN_GATE) return "ok";
+  if (n >= 1) return "warn";
+  return "bad";
+}
+
+function renderBacktestPfGate(result) {
+  const pf = result?.profit_factor_net;
+  const n = coercePf(pf);
+  const gateLine =
+    n === null
+      ? "This run did not report net profit factor."
+      : n >= PF_MEAN_GATE
+        ? "This single window clears mean PF ≥ 1.20. Worst-era PF is a multi-era check — not LIVE-ready by itself."
+        : "Promotion gate is mean PF ≥ 1.20. This is one window, not a multi-era verdict.";
+  return `<div class="bt-pf-gate" data-tone="${pfTone(pf)}">
+    <div class="bt-pf-gate-value">PF ${formatPf(pf)}</div>
+    <p class="bt-pf-gate-note">${escapeHtml(gateLine)}</p>
+  </div>`;
+}
+
+export function renderBacktestRunCompare(rows) {
+  const box = document.getElementById("btRunCompare");
+  if (!box) return;
+  const completed = (Array.isArray(rows) ? rows : [])
+    .filter((r) => r && r.result_summary && typeof r.result_summary === "object")
+    .slice(0, 3);
+  if (!completed.length) {
+    box.innerHTML = "";
+    return;
+  }
+  const body = completed
+    .map((r) => {
+      const sum = r.result_summary;
+      const created = safeText(r.created_at || "").slice(0, 16);
+      const spec = runDisplayTitle(r, state.scanCatalog) || backtestSpecSummaryLine(r.spec);
+      return `<tr>
+        <td>${escapeHtml(created)}</td>
+        <td>${escapeHtml(spec || "—")}</td>
+        <td class="mono-nums" data-tone="${pfTone(sum.profit_factor_net)}">${formatPf(sum.profit_factor_net)}</td>
+        <td class="mono-nums">${formatPercentPoints(sum.win_rate_net, 1)}</td> <!-- points from backtest.py 100*wins/total -->
+        <td class="mono-nums">${formatPercentPoints(sum.total_return_net_pct, 2)}</td> <!-- points from backtest.py -->
+        <td class="mono-nums">${formatPercentPoints(sum.max_drawdown_net_pct, 2)}</td> <!-- signed points from backtest.py -->
+      </tr>`;
+    })
+    .join("");
+  box.innerHTML = `
+    <p class="muted small">Last ${completed.length} completed run${completed.length === 1 ? "" : "s"} — chronological, not ranked. PF is per-window.</p>
+    <div class="table-wrap">
+      <table class="bt-run-compare-table">
+        <caption class="visually-hidden">Recent backtest runs</caption>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Setup</th>
+            <th>PF</th>
+            <th>Win</th>
+            <th>Return</th>
+            <th>Max DD</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
 }
 
 export function renderBacktestResultSummary(result) {
@@ -361,19 +708,30 @@ export function renderBacktestResultSummary(result) {
       "backtestStatusStrip",
       "partial",
       "Backtest result incomplete.",
-      "Result returned without total trade count; inspect raw JSON.",
+      "Result returned without a trade count. Re-queue or pick another finished run.",
     );
     return;
   }
   const findings = typeof result.findings === "string" ? result.findings : "";
+  const port = result.portfolio_summary && typeof result.portfolio_summary === "object" ? result.portfolio_summary : {};
+  const extra = [];
+  if (port.ending_equity != null && Number.isFinite(Number(port.ending_equity))) {
+    extra.push(
+      `<div class="bt-metric"><div class="bt-metric-label">Ending equity</div><div class="bt-metric-value">${formatMoney(port.ending_equity)}</div></div>`,
+    );
+  }
+  if (port.peak_concurrent != null && Number.isFinite(Number(port.peak_concurrent))) {
+    extra.push(
+      `<div class="bt-metric"><div class="bt-metric-label">Peak concurrent</div><div class="bt-metric-value">${safeText(port.peak_concurrent)}</div></div>`,
+    );
+  }
   box.innerHTML = `
-    <div class="bt-metric-grid">
-      <div class="bt-metric"><div class="bt-metric-label">Trades</div><div class="bt-metric-value">${safeText(tt)}</div></div>
+    <div class="bt-metric-grid bt-metric-grid-extra">
       <div class="bt-metric"><div class="bt-metric-label">Win rate (net)</div><div class="bt-metric-value">${formatPercentPoints(result.win_rate_net, 1)}</div></div>
-      <div class="bt-metric"><div class="bt-metric-label">Total return (net)</div><div class="bt-metric-value">${formatPercentPoints(result.total_return_net_pct, 2)}</div></div>
       <div class="bt-metric"><div class="bt-metric-label">CAGR (net)</div><div class="bt-metric-value">${formatPercentPoints(result.cagr_net_pct, 2)}</div></div>
-      <div class="bt-metric"><div class="bt-metric-label">Max drawdown (net)</div><div class="bt-metric-value">${formatPercentPoints(result.max_drawdown_net_pct, 2)}</div></div>
+      ${extra.join("")}
     </div>
+    ${renderBacktestPfGate(result)}
     ${findings ? `<div class="bt-findings">${escapeHtml(findings)}</div>` : ""}
   `;
   renderBacktestEquityCharts(chartWrap, result);
@@ -381,30 +739,37 @@ export function renderBacktestResultSummary(result) {
     "backtestStatusStrip",
     "success",
     "Backtest result ready.",
-    `Trades ${safeText(tt)} · Win ${formatPercentPoints(result.win_rate_net, 1)} · Return ${formatPercentPoints(result.total_return_net_pct, 2)}.`,
+    `PF ${formatPf(result.profit_factor_net)} · Trades ${safeText(tt)} · Win ${formatPercentPoints(result.win_rate_net, 1)} · Return ${formatPercentPoints(result.total_return_net_pct, 2)}.`,
   );
 }
 
-export function renderBacktestResultRaw(result, fallbackText, { getDisplayMode = () => "balanced" } = {}) {
-  const pre = document.getElementById("btResult");
-  const details = document.getElementById("btResultRawDetails");
-  if (!pre) return;
-  if (result && typeof result === "object") {
-    pre.textContent = prettyJson(result);
-    if (details) details.open = getDisplayMode() === "pro";
-  } else {
-    pre.textContent = fallbackText || "No run yet.";
-    if (details) details.open = false;
-  }
+export function renderBacktestResultRaw() {
+  // Hub briefing is the operator view. Raw JSON dump removed.
 }
 
 export function backtestSpecSummaryLine(spec) {
   if (!spec || typeof spec !== "object") return "";
-  const mode = spec.universe_mode === "tickers" ? "custom tickers" : "watchlist";
+  const cat = btCatalog();
+  const preset = normalizeBtUniverseValue(spec.universe_preset || spec.universe_mode || "sp1500");
+  const uni = (cat.universes || []).find((u) => String(u.id) === preset);
+  const uniLabel =
+    spec.universe_mode === "tickers" || preset === "custom"
+      ? "Custom tickers"
+      : uni?.display_name || humanizeKey(preset);
+  const ids = Array.isArray(spec.strategy_ids) ? spec.strategy_ids : [];
+  const stratNames = ids
+    .map((id) => {
+      const row = (cat.strategies || []).find((s) => String(s.id) === String(id));
+      return row?.display_name || humanizeKey(id);
+    })
+    .filter(Boolean);
+  const stratPart = stratNames.length ? ` · ${stratNames.slice(0, 2).join(", ")}${stratNames.length > 2 ? " +" : ""}` : "";
+  const tfRaw = String(spec.scan_timeframe || "daily").toLowerCase();
+  const tfPart = tfRaw && tfRaw !== "daily" ? ` · ${humanizeKey(tfRaw)}` : "";
   const dr = spec.start_date && spec.end_date ? `${safeText(spec.start_date)} → ${safeText(spec.end_date)}` : "";
   const n = Array.isArray(spec.tickers) ? spec.tickers.length : 0;
-  const tickPart = spec.universe_mode === "tickers" && n ? ` · ${n} names` : "";
-  return `${mode}${tickPart}${dr ? ` · ${dr}` : ""}`;
+  const tickPart = (spec.universe_mode === "tickers" || preset === "custom") && n ? ` · ${n} names` : "";
+  return `${uniLabel}${tickPart}${stratPart}${tfPart}${dr ? ` · ${dr}` : ""}`;
 }
 
 export function switchBacktestHubTab(which) {
@@ -432,6 +797,7 @@ export async function refreshBacktestRuns() {
   if (!list) return;
   if (!isBacktestQueueAvailable()) {
     list.innerHTML = `<li class="muted">${escapeHtml(LOCAL_BACKTEST_NOTICE)}</li>`;
+    renderBacktestRunCompare([]);
     setResearchStatusStrip(
       "backtestStatusStrip",
       "partial",
@@ -453,6 +819,7 @@ export async function refreshBacktestRuns() {
   );
   const out = await api.get("/api/backtest-runs?limit=15");
   if (!out.ok) {
+    renderBacktestRunCompare([]);
     setAsyncState(list, ASYNC_ERROR, {
       message: safeText(out.user_message || out.error || "Request failed."),
       onRetry: () => void refreshBacktestRuns(),
@@ -468,6 +835,7 @@ export async function refreshBacktestRuns() {
   const rows = Array.isArray(out.data) ? out.data : [];
   if (!rows.length) {
     list.innerHTML = `<li class="muted">No backtests yet.</li>`;
+    renderBacktestRunCompare([]);
     setResearchStatusStrip(
       "backtestStatusStrip",
       "empty",
@@ -476,6 +844,7 @@ export async function refreshBacktestRuns() {
     );
     return;
   }
+  renderBacktestRunCompare(rows);
   list.innerHTML = rows
     .map((r) => {
       const tid = r.celery_task_id ? `${safeText(r.celery_task_id).slice(0, 12)}…` : "—";
@@ -484,7 +853,7 @@ export async function refreshBacktestRuns() {
       let metrics = "";
       if (sum) {
         metrics = `<div class="bt-run-metrics">
-          Trades ${safeText(sum.total_trades)} · Win ${formatPercentPoints(sum.win_rate_net, 1)} ·
+          PF ${formatPf(sum.profit_factor_net)} · Trades ${safeText(sum.total_trades)} · Win ${formatPercentPoints(sum.win_rate_net, 1)} ·
           Return ${formatPercentPoints(sum.total_return_net_pct, 2)} · CAGR ${formatPercentPoints(sum.cagr_net_pct, 2)} ·
           Max DD ${formatPercentPoints(sum.max_drawdown_net_pct, 2)}
         </div>`;
@@ -508,7 +877,6 @@ export async function refreshBacktestRuns() {
 
 export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
   const t0 = Date.now();
-  const pre = document.getElementById("btResult");
   setJobProgress("btJobProgress", "btJobProgressLabel", 0.08, "Queued…");
   for (let i = 0; i < 120; i++) {
     const elapsed = Math.floor((Date.now() - t0) / 1000);
@@ -534,31 +902,30 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
           ? 0.5 + Math.min(0.45, (i / 120) * 0.45)
           : 0.2;
     setJobProgress("btJobProgress", "btJobProgressLabel", progFrac, `${celery} · ${elapsed}s`);
-    if (celery === "success" && d.result && pre) {
+    if (celery === "success" && d.result) {
       renderBacktestResultSummary(d.result);
-      renderBacktestResultRaw(d.result, "", { getDisplayMode });
-      setBtMetaMessage("Complete. Summary above; full JSON below.", { sticky: true });
+      setBtMetaMessage("Complete. Briefing and charts are ready.", { sticky: true });
       setJobProgress("btJobProgress", "btJobProgressLabel", 1, "Complete");
       await refreshBacktestRuns();
+      window.dispatchEvent(new CustomEvent("backtest_run_updated"));
       return;
     }
     if (celery === "failure" || celery === "revoked") {
       renderBacktestResultSummary(null);
-      renderBacktestResultRaw(null, prettyJson(d.task_result || d), { getDisplayMode });
       setBtMetaMessage("Run finished with an error.", { sticky: true });
       setResearchStatusStrip(
         "backtestStatusStrip",
         "error",
         "Backtest run failed.",
-        "Open full result JSON for worker details.",
+        safeText(d.error_message || d.exc_message || "Worker reported a failure. Retry from the queue."),
       );
       setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
+      window.dispatchEvent(new CustomEvent("backtest_run_updated"));
       return;
     }
     if (d.db_status === "failed" && d.error_message) {
       renderBacktestResultSummary(null);
-      if (pre) pre.textContent = safeText(d.error_message);
       setBtMetaMessage(safeText(d.error_message), { sticky: true });
       setResearchStatusStrip(
         "backtestStatusStrip",
@@ -568,6 +935,7 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
       );
       setJobProgress("btJobProgress", "btJobProgressLabel", 0, "");
       await refreshBacktestRuns();
+      window.dispatchEvent(new CustomEvent("backtest_run_updated"));
       return;
     }
     await new Promise((r) => setTimeout(r, 3000));
@@ -582,41 +950,209 @@ export async function pollBacktestTask(taskId, { setJobProgress = () => {}, getD
   setJobProgress("btJobProgress", "btJobProgressLabel", 0.9, "Still running…");
 }
 
-export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
-  if (state.backtestQueueBusy) return;
+let _queuePostInFlight = false;
+
+export function applySpecToForm(spec) {
+  if (!spec || typeof spec !== "object") return;
+  const u = document.getElementById("btUniverse");
+  if (u) u.value = normalizeBtUniverseValue(spec.universe_preset || spec.universe_mode || "sp1500");
+  const tick = document.getElementById("btTickers");
+  if (tick && Array.isArray(spec.tickers)) tick.value = spec.tickers.join(", ");
+  const th = document.getElementById("btTheory");
+  if (th && spec.theory_name != null) th.value = String(spec.theory_name);
+  const tf = document.getElementById("btScanTimeframe");
+  if (tf && spec.scan_timeframe) tf.value = String(spec.scan_timeframe);
+  if (Array.isArray(spec.strategy_ids)) {
+    const board = document.getElementById("btStrategyBoard");
+    if (board) board.dataset.selected = spec.strategy_ids.map((id) => String(id || "").toLowerCase()).join(",");
+  }
+  if (spec.start_date) {
+    const s = document.getElementById("btStart");
+    if (s) s.value = String(spec.start_date).slice(0, 10);
+  }
+  if (spec.end_date) {
+    const e = document.getElementById("btEnd");
+    if (e) e.value = String(spec.end_date).slice(0, 10);
+  }
+  const setNum = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null && val !== "") el.value = String(val);
+  };
+  setNum("btSlippage", spec.slippage_bps_per_side);
+  setNum("btFeeShare", spec.fee_per_share);
+  setNum("btMinFee", spec.min_fee_per_order);
+  setNum("btMaxAdv", spec.max_adv_participation);
+  const ov = spec.overrides && typeof spec.overrides === "object" ? spec.overrides : {};
+  setNum("btStartEquity", ov.backtest_portfolio_starting_equity);
+  setNum("btMaxPositions", ov.backtest_portfolio_max_positions);
+  setNum("btRiskPerTradePct", ov.backtest_risk_per_trade_pct);
+  setNum("btPositionSizePct", ov.backtest_position_size_pct);
+  setNum("btAdaptiveStopBasePct", ov.adaptive_stop_base_pct);
+  setNum("btStage252w", ov.stage2_52w_pct);
+  setNum("btStage2SmaDays", ov.stage2_sma_upward_days);
+  setNum("btVcpDays", ov.vcp_days);
+  setNum("btQualityMinScore", ov.quality_min_signal_score);
+  setNum("btQualityVolRatio", ov.quality_breakout_volume_min_ratio);
+  const setSel = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null && val !== "") el.value = String(val);
+  };
+  setSel("btQualityGates", ov.quality_gates_mode);
+  setSel("btVcpGateMode", ov.scan_vcp_gate_mode);
+  if (ov.quality_require_breakout_volume === true) setSel("btQualityRequireVol", "on");
+  if (ov.quality_require_breakout_volume === false) setSel("btQualityRequireVol", "off");
+  if (ov.breakout_confirm_enabled === true) setSel("btBreakoutConfirm", "on");
+  if (ov.breakout_confirm_enabled === false) setSel("btBreakoutConfirm", "off");
+  if (ov.pead_enabled === true) setSel("btPead", "on");
+  if (ov.pead_enabled === false) setSel("btPead", "off");
+  const skip = document.getElementById("btSkipMirofish");
+  if (skip && Object.prototype.hasOwnProperty.call(ov, "skip_mirofish")) {
+    skip.checked = Boolean(ov.skip_mirofish);
+  }
+  mountBacktestComposerCatalog();
+  syncBtUniverseRow();
+  schedulePersistBacktestForm();
+  renderBacktestQueueNowSummary();
+}
+
+export function openBacktestComposer() {
+  const details = document.querySelector("#backtestSection .bt-composer-details");
+  if (details) details.open = true;
+  document.getElementById("backtestSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+export function previewBacktestWindowYears(years) {
+  const y = Number(years);
+  const end = new Date();
+  const start = new Date();
+  start.setFullYear(end.getFullYear() - (Number.isFinite(y) && y > 0 ? y : 5));
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { start: fmt(start), end: fmt(end) };
+}
+
+export function extrasFromQueueButton(btn) {
+  if (!btn) return { years: null, extras: {} };
+  const years = btn.getAttribute("data-bt-queue-years");
+  const extras = {};
+  const uni = btn.getAttribute("data-bt-queue-universe");
+  if (uni) extras.universe = uni;
+  const strat = btn.getAttribute("data-bt-queue-strategy");
+  if (strat) extras.strategyIds = strat.split(/[\s,]+/).filter(Boolean);
+  const stage = btn.getAttribute("data-bt-queue-stage252w");
+  if (stage) extras.stage252w = stage;
+  const skip = btn.getAttribute("data-bt-queue-skip-mirofish");
+  if (skip === "1" || skip === "true") extras.skipMirofish = true;
+  const theory = btn.getAttribute("data-bt-queue-theory");
+  if (theory) extras.theory = theory;
+  return { years, extras };
+}
+
+export function renderBacktestQueueNowSummary() {
+  const el = document.getElementById("btQueueNowSummary");
+  const warn = document.getElementById("btQueueNowWarn");
+  const resetBtn = document.getElementById("btQueueUseIndexBtn");
+  const hint = document.getElementById("btQueueNowHint");
+  if (!el) return;
+  const spec = collectBacktestSpecFromForm();
+  const withoutDates = { ...spec, start_date: "", end_date: "" };
+  const who = backtestSpecSummaryLine(withoutDates) || "current index and strategies";
+  const five = previewBacktestWindowYears(5);
+  const eight = previewBacktestWindowYears(8);
+  el.textContent = `Ready: ${who}. Queue last 5 years uses ${five.start} → ${five.end}. Queue last 8 years uses ${eight.start} → ${eight.end}.`;
+  const custom = spec.universe_mode === "tickers" || spec.universe_preset === "custom";
+  const weekly = String(spec.scan_timeframe || "daily").toLowerCase() !== "daily";
+  const n = Array.isArray(spec.tickers) ? spec.tickers.length : 0;
+  const parts = [];
+  if (custom) {
+    parts.push(
+      n
+        ? `Custom tickers (${n} name${n === 1 ? "" : "s"}) are selected. Pick an index before queueing a long window.`
+        : "Custom tickers are selected but none are listed. Pick an index under Edit settings.",
+    );
+  }
+  if (weekly) {
+    parts.push("Horizon is not daily. Switch to daily under Edit settings for the usual Stage 2 replay.");
+  }
+  if (warn) {
+    warn.hidden = parts.length === 0;
+    warn.textContent = parts.join(" ");
+  }
+  if (resetBtn) resetBtn.classList.toggle("hidden", parts.length === 0);
+  if (hint && !state.publicConfig?.saas_mode) {
+    hint.textContent = "Same index and strategy as Edit settings. One replay at a time.";
+  }
+}
+
+export function applyNamedIndexQueueDefaults() {
+  const tick = document.getElementById("btTickers");
+  if (tick) tick.value = "";
+  applySpecToForm({
+    universe_mode: "watchlist",
+    universe_preset: "sp1500",
+    tickers: [],
+    scan_timeframe: "daily",
+    strategy_ids: ["trend_breakout"],
+    overrides: { skip_mirofish: true },
+  });
+  const th = document.getElementById("btTheory");
+  if (th) th.value = "";
+  renderBacktestQueueNowSummary();
+  setBtMetaMessage("Reset to S&P 1500 · Stage 2 / VCP · daily. Click Queue last 5 years or Queue last 8 years.");
+}
+
+export async function queueBacktestWindow(
+  years,
+  extras = {},
+  { setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {},
+) {
+  const y = Number(years);
+  if (!Number.isFinite(y) || y < 1) {
+    setBtMetaMessage("Pick a window of 2, 5, or 8 years.");
+    return;
+  }
+  if (extras.universe || extras.strategyIds || extras.stage252w != null) {
+    const patch = {};
+    if (extras.universe) {
+      patch.universe_preset = extras.universe;
+      patch.universe_mode = extras.universe === "custom" ? "tickers" : "watchlist";
+      if (extras.universe !== "custom") patch.tickers = [];
+    }
+    if (Array.isArray(extras.strategyIds) && extras.strategyIds.length) {
+      patch.strategy_ids = extras.strategyIds;
+    }
+    if (extras.scanTimeframe) patch.scan_timeframe = extras.scanTimeframe;
+    if (extras.stage252w != null) {
+      patch.overrides = { ...(patch.overrides || {}), stage2_52w_pct: Number(extras.stage252w) };
+    }
+    applySpecToForm(patch);
+  }
+  applyBacktestPresetYears(y);
+  const skipEl = document.getElementById("btSkipMirofish");
+  if (skipEl && (extras.skipMirofish === true || (extras.skipMirofish !== false && y >= 5))) {
+    skipEl.checked = true;
+  }
+  const th = document.getElementById("btTheory");
+  if (th && extras.theory) th.value = extras.theory;
+  else if (th && /^last\s+\d+\s+years?$/i.test(String(th.value || "").trim())) th.value = "";
+  schedulePersistBacktestForm();
+  renderBacktestQueueNowSummary();
+  await queueUserBacktest({ setJobProgress, getDisplayMode });
+}
+
+export async function queueSpec(spec, { setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
+  if (_queuePostInFlight) {
+    setBtMetaMessage("Already queueing a run. Wait a moment.");
+    return;
+  }
   if (!isBacktestQueueAvailable()) {
     setBtMetaMessage(LOCAL_BACKTEST_NOTICE, { sticky: true });
-    setResearchStatusStrip(
-      "backtestStatusStrip",
-      "partial",
-      "Hosted queue unavailable locally.",
-      "Run local backtest scripts to produce validation artifacts.",
-    );
     return;
   }
-  const start = document.getElementById("btStart")?.value;
-  const end = document.getElementById("btEnd")?.value;
-  if (!start || !end) {
+  if (!spec || !spec.start_date || !spec.end_date) {
     setBtMetaMessage("Choose start and end dates.");
-    setResearchStatusStrip(
-      "backtestStatusStrip",
-      "empty",
-      "Choose dates first.",
-      "Start and end dates are required before queueing a run.",
-    );
     return;
   }
-  const spec = collectBacktestSpecFromForm();
-  if (spec.universe_mode === "tickers" && (!spec.tickers || !spec.tickers.length)) {
-    setBtMetaMessage("Add at least one ticker, or switch universe to saved watchlist.");
-    setResearchStatusStrip(
-      "backtestStatusStrip",
-      "empty",
-      "Add tickers first.",
-      "Custom ticker mode requires at least one symbol.",
-    );
-    return;
-  }
+  _queuePostInFlight = true;
   setBacktestQueueUiBusy(true);
   setBtMetaMessage("Queueing…", { sticky: true });
   try {
@@ -641,9 +1177,49 @@ export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayM
       taskId ? `Tracking task ${safeText(taskId).slice(0, 14)}…` : "Waiting for hosted run status.",
     );
     logEvent({ kind: "system", severity: "info", message: "Backtest queued." });
-    if (taskId) await pollBacktestTask(taskId, { setJobProgress, getDisplayMode });
-    else await refreshBacktestRuns();
+    const runId = out.data?.run_id || taskId || "";
+    window.dispatchEvent(new CustomEvent("backtest_run_updated", { detail: { runId } }));
+    if (taskId) void pollBacktestTask(taskId, { setJobProgress, getDisplayMode });
+    else void refreshBacktestRuns();
   } finally {
+    _queuePostInFlight = false;
     setBacktestQueueUiBusy(false);
   }
+}
+
+export async function queueUserBacktest({ setJobProgress = () => {}, getDisplayMode = () => "balanced" } = {}) {
+  if (!isBacktestQueueAvailable()) {
+    setBtMetaMessage(LOCAL_BACKTEST_NOTICE, { sticky: true });
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "partial",
+      "Hosted queue unavailable locally.",
+      "Run local backtest scripts to produce validation artifacts.",
+    );
+    return;
+  }
+  const start = document.getElementById("btStart")?.value;
+  const end = document.getElementById("btEnd")?.value;
+  if (!start || !end) {
+    setBtMetaMessage("Choose start and end dates.");
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "Choose dates first.",
+      "Start and end dates are required before queueing a run.",
+    );
+    return;
+  }
+  const spec = collectBacktestSpecFromForm();
+  if (spec.universe_mode === "tickers" && (!spec.tickers || !spec.tickers.length)) {
+    setBtMetaMessage("Add at least one ticker, or pick a named index.");
+    setResearchStatusStrip(
+      "backtestStatusStrip",
+      "empty",
+      "Add tickers first.",
+      "Custom ticker mode requires at least one symbol.",
+    );
+    return;
+  }
+  await queueSpec(spec, { setJobProgress, getDisplayMode });
 }

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.scan_catalog import filter_signals_for_scan_selection
+from core.scan_catalog import annotate_passed_strategies, filter_signals_for_scan_selection
 from signal_scanner import scan_for_signals_detailed
 
 
@@ -55,6 +55,8 @@ def run_scan(
             shortlist[:] = filter_signals_for_scan_selection(shortlist, selected)
         else:
             diagnostics["strategy_id_filter_dropped"] = 0
+        signals = annotate_passed_strategies(signals, selected)
+        shortlist[:] = annotate_passed_strategies(shortlist, selected)
     try:
         from core.observability import flush_observability_metrics
 

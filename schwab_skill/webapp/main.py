@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import queue
+import re
 import secrets
 import threading
 import time
@@ -57,6 +58,20 @@ from ._shared import (
 from ._shared import (
     trade_to_dict as _trade_to_dict,
 )
+from .backtest_hub import (
+    annotate_run_list_item,
+    artifact_detail,
+    build_hub,
+    list_artifact_catalog,
+    previous_summary_map,
+    public_trade_progress,
+    resolve_artifact_path,
+    result_metrics_summary,
+    serialize_run,
+    stored_result_parts,
+)
+from .backtest_labels import attach_run_labels
+from .backtest_leaderboard import SCAN_CAP, leaderboard_item_from_parts
 from .checklist_language import with_plain_language
 from .cors_config import build_allowed_origins
 from .db import DATABASE_URL, Base, SessionLocal, engine
@@ -97,13 +112,20 @@ from .route_helpers import (
     resolve_schwab_redirect_uri as _shared_resolve_schwab_redirect_uri,
 )
 from .routes.book import router as book_router
+from .routes.event_probability import router as event_probability_router
+from .routes.grok_agent import router as grok_agent_router
 from .routes.learning import router as learning_router
+from .routes.liquid import router as liquid_router
+from .routes.operator_desk import router as operator_desk_router
 from .routes.position_intel import router as position_intel_router
+from .routes.pricing import router as pricing_router
 from .routes.research import router as research_router
+from .routes.sharadar import router as sharadar_router
 from .scan_payload import parse_scan_run_body, scan_runtime_kwargs
 from .schemas import (
     ApiResponse,
     ApproveTradeRequest,
+    BacktestStudyNextRequest,
     CreatePendingTrade,
     ManualPortfolioBody,
     PluginModeWriteRequest,
@@ -333,14 +355,41 @@ _ensure_local_dashboard_user()
 _fail_orphaned_local_backtest_runs()
 _validate_startup_configuration()
 
+
 @asynccontextmanager
 async def _lifespan(_app: "FastAPI"):
-    """App lifespan: stop the shared auth's background refresh threads on shutdown.
+    """App lifespan: drain a waiting local backtest, then stop background threads."""
+    try:
+        db = SessionLocal()
+        try:
+            with _local_backtest_lock:
+                _kick_next_local_backtest_locked(db)
+        finally:
+            db.close()
+    except Exception as exc:
+        LOG.debug("startup backtest kick failed: %s", exc)
+    desk_stop = threading.Event()
 
-    Daemon threads exit with the process, but closing explicitly avoids a brief
-    orphan-thread window across ``--reload`` restarts in development.
-    """
+    def _operator_desk_clock() -> None:
+        while True:
+            try:
+                from operator_desk import tick_operator_desk
+
+                tick_operator_desk(SKILL_DIR)
+            except Exception as exc:
+                LOG.warning("Operator desk clock failed: %s", exc)
+            try:
+                from core.tradeable_brief import tick_tradeable_brief
+
+                tick_tradeable_brief(SKILL_DIR)
+            except Exception as exc:
+                LOG.warning("Tradeable brief clock failed: %s", exc)
+            if desk_stop.wait(20):
+                break
+
+    threading.Thread(target=_operator_desk_clock, daemon=True, name="operator-desk-clock").start()
     yield
+    desk_stop.set()
     if _shared_auth is not None:
         try:
             _shared_auth.close()
@@ -374,9 +423,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(research_router)
+app.include_router(operator_desk_router)
 app.include_router(learning_router)
 app.include_router(book_router)
 app.include_router(position_intel_router)
+app.include_router(event_probability_router)
+app.include_router(grok_agent_router)
+app.include_router(pricing_router)
+app.include_router(sharadar_router)
+app.include_router(liquid_router)
 
 
 @app.exception_handler(HTTPException)
@@ -420,8 +475,12 @@ _request_metrics: dict[str, Any] = {
 
 # Cap persisted scan payloads so AppState rows stay reasonable.
 _LAST_SCAN_SIGNALS_CAP = min(200, int(os.getenv("WEB_LAST_SCAN_SIGNALS_CAP", "120") or 120))
-_SCAN_STALE_SECONDS = max(60, int(os.getenv("WEB_SCAN_STALE_SECONDS", "3600") or 3600))
+# Hard cap for a local scan thread. A full SP1500 pass with fallbacks can run
+# past 90 minutes (2026-10-29 finished in 5597s). Failing the job at 60 minutes
+# made the dashboard give up while that worker was still enriching.
+_SCAN_STALE_SECONDS = max(60, int(os.getenv("WEB_SCAN_STALE_SECONDS", "10800") or 10800))
 _scan_lock = threading.Lock()
+_scan_worker_thread: threading.Thread | None = None
 _scan_job: dict[str, Any] = {
     "job_id": None,
     "status": "idle",  # idle | running | completed | failed
@@ -443,8 +502,11 @@ _scan_job: dict[str, Any] = {
 # existing BacktestRun table so the frontend can reuse the SaaS queue contract
 # (`/api/backtest-runs*`) unchanged. `celery_task_id` stores the run id on
 # local rows so the task-status route resolves with the same URL shape.
+# Extra jobs stay `queued` and drain FIFO when the worker finishes.
 _local_backtest_lock = threading.Lock()
+_study_queue_lock = threading.Lock()
 _local_backtest_thread: threading.Thread | None = None
+LOCAL_BACKTEST_MAX_WAITING = 8
 
 # Map local BacktestRun.status values onto the Celery status vocabulary the
 # frontend poller already understands.
@@ -453,6 +515,7 @@ _LOCAL_BACKTEST_STATUS_TO_CELERY = {
     "running": "started",
     "success": "success",
     "failed": "failure",
+    "cancelled": "revoked",
 }
 
 
@@ -615,8 +678,7 @@ def _frontend_oauth_return_url(request: Request | None = None) -> str:
         return explicit
 
     frontend_origin = (
-        (os.getenv("SAAS_FRONTEND_URL") or "").strip()
-        or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
+        (os.getenv("SAAS_FRONTEND_URL") or "").strip() or (os.getenv("WEB_PUBLIC_ORIGIN") or "").strip()
     ).rstrip("/")
     if frontend_origin.startswith(("http://", "https://")):
         return f"{frontend_origin}/?section=connect"
@@ -707,8 +769,7 @@ def _preflight_sizing_context(trade: PendingTrade, signal: dict[str, Any]) -> di
         if get_volatility_sizing_enabled(SKILL_DIR) and ticker and price > 0:
             out["position_sizing_method"] = "volatility_atr"
             out["position_sizing_rationale"] = (
-                f"Volatility-adjusted size targets ~${recommended:,} notional "
-                f"(ATR-based risk budget, not flat $5k)."
+                f"Volatility-adjusted size targets ~${recommended:,} notional (ATR-based risk budget, not flat $5k)."
             )
         else:
             out["position_sizing_rationale"] = (
@@ -825,6 +886,54 @@ def _scan_snapshot() -> dict[str, Any]:
         }
 
 
+def _bind_operator_desk_scan_status() -> None:
+    """Let the in-process desk read the scan job without looping back over HTTPS."""
+    from operator_desk import set_local_scan_status
+
+    set_local_scan_status(_scan_snapshot)
+
+
+_bind_operator_desk_scan_status()
+
+
+def _resolve_local_scan_signal(db: Session, symbol: str) -> dict[str, Any] | None:
+    """Find a scan-row payload for Evaluate setup / decision-card.
+
+    Order: in-memory job (kept, then shortlist) → persisted last_scan → ScanResult.
+    Hydrated Today-tab rows come from last_scan after a restart, so looking only
+    at ``_scan_job`` leaves the brief dropdowns empty.
+    """
+    from .decision_card_service import coerce_scan_signal, find_signal_in_scan_collections
+
+    needle = str(symbol or "").upper().strip()
+    if not needle:
+        return None
+    with _scan_lock:
+        job_signals = list(_scan_job.get("signals") or [])
+        job_shortlist = list(_scan_job.get("shortlist_signals") or [])
+    found = find_signal_in_scan_collections(needle, job_signals, job_shortlist)
+    if found:
+        return found
+    last_scan = _load_state(db, "last_scan", {})
+    if isinstance(last_scan, dict):
+        found = find_signal_in_scan_collections(
+            needle,
+            last_scan.get("signals"),
+            last_scan.get("shortlist_signals"),
+        )
+        if found:
+            return found
+    row = (
+        db.query(ScanResult)
+        .filter(ScanResult.user_id == LOCAL_DASHBOARD_USER_ID, ScanResult.ticker == needle)
+        .order_by(ScanResult.created_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return coerce_scan_signal(row.payload_json)
+
+
 def _parse_iso_datetime(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -834,24 +943,45 @@ def _parse_iso_datetime(raw: Any) -> datetime | None:
         return None
 
 
+def _bind_scan_worker(worker: threading.Thread) -> None:
+    global _scan_worker_thread
+    _scan_worker_thread = worker
+
+
+def _scan_worker_abandoned_locked() -> bool:
+    """True after the scan thread has started and exited without clearing the job."""
+    worker = _scan_worker_thread
+    if worker is None or worker.ident is None:
+        return False
+    return not worker.is_alive()
+
+
 def _expire_stale_scan_job_locked() -> bool:
-    """Fail scans that exceeded watchdog runtime to avoid permanent 'running' state."""
+    """Fail a scan that can no longer finish.
+
+    A live worker stays ``running`` until ``WEB_SCAN_STALE_SECONDS``. Marking it
+    failed earlier lets the page stop polling while enrichment is still going,
+    and it also lets a second scan start on top of the first. A thread that
+    already exited is failed immediately so the job cannot sit on ``running``.
+    """
     if str(_scan_job.get("status") or "") != "running":
         return False
     started_dt = _parse_iso_datetime(_scan_job.get("started_at"))
     if started_dt is None:
         return False
     elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
-    if elapsed <= float(_SCAN_STALE_SECONDS):
+    abandoned = _scan_worker_abandoned_locked()
+    if not abandoned and elapsed <= float(_SCAN_STALE_SECONDS):
         return False
+    if abandoned:
+        error = "Scan worker exited without a result."
+    else:
+        error = f"Scan watchdog timeout: exceeded {_SCAN_STALE_SECONDS}s runtime ({int(elapsed)}s elapsed)."
     _scan_job.update(
         {
             "status": "failed",
             "finished_at": datetime.now(timezone.utc).isoformat(),
-            "error": (
-                "Scan watchdog timeout: exceeded "
-                f"{_SCAN_STALE_SECONDS}s runtime ({int(elapsed)}s elapsed)."
-            ),
+            "error": error,
         }
     )
     return True
@@ -902,7 +1032,10 @@ def _scan_lifecycle_payload(
         out["strategy_summary"] = snapshot.get("strategy_summary")
         out["signals"] = snapshot.get("signals") or []
         out["shortlist_signals"] = snapshot.get("shortlist_signals") or []
-    out["signal_edge_preflight"] = _signal_edge_scan_preflight(SKILL_DIR)
+    # Preflight hits disk/config. Skip it while a scan is running so 5s
+    # status polls do not compete with Stage A on the single uvicorn thread.
+    if status != "running":
+        out["signal_edge_preflight"] = _signal_edge_scan_preflight(SKILL_DIR)
     return out
 
 
@@ -949,6 +1082,41 @@ _DIAGNOSTIC_FLAG_KEYS = frozenset(
     }
 )
 
+# Timing / provenance counters must never rank as "top blockers".
+_DIAGNOSTIC_NON_BLOCKER_RE = re.compile(
+    r"(_ms$|^spy_|provider_|advisory_|watchlist|shadow|mode$|would_|"
+    r"headline|scan_id|scan_blocked|data_provider_)",
+    re.IGNORECASE,
+)
+_DIAGNOSTIC_DROPOFF_RE = re.compile(
+    r"(^stage2_fail$|^vcp_fail$|not_confirmed|not_winning|no_sector|too_few|"
+    r"df_empty|exceptions|timeouts|_filtered$|_pruned$|insufficient|no_price|stale)",
+    re.IGNORECASE,
+)
+# Ordinary funnel counts. They belong on the scan funnel, not the P2 banner.
+_FUNNEL_COUNT_KEYS = frozenset(
+    {
+        "stage2_fail",
+        "vcp_fail",
+        "breakout_not_confirmed",
+        "pead_primary_fail",
+        "quality_gates_filtered",
+        "pts_52w_cap_blocked",
+        "entry_timing_blocked",
+    }
+)
+
+
+def _is_actionable_scan_blocker_key(key: str) -> bool:
+    k = str(key or "").strip()
+    if not k or k in _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS or k in _DIAGNOSTIC_FLAG_KEYS:
+        return False
+    if _DIAGNOSTIC_NON_BLOCKER_RE.search(k):
+        return False
+    if k in _FUNNEL_COUNT_KEYS:
+        return False
+    return bool(_DIAGNOSTIC_DROPOFF_RE.search(k))
+
 
 def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, Any]] | None) -> dict[str, Any]:
     diagnostics = diag or {}
@@ -959,9 +1127,7 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
         spy_px = diagnostics.get("spy_price")
         spy_sma = diagnostics.get("spy_sma_200")
         if spy_px is not None and spy_sma is not None:
-            blocked_human = (
-                f"Scan blocked by regime gate: SPY ${spy_px} below 200 SMA ${spy_sma}."
-            )
+            blocked_human = f"Scan blocked by regime gate: SPY ${spy_px} below 200 SMA ${spy_sma}."
         else:
             blocked_human = "Scan blocked by regime gate: SPY is below 200 SMA."
     elif blocked_reason == "regime_check_failed_data_unavailable":
@@ -984,13 +1150,14 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
             or key == "watchlist_size"
             or key in _SIGNAL_EDGE_SHADOW_BLOCKER_KEYS
             or key in _DIAGNOSTIC_FLAG_KEYS
+            or not _is_actionable_scan_blocker_key(str(key))
         ):
             continue
         ranked.append(
             {
                 "key": key,
                 "value": value,
-                "severity": "error" if key in {"exceptions", "df_empty"} else "warn",
+                "severity": "error" if key in {"exceptions", "df_empty", "stage_a_timeouts"} else "warn",
             }
         )
     ranked.sort(key=lambda x: int(x.get("value") or 0), reverse=True)
@@ -999,7 +1166,7 @@ def _diagnostics_summary(diag: dict[str, Any] | None, signals: list[dict[str, An
     return {
         "scan_blocked": bool(diagnostics.get("scan_blocked")),
         "scan_blocked_reason": blocked_reason,
-        "headline": blocked_human,
+        "headline": blocked_human or (str(diagnostics.get("coverage_note") or "").strip() or None),
         "top_blockers": ranked[:5],
         "data_quality": diagnostics.get("data_quality"),
         "data_quality_reasons": list(diagnostics.get("data_quality_reasons") or []),
@@ -1038,7 +1205,6 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
     no_sector_etf = _safe_int(diagnostics.get("no_sector_etf"))
     sector_not_winning = _safe_int(diagnostics.get("sector_not_winning"))
     breakout_not_confirmed = _safe_int(diagnostics.get("breakout_not_confirmed"))
-    exceptions = _safe_int(diagnostics.get("exceptions"))
 
     stage_a_candidates_raw = _safe_int(diagnostics.get("stage_a_candidates"))
     stage_a_shortlisted_raw = _safe_int(diagnostics.get("stage_a_shortlisted"))
@@ -1048,6 +1214,8 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
     stage_b_exceptions = _safe_int(diagnostics.get("stage_b_exceptions"))
     stage_b_timeouts = _safe_int(diagnostics.get("stage_b_timeouts"))
     self_study_filtered = _safe_int(diagnostics.get("self_study_filtered"))
+    self_study_would_filter = _safe_int(diagnostics.get("self_study_would_filter"))
+    self_study_would_filter_cached = _safe_int(diagnostics.get("self_study_would_filter_cached"))
     quality_gates_filtered = _safe_int(diagnostics.get("quality_gates_filtered"))
 
     vcp_would_filter = _safe_int(diagnostics.get("stage_a_vcp_would_filter"))
@@ -1058,16 +1226,25 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
     sector_gate_mode = str(diagnostics.get("scan_sector_gate_mode") or "").strip().lower() or None
     primary_provider_mode = str(diagnostics.get("scan_primary_provider_mode") or "").strip().lower() or None
     quality_gates_mode = str(diagnostics.get("quality_gates_mode") or "").strip().lower() or None
+    self_study_mode = str(diagnostics.get("self_study_mode") or "").strip().lower() or None
     signal_edge_shadow_mode = str(diagnostics.get("signal_edge_shadow_mode") or "").strip().lower() or None
     stage2_shadow_would_filter = _safe_int(diagnostics.get("stage2_shadow_would_filter"))
     rank_filter_would_drop_any = _safe_int(diagnostics.get("rank_filter_would_drop_any"))
 
+    from core.stage_a_coverage import stage_a_funnel_counts
+
+    funnel_counts = stage_a_funnel_counts(diagnostics)
     n_watchlist = watchlist
-    n_stage2 = max(0, n_watchlist - stage2_fail)
+    n_evaluated = funnel_counts["evaluated"]
+    n_unresolved = funnel_counts["unresolved"]
+    n_stage2 = funnel_counts["stage2_pass"]
     n_vcp = max(0, n_stage2 - vcp_fail)
     sector_filtered = no_sector_etf + sector_not_winning
     n_sector = max(0, n_vcp - sector_filtered)
-    n_breakout = max(0, n_sector - breakout_not_confirmed - exceptions)
+    # Timeouts are already excluded from n_stage2. Subtracting the global
+    # exceptions counter again would hide names the executable pass finished.
+    stage_a_task_exceptions = _safe_int(diagnostics.get("stage_a_task_exceptions"))
+    n_breakout = max(0, n_sector - breakout_not_confirmed - stage_a_task_exceptions)
 
     # ``stage_a_candidates`` is the authoritative count of tickers that
     # passed every Stage A gate. Fall back to the chain-derived estimate
@@ -1088,6 +1265,16 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
             "value": n_watchlist,
             "filtered": 0,
             "tooltip": "Total tickers in the scan universe (e.g. SP1500 or your custom list).",
+        },
+        {
+            "key": "evaluated",
+            "label": "Stage A evaluated",
+            "value": n_evaluated,
+            "filtered": n_unresolved,
+            "tooltip": (
+                "Names that received a Stage A decision. Timeouts and Stage A task "
+                "exceptions are not counted as Stage 2 passes."
+            ),
         },
         {
             "key": "stage2",
@@ -1136,6 +1323,8 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
                 "Final Stage A pass count after breakout confirmation, exceptions, "
                 "and any timed gates. Sourced from stage_a_candidates."
             ),
+            "shadow_filtered": self_study_would_filter_cached if self_study_mode == "shadow" else 0,
+            "mode": self_study_mode if self_study_would_filter_cached > 0 else None,
         },
         {
             "key": "shortlist",
@@ -1155,10 +1344,14 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
             "value": n_quality,
             "filtered": quality_filtered_total,
             "mode": quality_gates_mode,
+            "shadow_filtered": (
+                self_study_would_filter if self_study_mode == "shadow" else 0
+            ),
             "tooltip": (
                 "Survivors of Stage B exceptions/timeouts, self-study min "
                 "conviction, and quality gates (forensic, weak breakout volume, "
-                "etc.)."
+                "etc.). Self-study shadow would-filter is counted separately and "
+                "does not remove names."
             ),
         },
         {
@@ -1203,6 +1396,7 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
         "sector_gate_mode": sector_gate_mode,
         "primary_provider_mode": primary_provider_mode,
         "quality_gates_mode": quality_gates_mode,
+        "self_study_mode": self_study_mode,
     }
 
 
@@ -1443,7 +1637,12 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                 "diagnostics_summary": diagnostics_summary,
                 "strategy_summary": strategy_summary,
             }
-            _save_last_scan(db, last_scan)
+            with _scan_lock:
+                still_current = _scan_job.get("job_id") == job_id
+            if still_current:
+                _save_last_scan(db, last_scan)
+            else:
+                LOG.info("Scan %s finished after a newer job started; result not saved", job_id)
             try:
                 from config import get_entry_timing_experiment_readiness
                 from core.entry_timing_live_compare import write_live_entry_shadow_compare_report
@@ -1461,8 +1660,10 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                 )
             except Exception as exc:
                 LOG.debug("Entry timing live compare artifact skipped: %s", exc)
+            _harvest_experiment_scan(diagnostics, signals, finished_at)
         finally:
             db.close()
+        published = False
         with _scan_lock:
             if _scan_job.get("job_id") == job_id:
                 _scan_job.update(
@@ -1478,15 +1679,17 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                         "error": None,
                     }
                 )
-        _sse_publish(
-            "scan_completed",
-            {
-                "job_id": job_id,
-                "signals_found": len(signals),
-                "diagnostics_summary": diagnostics_summary,
-                "strategy_summary": strategy_summary,
-            },
-        )
+                published = True
+        if published:
+            _sse_publish(
+                "scan_completed",
+                {
+                    "job_id": job_id,
+                    "signals_found": len(signals),
+                    "diagnostics_summary": diagnostics_summary,
+                    "strategy_summary": strategy_summary,
+                },
+            )
     except Exception as e:
         with _scan_lock:
             if _scan_job.get("job_id") == job_id:
@@ -1580,6 +1783,27 @@ def _save_last_scan(db: Session, last_scan: dict[str, Any]) -> None:
     except Exception:
         pass
     _save_state(db, "last_scan", last_scan)
+
+
+def _harvest_experiment_scan(
+    diagnostics: dict[str, Any],
+    signals: list[dict[str, Any]],
+    scan_at: str,
+) -> None:
+    try:
+        from core.experiment_collector import harvest_scan
+
+        harvest_scan(
+            SKILL_DIR,
+            diagnostics,
+            signals=signals,
+            signals_found=len(signals),
+            scan_at=scan_at,
+            persist_last_scan=False,
+            scan_label="dashboard",
+        )
+    except Exception as exc:
+        LOG.warning("Experiment harvest after dashboard scan failed: %s", exc)
 
 
 def _audit_event(
@@ -1701,6 +1925,12 @@ def index(
     return render_dashboard_html(STATIC_DIR / "index.html")
 
 
+@app.get("/legal.html", include_in_schema=False)
+def legal_page() -> RedirectResponse:
+    """Bare /legal.html 404s; the page lives under the static mount."""
+    return RedirectResponse("/static/legal.html", status_code=302)
+
+
 @app.get("/simple")
 def simple_dashboard() -> RedirectResponse:
     """Legacy focused-scan page, now a display-mode preset of the dashboard."""
@@ -1819,6 +2049,7 @@ def public_config() -> ApiResponse:
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
         "plugin_mode_writes_enabled": True,
+        "ablation_writes_enabled": True,
         "scan_studio": _scan_studio_public_config(),
     }
     if account_callback:
@@ -1931,9 +2162,7 @@ def local_schwab_oauth_portal_config(
             "account_callback_matches_configured": (
                 bool(account_configured) and account_effective == account_configured
             ),
-            "market_callback_matches_configured": (
-                bool(market_configured) and market_effective == market_configured
-            ),
+            "market_callback_matches_configured": (bool(market_configured) and market_effective == market_configured),
         }
     )
 
@@ -2105,10 +2334,7 @@ def prob_rank_shadow_evidence(
         live_rows = [r for r in records if r.get("source") != "cf_day_cohort"]
         disagreement = None
         disagree_path = (
-            SKILL_DIR
-            / "validation_artifacts"
-            / "prob_rank_shadow_evidence"
-            / "disagreement_attribution.json"
+            SKILL_DIR / "validation_artifacts" / "prob_rank_shadow_evidence" / "disagreement_attribution.json"
         )
         if disagree_path.is_file():
             try:
@@ -2166,9 +2392,7 @@ def status(
         # "Connected" (a present-but-dead token 401s on every call).
         market_health = str((schwab_token_health.get("market") or {}).get("status") or "")
         account_health = str((schwab_token_health.get("account") or {}).get("status") or "")
-        market_token_ok, market_state = _session_connection_state(
-            _session_token_ok(auth.market_session), market_health
-        )
+        market_token_ok, market_state = _session_connection_state(_session_token_ok(auth.market_session), market_health)
         account_token_ok, account_state = _session_connection_state(
             _session_token_ok(auth.account_session), account_health
         )
@@ -2259,14 +2483,15 @@ def scan(
                             "error": None,
                         }
                     )
+                    thread = threading.Thread(
+                        target=_scan_worker,
+                        args=(job_id, skw),
+                        daemon=True,
+                        name=f"scan-{job_id}",
+                    )
+                    _bind_scan_worker(thread)
                     started = True
             if started:
-                thread = threading.Thread(
-                    target=_scan_worker,
-                    args=(job_id, skw),
-                    daemon=True,
-                    name=f"scan-{job_id}",
-                )
                 thread.start()
             snapshot = _scan_snapshot()
             return _ok({"started": started, **snapshot})
@@ -2295,6 +2520,7 @@ def scan(
             "strategy_summary": strategy_summary,
         }
         _save_last_scan(db, last_scan)
+        _harvest_experiment_scan(diagnostics, signals, now_iso)
         return _ok(
             {
                 "signals_found": len(signals),
@@ -2349,6 +2575,104 @@ def scan_lifecycle(db: Session = Depends(get_db)) -> ApiResponse:
     return _ok(_scan_lifecycle_payload(snapshot, last_scan=last_scan))
 
 
+def _queued_backtest_count(db: Session) -> int:
+    return (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.status == "queued",
+        )
+        .count()
+    )
+
+
+def _oldest_queued_backtest(db: Session) -> BacktestRun | None:
+    return (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.status == "queued",
+        )
+        .order_by(BacktestRun.created_at.asc())
+        .first()
+    )
+
+
+def _queue_position_map(db: Session) -> dict[str, int]:
+    rows = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.status.in_(("queued", "running")),
+        )
+        .order_by(BacktestRun.created_at.asc())
+        .all()
+    )
+    return {str(row.id): idx + 1 for idx, row in enumerate(rows)}
+
+
+def _previous_summary_map(rows: list[Any]) -> dict[str, dict[str, Any]]:
+    return previous_summary_map(rows, parse_result=_coerce_json_dict)
+
+
+def _kick_next_local_backtest_locked(db: Session) -> None:
+    """Start the oldest queued run if the local worker is idle. Caller holds the lock."""
+    global _local_backtest_thread
+    if _local_backtest_thread is not None and _local_backtest_thread.is_alive():
+        return
+    row = _oldest_queued_backtest(db)
+    if row is None:
+        return
+    thread = threading.Thread(
+        target=_local_backtest_worker,
+        args=(row.id,),
+        daemon=True,
+        name=f"backtest-{str(row.id)[:8]}",
+    )
+    _local_backtest_thread = thread
+    thread.start()
+
+
+def _continue_auto_study(db: Session, finished_run_id: str) -> str | None:
+    """Queue one next study spec after a finished trial.
+
+    The study policy still decides. A stop, a hold, or a test already in
+    flight does not add another run.
+    """
+    from .backtest_spec import parse_strategy_spec
+    from .backtest_study_store import (
+        append_trial,
+        load_active_study,
+        refresh_proposal,
+        stamp_theory,
+    )
+
+    with _study_queue_lock:
+        study = load_active_study(SKILL_DIR)
+        if not isinstance(study, dict) or not study.get("auto"):
+            return None
+        if str(study.get("status") or "") != "active":
+            return None
+        trials = study.get("trials") or []
+        if not any(
+            isinstance(row, dict) and str(row.get("run_id") or "") == finished_run_id for row in trials
+        ):
+            return None
+        proposal = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+        if str(proposal.get("action") or "") != "queue" or not isinstance(proposal.get("spec"), dict):
+            return None
+        stamped = stamp_theory(
+            proposal["spec"],
+            str(study.get("study_id") or ""),
+            str(proposal.get("hypothesis") or "next test"),
+        )
+        parsed = parse_strategy_spec(stamped)
+        run_id = _enqueue_local_backtest(db, parsed)
+        append_trial(study, proposal, run_id, parsed.model_dump(exclude_none=True))
+        refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+        return run_id
+
+
 def _local_backtest_worker(run_id: str) -> None:
     """Run one queued backtest in-process and persist the outcome on its row."""
     global _local_backtest_thread
@@ -2363,11 +2687,25 @@ def _local_backtest_worker(run_id: str) -> None:
         )
         if row is None:
             return
+        if row.status == "cancelled":
+            return
         row.status = "running"
         db.commit()
         try:
             spec = parse_strategy_spec(_coerce_json_dict(row.spec_json))
-            result = run_strategy_backtest(SKILL_DIR, spec)
+
+            def _on_progress(snapshot: dict[str, Any]) -> None:
+                try:
+                    db.refresh(row)
+                    if row.status != "running":
+                        return
+                    row.result_json = json.dumps(snapshot, default=_json_default)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    LOG.warning("Could not save live backtest tape for %s", run_id)
+
+            result = run_strategy_backtest(SKILL_DIR, spec, on_progress=_on_progress)
             row.status = "success"
             row.result_json = json.dumps(result, default=_json_default)
             row.error_message = None
@@ -2381,27 +2719,45 @@ def _local_backtest_worker(run_id: str) -> None:
             _record_endpoint_error("backtest_worker")
     finally:
         db.close()
-        with _local_backtest_lock:
-            _local_backtest_thread = None
+        follow = SessionLocal()
+        try:
+            _continue_auto_study(follow, run_id)
+            with _local_backtest_lock:
+                _local_backtest_thread = None
+                _kick_next_local_backtest_locked(follow)
+        finally:
+            follow.close()
 
 
 def _backtest_run_result_summary(result: Any) -> dict[str, Any] | None:
     """Short metrics for the run-list UI; mirrors the SaaS list shape."""
-    if not isinstance(result, dict) or "total_trades" not in result:
-        return None
-    out: dict[str, Any] = {
-        "total_trades": result.get("total_trades"),
-        "win_rate_net": result.get("win_rate_net"),
-        "total_return_net_pct": result.get("total_return_net_pct"),
-        "cagr_net_pct": result.get("cagr_net_pct"),
-        "max_drawdown_net_pct": result.get("max_drawdown_net_pct"),
-        "profit_factor_net": result.get("profit_factor_net"),
-    }
-    findings = result.get("findings")
-    if isinstance(findings, str) and findings.strip():
-        snippet = findings.strip()
-        out["findings_preview"] = snippet[:280] + ("…" if len(snippet) > 280 else "")
-    return out
+    return result_metrics_summary(result)
+
+
+def _enqueue_local_backtest(db: Session, spec: Any) -> str:
+    """Insert one queued run and wake the local worker. Raises 409 when the wait cap is full."""
+    waiting = _queued_backtest_count(db)
+    if waiting >= LOCAL_BACKTEST_MAX_WAITING:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Already {LOCAL_BACKTEST_MAX_WAITING} backtests waiting. "
+                "Wait for one to start, or cancel a queued job."
+            ),
+        )
+    run_id = uuid.uuid4().hex
+    row = BacktestRun(
+        id=run_id,
+        user_id=LOCAL_DASHBOARD_USER_ID,
+        celery_task_id=run_id,
+        status="queued",
+        spec_json=json.dumps(spec.model_dump(), default=_json_default),
+    )
+    db.add(row)
+    db.commit()
+    with _local_backtest_lock:
+        _kick_next_local_backtest_locked(db)
+    return run_id
 
 
 @app.post("/api/backtest-runs", response_model=ApiResponse)
@@ -2413,39 +2769,16 @@ def queue_local_backtest_run(
     """Queue a backtest on the local single-user server (thread transport).
 
     Same URL and response contract as the SaaS Celery queue so the dashboard
-    backtest panel works identically in both deploy modes.
+    backtest panel works identically in both deploy modes. One worker runs at
+    a time; extra jobs stay queued and drain FIFO.
     """
     from .backtest_spec import parse_strategy_spec, spec_preview_dict
 
-    global _local_backtest_thread
     try:
         spec = parse_strategy_spec(payload.spec)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid strategy spec: {exc}") from exc
-    with _local_backtest_lock:
-        if _local_backtest_thread is not None and _local_backtest_thread.is_alive():
-            raise HTTPException(
-                status_code=409,
-                detail="A backtest is already running. Wait for it to finish before queueing another.",
-            )
-        run_id = uuid.uuid4().hex
-        row = BacktestRun(
-            id=run_id,
-            user_id=LOCAL_DASHBOARD_USER_ID,
-            celery_task_id=run_id,
-            status="queued",
-            spec_json=json.dumps(spec.model_dump(), default=_json_default),
-        )
-        db.add(row)
-        db.commit()
-        thread = threading.Thread(
-            target=_local_backtest_worker,
-            args=(run_id,),
-            daemon=True,
-            name=f"backtest-{run_id[:8]}",
-        )
-        _local_backtest_thread = thread
-        thread.start()
+    run_id = _enqueue_local_backtest(db, spec)
     return _ok({"ok": True, "run_id": run_id, "task_id": run_id, "preview": spec_preview_dict(spec)})
 
 
@@ -2471,12 +2804,9 @@ def list_local_backtest_runs(
             "spec": _coerce_json_dict(row.spec_json),
             "error_message": row.error_message,
             "created_at": row.created_at.isoformat() if row.created_at else None,
-            "has_result": bool(row.result_json),
         }
-        summary = _backtest_run_result_summary(parsed_result)
-        if summary is not None:
-            item["result_summary"] = summary
-        payload.append(item)
+        annotate_run_list_item(item, parsed_result)
+        payload.append(attach_run_labels(item))
     return _ok(payload)
 
 
@@ -2502,9 +2832,272 @@ def local_backtest_run_task_status(
         "db_status": row.status,
         "error_message": row.error_message,
     }
-    if row.result_json:
-        payload["result"] = _coerce_json_dict(row.result_json)
+    parsed = _coerce_json_dict(row.result_json) if row.result_json else {}
+    final, _progress = stored_result_parts(parsed)
+    if final is not None:
+        payload["result"] = final
     return _ok(payload)
+
+
+def _local_queue_busy() -> bool:
+    with _local_backtest_lock:
+        return _local_backtest_thread is not None and _local_backtest_thread.is_alive()
+
+
+def _serialize_local_run(
+    row: Any,
+    *,
+    include_result: bool = False,
+    queue_position: int | None = None,
+    previous_summary: dict[str, Any] | None = None,
+    queue_busy: bool | None = None,
+) -> dict[str, Any]:
+    raw = _coerce_json_dict(row.result_json) if row.result_json else {}
+    final, progress = stored_result_parts(raw)
+    spec = _coerce_json_dict(row.spec_json)
+    busy = _local_queue_busy() if queue_busy is None else queue_busy
+    item = serialize_run(
+        row,
+        result=final,
+        spec=spec,
+        include_result=include_result,
+        queue_busy=busy and row.status in {"queued", "running"},
+        queue_position=queue_position,
+        previous_summary=previous_summary,
+    )
+    if row.status == "running":
+        tape = public_trade_progress(progress)
+        if tape is not None:
+            item["progress"] = tape
+    return item
+
+
+@app.get("/api/backtest-hub", response_model=ApiResponse)
+def local_backtest_hub(
+    limit: int = Query(default=15, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    # Take the worker lock once, before the read, so serializing each row
+    # cannot wait on the backtest thread while this session holds SQLite.
+    busy = _local_queue_busy()
+    rows = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID)
+        .order_by(BacktestRun.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    positions = _queue_position_map(db)
+    prev_map = _previous_summary_map(rows)
+    runs = [
+        _serialize_local_run(
+            row,
+            queue_position=positions.get(str(row.id)),
+            previous_summary=prev_map.get(str(row.id)),
+            queue_busy=busy,
+        )
+        for row in rows
+    ]
+    last_scan = _load_state(db, key="last_scan", default={})
+    board_rows = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.status == "success",
+            BacktestRun.result_json.isnot(None),
+        )
+        .order_by(BacktestRun.created_at.desc())
+        .limit(SCAN_CAP)
+        .all()
+    )
+    leaderboard_runs = [
+        leaderboard_item_from_parts(
+            run_id=row.id,
+            status=row.status,
+            spec=_coerce_json_dict(row.spec_json),
+            summary=_backtest_run_result_summary(_coerce_json_dict(row.result_json) if row.result_json else {}),
+            created_at=row.created_at.isoformat() if row.created_at else None,
+        )
+        for row in board_rows
+    ]
+    # File assembly does not need the connection. End the read now so the
+    # rest of the dashboard is not stuck behind this snapshot.
+    db.rollback()
+    return _ok(
+        build_hub(
+            skill_dir=SKILL_DIR,
+            runs=runs,
+            queue_busy=busy,
+            concurrency_note="This computer runs one backtest at a time. Extra jobs wait in line.",
+            last_scan=last_scan if isinstance(last_scan, dict) else {},
+            leaderboard_runs=leaderboard_runs,
+        )
+    )
+
+
+def _study_runs_by_id(db: Session, study: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not study:
+        return {}
+    ids = [str(row.get("run_id")) for row in study.get("trials") or [] if isinstance(row, dict) and row.get("run_id")]
+    if not ids:
+        return {}
+    found = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id.in_(ids))
+        .all()
+    )
+    payload: dict[str, dict[str, Any]] = {}
+    for row in found:
+        result = _coerce_json_dict(row.result_json) if row.result_json else {}
+        payload[str(row.id)] = {
+            "status": row.status,
+            "result": result if row.status == "success" and result else None,
+        }
+    return payload
+
+
+@app.get("/api/backtest-study", response_model=ApiResponse)
+def local_backtest_study(db: Session = Depends(get_db)) -> ApiResponse:
+    """Current adaptive study: hypothesis, factor effects, and the unqueued next spec."""
+    from .backtest_study_store import build_view, idle_view, load_active_study, refresh_proposal
+
+    study = load_active_study(SKILL_DIR)
+    if study is None:
+        return _ok(idle_view())
+    proposal = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+    return _ok(build_view(study, proposal))
+
+
+@app.post("/api/backtest-study/next", response_model=ApiResponse)
+def local_backtest_study_next(
+    payload: BacktestStudyNextRequest,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    """Queue the single next informed spec. Does not stack tests ahead of a result."""
+    from .backtest_spec import parse_strategy_spec
+    from .backtest_study_store import (
+        append_trial,
+        build_view,
+        load_active_study,
+        new_study,
+        refresh_proposal,
+        save_study,
+        stamp_theory,
+    )
+
+    with _study_queue_lock:
+        study = load_active_study(SKILL_DIR)
+        if payload.restart or study is None or str(study.get("status") or "") != "active":
+            if study is not None and str(study.get("status") or "") != "active" and not payload.restart:
+                proposal = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+                return _ok(build_view(study, proposal))
+            if not isinstance(payload.spec, dict):
+                raise HTTPException(status_code=400, detail="spec is required to start a study")
+            try:
+                parse_strategy_spec(payload.spec)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid strategy spec: {exc}") from exc
+            study = new_study(payload.spec, auto=bool(payload.auto))
+            save_study(SKILL_DIR, study)
+        elif payload.auto:
+            study["auto"] = True
+            save_study(SKILL_DIR, study)
+
+        proposal = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+        if str(proposal.get("action") or "") != "queue" or not isinstance(proposal.get("spec"), dict):
+            return _ok(build_view(study, proposal))
+
+        stamped = stamp_theory(
+            proposal["spec"],
+            str(study.get("study_id") or ""),
+            str(proposal.get("hypothesis") or "next test"),
+        )
+        try:
+            parsed = parse_strategy_spec(stamped)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid strategy spec: {exc}") from exc
+        run_id = _enqueue_local_backtest(db, parsed)
+        append_trial(study, proposal, run_id, parsed.model_dump(exclude_none=True))
+        waiting = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
+        view = build_view(study, waiting)
+        view["queued_run_id"] = run_id
+        return _ok(view)
+
+
+@app.get("/api/backtest-runs/{run_id}", response_model=ApiResponse)
+def local_backtest_run_detail(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    row = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Backtest run not found.")
+    older = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID,
+            BacktestRun.status == "success",
+            BacktestRun.created_at < row.created_at,
+        )
+        .order_by(BacktestRun.created_at.desc())
+        .first()
+    )
+    prev = None
+    if older is not None:
+        prev = _backtest_run_result_summary(_coerce_json_dict(older.result_json) if older.result_json else {})
+    positions = _queue_position_map(db)
+    return _ok(
+        _serialize_local_run(
+            row,
+            include_result=True,
+            queue_position=positions.get(str(row.id)),
+            previous_summary=prev,
+        )
+    )
+
+
+@app.post("/api/backtest-runs/{run_id}/cancel", response_model=ApiResponse)
+def cancel_local_backtest_run(
+    run_id: str,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    row = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Backtest run not found.")
+    if row.status != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail="Only waiting jobs can be cancelled. A running replay cannot be stopped mid-flight.",
+        )
+    row.status = "cancelled"
+    row.error_message = "Cancelled before start."
+    db.commit()
+    return _ok({"id": row.id, "status": row.status})
+
+
+@app.get("/api/backtest-artifacts", response_model=ApiResponse)
+def local_backtest_artifacts() -> ApiResponse:
+    return _ok({"items": list_artifact_catalog(SKILL_DIR)})
+
+
+@app.get("/api/backtest-artifacts/{name}", response_model=ApiResponse)
+def local_backtest_artifact_detail(name: str) -> ApiResponse:
+    if resolve_artifact_path(SKILL_DIR, name) is None:
+        raise HTTPException(status_code=404, detail="Artifact is not on the allowlist.")
+    detail = artifact_detail(SKILL_DIR, name)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Artifact is not on the allowlist.")
+    return _ok(detail)
 
 
 @app.get("/api/portfolio", response_model=ApiResponse)
@@ -2518,18 +3111,38 @@ def portfolio(db: Session = Depends(get_db)) -> ApiResponse:
         try:
             from core.portfolio_equity_snapshot import record_equity_snapshot
             from core.providers import PortfolioProvider
-            from sector_strength import get_ticker_sector_etf
 
-            state = PortfolioProvider.normalize_account(
-                status_data,
-                sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=SKILL_DIR),
-            )
+            # Skip live sector lookups here — yfinance on OCC option symbols can
+            # stall GET /api/portfolio before the positions table is returned.
+            state = PortfolioProvider.normalize_account(status_data)
             record_equity_snapshot(db, state, user_id=LOCAL_DASHBOARD_USER_ID)
         except Exception as snap_exc:
             LOG.debug("Portfolio snapshot skipped: %s", snap_exc)
-        return _ok(_build_portfolio_summary(status_data))
+        summary = _build_portfolio_summary(status_data)
+        from core.protective_orders import annotate_portfolio_protection
+
+        annotate_portfolio_protection(summary, SKILL_DIR)
+        return _ok(summary)
     except Exception as e:
         return _err("portfolio", e)
+
+
+@app.post("/api/execution/ambiguity/resolve", response_model=ApiResponse)
+def resolve_execution_ambiguity(
+    body: dict[str, Any] = Body(...),
+    _auth: dict[str, str] = Depends(require_trade_api_key),
+) -> ApiResponse:
+    """Clear a symbol lock after the operator checks the order at Schwab."""
+    from execution import resolve_order_ambiguity
+
+    result = resolve_order_ambiguity(
+        SKILL_DIR,
+        str(body.get("ticker") or ""),
+        str(body.get("outcome") or ""),
+    )
+    if not result.get("ok"):
+        return ApiResponse(ok=False, error=str(result.get("error") or "resolve failed"), data=result)
+    return _ok(result)
 
 
 @app.get("/api/portfolio/risk", response_model=ApiResponse)
@@ -2900,7 +3513,15 @@ def cockpit_market(db: Session = Depends(get_db)) -> ApiResponse:
         if not isinstance(diagnostics, dict):
             last_scan = _load_state(db, "last_scan", {})
             diagnostics = (last_scan or {}).get("diagnostics") if isinstance(last_scan, dict) else None
-        return _ok(cockpit_service.build_market(diagnostics or {}))
+        diag = diagnostics if isinstance(diagnostics, dict) else {}
+        try:
+            from core.hmm_regime import load_spy_hmm_view
+
+            hmm = load_spy_hmm_view(SKILL_DIR, diag)
+        except Exception as exc:
+            LOG.warning("HMM regime view failed: %s", exc)
+            hmm = None
+        return _ok(cockpit_service.build_market(diag, hmm_regime=hmm))
     except Exception as e:
         return _err("cockpit_market", e)
 
@@ -3089,11 +3710,7 @@ def cockpit_deltas(db: Session = Depends(get_db)) -> ApiResponse:
         from core import cockpit_service
 
         snapshot = _scan_snapshot()
-        curr = (
-            {"signals": snapshot.get("signals")}
-            if snapshot.get("signals")
-            else _load_state(db, "last_scan", {})
-        )
+        curr = {"signals": snapshot.get("signals")} if snapshot.get("signals") else _load_state(db, "last_scan", {})
         prev = _load_state(db, "prev_scan", {})
         return _ok(cockpit_service.build_deltas(prev, curr))
     except Exception as e:
@@ -3107,11 +3724,7 @@ def cockpit_watchlists(db: Session = Depends(get_db)) -> ApiResponse:
         from core import cockpit_service
 
         snapshot = _scan_snapshot()
-        curr = (
-            {"signals": snapshot.get("signals")}
-            if snapshot.get("signals")
-            else _load_state(db, "last_scan", {})
-        )
+        curr = {"signals": snapshot.get("signals")} if snapshot.get("signals") else _load_state(db, "last_scan", {})
         prev = _load_state(db, "prev_scan", {})
         return _ok(cockpit_service.build_watchlists(prev, curr, skill_dir=SKILL_DIR))
     except Exception as e:
@@ -3161,12 +3774,13 @@ def cockpit_order_intent_preview(payload: CreatePendingTrade) -> ApiResponse:
         symbol = payload.ticker.upper().strip()
         signal = payload.signal or {}
         if not signal:
-            with _scan_lock:
-                rows = list(_scan_job.get("signals") or []) + list(_scan_job.get("shortlist_signals") or [])
-            for row in rows:
-                if str((row or {}).get("ticker", "")).upper() == symbol:
-                    signal = row
-                    break
+            db = SessionLocal()
+            try:
+                resolved = _resolve_local_scan_signal(db, symbol)
+            finally:
+                db.close()
+            if resolved:
+                signal = resolved
 
         bid = ask = None
         quote_age_sec = None
@@ -3431,9 +4045,7 @@ def approve_trade(
 
         _ls = _load_state(db, "last_scan", {})
         _market = cockpit_service.build_market((_ls or {}).get("diagnostics") or {})
-        _execu = ExecutionProvider.from_order_result(result if isinstance(result, dict) else {}).model_dump(
-            mode="json"
-        )
+        _execu = ExecutionProvider.from_order_result(result if isinstance(result, dict) else {}).model_dump(mode="json")
         _packet = decision_packet.build_packet(
             ticker=row.ticker,
             kind="approved",
@@ -3713,12 +4325,8 @@ def _local_api_health_snapshot() -> dict[str, Any]:
         }
     market_health = str((schwab_token_health.get("market") or {}).get("status") or "")
     account_health = str((schwab_token_health.get("account") or {}).get("status") or "")
-    market_token_ok, market_state = _session_connection_state(
-        _session_token_ok(auth.market_session), market_health
-    )
-    account_token_ok, account_state = _session_connection_state(
-        _session_token_ok(auth.account_session), account_health
-    )
+    market_token_ok, market_state = _session_connection_state(_session_token_ok(auth.market_session), market_health)
+    account_token_ok, account_state = _session_connection_state(_session_token_ok(auth.account_session), account_health)
     linked = bool(market_token_ok or account_token_ok)
     quote_ok = False
     if linked:
@@ -3789,158 +4397,28 @@ def onboarding_status(db: Session = Depends(get_db)) -> ApiResponse:
 @app.get("/api/decision-card/{ticker}", response_model=ApiResponse)
 def decision_card(ticker: str, db: Session = Depends(get_db)) -> ApiResponse:
     symbol = ticker.upper().strip()
-    signal = None
-    with _scan_lock:
-        # Prefer kept/live-ranked signals, then fall back to shortlist rows so
-        # near-miss / filtered candidates can still show a decision brief.
-        all_rows = list(_scan_job.get("signals") or []) + list(_scan_job.get("shortlist_signals") or [])
-        for row in all_rows:
-            if str((row or {}).get("ticker", "")).upper() == symbol:
-                signal = row
-                break
+    # Prefer kept/live-ranked signals, then shortlist, then last_scan / ScanResult
+    # so Evaluate setup still works after a dashboard restart (table hydrates
+    # from last_scan while ``_scan_job`` is idle).
+    signal = _resolve_local_scan_signal(db, symbol)
     if signal is None:
         return ApiResponse(ok=False, error=f"{symbol} is not in current scan results. Run scan first.")
+
+    from .decision_card_service import build_decision_card_payload
 
     price = float(signal.get("price", 0) or 0)
     size_usd = get_position_size_usd(ticker=symbol, price=price if price > 0 else None, skill_dir=SKILL_DIR)
     qty = max(1, int(size_usd / price)) if price > 0 else 1
-    stop_pct = max(0.03, min(0.15, 0.07))
-    stop_level = round(price * (1.0 - stop_pct), 2) if price > 0 else None
-    entry_zone = (
-        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)} if price > 0 else {"low": None, "high": None}
-    )
-    confidence_bucket = str(((signal.get("advisory") or {}).get("confidence_bucket") or "unknown")).lower()
-    score = float(signal.get("composite_score", signal.get("signal_score", 0)) or 0)
-    reliability = signal.get("reliability_score")
-    edge = signal.get("edge_score")
-    execution = signal.get("execution_score")
-    ev_10d = signal.get("ev_10d")
-    rank_score = signal.get("rank_score")
-    rank_score_v2 = signal.get("rank_score_v2")
-    rank_score_v1 = signal.get("rank_score_v1") or rank_score
-    rank_basis = signal.get("rank_basis")
-    conviction = signal.get("mirofish_conviction")
-    try:
-        reliability_text = f"{float(reliability):.1f}" if reliability is not None else "unknown"
-    except (TypeError, ValueError):
-        reliability_text = "unknown"
-    reasons = [
-        f"Signal score {score:.1f}",
-        f"Reliability {reliability_text}",
-        f"Confidence: {confidence_bucket}",
-        f"Strategy: {str((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown').replace('_', ' ')}",
-    ]
-    if rank_score_v2 is not None:
-        reasons.append(f"Rank score {float(rank_score_v2):.1f}")
-    elif rank_score is not None:
-        reasons.append(f"Rank score {float(rank_score):.1f}")
-    if rank_basis:
-        reasons.append(f"Rank basis: {str(rank_basis).replace('_', ' ')}")
-    if conviction is not None:
-        reasons.append(f"Conviction {conviction}")
-    if signal.get("event_risk", {}).get("flagged"):
-        event_bits = ",".join(signal.get("event_risk", {}).get("reasons", []))
-        reasons.append(f"Event risk flagged{f' ({event_bits})' if event_bits else ''}")
-
     mock_trade = PendingTrade(
         id="preview", ticker=symbol, qty=qty, price=price, status="pending", signal_json=json.dumps(signal), note=None
     )
     checklist = _build_pretrade_checklist(mock_trade, signal)
-    advisory = signal.get("advisory") if isinstance(signal.get("advisory"), dict) else {}
-    p_up_10d = advisory.get("p_up_10d")
-    sec_risk_tag = str(signal.get("sec_risk_tag") or "unknown").lower()
-    sec_recency_days = signal.get("filing_recency_days")
-    event_risk = signal.get("event_risk") if isinstance(signal.get("event_risk"), dict) else {}
-    forensic_flags = [str(v) for v in list(signal.get("forensic_flags") or []) if str(v).strip()]
-    setup_summary = (
-        f"{symbol} remains a breakout candidate with score {score:.1f}, "
-        f"{confidence_bucket} confidence, and strategy "
-        f"{((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}."
-    )
-    key_risks: list[str] = []
-    for r in list(checklist.get("block_reasons_plain") or []):
-        txt = str(r).strip()
-        if txt:
-            key_risks.append(txt)
-    if sec_risk_tag in {"high", "medium"}:
-        key_risks.append(f"SEC risk tag: {sec_risk_tag}.")
-    if confidence_bucket in {"low", "unknown"}:
-        key_risks.append("Advisory confidence is low/unknown.")
-    if event_risk.get("flagged"):
-        event_reasons = ", ".join([str(x) for x in list(event_risk.get("reasons") or []) if str(x).strip()])
-        key_risks.append(f"Event risk flagged{': ' + event_reasons if event_reasons else ''}.")
-    catalyst_notes: list[str] = []
-    pead_surprise = signal.get("pead_surprise_pct")
-    pead_beat = signal.get("pead_beat")
-    if pead_surprise is not None:
-        try:
-            s = float(pead_surprise)
-            if pead_beat is True and s >= 0.05:
-                catalyst_notes.append(f"Positive earnings surprise: {round(s * 100, 1)}%.")
-            elif pead_beat is False and s <= -0.05:
-                catalyst_notes.append(f"Negative earnings surprise: {round(s * 100, 1)}%.")
-        except (TypeError, ValueError):
-            pass
-    catalyst_notes.append(
-        f"Primary strategy signal: {((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}."
-    )
-    sec_notes: list[str] = []
-    sec_notes.append(f"SEC risk tag: {sec_risk_tag}.")
-    if isinstance(sec_recency_days, int):
-        sec_notes.append(f"Most recent filing context age: {sec_recency_days} day(s).")
-    if not sec_notes:
-        sec_notes.append("No SEC enrichment notes available.")
-    forensic_note_lines: list[str] = []
-    if forensic_flags:
-        forensic_note_lines.extend(forensic_flags)
-    if signal.get("forensic_sloan") is not None:
-        forensic_note_lines.append(f"sloan={signal.get('forensic_sloan')}")
-    if signal.get("forensic_beneish") is not None:
-        forensic_note_lines.append(f"beneish={signal.get('forensic_beneish')}")
-    if signal.get("forensic_altman") is not None:
-        forensic_note_lines.append(f"altman={signal.get('forensic_altman')}")
-    expected_move_window = "10 trading days"
-    if p_up_10d is not None:
-        try:
-            expected_move_window = f"10 trading days (P(up) {round(float(p_up_10d) * 100, 1)}%)"
-        except (TypeError, ValueError):
-            pass
-    entry_stop_ideas = [
-        f"Entry zone: {entry_zone.get('low')} to {entry_zone.get('high')}.",
-        f"Stop / invalidation: {stop_level}.",
-        f"Sizing preview: {qty} shares (~${round(float(size_usd), 2)}).",
-    ]
-
     return _ok(
-        {
-            "ticker": symbol,
-            "entry_zone": entry_zone,
-            "stop_invalidation": stop_level,
-            "size": {"qty": qty, "usd": size_usd},
-            "confidence": {
-                "bucket": confidence_bucket,
-                "signal_score": score,
-                "mirofish_conviction": conviction,
-                "edge_score": edge,
-                "reliability_score": reliability,
-                "execution_score": execution,
-                "ev_10d": ev_10d,
-                "rank_score": rank_score_v2 if rank_score_v2 is not None else rank_score,
-                "rank_score_v2": rank_score_v2,
-                "rank_score_v1": rank_score_v1,
-                "rank_basis": rank_basis,
-            },
-            "key_reasons": reasons[:6],
-            "block_reason": (checklist.get("block_reasons") or [None])[0],
-            "checklist": checklist,
-            "brief": {
-                "setup_summary": setup_summary,
-                "key_risks": key_risks[:6],
-                "catalyst_notes": catalyst_notes[:6],
-                "forensic_flags": forensic_note_lines[:6],
-                "sec_notes": sec_notes[:6],
-                "expected_move_window": expected_move_window,
-                "entry_stop_ideas": entry_stop_ideas[:4],
-            },
-        }
+        build_decision_card_payload(
+            signal,
+            ticker=symbol,
+            skill_dir=SKILL_DIR,
+            checklist=checklist,
+            size_usd=size_usd,
+        )
     )

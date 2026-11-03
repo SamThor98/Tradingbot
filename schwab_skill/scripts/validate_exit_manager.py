@@ -153,22 +153,33 @@ def _check_breakeven_move_once(tmp_skill_dir: Path) -> tuple[bool, str]:
         )
 
         post_calls: list[str] = []
+        replace_calls: list[str] = []
 
         def _fake_post(_url, _payload, _auth):
-            order_id = "BE1"
-            post_calls.append(order_id)
-            return _FakeResponse(order_id)
+            post_calls.append("post")
+            return _FakeResponse("BE-POST")
+
+        def _fake_replace(url, _payload, _auth):
+            replace_calls.append(str(url))
+            return _FakeResponse("BE1")
 
         with (
             patch.object(execution, "_get_quote_quality_snapshot", return_value={"bid": 104.0, "ask": 104.2, "last": 104.1, "mid": 104.1, "spread_bps": 19.0}),
             patch.object(execution, "_post_order_with_refresh", side_effect=_fake_post),
-            patch.object(execution, "_cancel_order_with_refresh", return_value=_FakeCancelResponse()),
+            patch.object(execution, "_replace_order_with_refresh", side_effect=_fake_replace),
+            patch.object(execution, "_cancel_order_with_refresh", return_value=_FakeCancelResponse()) as cancel_mock,
         ):
             execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
             execution.run_exit_manager_sweep(auth=auth, skill_dir=tmp_skill_dir, account_hash="H")
 
-        if len(post_calls) != 1:
-            return False, f"breakeven stop move should place once, got {len(post_calls)}"
+        if post_calls:
+            return False, f"breakeven must replace the working stop, not post a second one, got {post_calls}"
+        if cancel_mock.called:
+            return False, "breakeven must not cancel the stop before the new one is accepted"
+        if len(replace_calls) != 1:
+            return False, f"breakeven stop move should replace once, got {len(replace_calls)}"
+        if not replace_calls[0].endswith("/STOP1"):
+            return False, f"breakeven replace target was {replace_calls[0]}"
 
         state = execution._load_exit_manager_state(tmp_skill_dir)
         pos = state.get("positions", {}).get("AAPL:ENTRY1", {})

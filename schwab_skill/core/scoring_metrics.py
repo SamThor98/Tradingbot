@@ -300,10 +300,12 @@ def enrich_candidate_scores(
         (edge_signal_weight * edge_signal) + (edge_pup_weight * (p_up * 100.0))
     ).clip(0, 100)
 
+    sec_values = pd.to_numeric(out["sec_risk_score"], errors="coerce")
+    # Advisory encoding: high risk is -1, low risk is +1. Zero stays unknown.
     sec_tag = np.where(
-        out["sec_risk_score"] >= 0.67,
+        sec_values <= -0.5,
         "high",
-        np.where(out["sec_risk_score"] >= 0.33, "medium", "unknown"),
+        np.where(sec_values >= 0.5, "low", "unknown"),
     )
     if "advisory_confidence_bucket" in out.columns or "confidence_bucket" in out.columns:
         bucket_col = "advisory_confidence_bucket" if "advisory_confidence_bucket" in out.columns else "confidence_bucket"
@@ -337,11 +339,6 @@ def enrich_candidate_scores(
     execution = np.clip(execution, 0.0, 100.0)
     out["execution_score_proxy"] = execution
 
-    avg_win = 0.01 + (np.maximum(0.0, out["edge_score_proxy"] - 50.0) / 100.0) * 0.06
-    avg_loss = 0.008 + (np.maximum(0.0, 50.0 - out["edge_score_proxy"]) / 100.0) * 0.05
-    friction = 0.002 + ((100.0 - execution) / 100.0) * 0.01
-    out["ev_10d_proxy"] = (p_up * avg_win) - ((1.0 - p_up) * avg_loss) - friction
-
     from core.scoring_composite import CompositeQualityWeights, compute_composite_quality_series
 
     proxy_weights = CompositeQualityWeights(
@@ -366,9 +363,7 @@ def enrich_candidate_scores(
         + (execution * 0.05)
         + (reliability * 0.05)
     )
-    rank_nudge = np.clip(out["ev_10d_proxy"] * 1000.0, -8.0, 8.0)
-    rank = rank_base + rank_nudge
-    rank = np.where(reliability < 40.0, np.minimum(rank, 55.0), rank)
+    rank = np.where(reliability < 40.0, np.minimum(rank_base, 55.0), rank_base)
     rank = np.where(execution < 45.0, np.minimum(rank, 58.0), rank)
     rank = np.where(sec_tag == "high", np.minimum(rank, 45.0), rank)
     out["rank_score_proxy"] = np.clip(rank, 0.0, 100.0)
@@ -464,6 +459,29 @@ def sma_multiplier_sensitivity(
     return rows
 
 
+_DEBATE_GRADE_COLUMNS = frozenset(
+    {
+        "qual_raw",
+        "qual_raw_equal",
+        "qual_raw_with_business",
+        "qual_score",
+        "qual_letter",
+        "qual_trend",
+        "qual_setup",
+        "qual_asymmetry",
+        "qual_asymmetry_distance",
+        "qual_raw_with_asymmetry_distance",
+        "qual_crowding",
+        "qual_business",
+        "debate_score",
+        "qual_disagreement",
+        "disagreement_source",
+        "qual_abstain",
+        "debate_grade_would_skip",
+    }
+)
+
+
 def score_columns_for_source(source: str, df: pd.DataFrame | None = None) -> list[str]:
     base_components = ["pts_52w", "pts_sma", "pts_volume", "pts_mirofish"]
     live_stack = [
@@ -498,11 +516,11 @@ def score_columns_for_source(source: str, df: pd.DataFrame | None = None) -> lis
             "p_up_calibrated",
         ]
         if df is not None:
-            return [c for c in cols if c in df.columns]
-        return cols
+            return [c for c in cols if c in df.columns and c not in _DEBATE_GRADE_COLUMNS]
+        return [c for c in cols if c not in _DEBATE_GRADE_COLUMNS]
     if df is not None and "rank_score" in df.columns and df["rank_score"].notna().sum() >= 30:
-        return [c for c in live_stack if c in df.columns]
-    return proxy_stack
+        return [c for c in live_stack if c in df.columns and c not in _DEBATE_GRADE_COLUMNS]
+    return [c for c in proxy_stack if c not in _DEBATE_GRADE_COLUMNS]
 
 
 def composite_weight_pack_from_config(skill_dir: Path | None = None):
@@ -541,6 +559,27 @@ def load_trade_chunks_frame(run_id: str, skill_dir: Path | None = None) -> pd.Da
         "pts_sma",
         "pts_volume",
         "pts_mirofish",
+        "qual_raw",
+        "qual_raw_equal",
+        "qual_raw_with_business",
+        "qual_score",
+        "qual_letter",
+        "qual_trend",
+        "qual_setup",
+        "qual_asymmetry",
+        "qual_asymmetry_distance",
+        "qual_raw_with_asymmetry_distance",
+        "qual_crowding",
+        "qual_business",
+        "debate_score",
+        "qual_coverage_trend",
+        "qual_coverage_setup",
+        "qual_coverage_asymmetry",
+        "qual_coverage_crowding",
+        "qual_disagreement",
+        "disagreement_source",
+        "qual_abstain",
+        "debate_grade_would_skip",
         "edge_score",
         "reliability_score",
         "execution_score",
@@ -548,7 +587,6 @@ def load_trade_chunks_frame(run_id: str, skill_dir: Path | None = None) -> pd.Da
         "rank_score",
         "rank_score_v2",
         "p_up_calibrated",
-        "ev_10d",
         "sec_risk_score",
     )
     rows: list[dict[str, Any]] = []
@@ -1116,3 +1154,438 @@ def optimize_composite_weights(
             baseline_col=baseline_col,
         ),
     }
+
+
+def incremental_spearman_ic(
+    feature: pd.Series,
+    control: pd.Series,
+    target: pd.Series,
+    *,
+    min_rows: int = 50,
+) -> float:
+    """Spearman of feature ranks after a linear residual on control ranks.
+
+    This is the pre-registered claim for the debate grade: what ``qual_raw``
+    still ranks after ``signal_score`` is removed. Raw IC of ``qual_raw`` is
+    reported separately and is not the claim.
+    """
+    frame = pd.DataFrame({"feature": feature, "control": control, "target": target})
+    frame = frame.apply(pd.to_numeric, errors="coerce").dropna()
+    if len(frame) < min_rows:
+        return float("nan")
+    feature_rank = frame["feature"].rank(method="average")
+    control_rank = frame["control"].rank(method="average")
+    if int(feature_rank.nunique()) <= 1 or int(control_rank.nunique()) <= 1:
+        return float("nan")
+    slope, intercept = np.polyfit(control_rank.to_numpy(dtype=float), feature_rank.to_numpy(dtype=float), 1)
+    residual = feature_rank.to_numpy(dtype=float) - (intercept + slope * control_rank.to_numpy(dtype=float))
+    if float(np.nanstd(residual)) < 1e-8:
+        return float("nan")
+    return spearman_corr(residual, frame["target"])
+
+
+def _bucket_profit_factor(returns: pd.Series) -> float | None:
+    vals = pd.to_numeric(returns, errors="coerce").dropna()
+    if vals.empty:
+        return None
+    wins = float(vals[vals > 0].sum())
+    losses = float(-vals[vals <= 0].sum())
+    if losses <= 0:
+        return None if wins <= 0 else float("inf")
+    return wins / losses
+
+
+def _return_bucket(returns: pd.Series, *, min_trades: int) -> dict[str, Any]:
+    vals = pd.to_numeric(returns, errors="coerce").dropna()
+    n = int(len(vals))
+    if n < min_trades:
+        return {"n": n, "insufficient": True}
+    pf = _bucket_profit_factor(vals)
+    return {
+        "n": n,
+        "insufficient": False,
+        "mean_return": float(vals.mean()),
+        "win_rate": float((vals > 0).mean()),
+        "profit_factor": None if pf is None or not math.isfinite(pf) else float(pf),
+    }
+
+
+def _scored_debate_frame(df: pd.DataFrame, ret_col: str) -> pd.DataFrame:
+    work = df.copy()
+    if "qual_abstain" in work.columns:
+        abstain = work["qual_abstain"].fillna(False).astype(bool)
+        work = work.loc[~abstain].copy()
+    work["qual_raw"] = pd.to_numeric(work.get("qual_raw"), errors="coerce")
+    work[ret_col] = pd.to_numeric(work.get(ret_col), errors="coerce")
+    return work.dropna(subset=["qual_raw", ret_col])
+
+
+def _skip_vs_kept(df: pd.DataFrame, ret_col: str, *, min_trades: int) -> dict[str, Any]:
+    if "debate_grade_would_skip" not in df.columns or ret_col not in df.columns:
+        return {"skipped": True, "reason": "debate_grade_would_skip missing"}
+    work = df.copy()
+    work[ret_col] = pd.to_numeric(work[ret_col], errors="coerce")
+    work = work.dropna(subset=[ret_col])
+    flag = work["debate_grade_would_skip"].fillna(False).astype(bool)
+    return {
+        "skipped": False,
+        "would_skip": _return_bucket(work.loc[flag, ret_col], min_trades=min_trades),
+        "kept": _return_bucket(work.loc[~flag, ret_col], min_trades=min_trades),
+    }
+
+
+def _qual_raw_without_pillar(scored: pd.DataFrame, drop_name: str) -> pd.Series:
+    from core.debate_grade import WEIGHTS_PRIMARY
+
+    pillar_cols = {
+        "trend": "qual_trend",
+        "setup": "qual_setup",
+        "asymmetry": "qual_asymmetry",
+        "crowding": "qual_crowding",
+    }
+    numerator = pd.Series(0.0, index=scored.index)
+    denominator = pd.Series(0.0, index=scored.index)
+    for name, weight in WEIGHTS_PRIMARY.items():
+        if name == drop_name or pillar_cols[name] not in scored.columns:
+            continue
+        column = pd.to_numeric(scored[pillar_cols[name]], errors="coerce")
+        present = column.notna()
+        contribution = (100.0 - column) if name == "crowding" else column
+        numerator = numerator + contribution.fillna(0.0) * float(weight)
+        denominator = denominator + present.astype(float) * float(weight)
+    return numerator / denominator.replace(0.0, np.nan)
+
+
+def _side_incremental(
+    scored: pd.DataFrame,
+    column: str,
+    ret_col: str,
+    *,
+    min_rows: int,
+    note: str,
+) -> dict[str, Any]:
+    if column not in scored.columns or "signal_score" not in scored.columns:
+        return {"skipped": True, "reason": f"{column} missing", "note": note}
+    feature = pd.to_numeric(scored[column], errors="coerce")
+    if int(feature.notna().sum()) < min_rows:
+        return {"skipped": True, "reason": "insufficient rows", "row_count": int(feature.notna().sum()), "note": note}
+    signal = pd.to_numeric(scored["signal_score"], errors="coerce")
+    return {
+        "skipped": False,
+        "note": note,
+        "row_count": int(feature.notna().sum()),
+        "incremental_ic": incremental_spearman_ic(feature, signal, scored[ret_col], min_rows=min_rows),
+    }
+
+
+def debate_grade_report(
+    df: pd.DataFrame,
+    *,
+    ret_col: str,
+    min_rows: int = 50,
+    min_bucket: int = 30,
+) -> dict[str, Any]:
+    """Pre-registered debate-grade block. Letters are secondary and uncalibrated."""
+    skip_vs_kept = _skip_vs_kept(df, ret_col, min_trades=min_bucket)
+    if "qual_raw" not in df.columns:
+        return {"skipped": True, "reason": "qual_raw missing", "skip_vs_kept": skip_vs_kept}
+    total = int(len(df))
+    abstain_n = 0
+    if "qual_abstain" in df.columns:
+        abstain_n = int(df["qual_abstain"].fillna(False).astype(bool).sum())
+    scored = _scored_debate_frame(df, ret_col)
+    if len(scored) < min_rows:
+        return {
+            "skipped": True,
+            "reason": "insufficient non-abstain rows",
+            "row_count": int(len(scored)),
+            "abstain_n": abstain_n,
+            "abstain_rate": (abstain_n / total) if total else None,
+            "skip_vs_kept": skip_vs_kept,
+        }
+
+    signal = pd.to_numeric(scored.get("signal_score"), errors="coerce")
+    raw_ic = spearman_corr(scored["qual_raw"], scored[ret_col])
+    signal_ic = spearman_corr(signal, scored[ret_col]) if "signal_score" in scored.columns else float("nan")
+    incremental = (
+        incremental_spearman_ic(scored["qual_raw"], signal, scored[ret_col], min_rows=min_rows)
+        if "signal_score" in scored.columns
+        else float("nan")
+    )
+    equal_ic = float("nan")
+    if "qual_raw_equal" in scored.columns:
+        equal_ic = spearman_corr(pd.to_numeric(scored["qual_raw_equal"], errors="coerce"), scored[ret_col])
+
+    try:
+        quintiles = pd.qcut(scored["qual_raw"], 5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop")
+    except ValueError:
+        quintiles = pd.Series(index=scored.index, dtype=object)
+    quintile_rows: list[dict[str, Any]] = []
+    if quintiles.notna().any():
+        for label, group in scored.groupby(quintiles, observed=True):
+            bucket = _return_bucket(group[ret_col], min_trades=min_bucket)
+            bucket["quintile"] = str(label)
+            quintile_rows.append(bucket)
+
+    era_rows: list[dict[str, Any]] = []
+    if "era" in df.columns:
+        for era, group in df.groupby("era"):
+            era_abstain = 0
+            if "qual_abstain" in group.columns:
+                era_abstain = int(group["qual_abstain"].fillna(False).astype(bool).sum())
+            era_scored = _scored_debate_frame(group, ret_col)
+            era_signal = pd.to_numeric(era_scored.get("signal_score"), errors="coerce")
+            era_rows.append(
+                {
+                    "era": str(era),
+                    "n": int(len(group)),
+                    "abstain_n": era_abstain,
+                    "abstain_rate": (era_abstain / len(group)) if len(group) else None,
+                    "incremental_ic": incremental_spearman_ic(
+                        era_scored["qual_raw"], era_signal, era_scored[ret_col], min_rows=min_rows
+                    )
+                    if "signal_score" in era_scored.columns
+                    else float("nan"),
+                    "skipped": len(era_scored) < min_rows,
+                }
+            )
+
+    disagreement: dict[str, Any] = {"skipped": True, "reason": "disagreement_source missing"}
+    if "disagreement_source" in scored.columns:
+        voted = scored.loc[scored["disagreement_source"].astype(str) == "votes"].copy()
+        if len(voted) < min_rows:
+            disagreement = {
+                "skipped": True,
+                "reason": "insufficient rows with committee votes",
+                "row_count": int(len(voted)),
+            }
+        else:
+            voted["qual_disagreement"] = pd.to_numeric(voted.get("qual_disagreement"), errors="coerce")
+            low = voted.loc[voted["qual_disagreement"] <= 0.35]
+            high = voted.loc[voted["qual_disagreement"] > 0.35]
+            disagreement = {
+                "skipped": False,
+                "row_count": int(len(voted)),
+                "threshold": 0.35,
+                "low": _return_bucket(low[ret_col], min_trades=min_bucket),
+                "high": _return_bucket(high[ret_col], min_trades=min_bucket),
+            }
+
+    from core.debate_grade import WEIGHTS_PRIMARY
+
+    ablation: list[dict[str, Any]] = []
+    pillar_cols = {
+        "trend": "qual_trend",
+        "setup": "qual_setup",
+        "asymmetry": "qual_asymmetry",
+        "crowding": "qual_crowding",
+    }
+    if all(col in scored.columns for col in pillar_cols.values()):
+        base_ic = spearman_corr(scored["qual_raw"], scored[ret_col])
+        for drop_name in WEIGHTS_PRIMARY:
+            numerator = pd.Series(0.0, index=scored.index)
+            denominator = pd.Series(0.0, index=scored.index)
+            for name, weight in WEIGHTS_PRIMARY.items():
+                if name == drop_name:
+                    continue
+                column = pd.to_numeric(scored[pillar_cols[name]], errors="coerce")
+                present = column.notna()
+                contribution = (100.0 - column) if name == "crowding" else column
+                numerator = numerator + contribution.fillna(0.0) * float(weight)
+                denominator = denominator + present.astype(float) * float(weight)
+            rebuilt_s = numerator / denominator.replace(0.0, np.nan)
+            ablated_ic = spearman_corr(rebuilt_s, scored[ret_col])
+            ablation.append(
+                {
+                    "removed_pillar": drop_name,
+                    "ic": ablated_ic,
+                    "ic_delta": ablated_ic - base_ic
+                    if math.isfinite(ablated_ic) and math.isfinite(base_ic)
+                    else float("nan"),
+                }
+            )
+
+    letters: list[dict[str, Any]] = []
+    if "qual_letter" in scored.columns:
+        for letter, group in scored.groupby(scored["qual_letter"].astype(str)):
+            bucket = _return_bucket(group[ret_col], min_trades=min_bucket)
+            bucket["letter"] = str(letter)
+            letters.append(bucket)
+
+    asymmetry_spread: dict[str, Any] = {"nunique": 0, "no_spread": True}
+    incremental_ex_asymmetry = float("nan")
+    claim_note = None
+    if "qual_asymmetry" in scored.columns:
+        asymmetry_values = pd.to_numeric(scored["qual_asymmetry"], errors="coerce").dropna()
+        nunique = int(asymmetry_values.nunique())
+        asymmetry_spread = {"nunique": nunique, "no_spread": nunique <= 1}
+        if nunique <= 1 and "signal_score" in scored.columns:
+            rebuilt = _qual_raw_without_pillar(scored, "asymmetry")
+            incremental_ex_asymmetry = incremental_spearman_ic(
+                rebuilt, signal, scored[ret_col], min_rows=min_rows
+            )
+            claim_note = (
+                "Asymmetry has no spread on this sample, so it is excluded from the claim. "
+                "Stored qual_raw is unchanged. The claim figure is incremental_ic_ex_asymmetry."
+            )
+
+    return {
+        "skipped": False,
+        "claim": "incremental_spearman_ic of qual_raw after signal_score",
+        "claim_note": claim_note,
+        "row_count": int(len(scored)),
+        "abstain_n": abstain_n,
+        "abstain_rate": (abstain_n / total) if total else None,
+        "qual_raw_ic": raw_ic,
+        "signal_score_ic": signal_ic,
+        "incremental_ic": incremental,
+        "incremental_ic_ex_asymmetry": incremental_ex_asymmetry,
+        "asymmetry_spread": asymmetry_spread,
+        "qual_raw_equal_ic": equal_ic,
+        "equal_weight_note": "Printed beside the frozen primary weights. Not used to pick a winner.",
+        "skip_vs_kept": skip_vs_kept,
+        "qual_raw_with_business": _side_incremental(
+            scored,
+            "qual_raw_with_business",
+            ret_col,
+            min_rows=min_rows,
+            note="Not the claim. Business stays out of qual_raw so live and historical samples stay comparable.",
+        ),
+        "debate_score": _side_incremental(
+            scored,
+            "debate_score",
+            ret_col,
+            min_rows=min_rows,
+            note="Not the claim. Committee scores exist only on sampled shadow scans joined at exit.",
+        ),
+        "qual_raw_with_asymmetry_distance": _side_incremental(
+            scored,
+            "qual_raw_with_asymmetry_distance",
+            ret_col,
+            min_rows=min_rows,
+            note="Not the claim. Continuous stop-cushion replaces the binary asymmetry pillar only in this column.",
+        ),
+        "quintiles": quintile_rows,
+        "eras": era_rows,
+        "disagreement": disagreement,
+        "ablation": ablation,
+        "letters_uncalibrated": letters,
+    }
+
+
+def _skip_vs_kept_lines(block: dict[str, Any]) -> list[str]:
+    lines = ["", "### Would-skip versus kept", ""]
+    if not block or block.get("skipped"):
+        lines.append(f"- Skipped: {(block or {}).get('reason', 'missing')}")
+        return lines
+    lines.append("- Would skip: " + _bucket_inline(block.get("would_skip") or {}))
+    lines.append("- Kept: " + _bucket_inline(block.get("kept") or {}))
+    lines.append("- This compares realized trades. It is not an entry filter.")
+    return lines
+
+
+def render_debate_grade_markdown(block: dict[str, Any]) -> list[str]:
+    lines = ["", "## Debate grade (shadow)", ""]
+    lines.extend(_skip_vs_kept_lines(block.get("skip_vs_kept") or {}))
+    if block.get("skipped"):
+        lines.append(f"- Skipped: {block.get('reason')} (rows={block.get('row_count', 0)})")
+        if block.get("abstain_rate") is not None:
+            lines.append(f"- Abstain rate: {float(block['abstain_rate']):.1%}")
+        return lines
+    lines.extend(
+        [
+            "- Claim: incremental Spearman IC of `qual_raw` after `signal_score`.",
+            "- Letters are uncalibrated display cuts. They are not the claim.",
+            f"- Non-abstain rows: {block.get('row_count')}",
+            f"- Abstain rate: {float(block.get('abstain_rate') or 0):.1%}",
+            f"- `qual_raw` IC: {_fmt_ic(block.get('qual_raw_ic'))}",
+            f"- `signal_score` IC: {_fmt_ic(block.get('signal_score_ic'))}",
+            f"- Incremental IC: {_fmt_ic(block.get('incremental_ic'))}",
+            f"- Equal-weight `qual_raw` IC (not selected): {_fmt_ic(block.get('qual_raw_equal_ic'))}",
+            "",
+            "### Quintiles of qual_raw",
+            "",
+            "| Quintile | n | Mean return | Win rate | Profit factor |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for row in block.get("quintiles") or []:
+        lines.append(_bucket_markdown_row(str(row.get("quintile")), row))
+    lines.extend(["", "### Era incremental IC", ""])
+    for row in block.get("eras") or []:
+        status = "skipped" if row.get("skipped") else _fmt_ic(row.get("incremental_ic"))
+        rate = row.get("abstain_rate")
+        rate_s = "n/a" if rate is None else f"{float(rate):.1%}"
+        lines.append(f"- {row.get('era')}: incremental IC {status}, abstain {rate_s} (n={row.get('n')})")
+    disagree = block.get("disagreement") or {}
+    lines.extend(["", "### Disagreement split (votes only)", ""])
+    if disagree.get("skipped"):
+        lines.append(f"- Skipped: {disagree.get('reason')} (rows={disagree.get('row_count', 0)})")
+    else:
+        lines.append(f"- Rows with votes: {disagree.get('row_count')}. Threshold {disagree.get('threshold')}.")
+        lines.append("- Low: " + _bucket_inline(disagree.get("low") or {}))
+        lines.append("- High: " + _bucket_inline(disagree.get("high") or {}))
+    spread = block.get("asymmetry_spread") or {}
+    lines.extend(["", "### Asymmetry spread", ""])
+    if spread.get("no_spread"):
+        lines.append(f"- No spread (unique values={spread.get('nunique', 0)}).")
+        lines.append(f"- {block.get('claim_note')}")
+        lines.append(
+            f"- Incremental IC with asymmetry removed: {_fmt_ic(block.get('incremental_ic_ex_asymmetry'))}"
+        )
+    else:
+        lines.append(f"- Asymmetry takes {spread.get('nunique')} values. The claim stays on stored `qual_raw`.")
+    for label, key in (
+        ("Business side column", "qual_raw_with_business"),
+        ("Committee debate_score", "debate_score"),
+        ("Asymmetry distance side column", "qual_raw_with_asymmetry_distance"),
+    ):
+        side = block.get(key) or {}
+        lines.extend(["", f"### {label}", ""])
+        if side.get("skipped"):
+            lines.append(f"- Skipped: {side.get('reason')} (rows={side.get('row_count', 0)}). {side.get('note')}")
+        else:
+            lines.append(f"- {side.get('note')}")
+            lines.append(f"- Incremental IC: {_fmt_ic(side.get('incremental_ic'))} (n={side.get('row_count')})")
+    lines.extend(["", "### Pillar ablation on qual_raw", ""])
+    for row in block.get("ablation") or []:
+        lines.append(
+            f"- Drop {row.get('removed_pillar')}: IC {_fmt_ic(row.get('ic'))}, "
+            f"delta {_fmt_ic(row.get('ic_delta'))}"
+        )
+    lines.extend(["", "### Letters (uncalibrated)", ""])
+    for row in block.get("letters_uncalibrated") or []:
+        lines.append(f"- {row.get('letter')}: {_bucket_inline(row)}")
+    return lines
+
+
+def _fmt_ic(value: Any) -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if not math.isfinite(num):
+        return "n/a"
+    return f"{num:+.4f}"
+
+
+def _bucket_inline(row: dict[str, Any]) -> str:
+    if row.get("insufficient"):
+        return f"insufficient (n={row.get('n', 0)})"
+    pf = row.get("profit_factor")
+    pf_s = "n/a" if pf is None else f"{float(pf):.2f}"
+    mean = row.get("mean_return")
+    mean_s = "n/a" if mean is None else f"{float(mean) * 100:+.2f}%"
+    win = row.get("win_rate")
+    win_s = "n/a" if win is None else f"{float(win):.1%}"
+    return f"n={row.get('n')} mean {mean_s} win {win_s} PF {pf_s}"
+
+
+def _bucket_markdown_row(label: str, row: dict[str, Any]) -> str:
+    if row.get("insufficient"):
+        return f"| {label} | {row.get('n', 0)} | insufficient | | |"
+    pf = row.get("profit_factor")
+    pf_s = "n/a" if pf is None else f"{float(pf):.2f}"
+    mean = float(row.get("mean_return") or 0.0) * 100
+    win = float(row.get("win_rate") or 0.0)
+    return f"| {label} | {row.get('n')} | {mean:+.2f}% | {win:.1%} | {pf_s} |"

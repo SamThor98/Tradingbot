@@ -116,17 +116,26 @@ def build_pead_canary_sleeve_block(
             top_n = 5
         capacity_rows = list(names[:top_n])
     dq = str(diagnostics.get("data_quality") or "").strip().lower()
+    from core.pead_canary_splits import annotate_pead_shadow_name
+
     names_out = [
-        {
-            "ticker": str(n.get("ticker") or "").upper(),
-            "edge_score": n.get("edge_score"),
-            "stage_a_score": n.get("stage_a_score"),
-            "pead_beat": n.get("pead_beat"),
-            "pead_surprise_pct": n.get("pead_surprise_pct"),
-            "adv_usd": n.get("adv_usd"),
-            "executable": False,
-            "sleeve_id": "S1",
-        }
+        annotate_pead_shadow_name(
+            {
+                "ticker": str(n.get("ticker") or "").upper(),
+                "edge_score": n.get("edge_score"),
+                "stage_a_score": n.get("stage_a_score"),
+                "price": n.get("price"),
+                "sma_200": n.get("sma_200"),
+                "close_vs_sma200_pct": n.get("close_vs_sma200_pct"),
+                "pead_beat": n.get("pead_beat"),
+                "pead_surprise_pct": n.get("pead_surprise_pct"),
+                "pead_extension_drop_would_drop": n.get("pead_extension_drop_would_drop"),
+                "pead_surprise_large": n.get("pead_surprise_large"),
+                "adv_usd": n.get("adv_usd"),
+                "executable": False,
+                "sleeve_id": "S1",
+            }
+        )
         for n in capacity_rows
     ]
     # R4 paper scores for S1 ranking (shadow only)

@@ -1,0 +1,72 @@
+{
+  "cik": 320193,
+  "entityName": "Apple Inc.",
+  "facts": {
+    "dei": {
+      "EntityCommonStockSharesOutstanding": {
+        "label": "Entity Common Stock, Shares Outstanding",
+        "units": {
+          "shares": [
+            {
+              "end": "2023-09-30",
+              "val": 15000000000,
+              "accn": "0000320193-23-000106",
+              "fy": 2023,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2023-11-03"
+            }
+          ]
+        }
+      }
+    },
+    "us-gaap": {
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "label": "Revenue",
+        "units": {
+          "USD": [
+            {"end": "2021-09-25", "val": 100000000000, "accn": "a", "fy": 2021, "fp": "FY", "form": "10-K", "filed": "2021-10-29"},
+            {"end": "2022-09-24", "val": 110000000000, "accn": "b", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28"},
+            {"end": "2023-09-30", "val": 121000000000, "accn": "c", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "NetCashProvidedByUsedInOperatingActivities": {
+        "label": "Operating cash flow",
+        "units": {
+          "USD": [
+            {"end": "2021-09-25", "val": 20000000000, "accn": "a", "fy": 2021, "fp": "FY", "form": "10-K", "filed": "2021-10-29"},
+            {"end": "2022-09-24", "val": 22000000000, "accn": "b", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28"},
+            {"end": "2023-09-30", "val": 24200000000, "accn": "c", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "PaymentsToAcquirePropertyPlantAndEquipment": {
+        "label": "CapEx",
+        "units": {
+          "USD": [
+            {"end": "2021-09-25", "val": 5000000000, "accn": "a", "fy": 2021, "fp": "FY", "form": "10-K", "filed": "2021-10-29"},
+            {"end": "2022-09-24", "val": 5000000000, "accn": "b", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-10-28"},
+            {"end": "2023-09-30", "val": 5000000000, "accn": "c", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "LongTermDebt": {
+        "label": "Long-term debt",
+        "units": {
+          "USD": [
+            {"end": "2023-09-30", "val": 40000000000, "accn": "c", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      },
+      "CashAndCashEquivalentsAtCarryingValue": {
+        "label": "Cash",
+        "units": {
+          "USD": [
+            {"end": "2023-09-30", "val": 10000000000, "accn": "c", "fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-11-03"}
+          ]
+        }
+      }
+    }
+  }
+}

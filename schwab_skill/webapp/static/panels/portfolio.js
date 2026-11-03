@@ -24,6 +24,84 @@ import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 import { getPortfolioSource, renderManualPositionsPanel, loadManualBook } from "./portfolioManual.js";
 import { openBookJournalForSymbol } from "./portfolioBook.js";
 
+function protectionTone(status) {
+  if (status === "FULL") return "good";
+  if (status === "PARTIAL") return "warn";
+  if (status === "NO STOP SEEN" || status === "LOCKED") return "bad";
+  return "neutral";
+}
+
+function protectionCell(position) {
+  const prot = position.protection || {};
+  const status = String(prot.status || "");
+  if (!status || status === "NOT_APPLICABLE") return "—";
+  const tone = protectionTone(status);
+  const label = safeText(prot.label || status);
+  const detail = safeText(prot.detail || "");
+  return `<span class="pill ${tone}" title="${detail}">${label}</span>`;
+}
+
+function ambiguityButtons(ticker) {
+  const symbol = safeText(ticker);
+  return `<button type="button" class="btn small secondary" data-ambiguity-resolve="${symbol}" data-outcome="landed">Landed</button>
+    <button type="button" class="btn small secondary" data-ambiguity-resolve="${symbol}" data-outcome="absent">Absent</button>`;
+}
+
+async function resolveAmbiguity(ticker, outcome) {
+  const out = await api.post("/api/execution/ambiguity/resolve", { ticker, outcome });
+  if (!out.ok) {
+    logEvent({
+      kind: "system",
+      severity: "warn",
+      message: `Order resolve failed: ${out.user_message || out.error || "request failed"}`,
+    });
+    return;
+  }
+  await refreshPortfolio();
+}
+
+function bindAmbiguityButtons(root) {
+  root?.querySelectorAll("[data-ambiguity-resolve]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const ticker = button.getAttribute("data-ambiguity-resolve");
+      const outcome = button.getAttribute("data-outcome");
+      if (ticker && outcome) void resolveAmbiguity(ticker, outcome);
+    });
+  });
+}
+
+function paintAmbiguityBanner(data) {
+  const banner = document.getElementById("portfolioAmbiguityBanner");
+  if (!banner) return;
+  const locks = Array.isArray(data.order_ambiguity) ? data.order_ambiguity : [];
+  const ledgerError = data.order_ambiguity_error ? safeText(data.order_ambiguity_error) : "";
+  if (!locks.length && !ledgerError) {
+    banner.classList.add("hidden");
+    banner.replaceChildren();
+    return;
+  }
+  banner.classList.remove("hidden");
+  const rows = locks
+    .map((lock) => {
+      const ticker = safeText(lock.ticker);
+      const reason = safeText(lock.reason || "Order outcome unknown");
+      return `<div class="portfolio-ambiguity-row"><span class="pill bad">LOCKED</span> <strong>${ticker}</strong> <span class="muted">${reason}</span> ${ambiguityButtons(lock.ticker)}</div>`;
+    })
+    .join("");
+  banner.innerHTML = `${ledgerError ? `<div>${ledgerError}</div>` : ""}${rows}`;
+  bindAmbiguityButtons(banner);
+}
+
+function protectionSummary(data) {
+  const counts = data.protection_counts || {};
+  const parts = [];
+  if (counts.FULL) parts.push(`${formatCount(counts.FULL)} protected`);
+  if (counts.PARTIAL) parts.push(`${formatCount(counts.PARTIAL)} partial`);
+  if (counts["NO STOP SEEN"]) parts.push(`${formatCount(counts["NO STOP SEEN"])} no stop`);
+  if (counts.LOCKED) parts.push(`${formatCount(counts.LOCKED)} locked`);
+  return parts.join(" · ");
+}
+
 function paintPortfolioSurface(stateName, title, detail, extras = {}) {
   return setResearchPanelStatus({
     stripId: "portfolioStatusStrip",
@@ -48,8 +126,17 @@ export async function refreshPortfolio() {
   if (!body) return;
   // Manual source: the editor grid owns the Positions panel — no Schwab fetch.
   if (getPortfolioSource() === "manual") {
+    paintAmbiguityBanner({});
     renderManualPositionsPanel();
-    const tickers = loadManualBook().positions.filter((p) => p.ticker).length;
+    const book = loadManualBook();
+    const tickers = book.positions.filter((p) => p.ticker).length;
+    state.lastPortfolioData = {
+      positions_count: tickers,
+      positions: book.positions,
+      source: "manual",
+    };
+    state.lastPortfolioAt = new Date().toISOString();
+    window.dispatchEvent(new CustomEvent("research_summary_refresh"));
     if (card) card.setAttribute("data-async-state", tickers ? "success" : "empty");
     paintPortfolioSurface(
       tickers ? "success" : "empty",
@@ -61,7 +148,6 @@ export async function refreshPortfolio() {
         output: { value: tickers ? "Ready" : "None", sub: "manual book" },
         data: { value: "Local", sub: "this browser" },
         action: { value: tickers ? "Pass" : "Add", sub: tickers ? "risk optional" : "add tickers" },
-        confidence: tickers ? 70 : 0,
       },
     );
     return;
@@ -75,10 +161,9 @@ export async function refreshPortfolio() {
       output: { value: "…", sub: "positions table" },
       data: { value: "…", sub: "broker feed" },
       action: { value: "Wait", sub: "hold" },
-      confidence: 28,
     },
   );
-  body.innerHTML = `<tr><td colspan="8" class="muted">
+  body.innerHTML = `<tr><td colspan="9" class="muted">
     <div class="async-state async-state--loading">
       <span class="async-spinner" aria-hidden="true"></span>
       <span>Loading positions…</span>
@@ -86,6 +171,7 @@ export async function refreshPortfolio() {
   </td></tr>`;
   const out = await api.get("/api/portfolio");
   if (!out.ok) {
+    paintAmbiguityBanner({});
     state.lastPortfolioData = null;
     window.dispatchEvent(new CustomEvent("research_summary_refresh"));
     const reason = safeText(out.user_message || out.error || "fetch failed");
@@ -107,7 +193,7 @@ export async function refreshPortfolio() {
         markUnavailable(meta, "signed out");
         meta.textContent = "Sign in to load positions.";
       }
-      body.innerHTML = `<tr><td colspan="8">
+      body.innerHTML = `<tr><td colspan="9">
         <div class="signed-out-banner" role="status">
           <strong>Signed out.</strong>
           <span>Sign in to load tenant-scoped portfolio data.</span>
@@ -130,7 +216,7 @@ export async function refreshPortfolio() {
     const hint = out.status === 409
       ? " Link Schwab account + market data in Settings, then retry."
       : "";
-    body.innerHTML = `<tr><td colspan="8">
+    body.innerHTML = `<tr><td colspan="9">
       ${buildOperatorAlertHtml({
         tone: "bad",
         headline: "Data unavailable",
@@ -145,11 +231,15 @@ export async function refreshPortfolio() {
   }
   const data = out.data || {};
   state.lastPortfolioData = data;
+  state.lastPortfolioAt = new Date().toISOString();
   window.dispatchEvent(new CustomEvent("research_summary_refresh"));
   if (meta) {
     clearUnavailable(meta);
     meta.textContent = `${formatCount(data.positions_count, "0")} position(s) • ${formatMoney(data.total_market_value)}`;
+    const protNote = protectionSummary(data);
+    if (protNote) meta.textContent += ` • ${protNote}`;
   }
+  paintAmbiguityBanner(data);
   body.innerHTML = "";
   if (!Array.isArray(data.positions) || !data.positions.length) {
     if (card) card.setAttribute("data-async-state", "empty");
@@ -166,7 +256,7 @@ export async function refreshPortfolio() {
     );
     body.innerHTML = `
       <tr>
-        <td colspan="8" class="muted">
+        <td colspan="9" class="muted">
           <div class="empty-state-cell">
             <svg class="empty-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -189,30 +279,45 @@ export async function refreshPortfolio() {
       output: { value: "Ready", sub: "positions" },
       data: { value: "Fresh", sub: "broker" },
       action: { value: "Pass", sub: "risk optional" },
-      confidence: 78,
     },
   );
   const totalValue = Number(data.total_market_value) || 0;
   data.positions.slice(0, 25).forEach((p) => {
     const weightPct = totalValue > 0 ? (Number(p.market_value) / totalValue) * 100 : NaN;
     const dayPl = Number(p.day_pl);
+    const dayTone = !Number.isFinite(dayPl) || dayPl === 0 ? "neutral" : dayPl > 0 ? "ok" : "bad";
     const dayPlCell = Number.isFinite(dayPl)
-      ? `<span class="mono-nums" style="color:${dayPl >= 0 ? "var(--good)" : "var(--bad)"}">${dayPl >= 0 ? "+" : ""}${formatMoney(dayPl)}</span>`
+      ? `<span class="mono-nums" data-tone="${dayTone}">${dayPl >= 0 ? "+" : ""}${formatMoney(dayPl)}</span>`
       : "—";
+    const plPct = Number(p.pl_pct);
+    const plTone = !Number.isFinite(plPct) || plPct === 0 ? "neutral" : plPct > 0 ? "ok" : "bad";
+    const weight = Number.isFinite(weightPct) ? Math.max(0, Math.min(100, weightPct)) : null;
+    const weightCell = weight === null
+      ? "—"
+      : `<span class="ol-weight"><span class="ol-weight-track" aria-hidden="true"><span class="ol-weight-fill" style="width:${weight.toFixed(1)}%"></span></span><span class="mono-nums">${formatDecimal(weightPct, 1)}%</span></span>`;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${safeText(p.symbol)}</td>
       <td>${formatCount(p.qty, "—")}</td>
       <td>${formatMoney(p.last)}</td>
       <td>${formatMoney(p.market_value)}</td>
-      <td class="mono-nums">${Number.isFinite(weightPct) ? `${formatDecimal(weightPct, 1)}%` : "—"}</td>
+      <td class="mono-nums">${weightCell}</td>
       <td>${dayPlCell}</td>
-      <td>${formatSignedDelta(p.pl_pct, (n) => formatDecimal(n, 2, "0.00"))}%</td>
-      <td><button type="button" class="btn small secondary" data-journal-sym="${safeText(p.symbol)}">Journal</button></td>
+      <td class="mono-nums" data-tone="${plTone}">${formatSignedDelta(p.pl_pct, (n) => formatDecimal(n, 2, "0.00"))}%</td>
+      <td>${protectionCell(p)}</td>
+      <td>
+        <button type="button" class="btn small secondary" data-check-sym="${safeText(p.symbol)}" aria-label="Check ${safeText(p.symbol)}">Check</button>
+        <button type="button" class="btn small secondary" data-journal-sym="${safeText(p.symbol)}">Journal</button>
+        ${(p.protection || {}).status === "LOCKED" ? ambiguityButtons(p.symbol) : ""}
+      </td>
     `;
+    tr.querySelector("[data-check-sym]")?.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("research_open_ticker", { detail: { ticker: p.symbol } }));
+    });
     tr.querySelector("[data-journal-sym]")?.addEventListener("click", () => {
       openBookJournalForSymbol(p.symbol);
     });
+    bindAmbiguityButtons(tr);
     body.appendChild(tr);
   });
   // Provenance label: portfolio meta gets a freshness chip too.

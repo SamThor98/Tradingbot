@@ -1,7 +1,7 @@
 import { escapeHtml, safeNum, safeText } from "./format.js";
 import { setPanelState } from "./operationsPanelState.js";
 
-const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error"]);
+const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error", "hold"]);
 
 function toneClass(tone) {
   const t = safeText(tone || "neutral").toLowerCase();

@@ -24,6 +24,7 @@ SECTOR_TO_ETF: dict[str, str] = {
     "energy": "XLE",
     "healthcare": "XLV",
     "consumer cyclical": "XLY",  # Consumer Discretionary
+    "consumer defensive": "XLP",  # Consumer Staples (yfinance's current label)
     "consumer defensives": "XLP",  # Consumer Staples
     "consumer staples": "XLP",
     "basic materials": "XLB",
@@ -249,6 +250,10 @@ def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | N
     outages don't permanently disable sector-aware filtering for the ticker.
     """
     tkr = ticker.upper().strip()
+    # A sector ETF is its own sector proxy; never send it to yfinance `info`
+    # (ETFs have no `sector`, so they used to be cached as unresolved forever).
+    if tkr in SECTOR_ETFS:
+        return tkr
     cache = _load_sector_cache(skill_dir)
     mapping = cache.get("sector_etf_by_ticker", {})
     if tkr in mapping:
@@ -565,7 +570,7 @@ def compute_regime_v2_score_from_inputs(
 def get_regime_v2_snapshot(auth: Any, skill_dir: Path) -> dict[str, Any]:
     """
     Composite regime context for diagnostics/gating/sizing.
-    Falls back to neutral scores when inputs are partially unavailable.
+    An input failure returns bucket ``unavailable`` and score None. It does not invent a high score.
     """
     from market_data import get_daily_history
     from stage_analysis import add_indicators
@@ -658,18 +663,30 @@ def get_regime_v2_snapshot(auth: Any, skill_dir: Path) -> dict[str, Any]:
         computed["context"] = ctx
         return computed
     except Exception as e:
-        LOG.warning("Regime v2 snapshot failed (%s), using neutral fallback", e)
+        LOG.warning("Regime v2 snapshot failed (%s); score unavailable", e)
         ctx["available"] = False
-        fallback = compute_regime_v2_score_from_inputs(
-            spy_above_200=True,
-            spy_50_above_200=True,
-            spy_50_slope_up=True,
-            vix_value=None,
-            breadth_ratio=None,
-            sector_dispersion_pct=None,
-        )
-        fallback["context"] = ctx
-        return fallback
+        ctx["error"] = str(e)
+        return {
+            "score": None,
+            "bucket": "unavailable",
+            "components": None,
+            "context": ctx,
+            "unavailable_reason": str(e),
+        }
+
+
+def regime_v2_is_unavailable(snapshot: dict[str, Any] | None) -> bool:
+    """True when the snapshot is an outage, not a measured score.
+
+    A measured 0 is available. The old outage path scored 71.75 / high with
+    SPY flags forced true. That path now returns bucket ``unavailable``.
+    """
+    if not isinstance(snapshot, dict):
+        return True
+    if snapshot.get("bucket") == "unavailable" or snapshot.get("score") is None:
+        return True
+    ctx = snapshot.get("context")
+    return isinstance(ctx, dict) and ctx.get("available") is False
 
 
 def is_ticker_in_winning_sector(

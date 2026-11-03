@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/Discord Integration.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-10-06
 tags: [architecture, discord, alerts]
 ---
 
@@ -32,6 +32,7 @@ Signals with conviction >= `ALERT_PING_CONVICTION` AND score >= `ALERT_PING_SCOR
 ## Related Pages
 
 - [[signal-scanner]] — source of signal alerts
+- [[operator-desk]] — advisory scan and grade brief
 - [[feature-flags]] — alert threshold config
 - [[system-overview]] — where Discord fits
 

@@ -2,7 +2,10 @@
 System orchestration for the trading bot.
 
 Schedules Morning Brief (9:25 AM ET), signal scan (9:30 AM ET),
-hold reminders (3:30 PM ET), self-study (4:00 PM ET), and
+operator desk (8:30 AM ET weekdays when OPERATOR_DESK_MODE is not off),
+tradeable-universe Discord brief (8:30 AM CT weekdays),
+hold reminders (3:30 PM ET), research close (4:00 PM ET: score hypotheses,
+then self-study), experiment brief (4:15 PM ET weekdays), and
 weekly digest (Sunday 6:00 PM ET). Global try/except fires
 critical error alert on crash.
 """
@@ -579,13 +582,48 @@ def run_scheduler() -> None:
         if now.hour == 16 and now.minute == 0 and key != _last_self_study_minute:
             _last_self_study_minute = key
             try:
-                from self_study import run_self_study
-                result = run_self_study(skill_dir=SKILL_DIR)
-                if result.get("round_trips_count", 0) > 0:
-                    log.info("Self-study: %d round trips, win_rate=%.1f%%",
-                             result["round_trips_count"], result.get("win_rate") or 0)
+                from core.research_close import run_research_close
+
+                result = run_research_close(SKILL_DIR)
+                cards = result.get("hypothesis_cards") if isinstance(result.get("hypothesis_cards"), dict) else {}
+                network = cards.get("network_status") if isinstance(cards.get("network_status"), dict) else {}
+                log.info(
+                    "Research close: score_ok=%s round_trips=%s score_error=%s study_error=%s "
+                    "cards_scored=%s cards_missing=%s promote_not_false=%s cards_error=%s",
+                    result.get("score_ok"),
+                    result.get("round_trips_count"),
+                    result.get("score_error"),
+                    result.get("study_error"),
+                    cards.get("scored"),
+                    cards.get("artifact_missing"),
+                    network.get("promote_not_false"),
+                    result.get("hypothesis_cards_error"),
+                )
             except Exception as e:
-                log.warning("Self-study failed: %s", e)
+                log.warning("Research close failed: %s", e)
+
+    _last_experiment_brief_minute: int | None = None
+
+    def _run_experiment_brief_if_scheduled() -> None:
+        nonlocal _last_experiment_brief_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if now.weekday() >= 5:
+            return
+        if not (now.hour == 16 and now.minute == 15 and key != _last_experiment_brief_minute):
+            return
+        _last_experiment_brief_minute = key
+        try:
+            from core.experiment_collector import deliver_experiment_briefs
+
+            result = deliver_experiment_briefs(SKILL_DIR, notify=True, now=now)
+            log.info(
+                "Experiment brief: skipped=%s posted=%s",
+                result.get("skipped"),
+                result.get("posted"),
+            )
+        except Exception as e:
+            log.warning("Experiment brief failed: %s", e)
 
     _last_weekly_minute: int | None = None
 
@@ -761,11 +799,60 @@ def run_scheduler() -> None:
                 env_path=SKILL_DIR / ".env",
             )
 
+    def _run_operator_desk_if_scheduled() -> None:
+        try:
+            from operator_desk import tick_operator_desk
+        except Exception as exc:
+            log.warning("Operator desk config failed: %s", exc)
+            return
+        tick_operator_desk(SKILL_DIR, datetime.now(TZ_NY))
+
+    def _run_tradeable_brief_if_scheduled() -> None:
+        try:
+            from core.tradeable_brief import tick_tradeable_brief
+
+            tick_tradeable_brief(SKILL_DIR)
+        except Exception as exc:
+            log.warning("Tradeable brief failed: %s", exc)
+
+    _last_liquid_collect_key: int | None = None
+
+    def _run_liquid_collect_if_scheduled() -> None:
+        nonlocal _last_liquid_collect_key
+        try:
+            from config import get_liquid_collect_enabled, get_liquid_overlay_mode
+
+            if get_liquid_overlay_mode(SKILL_DIR) == "off" or not get_liquid_collect_enabled(SKILL_DIR):
+                return
+        except Exception as e:
+            log.warning("Liquid collect config failed: %s", e)
+            return
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if now.minute != 5 or key == _last_liquid_collect_key:
+            return
+        _last_liquid_collect_key = key
+        try:
+            from core.liquid_positioning.provider import HyperliquidXyzProvider
+            from core.liquid_positioning.settings import build_liquid_config
+            from core.liquid_positioning.store import ensure_table, store_snapshots
+
+            ensure_table(SKILL_DIR)
+            snapshots, diag = HyperliquidXyzProvider(build_liquid_config(SKILL_DIR)).get_snapshots()
+            diag.stored = store_snapshots(snapshots, SKILL_DIR)
+            log.info("Liquid collect: %s", diag.to_dict())
+        except Exception as e:
+            log.warning("Liquid collect failed: %s", e)
+
+    schedule.every().minute.do(_run_liquid_collect_if_scheduled)
     schedule.every().minute.do(_run_morning_brief_if_scheduled)
+    schedule.every().minute.do(_run_operator_desk_if_scheduled)
+    schedule.every().minute.do(_run_tradeable_brief_if_scheduled)
     schedule.every().minute.do(_run_pead_warm_if_scheduled)
     schedule.every().minute.do(_run_signal_scan_if_scheduled)
     schedule.every().minute.do(_run_hold_reminder_if_scheduled)
     schedule.every().minute.do(_run_self_study_if_scheduled)
+    schedule.every().minute.do(_run_experiment_brief_if_scheduled)
     schedule.every().minute.do(_run_weekly_digest_if_scheduled)
     schedule.every().minute.do(_run_false_positive_report_if_scheduled)
     schedule.every().minute.do(_run_evolve_if_scheduled)

@@ -195,6 +195,7 @@ def _catalog_rows(g: dict[str, Callable[[Path | None], str]]) -> list[PluginSpec
             "scan",
             purpose="Keeps only the strongest percentile of ranked candidates.",
             artifact_name="rank_filter_counterfactual_{run_id}.json",
+            evidence_key="rank_filter_v2",
         ),
         PluginSpec(
             "rank_score_v2",
@@ -212,6 +213,7 @@ def _catalog_rows(g: dict[str, Callable[[Path | None], str]]) -> list[PluginSpec
             "scan",
             purpose="Requires a breakout buffer so late/chasing entries are filtered.",
             artifact_name="entry_timing_shadow_counterfactual_{run_id}.json",
+            evidence_key="entry_timing",
         ),
         PluginSpec(
             "signal_edge",
@@ -263,6 +265,7 @@ def _catalog_rows(g: dict[str, Callable[[Path | None], str]]) -> list[PluginSpec
             g["prob_rank"],
             "scan",
             purpose="Ranks candidates by model probability instead of heuristic score alone.",
+            evidence_key="prob_rank",
         ),
         PluginSpec(
             "allocator",
@@ -421,10 +424,18 @@ def resolve_modes(skill_dir: Path) -> dict[str, str]:
 
 
 def count_ok_sessions(records: list[dict[str, Any]], spec: PluginSpec) -> int:
-    """Count RTH/ok evidence sessions for a plugin (fail-closed when absent)."""
+    """Count unique RTH/ok ET dates for a plugin (fail-closed when absent).
+
+    Dated rows outside weekday 09:30–16:00 ET are skipped. Rows without a
+    parseable ``scan_at``/``ts`` still count individually so legacy undated
+    ledger lines are not collapsed.
+    """
     if not spec.evidence_key:
         return 0
-    n = 0
+    from core.plugin_shadow_evidence import evidence_session_date, evidence_session_is_rth
+
+    dated: set[str] = set()
+    undated = 0
     for row in records:
         if str(row.get("data_quality") or "").lower() != "ok":
             continue
@@ -432,9 +443,16 @@ def count_ok_sessions(records: list[dict[str, Any]], spec: PluginSpec) -> int:
         if not isinstance(block, dict):
             continue
         mode = str(block.get("effective_mode") or block.get("mode") or "").strip().lower()
-        if mode in {"shadow", "live", "soft", "hard"}:
-            n += 1
-    return n
+        if mode not in {"shadow", "live", "soft", "hard"}:
+            continue
+        day = evidence_session_date(row)
+        if day:
+            if not evidence_session_is_rth(row):
+                continue
+            dated.add(day)
+        else:
+            undated += 1
+    return len(dated) + undated
 
 
 def _load_promotion_helpers():

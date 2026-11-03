@@ -24,7 +24,16 @@ from core.contracts.execution import (
     ExecutionStateName,
     OrderIntent,
 )
-from core.contracts.market import MarketSnapshot, RegimeState, SectorStrength, VolatilityState
+from core.contracts.market import (
+    HmmPlaybookView,
+    HmmRegimeView,
+    HmmStateRow,
+    HmmSwitch,
+    MarketSnapshot,
+    RegimeState,
+    SectorStrength,
+    VolatilityState,
+)
 from core.contracts.portfolio import (
     ClosedTradeMetrics,
     ConcentrationBlock,
@@ -70,6 +79,10 @@ __all__ = [
     "SectorStrength",
     "RegimeState",
     "VolatilityState",
+    "HmmRegimeView",
+    "HmmStateRow",
+    "HmmPlaybookView",
+    "HmmSwitch",
     # symbol
     "SymbolDecisionCard",
     "RankScores",

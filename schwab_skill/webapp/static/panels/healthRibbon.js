@@ -14,6 +14,8 @@ import {
   clearUnavailable,
 } from "../modules/freshness.js";
 import { updateActionCenter } from "../modules/logger.js";
+import { selectScanBlockerBanner } from "../modules/landingTrust.js";
+import { isPriorityFeedActive, removePriorityItem } from "../modules/priorityFeed.js";
 import { setSystemStatusStrip } from "../modules/systemStatus.js";
 import { paintSystemPanelSnapshot, syncSystemSectionState } from "../modules/systemPanelContract.js";
 
@@ -44,7 +46,16 @@ function paintHealthSnapshot(stateName, opts = {}) {
         label: "API",
         sub: "error rate",
         value: apiLabel,
-        tone: stateName === "error" ? "bad" : "neutral",
+        tone:
+          stateName === "error"
+            ? "bad"
+            : (() => {
+                const n = parseFloat(String(apiLabel));
+                if (!Number.isFinite(n)) return "neutral";
+                if (n >= 8) return "bad";
+                if (n >= 2) return "warn";
+                return "success";
+              })(),
       },
     ],
     lines: [title, detail].filter(Boolean),
@@ -82,6 +93,18 @@ export function setHealthRibbonUnavailable(reason) {
     title: "Health check unavailable.",
     detail: uiReason,
   });
+  const strip = document.getElementById("healthStatusStrip");
+  if (strip && !strip.querySelector("[data-health-retry]")) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn small secondary";
+    btn.setAttribute("data-health-retry", "");
+    btn.textContent = "Retry";
+    btn.addEventListener("click", () => {
+      document.getElementById("refreshBtn")?.click();
+    });
+    strip.appendChild(btn);
+  }
   ["ribbonAuth", "ribbonQuotes", "ribbonApiErrorRate", "ribbonValidation"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -127,6 +150,11 @@ export function setHealthRibbonTiles(authState, quoteOk, errRate, validation) {
   const apiGaugeHealth = Math.max(0, Math.min(1, 1 - er / 18));
   const apiState = er < 2 ? "good" : er < 8 ? "warn" : "bad";
   setTile("healthTileApi", apiState, apiGaugeHealth);
+  const apiTile = document.getElementById("healthTileApi");
+  if (apiTile) {
+    apiTile.title = `Request error rate ${er.toFixed(1)}% (lower is better). Ring fills as errors fall, not a health percent.`;
+    apiTile.setAttribute("aria-label", `Request error rate ${er.toFixed(1)} percent. Lower is better.`);
+  }
 
   const v = validation || {};
   const runStatus = safeText(v.run_status || "").toLowerCase();
@@ -151,7 +179,7 @@ export function setHealthRibbonTiles(authState, quoteOk, errRate, validation) {
 
 // Plain-language one-liner rolling up the broker, market data, and scan state.
 // Keeps the diagnostics page understandable at a glance without reading tiles.
-export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, lastScan }) {
+export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, lastScan, errRate }) {
   const el = document.getElementById("healthRibbonSummary");
   const compact = document.getElementById("systemStatusCompact");
   const broker =
@@ -170,7 +198,9 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
       scan = mins < 1 ? "last scan just now" : mins < 60 ? `last scan ${mins}m ago` : `last scan ${Math.round(mins / 60)}h ago`;
     }
   }
-  const line = `System status: ${broker}, ${market}, ${scan}.`;
+  const apiLabel =
+    typeof errRate === "number" && Number.isFinite(errRate) ? `${errRate.toFixed(1)}%` : "—";
+  const line = `System status: ${broker}, ${market}, API ${apiLabel}, ${scan}.`;
   const state =
     authState === "connected" && quoteOk
       ? "success"
@@ -183,7 +213,7 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
     authLabel:
       authState === "connected" ? "ok" : authState === "unverified" ? "check" : "off",
     quotesLabel: !deepReachable ? "unknown" : quoteOk ? "live" : "degraded",
-    apiLabel: "—",
+    apiLabel,
     title: "System health.",
     detail: line,
   });
@@ -197,9 +227,35 @@ export function renderHealthRibbonSummary({ authState, quoteOk, deepReachable, l
   }
 }
 
-export function prioritizeActionCenterFromHealth({ authState, quoteOk, errRate, validation, topBlocker, quoteHealth }) {
+const SCAN_NOTICE_KEYS = {
+  "P2: Scan Blocker Identified": "p2_scan_blocker_identified",
+  "P2: Price history gap": "p2_price_history_gap",
+  "P2: Scan Blocked": "p2_scan_blocked",
+};
+
+function dismissScanNotices(exceptTitle = "") {
+  for (const [title, key] of Object.entries(SCAN_NOTICE_KEYS)) {
+    if (title === exceptTitle) continue;
+    removePriorityItem(key);
+  }
+  if (isPriorityFeedActive() || typeof document === "undefined") return;
+  const titleEl = document.getElementById("actionCenterTitle");
+  if (!titleEl) return;
+  const current = safeText(titleEl.textContent).trim();
+  if (SCAN_NOTICE_KEYS[current] && current !== exceptTitle) {
+    updateActionCenter({ title: "Next Action", message: "Ready.", severity: "info" });
+  }
+}
+
+export function prioritizeActionCenterFromHealth({
+  authState,
+  quoteOk,
+  errRate,
+  validation,
+  quoteHealth,
+  scanNotice,
+}) {
   const runStatus = safeText(validation?.run_status || "").toLowerCase();
-  const blocker = safeText(topBlocker || "").trim();
   if (authState === "disconnected") {
     updateActionCenter({
       title: "P0: Broker Authentication Blocked",
@@ -246,11 +302,12 @@ export function prioritizeActionCenterFromHealth({ authState, quoteOk, errRate, 
     });
     return;
   }
-  if (blocker) {
-    updateActionCenter({
-      title: "P2: Scan Blocker Identified",
-      message: blocker,
-      severity: "warn",
-    });
+  const notice = scanNotice && typeof scanNotice === "object" ? scanNotice : null;
+  const banner = notice ? selectScanBlockerBanner(notice) : null;
+  if (!banner) {
+    dismissScanNotices();
+    return;
   }
+  dismissScanNotices(banner.title);
+  updateActionCenter(banner);
 }

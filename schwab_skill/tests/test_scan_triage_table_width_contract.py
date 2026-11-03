@@ -1,8 +1,8 @@
 """Contract: scan triage table width layout must not regress.
 
 Invariant (Operations → Qualified / Near-miss):
-- Columns: Ticker · Gate · Strategy · Vol · Price · Rank · Stop · Actions
-- Exactly 8 columns. NO spacer col/th/td (that parks Actions mid-row)
+- Columns: Ticker · Gate · Strategy · Vol · Price · Rank · Analog · Stop · Actions
+- Exactly 9 columns. NO spacer col/th/td (that parks Actions mid-row)
 - Ticker absorbs leftover width (width: auto); Actions stay fixed at 13.75rem flush right
 
 This has regressed via spacer reintroduction. Fail CI if it returns.
@@ -33,14 +33,15 @@ def test_no_scan_triage_spacer_column() -> None:
             assert token not in text, f"{path.name} must not contain {token!r}"
 
 
-def test_triage_colspan_is_eight() -> None:
+def test_triage_colspan_is_nine() -> None:
     js = SCAN_TABLE_JS.read_text(encoding="utf-8")
     html = INDEX.read_text(encoding="utf-8")
-    assert "const TRIAGE_COLSPAN = 8;" in js
-    assert 'colspan="8"' in html
-    assert 'colspan="9"' not in html
+    assert "const TRIAGE_COLSPAN = 9;" in js
+    assert 'colspan="9"' in html
+    assert html.count("scan-triage-col-analog") == 2
     assert html.count("scan-triage-col-actions") == 2
     assert html.count("scan-candidates-table--triage") == 2
+    assert 'data-sort-key="analog_neighborhood_pf"' in html
 
 
 def test_ticker_absorbs_leftover_actions_fixed() -> None:
@@ -88,4 +89,5 @@ def test_rich_ticker_and_stop_helpers_present() -> None:
     assert "scan-row-why" in js
     assert "ADVISORY_STOP_PCT" in js
     assert "company_name" in js
-    assert "const TRIAGE_COLSPAN = 8;" in js
+    assert "const TRIAGE_COLSPAN = 9;" in js
+    assert "function renderAnalogCell" in js

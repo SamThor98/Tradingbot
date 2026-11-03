@@ -11,19 +11,14 @@ import logging
 import math
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import pandas as pd
 import requests
-
-try:
-    import yfinance as yf
-except ImportError:
-    print("Install yfinance: pip install yfinance")
-    raise
 
 from backtest_guardrails import AdaptiveGuardrailPolicy, load_adaptive_guardrail_policy
 from backtest_intelligence import (
@@ -63,12 +58,11 @@ from config import (
     get_pead_score_penalty,
     get_pead_score_penalty_large,
     get_quality_gates_mode,
-    get_quality_soft_min_reasons,
     get_scan_allow_bear_regime,
     get_scan_sector_gate_mode,
     get_scan_vcp_gate_mode,
-    get_schwab_only_data,
 )
+from core.backtest_trade_tape import PROGRESS_MIN_INTERVAL_SEC, rank_closed_trades
 from env_overrides import temporary_env
 from schwab_auth import DualSchwabAuth
 from sector_regime_analysis import build_spy_regime_series, lookup_regime_at, summarize_sector_regime
@@ -82,9 +76,11 @@ from stage_analysis import (
     evaluate_early_stop_gate,
     evaluate_entry_timing_shadow,
     evaluate_pts_52w_cap,
+    expansion_volume_ratio,
     is_pullback_entry,
     is_stage_2,
     pts_52w_cap_blocks_stage_a,
+    tag_entry_family,
 )
 
 SKILL_DIR = Path(__file__).resolve().parent
@@ -110,6 +106,111 @@ def _temporary_env(overrides: dict[str, str] | None) -> Iterator[None]:
     return temporary_env(overrides)
 
 
+@contextmanager
+def _override_env(key: str, value: str) -> Iterator[None]:
+    previous = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
+def replay_honors_account_focus(
+    universe_preset: str | None,
+    env_overrides: dict[str, str] | None = None,
+) -> bool:
+    """True only when this replay asked for the short account book.
+
+    ``SIGNAL_UNIVERSE_MODE=focused`` in ``.env`` is the live-scan setting.
+    A named index stays that index unless the preset is ``focused`` or this
+    run's overrides set the mode to focused.
+    """
+    preset = str(universe_preset or "sp1500").strip().lower() or "sp1500"
+    explicit = str((env_overrides or {}).get("SIGNAL_UNIVERSE_MODE") or "").strip().lower()
+    return preset == "focused" or explicit == "focused"
+
+
+def _history_pad_days(strategy_ids: list[str] | None) -> int:
+    """Calendar days of price history fetched before the requested start."""
+    pad = HISTORY_WARMUP_DAYS
+    selected = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    if not selected:
+        return pad
+    try:
+        from core.horizon_strategies import executable_stage_a_history_days, stage_a_history_days
+
+        pad = max(pad, int(executable_stage_a_history_days()), int(stage_a_history_days(selected)))
+    except Exception:
+        return pad
+    return pad
+
+
+def _attach_liquid_shadow(
+    trades: list[dict[str, Any]], diagnostics: dict[str, Any], skill_dir: Path
+) -> None:
+    """Attach Liquid funding features to closed trades (shadow only).
+
+    Point-in-time: funding features use only funding days strictly before
+    each trade's entry date (see core.liquid_positioning.features). This
+    never changes returns, ranking, exits, or sizing — it only labels
+    trades so a later study can measure whether funding separates them.
+    Uncovered tickers keep None features, never zero-filled.
+    """
+    diagnostics["liquid_evaluated"] = 0
+    diagnostics["liquid_covered"] = 0
+    diagnostics["liquid_uncovered"] = 0
+    diagnostics["liquid_errors"] = 0
+    try:
+        from config import get_liquid_overlay_mode
+
+        if get_liquid_overlay_mode(skill_dir) == "off":
+            return
+    except Exception:
+        return
+    try:
+        from core.liquid_positioning.features import funding_features_asof
+        from core.liquid_positioning.store import get_funding_daily
+
+        by_ticker: dict[str, list[dict[str, Any]]] = {}
+        for trade in trades:
+            ticker = str(trade.get("ticker") or "").upper()
+            if not ticker:
+                continue
+            diagnostics["liquid_evaluated"] += 1
+            if ticker not in by_ticker:
+                by_ticker[ticker] = get_funding_daily(ticker, days=3650, skill_dir=skill_dir)
+            daily = by_ticker[ticker]
+            try:
+                entry = pd.Timestamp(trade.get("entry_date")).date()
+            except Exception:
+                # Unparseable entry date: leave the trade uncovered rather
+                # than labelling it with funding history from after entry.
+                entry = None
+            feats = (
+                funding_features_asof(daily, entry)
+                if entry is not None
+                else {
+                    "liquid_funding_mean_30d": None,
+                    "liquid_funding_last": None,
+                    "liquid_funding_z90": None,
+                    "liquid_funding_pct_rank": None,
+                    "liquid_funding_days": 0,
+                }
+            )
+            trade.update(feats)
+            if feats.get("liquid_funding_days"):
+                diagnostics["liquid_covered"] += 1
+            else:
+                diagnostics["liquid_uncovered"] += 1
+    except Exception as exc:
+        diagnostics["liquid_errors"] += 1
+        LOG.warning("Liquid shadow attach failed: %s", exc)
+
+
 def _load_adaptive_guardrail_policy(skill_dir: Path) -> AdaptiveGuardrailPolicy | None:
     if not get_backtest_adaptive_guardrails_enabled(skill_dir):
         return None
@@ -119,6 +220,8 @@ def _load_adaptive_guardrail_policy(skill_dir: Path) -> AdaptiveGuardrailPolicy 
 
 HOLD_DAYS = 20
 MIN_BARS = 260
+# Calendar days so a one-year window still has MIN_BARS sessions of warmup.
+HISTORY_WARMUP_DAYS = 420
 SECTOR_LOOKBACK_DAYS = 21
 DEFAULT_SLIPPAGE_BPS_PER_SIDE = 15.0
 DEFAULT_FEE_PER_SHARE = 0.005
@@ -182,29 +285,8 @@ class ActivePosition:
     exec_info: dict[str, Any]
     telemetry: dict[str, Any]
     highest_close: float
-
-
-def _normalize_history(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date")
-    out = df.rename(
-        columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        }
-    )
-    cols = ["open", "high", "low", "close", "volume"]
-    out = out[[c for c in cols if c in out.columns]].copy()
-    for col in cols:
-        if col not in out.columns:
-            out[col] = 0.0
-    out = out[cols].astype(float)
-    out.index = pd.to_datetime(out.index).tz_localize(None).normalize()
-    out.index.name = "date"
-    return out.sort_index().drop_duplicates()
+    exit_manager_exit_idx: int | None = None
+    exit_manager_reason: str | None = None
 
 
 def _fetch_history(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -286,61 +368,37 @@ def _fetch_history_with_meta(
     end_date: str,
     schwab_auth: DualSchwabAuth | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    meta: dict[str, Any] = {
-        "provider": "unknown",
-        "used_fallback": False,
-        "reason": "unknown",
-        "rows": 0,
-    }
-    if get_schwab_only_data():
-        out = _fetch_history_schwab(symbol, start_date, end_date, auth=schwab_auth)
-        meta["provider"] = "schwab"
-        meta["used_fallback"] = False
-        meta["rows"] = int(len(out))
-        meta["reason"] = "schwab_only"
-        return out, meta
-    fast_rate_limit = (os.getenv("BACKTEST_FAST_RATE_LIMIT") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    from _io_utils import yfinance_call
+    """Schwab daily history first, Yahoo only when Schwab fails.
 
-    for attempt in range(3):
-        try:
-            with yfinance_call():
-                t = yf.Ticker(symbol)
-                raw = t.history(start=start_date, end=end_date, auto_adjust=True, timeout=20)
-            if raw is None:
-                meta["provider"] = "yfinance"
-                meta["used_fallback"] = True
-                meta["reason"] = "yfinance_history_none"
-                return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date"), meta
-            time.sleep(0.05)
-            out = _normalize_history(raw)
-            meta["provider"] = "yfinance"
-            meta["used_fallback"] = True
-            meta["rows"] = int(len(out))
-            meta["reason"] = "yfinance_ok" if not out.empty else "yfinance_empty_after_normalize"
-            return out, meta
-        except Exception as e:
-            msg = str(e)
-            if "Too Many Requests" in msg and attempt < 2 and not fast_rate_limit:
-                time.sleep(2.0 * (attempt + 1))
-                continue
-            LOG.warning("History fetch failed for %s: %s", symbol, e)
-            meta["provider"] = "yfinance"
-            meta["used_fallback"] = True
-            if "Too Many Requests" in msg and fast_rate_limit:
-                meta["reason"] = "yfinance_rate_limited_fastfail"
-            else:
-                meta["reason"] = f"yfinance_exception:{type(e).__name__}"
-            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date"), meta
-    meta["provider"] = "yfinance"
-    meta["used_fallback"] = True
-    meta["reason"] = "yfinance_retries_exhausted"
-    return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date"), meta
+    Matches the scanner. A Yahoo fill is a fallback, so the study will not
+    treat that window as clean enough to search.
+    """
+    from market_data import get_daily_history_with_meta
+
+    frame, source = get_daily_history_with_meta(
+        symbol,
+        auth=schwab_auth,
+        skill_dir=_runtime_skill_dir(),
+        start_date=start_date,
+        end_date=end_date,
+    )
+    provider = str(source.get("provider") or "unknown")
+    used_fallback = bool(source.get("used_fallback"))
+    reason = str(source.get("fallback_reason") or "").strip()
+    if not reason:
+        if provider == "schwab" and not frame.empty:
+            reason = "schwab_ok"
+        elif provider == "schwab":
+            reason = "schwab_empty"
+        else:
+            reason = "unknown"
+    meta = {
+        "provider": provider,
+        "used_fallback": used_fallback,
+        "reason": reason,
+        "rows": int(source.get("rows") or len(frame)),
+    }
+    return frame, meta
 
 
 def _fetch_history_schwab(
@@ -387,28 +445,188 @@ def _fetch_history_schwab(
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"]).rename_axis("date")
 
 
+def _session_close_now(day_ts: Any) -> pd.Timestamp:
+    """Treat the replay bar as a completed regular session (16:00 Eastern)."""
+    ts = pd.Timestamp(day_ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("America/New_York")
+    else:
+        ts = ts.tz_convert("America/New_York")
+    return ts.normalize() + pd.Timedelta(hours=16)
+
+
+@dataclass
+class EntryAdmit:
+    admitted: bool
+    family: str
+    shadow_only: bool
+    stage2_ok: bool
+    pead_ok: bool
+    horizon_ok: bool
+    horizon_hits: list[dict[str, Any]]
+
+
+def _evaluate_backtest_entry_admit(
+    window: pd.DataFrame,
+    *,
+    skill_dir: Path,
+    entry_family: str,
+    strategy_ids: list[str] | None,
+    day_ts: pd.Timestamp,
+    diagnostics: dict[str, Any],
+) -> EntryAdmit:
+    """Match Scan studio Stage A arms: Stage 2, PEAD, and dual-admit sleeves."""
+    selected = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    if not selected:
+        if entry_family == "pullback":
+            ok = is_pullback_entry(window, skill_dir)
+            if not ok:
+                diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+            return EntryAdmit(
+                admitted=ok,
+                family="pullback",
+                shadow_only=True,
+                stage2_ok=False,
+                pead_ok=False,
+                horizon_ok=ok,
+                horizon_hits=[],
+            )
+        if entry_family == "pead_primary":
+            try:
+                px = float(window["close"].iloc[-1])
+                avg_vol = float(window["avg_vol_50"].iloc[-1]) if "avg_vol_50" in window.columns else 0.0
+            except Exception:
+                px, avg_vol = 0.0, 0.0
+            ok = px >= 5.0 and avg_vol >= 200_000.0
+            if not ok:
+                diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+            return EntryAdmit(
+                admitted=ok,
+                family="pead_primary",
+                shadow_only=True,
+                stage2_ok=False,
+                pead_ok=ok,
+                horizon_ok=False,
+                horizon_hits=[],
+            )
+        stage2_ok = is_stage_2(window, skill_dir)
+        if not stage2_ok:
+            diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
+        return EntryAdmit(
+            admitted=stage2_ok,
+            family="stage2",
+            shadow_only=False,
+            stage2_ok=stage2_ok,
+            pead_ok=False,
+            horizon_ok=False,
+            horizon_hits=[],
+        )
+
+    from core.horizon_strategies import selected_horizon_plugin_hits
+    from core.scan_catalog import scan_arm_flags
+
+    arms = scan_arm_flags(selected)
+    want_stage2 = bool(arms.get("want_stage2"))
+    want_pead = bool(arms.get("want_pead"))
+    want_horizon = [str(s) for s in (arms.get("want_horizon") or []) if str(s)]
+
+    stage2_ok = False
+    if want_stage2:
+        stage2_ok = bool(is_stage_2(window, skill_dir))
+        if not stage2_ok:
+            diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
+
+    pead_ok = False
+    if want_pead:
+        try:
+            px = float(window["close"].iloc[-1])
+            avg_vol = float(window["avg_vol_50"].iloc[-1]) if "avg_vol_50" in window.columns else 0.0
+        except Exception:
+            px, avg_vol = 0.0, 0.0
+        pead_ok = px >= 5.0 and avg_vol >= 200_000.0
+        if not pead_ok:
+            diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+
+    horizon_hits: list[dict[str, Any]] = []
+    horizon_ok = False
+    if want_horizon:
+        pullback_hit = "pullback" in want_horizon and is_pullback_entry(window, skill_dir)
+        try:
+            horizon_hits = selected_horizon_plugin_hits(
+                window,
+                want_horizon,
+                pullback_triggered=pullback_hit,
+                now=_session_close_now(day_ts),
+            )
+        except Exception:
+            LOG.debug("Backtest horizon eval failed", exc_info=True)
+            horizon_hits = []
+        horizon_ok = bool(horizon_hits)
+        if not horizon_ok:
+            diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
+        else:
+            diagnostics["horizon_admit"] = int(diagnostics.get("horizon_admit", 0) or 0) + 1
+
+    family = tag_entry_family(stage2_ok=stage2_ok, pead_ok=pead_ok, horizon_ok=horizon_ok) or ""
+    admitted = bool(family)
+    if not admitted:
+        return EntryAdmit(
+            admitted=False,
+            family=entry_family,
+            shadow_only=True,
+            stage2_ok=stage2_ok,
+            pead_ok=pead_ok,
+            horizon_ok=horizon_ok,
+            horizon_hits=[],
+        )
+    shadow_only = family in {"pead_primary", "horizon"}
+    return EntryAdmit(
+        admitted=True,
+        family=family,
+        shadow_only=shadow_only,
+        stage2_ok=stage2_ok,
+        pead_ok=pead_ok,
+        horizon_ok=horizon_ok,
+        horizon_hits=list(horizon_hits),
+    )
+
+
 def _prepare_context(
     start_date: str,
     end_date: str,
     watchlist: list[str] | None = None,
     skill_dir: Path | None = None,
+    universe_preset: str | None = None,
+    history_pad_days: int = 0,
+    honor_account_focus: bool = False,
 ) -> BacktestContext:
     from sector_strength import SECTOR_ETFS, get_ticker_sector_etf
 
     sd = skill_dir or SKILL_DIR
-    schwab_only = get_schwab_only_data(sd)
-    schwab_auth: DualSchwabAuth | None = None
-    if schwab_only:
-        # Reuse one tenant-scoped auth object across the full run to avoid token
-        # refresh races and accidental fallback to repository-root token files.
-        schwab_auth = DualSchwabAuth(skill_dir=sd, auto_refresh=False)
-    universe = watchlist if watchlist is not None else _load_watchlist(sd)
+    # One auth object for the whole replay. Per-ticker sessions refresh the
+    # token against each other and drop the run onto Yahoo.
+    schwab_auth = DualSchwabAuth(skill_dir=sd, auto_refresh=False)
+    preset_key = str(universe_preset or "sp1500").strip().lower() or "sp1500"
+    if watchlist is not None:
+        universe = watchlist
+    elif honor_account_focus:
+        universe = _load_watchlist(sd, universe_preset=preset_key)
+    else:
+        with _override_env("SIGNAL_UNIVERSE_MODE", "broad"):
+            universe = _load_watchlist(sd, universe_preset=preset_key)
     cleaned = [str(t).strip().upper() for t in universe if str(t).strip()]
     universe = list(dict.fromkeys(cleaned))
     price_data: dict[str, pd.DataFrame] = {}
     history_meta_by_ticker: dict[str, dict[str, Any]] = {}
     sector_etf_by_ticker: dict[str, str | None] = {}
     excluded: list[dict[str, Any]] = []
+    apply_sp1500_membership = watchlist is None and preset_key in {"sp1500", "watchlist"}
+    if watchlist is not None:
+        membership_mode = "explicit_watchlist_override"
+    elif apply_sp1500_membership:
+        membership_mode = "live_watchlist"
+    else:
+        membership_mode = "named_universe_live_constituents"
     data_integrity: dict[str, Any] = {
         "history_fetch_total": 0,
         "history_fetch_empty": 0,
@@ -418,14 +636,25 @@ def _prepare_context(
         "history_provider_unknown": 0,
         "history_fallback_used": 0,
         "history_reason_counts": {},
-        "membership_filter_mode": "explicit_watchlist_override" if watchlist is not None else "live_watchlist",
+        "membership_filter_mode": membership_mode,
         "membership_as_of_date": None,
         "membership_file_present": False,
         "membership_input_universe": len(universe),
         "membership_filtered_out": 0,
+        "universe_preset": preset_key if watchlist is None else "custom",
+        "account_focus_honored": bool(honor_account_focus and watchlist is None),
     }
+    pad = max(0, int(history_pad_days or 0))
+    fetch_start = start_date
+    if pad:
+        try:
+            fetch_start = (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=pad)).strftime("%Y-%m-%d")
+        except ValueError:
+            fetch_start = start_date
+        data_integrity["history_pad_days"] = pad
+        data_integrity["history_fetch_start"] = fetch_start
 
-    if watchlist is None:
+    if apply_sp1500_membership:
         # Deterministic membership policy: freeze eligibility at backtest start
         # date so repeated runs over the same window produce a stable universe.
         membership_as_of: date | None = None
@@ -460,7 +689,7 @@ def _prepare_context(
                 )
 
     for ticker in universe:
-        df, history_meta = _fetch_history_with_meta(ticker, start_date, end_date, schwab_auth=schwab_auth)
+        df, history_meta = _fetch_history_with_meta(ticker, fetch_start, end_date, schwab_auth=schwab_auth)
         history_meta_by_ticker[ticker] = dict(history_meta or {})
         data_integrity["history_fetch_total"] = int(data_integrity.get("history_fetch_total", 0) or 0) + 1
         provider = str(history_meta.get("provider") or "unknown")
@@ -495,7 +724,7 @@ def _prepare_context(
 
     sector_perf: dict[str, pd.DataFrame] = {}
     for sym in sorted(set(SECTOR_ETFS + ["SPY"])):
-        sdf, _meta = _fetch_history_with_meta(sym, start_date, end_date, schwab_auth=schwab_auth)
+        sdf, _meta = _fetch_history_with_meta(sym, fetch_start, end_date, schwab_auth=schwab_auth)
         if not sdf.empty and len(sdf) >= MIN_BARS:
             sector_perf[sym] = sdf
 
@@ -664,7 +893,7 @@ def _build_telemetry_payload(signal: dict[str, Any], comps: dict[str, Any]) -> d
     }
 
 
-def _score_fields_for_trade(signal: dict[str, Any]) -> dict[str, Any]:
+def _score_fields_for_trade(signal: dict[str, Any], skill_dir: Path | None = None) -> dict[str, Any]:
     comps = signal.get("score_components") if isinstance(signal.get("score_components"), dict) else {}
     price_raw = signal.get("price")
     sma_200_raw = signal.get("sma_200")
@@ -700,7 +929,6 @@ def _score_fields_for_trade(signal: dict[str, Any]) -> dict[str, Any]:
         "prob_rank_confidence": signal.get("prob_rank_confidence"),
         "prob_rank_model_id": signal.get("prob_rank_model_id"),
         "p_up_calibrated": signal.get("p_up_calibrated"),
-        "ev_10d": signal.get("ev_10d"),
         "advisory_confidence_bucket": advisory.get("confidence_bucket"),
         "advisory_feature_coverage": advisory.get("feature_coverage"),
         "data_provider": signal.get("data_provider"),
@@ -710,11 +938,19 @@ def _score_fields_for_trade(signal: dict[str, Any]) -> dict[str, Any]:
         "pts_sma": comps.get("pts_sma"),
         "pts_volume": comps.get("pts_volume"),
         "pts_mirofish": comps.get("pts_mirofish"),
+        "expansion_volume_ratio": signal.get("expansion_volume_ratio"),
         "close_vs_sma200_pct": trend_pct,
         "entry_sma_200": sma_200,
     }
     if price is not None:
         out["entry_price_ref"] = price
+    grade = signal.get("debate_grade")
+    if isinstance(grade, dict):
+        from core.debate_committee import join_committee_sample
+        from core.debate_grade import flatten_debate_grade
+
+        join_committee_sample(signal, skill_dir)
+        out.update(flatten_debate_grade(grade))
     return out
 
 
@@ -753,6 +989,7 @@ def _evaluate_position_exit(
     defer_soft_exits: bool,
     window: pd.DataFrame,
     skill_dir: Path,
+    skip_vcp_invalidation: bool = False,
 ) -> str | None:
     bars_held = idx - entry_idx
     if _stop_triggered(
@@ -774,6 +1011,8 @@ def _evaluate_position_exit(
     sma50 = float(window["sma_50"].iloc[-1]) if "sma_50" in window.columns else 0.0
     if sma50 > 0 and px < sma50:
         return "sma50_break"
+    if skip_vcp_invalidation:
+        return None
     try:
         if not check_vcp_volume(window, skill_dir, exclude_last_bars=0):
             return "vcp_invalidation"
@@ -810,6 +1049,59 @@ def _simulate_exit(
         ):
             return px, df.index[j], "trailing_stop"
     return float(df["close"].iloc[last_idx]), df.index[last_idx], "time_exit"
+
+
+def _plan_exit_manager_for_entry(
+    df: pd.DataFrame,
+    entry_idx: int,
+    hold_days: int,
+    stop_pct: float,
+    skill_dir: Path,
+    diagnostics: dict[str, Any],
+) -> tuple[int | None, str | None]:
+    """Run the exit-manager simulator once per entry.
+
+    ``off`` does not call it, so the counter stays 0. ``shadow`` records a
+    comparison and leaves the bar-loop exit unchanged. ``live`` returns the
+    managed exit index so the bar loop can take it when no earlier stop fired.
+    Hold-day settings stay on the existing getters.
+    """
+    from config import get_exit_manager_mode
+
+    mode = str(get_exit_manager_mode(skill_dir) or "off").strip().lower()
+    if mode == "off":
+        return None, None
+    from backtest_intelligence import simulate_exit_with_manager
+
+    try:
+        _px, exit_ts, reason, info = simulate_exit_with_manager(
+            df,
+            int(entry_idx),
+            int(hold_days),
+            float(stop_pct),
+            skill_dir=skill_dir,
+            mode=mode,
+        )
+    except Exception:
+        diagnostics["exit_manager_simulated_errors"] = int(diagnostics.get("exit_manager_simulated_errors", 0) or 0) + 1
+        return None, None
+    diagnostics["exit_manager_simulated"] = int(diagnostics.get("exit_manager_simulated", 0) or 0) + 1
+    shadow = info.get("shadow") if isinstance(info, dict) else None
+    if isinstance(shadow, dict) and shadow.get("legacy_reason") != shadow.get("managed_reason"):
+        diagnostics["exit_manager_shadow_would_differ"] = (
+            int(diagnostics.get("exit_manager_shadow_would_differ", 0) or 0) + 1
+        )
+    if mode != "live":
+        return None, None
+    exit_idx = None
+    if exit_ts is not None:
+        for i, ts in enumerate(df.index):
+            if ts == exit_ts:
+                exit_idx = i
+                break
+    if exit_idx is None:
+        return None, None
+    return int(exit_idx), str(reason or "exit_manager")
 
 
 def _resolve_stop_pct_for_entry(df: pd.DataFrame, entry_idx: int, skill_dir: Path | None = None) -> float:
@@ -1071,18 +1363,10 @@ def _max_drawdown(returns: pd.Series) -> float:
 
 
 def _quality_mode_should_filter(reasons: list[str], skill_dir: Path | None = None) -> bool:
-    if not reasons:
-        return False
-    sd = skill_dir or SKILL_DIR
-    mode = get_quality_gates_mode(sd)
-    if mode in {"off", "shadow"}:
-        return False
-    if "weak_breakout_volume" in reasons and mode in {"soft", "hard"}:
-        return True
-    if mode == "hard":
-        return True
-    soft_min = max(1, int(get_quality_soft_min_reasons(sd)))
-    return len(reasons) >= soft_min
+    """Same rule as the scanner, including the soft-mode volume count."""
+    from signal_scanner import _quality_mode_should_filter as scanner_filter
+
+    return scanner_filter(reasons, skill_dir or SKILL_DIR)
 
 
 def run_backtest(
@@ -1098,7 +1382,11 @@ def run_backtest(
     include_all_trades: bool = False,
     prediction_market_snapshot_path: str | None = None,
     intelligence_overlay: dict[str, str] | BacktestIntelligenceConfig | None = None,
+    universe_preset: str | None = None,
+    strategy_ids: list[str] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    honor_account_focus = replay_honors_account_focus(universe_preset, env_overrides)
     with _temporary_env(env_overrides):
         return _run_backtest_core(
             tickers=tickers,
@@ -1112,6 +1400,10 @@ def run_backtest(
             include_all_trades=include_all_trades,
             prediction_market_snapshot_path=prediction_market_snapshot_path,
             intelligence_overlay=intelligence_overlay,
+            universe_preset=universe_preset,
+            strategy_ids=strategy_ids,
+            on_progress=on_progress,
+            honor_account_focus=honor_account_focus,
         )
 
 
@@ -1127,6 +1419,10 @@ def _run_backtest_core(
     include_all_trades: bool = False,
     prediction_market_snapshot_path: str | None = None,
     intelligence_overlay: dict[str, str] | BacktestIntelligenceConfig | None = None,
+    universe_preset: str | None = None,
+    strategy_ids: list[str] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+    honor_account_focus: bool = False,
 ) -> dict[str, Any]:
     sd = skill_dir or SKILL_DIR
     end = end_date or datetime.now().strftime("%Y-%m-%d")
@@ -1139,10 +1435,44 @@ def _run_backtest_core(
     else:
         overlay_cfg = BacktestIntelligenceConfig.from_env(sd)
 
+    selected_ids = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    history_pad = _history_pad_days(selected_ids)
+
     requested = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
-    context = _prepare_context(start, end, watchlist=requested if requested else None, skill_dir=sd)
+    try:
+        from sec_enrichment import cached_filings_by_ticker
+
+        filings_by_ticker = cached_filings_by_ticker(sd)
+    except Exception:
+        filings_by_ticker = {}
+    context = _prepare_context(
+        start,
+        end,
+        watchlist=requested if requested else None,
+        skill_dir=sd,
+        universe_preset=universe_preset,
+        history_pad_days=history_pad,
+        honor_account_focus=honor_account_focus,
+    )
 
     all_trades: list[dict[str, Any]] = []
+    _last_progress_at = 0.0
+    _progress_failed = False
+
+    def _publish_trade_progress(*, force: bool = False) -> None:
+        nonlocal _last_progress_at, _progress_failed
+        if on_progress is None or _progress_failed or not all_trades:
+            return
+        now = time.monotonic()
+        if not force and (now - _last_progress_at) < PROGRESS_MIN_INTERVAL_SEC:
+            return
+        _last_progress_at = now
+        try:
+            on_progress({"progress": rank_closed_trades(all_trades)})
+        except Exception:
+            _progress_failed = True
+            LOG.warning("Backtest progress callback failed; live tape stopped for this run")
+
     diagnostics: dict[str, int | float] = {
         "stage2_fail": 0,
         "vcp_fail": 0,
@@ -1152,9 +1482,14 @@ def _run_backtest_core(
         "sector_would_block": 0,
         "vcp_would_block": 0,
         "quality_gates_filtered": 0,
+        "quality_gates_would_filter": 0,
         "forensic_filtered": 0,
         "regime_blocked": 0,
         "entries": 0,
+        "debate_grade_evaluated": 0,
+        "debate_grade_abstain": 0,
+        "debate_grade_would_skip": 0,
+        "debate_grade_live_coerced": 0,
         "capital_filtered": 0,
         "position_limit_filtered": 0,
         "liquidity_filtered": 0,
@@ -1177,6 +1512,10 @@ def _run_backtest_core(
         "event_risk_shadow_would_block": 0,
         "event_risk_shadow_would_downsize": 0,
         "exit_manager_partial_done": 0,
+        "exit_manager_simulated": 0,
+        "exit_manager_shadow_would_differ": 0,
+        "exit_manager_simulated_errors": 0,
+        "exits_exit_manager": 0,
         "confluence_confirmed": 0,
         "confluence_blocked": 0,
         "confluence_would_block": 0,
@@ -1191,6 +1530,10 @@ def _run_backtest_core(
         "early_stop_gate_blocked": 0,
         "entry_family_fail": 0,
         "pead_primary_fail": 0,
+        "liquid_evaluated": 0,
+        "liquid_covered": 0,
+        "liquid_uncovered": 0,
+        "liquid_errors": 0,
         "rank_filter_v2_evaluated": 0,
         "rank_filter_v2_would_drop": 0,
         "rank_filter_v2_dropped": 0,
@@ -1199,12 +1542,22 @@ def _run_backtest_core(
         "exits_sma50_break": 0,
         "exits_vcp_invalidation": 0,
         "exits_final_liquidation": 0,
+        "horizon_admit": 0,
     }
 
     entry_family = get_backtest_entry_family(sd)
     diagnostics["entry_family"] = entry_family
-    breakout_enabled = get_breakout_confirm_enabled(sd) and entry_family == "stage2"
+    if selected_ids:
+        diagnostics["strategy_ids"] = list(selected_ids)
+        try:
+            from core.scan_catalog import scan_arm_flags
+
+            diagnostics["scan_arms"] = scan_arm_flags(selected_ids)
+        except Exception:
+            diagnostics["scan_arms"] = {}
+    breakout_confirm_on = bool(get_breakout_confirm_enabled(sd))
     breakout_confirm_bars = int(get_breakout_confirm_bars(sd))
+    breakout_enabled = breakout_confirm_on and entry_family == "stage2" and not selected_ids
     vcp_gate_mode = get_scan_vcp_gate_mode(sd)
     sector_gate_mode = get_scan_sector_gate_mode(sd)
     confluence_mode = get_confluence_gate_mode(sd)
@@ -1284,6 +1637,15 @@ def _run_backtest_core(
 
     spy_df = context.sector_perf.get("SPY")
     allow_bear_regime = bool(get_scan_allow_bear_regime(sd))
+    if selected_ids:
+        try:
+            from core.scan_catalog import selected_strategies_bypass_bull_regime
+
+            if selected_strategies_bypass_bull_regime(selected_ids):
+                allow_bear_regime = True
+                diagnostics["regime_bypass_counter_trend"] = True
+        except Exception:
+            pass
     # Always build regime series for trade tagging; only use above-200 as a hard
     # entry block when SCAN_ALLOW_BEAR_REGIME is false.
     spy_above_200, spy_regime_bucket = build_spy_regime_series(spy_df)
@@ -1305,6 +1667,13 @@ def _run_backtest_core(
         ticker_date_index[ticker] = idx_map
 
     timeline = sorted(timeline_dates)
+    if history_pad:
+        try:
+            start_ts = pd.Timestamp(start)
+            end_ts = pd.Timestamp(end)
+            timeline = [t for t in timeline if start_ts <= pd.Timestamp(t) <= end_ts]
+        except Exception:
+            pass
     if not timeline:
         return {
             "start_date": start,
@@ -1344,6 +1713,7 @@ def _run_backtest_core(
             "data_integrity": context.data_integrity,
             "findings": "No valid timeline generated over the requested window.",
             "trades_sample": [],
+            "trade_ranks": rank_closed_trades(all_trades),
         }
 
     def _price_at_or_before(ticker: str, ts: pd.Timestamp) -> float | None:
@@ -1489,6 +1859,13 @@ def _run_backtest_core(
                 diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
             elif exit_reason == "vcp_invalidation":
                 diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
+            if (
+                not exit_reason
+                and pos.exit_manager_exit_idx is not None
+                and int(idx) >= int(pos.exit_manager_exit_idx)
+            ):
+                exit_reason = pos.exit_manager_reason or "exit_manager"
+                diagnostics["exits_exit_manager"] = int(diagnostics.get("exits_exit_manager", 0) or 0) + 1
             if not exit_reason:
                 continue
 
@@ -1519,7 +1896,7 @@ def _run_backtest_core(
                     "mae": mae,
                     "ohlc_path": ohlc_path,
                     "exit_reason": exit_reason,
-                    **_score_fields_for_trade(pos.signal),
+                    **_score_fields_for_trade(pos.signal, sd),
                     "mirofish_conviction": pos.signal.get("mirofish_conviction"),
                     "data_provider": pos.signal.get("data_provider"),
                     "data_provider_primary": pos.signal.get("data_provider_primary"),
@@ -1554,6 +1931,7 @@ def _run_backtest_core(
                     "telemetry": pos.telemetry,
                 }
             )
+            _publish_trade_progress()
             active_positions.pop(ticker, None)
 
         # Entry pass: evaluate all tickers on the same date with point-in-time windows.
@@ -1578,31 +1956,26 @@ def _run_backtest_core(
                 except Exception:
                     pass
 
-            if entry_family == "pullback":
-                if not is_pullback_entry(window, sd):
-                    diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
-                    continue
-            elif entry_family == "pead_primary":
-                # Generator gate applied after PEAD enrichment below; liquidity floor here.
-                try:
-                    px = float(window["close"].iloc[-1])
-                    avg_vol = float(window["avg_vol_50"].iloc[-1]) if "avg_vol_50" in window.columns else 0.0
-                except Exception:
-                    px, avg_vol = 0.0, 0.0
-                if px < 5.0 or avg_vol < 200_000.0:
-                    diagnostics["entry_family_fail"] = int(diagnostics["entry_family_fail"]) + 1
-                    continue
-            else:
-                if not is_stage_2(window, sd):
-                    diagnostics["stage2_fail"] = int(diagnostics["stage2_fail"]) + 1
-                    continue
+            admit = _evaluate_backtest_entry_admit(
+                window,
+                skill_dir=sd,
+                entry_family=entry_family,
+                strategy_ids=selected_ids,
+                day_ts=day_ts,
+                diagnostics=diagnostics,
+            )
+            if not admit.admitted:
+                continue
+            candidate_family = admit.family or entry_family
             vcp_ok = check_vcp_volume(window, sd)
             if not vcp_ok:
                 diagnostics["vcp_fail"] = int(diagnostics["vcp_fail"]) + 1
-                if vcp_gate_mode == "hard" and entry_family == "stage2":
+                apply_vcp_hard = vcp_gate_mode == "hard" and not admit.shadow_only
+                if apply_vcp_hard:
                     continue
                 diagnostics["vcp_would_block"] = int(diagnostics["vcp_would_block"]) + 1
-            if breakout_enabled and idx >= breakout_confirm_bars:
+            apply_breakout = breakout_confirm_on and admit.stage2_ok and (breakout_enabled or bool(selected_ids))
+            if apply_breakout and idx >= breakout_confirm_bars:
                 # Each of the last BREAKOUT_CONFIRM_BARS closes must hold above
                 # the prior bar's high (bars=1 preserves legacy behavior).
                 breakout_ok = True
@@ -1633,7 +2006,7 @@ def _run_backtest_core(
                     diagnostics["sector_not_winning"] = int(diagnostics["sector_not_winning"]) + 1
                 elif sector_reason == "no_sector_etf":
                     diagnostics["no_sector_etf"] = int(diagnostics["no_sector_etf"]) + 1
-                if sector_gate_mode == "hard":
+                if sector_gate_mode == "hard" and not admit.shadow_only:
                     continue
                 diagnostics["sector_would_block"] = int(diagnostics["sector_would_block"]) + 1
 
@@ -1710,6 +2083,7 @@ def _run_backtest_core(
                 "score_components": comps,
                 "latest_volume": float(window["volume"].iloc[-1]),
                 "avg_vol_50": float(window["avg_vol_50"].iloc[-1]),
+                "expansion_volume_ratio": expansion_volume_ratio(window),
                 "mirofish_result": miro,
                 "mirofish_conviction": miro.get("conviction_score") if miro else None,
                 "forensic_sloan": ((forensic_snapshot or {}).get("sloan") or {}).get("sloan_ratio"),
@@ -1717,7 +2091,19 @@ def _run_backtest_core(
                 "forensic_altman": ((forensic_snapshot or {}).get("altman") or {}).get("z_score"),
                 "forensic_flags": list((forensic_snapshot or {}).get("forensic_flags", []) or []),
                 "breakout_confirmed": True,
+                "entry_family": candidate_family,
             }
+            try:
+                from core.debate_grade import stamp_checklist_fields
+
+                stamped = stamp_checklist_fields(window, sd, include_points=False)
+                for key in ("trend_stack_ok", "sma200_rising", "vcp_present"):
+                    if key in stamped:
+                        signal[key] = stamped[key]
+            except Exception as stamp_exc:
+                LOG.debug("Debate-grade checklist skipped for %s: %s", ticker, stamp_exc)
+            if admit.horizon_hits:
+                signal["strategy_plugins"] = list(admit.horizon_hits)
             history_meta = context.history_meta_by_ticker.get(ticker, {})
             signal["data_provider"] = str(history_meta.get("provider") or "unknown")
             signal["data_provider_primary"] = str(signal["data_provider"]).lower() == "schwab"
@@ -1725,7 +2111,7 @@ def _run_backtest_core(
             signal["fallback_reason"] = history_meta.get("reason")
 
             pead_info = None
-            pead_required = pead_enabled or entry_family == "pead_primary"
+            pead_required = pead_enabled or candidate_family in {"pead_primary", "both"}
             if pead_required:
                 try:
                     from earnings_signal import check_earnings_at_date
@@ -1739,7 +2125,7 @@ def _run_backtest_core(
                     )
                 except Exception as e:
                     LOG.debug("Backtest PEAD check skipped for %s: %s", ticker, e)
-            if entry_family == "pead_primary":
+            if candidate_family == "pead_primary":
                 beat = bool((pead_info or {}).get("beat"))
                 surprise = (pead_info or {}).get("surprise_pct")
                 try:
@@ -1772,7 +2158,7 @@ def _run_backtest_core(
             try:
                 from advisory_model import score_signal_advisory
 
-                advisory = score_signal_advisory(signal, skill_dir=sd)
+                advisory = score_signal_advisory(signal, skill_dir=sd, window=window)
                 if advisory is not None:
                     signal["advisory"] = advisory.to_dict()
             except Exception as e:
@@ -1820,6 +2206,8 @@ def _run_backtest_core(
             if _quality_mode_should_filter(reasons, sd):
                 diagnostics["quality_gates_filtered"] = int(diagnostics["quality_gates_filtered"]) + 1
                 continue
+            if reasons:
+                diagnostics["quality_gates_would_filter"] = int(diagnostics["quality_gates_would_filter"]) + 1
 
             # Confluence gate: mirror of the live scanner's post-Stage-B gate.
             # Requires an independent confirmation (PEAD-positive or
@@ -1894,6 +2282,16 @@ def _run_backtest_core(
                 continue
 
             stop_pct_entry = _resolve_stop_pct_for_entry(df, idx, skill_dir=sd)
+            signal["stop_pct"] = float(stop_pct_entry)
+            # Entry date keeps an undated forensic snapshot from filling the business pillar.
+            signal["entry_date"] = pd.Timestamp(day_ts).date().isoformat()
+            try:
+                from core.debate_grade import attach_debate_grade, stamp_pit_business
+
+                stamp_pit_business(signal, filings_by_ticker.get(str(ticker).upper()) or [])
+                attach_debate_grade(signal, diagnostics=diagnostics, skill_dir=sd)
+            except Exception as grade_exc:
+                LOG.debug("Debate grade skipped for %s: %s", ticker, grade_exc)
             effective_slippage_bps, exec_info = apply_exec_quality_overlay(
                 slippage_bps_per_side=slippage_bps_per_side,
                 day_volume=day_volume,
@@ -1976,7 +2374,7 @@ def _run_backtest_core(
                 diagnostics["adaptive_guardrail_extra_slot_entries"] = (
                     int(diagnostics["adaptive_guardrail_extra_slot_entries"]) + 1
                 )
-            active_positions[candidate.ticker] = ActivePosition(
+            pos = ActivePosition(
                 ticker=candidate.ticker,
                 entry_idx=candidate.idx,
                 entry_date=day_ts,
@@ -1998,6 +2396,19 @@ def _run_backtest_core(
                 telemetry=candidate.telemetry,
                 highest_close=float(candidate.entry_price),
             )
+            entry_df = context.price_data.get(candidate.ticker)
+            if entry_df is not None and not entry_df.empty:
+                exit_idx, mgr_reason = _plan_exit_manager_for_entry(
+                    entry_df,
+                    int(candidate.idx),
+                    int(backtest_hold_days),
+                    float(candidate.stop_pct),
+                    sd,
+                    diagnostics,
+                )
+                pos.exit_manager_exit_idx = exit_idx
+                pos.exit_manager_reason = mgr_reason
+            active_positions[candidate.ticker] = pos
             if size_by_risk is not None:
                 diagnostics["risk_sized_entries"] = int(diagnostics["risk_sized_entries"]) + 1
             else:
@@ -2049,7 +2460,7 @@ def _run_backtest_core(
                 "mae": mae,
                 "ohlc_path": ohlc_path,
                 "exit_reason": "final_liquidation",
-                **_score_fields_for_trade(pos.signal),
+                **_score_fields_for_trade(pos.signal, sd),
                 "mirofish_conviction": pos.signal.get("mirofish_conviction"),
                 "data_provider": pos.signal.get("data_provider"),
                 "data_provider_primary": pos.signal.get("data_provider_primary"),
@@ -2084,10 +2495,12 @@ def _run_backtest_core(
                 "telemetry": pos.telemetry,
             }
         )
+        _publish_trade_progress()
         active_positions.pop(ticker, None)
 
     ending_equity = float(current_cash)
     equity_curve.append((pd.Timestamp(final_ts).isoformat(), ending_equity))
+    _publish_trade_progress(force=True)
 
     if not all_trades:
         return {
@@ -2144,6 +2557,7 @@ def _run_backtest_core(
             "sector_regime_summary": summarize_sector_regime([]),
             "findings": "No trades generated over the requested window.",
             "trades_sample": [],
+            "trade_ranks": rank_closed_trades(all_trades),
         }
 
     trades_df = pd.DataFrame(all_trades)
@@ -2182,6 +2596,7 @@ def _run_backtest_core(
         f"portfolio net return {100.0 * total_ret_net:.2f}% with max DD {100.0 * max_dd:.2f}%, "
         f"net PF {profit_factor_net if profit_factor_net == float('inf') else round(float(profit_factor_net), 3)}."
     )
+    _attach_liquid_shadow(all_trades, diagnostics, sd)
     score_stack_metrics = _score_stack_metrics_from_trades(trades_df)
     provider_segment_metrics = _provider_segment_metrics_from_trades(trades_df)
     sector_regime_summary = summarize_sector_regime(all_trades)
@@ -2247,6 +2662,7 @@ def _run_backtest_core(
         "provider_segment_metrics": provider_segment_metrics,
         "sector_regime_summary": sector_regime_summary,
         "trades_sample": all_trades[:5],
+        "trade_ranks": rank_closed_trades(all_trades),
         "findings": findings,
     }
     if include_all_trades:

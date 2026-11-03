@@ -1,7 +1,7 @@
 ---
 source: Brain/Runbooks/Deployment.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-09-11
 tags: [runbook, deployment]
 ---
 
@@ -39,6 +39,7 @@ See [[saas-infrastructure]] for the full list.
 
 ## Related Pages
 
+- [[local-ops-box]] — always-on Windows mini PC (local dashboard, not Render)
 - [[saas-api]] — what gets deployed
 - [[saas-infrastructure]] — env vars
 - [[schwab-oauth-setup]] — token setup

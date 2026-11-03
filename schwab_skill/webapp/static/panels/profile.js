@@ -15,7 +15,7 @@
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import { getApiAccessToken } from "../modules/auth.js";
-import { safeText, prettyJson } from "../modules/format.js";
+import { safeText } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import {
   setAsyncState,
@@ -39,14 +39,7 @@ export function presetSettingLabel(key) {
 }
 
 export function renderProfilePanel(rootEl, data, { error } = {}) {
-  const rawDetails = document.getElementById("profileRawDetails");
-  const rawPre = document.getElementById("profileRaw");
   if (!rootEl) return;
-  if (rawPre && !error && data) rawPre.textContent = prettyJson(data);
-  if (rawDetails) {
-    if (error || !data) rawDetails.classList.add("hidden");
-    else rawDetails.classList.remove("hidden");
-  }
   if (error) {
     rootEl.innerHTML = `<div class="panel-error">${safeText(error)}</div>`;
     return;
@@ -75,7 +68,7 @@ export function renderProfilePanel(rootEl, data, { error } = {}) {
       const label = safeText(d.label || presetSettingLabel(k));
       const plain = safeText(d.plain || active[k]);
       const raw = safeText(d.raw != null ? d.raw : active[k]);
-      const valueCell = expertUi ? `${plain}<br/><code class="preset-value">${raw}</code>` : plain;
+      const valueCell = expertUi && raw && raw !== plain ? `${plain} · ${safeText(raw)}` : plain;
       return `<tr><th scope="row">${label}</th><td>${valueCell}</td></tr>`;
     })
     .join("");

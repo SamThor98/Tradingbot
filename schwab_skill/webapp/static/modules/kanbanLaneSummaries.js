@@ -1,6 +1,7 @@
 import { safeText, safeNum, formatCount } from "./format.js";
 import { state } from "./state.js";
 import { isScanSignalStageable } from "./signalProvenance.js";
+import { clearToQueue, stageHoldReasons } from "./stageEvidence.js";
 
 function setLaneSummary(id, text, laneState = "neutral") {
   const el = document.getElementById(id);
@@ -51,13 +52,14 @@ export function updateKanbanLaneSummaries(options = {}) {
       ) ||
       {};
     const stageable = isScanSignalStageable(sig);
-    setLaneSummary(
-      "scanDetailLaneSummary",
-      stageable
-        ? `Step 2 — reviewing ${selectedTicker}; trust chips look OK to queue.`
-        : `Step 2 — ${selectedTicker} is filtered; read blockers before queuing.`,
-      stageable ? "success" : "partial",
-    );
+    const holds = stageHoldReasons(sig);
+    const clear = clearToQueue(sig);
+    const line = !stageable
+      ? `Step 2 — ${selectedTicker} is filtered; read blockers before queuing.`
+      : holds.length
+        ? `Step 2 — do not queue ${selectedTicker}. ${holds[0]}.`
+        : `Step 2 — ${selectedTicker} is clear to queue.`;
+    setLaneSummary("scanDetailLaneSummary", line, clear ? "success" : "partial");
   }
 
   if (options.pendingState === "loading") {

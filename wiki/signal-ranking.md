@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Signal Ranking.md
 created: 2026-04-13
-updated: 2026-07-17
+updated: 2026-10-08
 tags: [strategy, ranking]
 ---
 
@@ -17,7 +17,10 @@ tags: [strategy, ranking]
 | Edge (blend) | `edge_score` | Optional 20% stack blend into composite |
 | Safety | reliability / execution | **Caps only** — not blended into rank |
 | Quality rank | `composite_score` | Offline challenger |
-| Diagnostic | `rank_score_v2` | Shadow comparison |
+| Diagnostic | `rank_score_v2` | Shadow comparison; live p76 filter |
+| Diagnostic | `historical_rank` | Shadow historical blend (operator Rank display) |
+| Diagnostic | analog overlay | Shadow neighborhood PF / p(win); own Analog column |
+| Diagnostic | `setup_confidence` | Shadow survival readout inside the Rank cell |
 
 ## Top-N Selection
 
@@ -71,13 +74,69 @@ top `PROB_RANK_TOP_N` by `expected_return_40d` are kept. **Go/no-go locked
 2026-07-18: KEEP SHADOW** (not LIVE) — see
 [[probabilistic-ranking-research-architecture]].
 
+## Historical blend ranker (shadow)
+
+`HISTORICAL_RANK_MODE` (default `shadow`) attaches `historical_rank`,
+`historical_rank_reasons`, and `rank_percentile` after the score stack and
+prob-rank attach. `core/scoring_historical.py` scores a non-negative blend of
+0–100 normalized features, then reuses the rank-v2 **caps only** (low
+reliability, low execution, SEC/Beneish/Altman risk). Feature bounds are the
+p1/p99 quantiles fitted from the training panel and stored in the artifact, so
+scores keep resolution instead of saturating at a fixed cap.
+
+Fitted with `scripts/fit_historical_rank_blend.py` (walk-forward,
+cross-sectionally demeaned NNLS on `ret_40d_fwd`); artifact lives at
+`research_store/models/historical_rank_blend.json`. Current model
+`hist_blend_83df956d8e` is **trend-only** — `volume_norm` and `prox_52w_norm`
+screened out on non-positive OOS IC, and the LightGBM `expected_return_40d`
+feature is excluded because it is in-sample on four of five eras.
+
+**Go/no-go 2026-09-03: KEEP SHADOW.** The `historical_top5` arm beats today's
+p76 + `signal_score` stack on PF mean (1.160 vs 1.028) and worst-era PF (1.014
+vs 0.937), but misses the 1.20 PF mean gate. Live sort/filter unchanged. See
+`SIGNAL_QUALITY_ROLLOUT.md` Stage 2h and
+`validation_artifacts/historical_rank/counterfactual_control_legacy_aug.json`.
+
+Operator display: the Rank column leads with `trust_score` (0–100, higher is
+less extended) when the extension shadow stamp is present. Cohort percentile
+over `historical_rank` remains the fallback for older payloads. See
+[[scan-confidence]].
+
+## Analog overlay (shadow)
+
+`ANALOG_OVERLAY_MODE` (default `shadow`) attaches a winner-neighborhood score
+after historical rank. k-NN is Euclidean on the same entry-time names the
+scanner already carries. Live sort/filter stay `signal_score` + rank-v2 p76.
+See [[analog-overlay]] and `SIGNAL_QUALITY_ROLLOUT.md` Stage 2i.
+
+## Setup confidence (shadow)
+
+`CONFIDENCE_RANK_MODE` (default `shadow`) attaches `setup_confidence`, a 0–100
+survival readout scored in Stage B from the same PIT registry features
+prob-rank uses. It asks whether a setup resembles the 21–40 day winners or the
+≤20 day stop-outs rather than how strong the setup looks.
+
+The screen behind it found every chart/trend variable **negatively** correlated
+with realized return in all five eras, and that a p76 cut on the score returns
+PF 1.4296 / worst 1.1212 against the live stack's 1.0276 / 0.9368 — but only
+ties inverting `pts_52w` alone. Fundamentals (real PIT Sharadar) and insider
+Form 4 data were tested and carry no signal here.
+
+**Go/no-go 2026-09-21: KEEP SHADOW** (`keep_shadow_single_variable_explains_it`).
+Live sort/filter unchanged. See [[scan-confidence]] and
+`SIGNAL_QUALITY_ROLLOUT.md` Stage 2j.
+
 ## Related Pages
 
 - [[signal-scanner]] — ranking at end of Stage B
 - [[advisory-model]] — probability overlay
+- [[analog-overlay]] — winner-neighborhood shadow score
+- [[scan-confidence]] — survival readout and the inverted-ranking evidence
 - [[probabilistic-ranking-research-architecture]] — ML ranking research path
+- [[pit-research-platform]] — factor analytics that reports the negative-IC fact
 - [[scanner-tunables]], [[feature-flags]]
+- [[thirty-day-signal-cut-plan]] — top-N stays 5 through 2026-11-07; the capped top-5 cut removes 88 names
 
 ---
 
-*Last compiled: 2026-07-17*
+*Last compiled: 2026-09-21*

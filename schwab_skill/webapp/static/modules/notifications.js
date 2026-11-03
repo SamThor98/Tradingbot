@@ -72,17 +72,20 @@ export function renderNotifications() {
   }
 
   if (!_notifications.length) {
-    list.innerHTML = `<li class="muted">No notifications yet.</li>`;
+    list.innerHTML = `<li class="muted">No saved alerts. Live warnings are on Today’s feed and System health.</li>`;
     return;
   }
 
   list.innerHTML = _notifications
     .slice()
-    .reverse()
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
     .slice(0, 30)
     .map((n) => {
       const dotClass = n.severity === "error" ? "notif-dot--bad" : n.severity === "success" ? "notif-dot--good" : "notif-dot--info";
-      const timeStr = new Date(n.time).toLocaleTimeString();
+      const when = new Date(n.time);
+      const timeStr = Number.isFinite(when.getTime())
+        ? when.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+        : "";
       return `<li class="notif-item${n.read ? "" : " notif-unread"}">
         <span class="notif-dot ${dotClass}"></span>
         <span class="notif-msg">${safeText(n.message)}</span>

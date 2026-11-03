@@ -23,42 +23,248 @@ MACRO_BLACKOUT_FILE = ".macro_event_blackouts.json"
 # Default watchlist: every sector, liquid names. Override via SIGNAL_WATCHLIST in .env
 DEFAULT_WATCHLIST = [
     # Technology (XLK)
-    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "AVGO", "ADBE", "CRM",
-    "CSCO", "ORCL", "IBM", "AMD", "INTC", "QCOM", "TXN", "AMAT", "NOW", "INTU",
-    "ADI", "LRCX", "KLAC", "SNPS", "CDNS", "MRVL", "NXPI", "MU",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "GOOG",
+    "AMZN",
+    "META",
+    "NVDA",
+    "AVGO",
+    "ADBE",
+    "CRM",
+    "CSCO",
+    "ORCL",
+    "IBM",
+    "AMD",
+    "INTC",
+    "QCOM",
+    "TXN",
+    "AMAT",
+    "NOW",
+    "INTU",
+    "ADI",
+    "LRCX",
+    "KLAC",
+    "SNPS",
+    "CDNS",
+    "MRVL",
+    "NXPI",
+    "MU",
     # Financial Services (XLF)
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "AXP", "V", "MA", "SPGI", "BLK",
-    "SCHW", "CB", "PGR", "MMC", "ICE", "CME", "AON", "AJG", "COF",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "MS",
+    "C",
+    "AXP",
+    "V",
+    "MA",
+    "SPGI",
+    "BLK",
+    "SCHW",
+    "CB",
+    "PGR",
+    "MMC",
+    "ICE",
+    "CME",
+    "AON",
+    "AJG",
+    "COF",
     # Energy (XLE)
-    "XOM", "CVX", "COP", "SLB", "EOG", "PXD", "MPC", "VLO", "OXY", "PSX",
-    "DVN", "HES", "FANG", "HAL", "KMI", "WMB", "OKE",
+    "XOM",
+    "CVX",
+    "COP",
+    "SLB",
+    "EOG",
+    "PXD",
+    "MPC",
+    "VLO",
+    "OXY",
+    "PSX",
+    "DVN",
+    "HES",
+    "FANG",
+    "HAL",
+    "KMI",
+    "WMB",
+    "OKE",
     # Healthcare (XLV)
-    "UNH", "JNJ", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "DHR", "BMY",
-    "AMGN", "GILD", "MDT", "SYK", "ISRG", "ZTS", "VRTX", "REGN", "IQV",
-    "ELV", "CI", "HUM", "MCK", "CAH", "BSX",
+    "UNH",
+    "JNJ",
+    "PFE",
+    "ABBV",
+    "MRK",
+    "LLY",
+    "TMO",
+    "ABT",
+    "DHR",
+    "BMY",
+    "AMGN",
+    "GILD",
+    "MDT",
+    "SYK",
+    "ISRG",
+    "ZTS",
+    "VRTX",
+    "REGN",
+    "IQV",
+    "ELV",
+    "CI",
+    "HUM",
+    "MCK",
+    "CAH",
+    "BSX",
     # Consumer Discretionary (XLY)
-    "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG", "ORLY", "AZO",
-    "DHI", "LEN", "NVR", "F", "GM", "YUM", "CMG", "DPZ", "MAR", "HLT",
-    "WYNN", "LVS", "EBAY", "ETSY", "ROST", "DRI",
+    "TSLA",
+    "HD",
+    "MCD",
+    "NKE",
+    "SBUX",
+    "LOW",
+    "TJX",
+    "BKNG",
+    "ORLY",
+    "AZO",
+    "DHI",
+    "LEN",
+    "NVR",
+    "F",
+    "GM",
+    "YUM",
+    "CMG",
+    "DPZ",
+    "MAR",
+    "HLT",
+    "WYNN",
+    "LVS",
+    "EBAY",
+    "ETSY",
+    "ROST",
+    "DRI",
     # Consumer Staples (XLP)
-    "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL", "MDLZ", "KMB",
-    "GIS", "K", "SJM", "HSY", "STZ", "BF.B", "TAP", "KHC", "CPB", "MKC",
+    "PG",
+    "KO",
+    "PEP",
+    "COST",
+    "WMT",
+    "PM",
+    "MO",
+    "CL",
+    "MDLZ",
+    "KMB",
+    "GIS",
+    "K",
+    "SJM",
+    "HSY",
+    "STZ",
+    "BF.B",
+    "TAP",
+    "KHC",
+    "CPB",
+    "MKC",
     # Materials (XLB)
-    "LIN", "APD", "SHW", "ECL", "NEM", "FCX", "NUE", "VMC", "DOW", "PPG",
-    "DD", "CE", "FMC", "CF", "MOS", "ALB", "LYB", "EMN",
+    "LIN",
+    "APD",
+    "SHW",
+    "ECL",
+    "NEM",
+    "FCX",
+    "NUE",
+    "VMC",
+    "DOW",
+    "PPG",
+    "DD",
+    "CE",
+    "FMC",
+    "CF",
+    "MOS",
+    "ALB",
+    "LYB",
+    "EMN",
     # Industrials (XLI)
-    "UNP", "HON", "UPS", "RTX", "CAT", "GE", "LMT", "BA", "DE", "MMM",
-    "WM", "RSG", "FDX", "LUV", "DAL", "NOC", "GD", "PH", "ROK", "ITW",
-    "EMR", "ETN", "CARR", "OTIS", "JCI", "PCAR", "CTAS", "FAST",
+    "UNP",
+    "HON",
+    "UPS",
+    "RTX",
+    "CAT",
+    "GE",
+    "LMT",
+    "BA",
+    "DE",
+    "MMM",
+    "WM",
+    "RSG",
+    "FDX",
+    "LUV",
+    "DAL",
+    "NOC",
+    "GD",
+    "PH",
+    "ROK",
+    "ITW",
+    "EMR",
+    "ETN",
+    "CARR",
+    "OTIS",
+    "JCI",
+    "PCAR",
+    "CTAS",
+    "FAST",
     # Utilities (XLU)
-    "NEE", "DUK", "SO", "D", "AEP", "SRE", "EXC", "XEL", "ED", "WEC",
-    "AWK", "ES", "EVRG", "DTE", "AEE", "CMS", "EIX", "PEG", "CEG",
+    "NEE",
+    "DUK",
+    "SO",
+    "D",
+    "AEP",
+    "SRE",
+    "EXC",
+    "XEL",
+    "ED",
+    "WEC",
+    "AWK",
+    "ES",
+    "EVRG",
+    "DTE",
+    "AEE",
+    "CMS",
+    "EIX",
+    "PEG",
+    "CEG",
     # Communication Services (XLC)
-    "NFLX", "DIS", "CMCSA", "VZ", "T", "TMUS", "CHTR", "EA", "TTWO",
-    "WBD", "PARA", "LYV", "MTCH", "FOXA", "FOX",
+    "NFLX",
+    "DIS",
+    "CMCSA",
+    "VZ",
+    "T",
+    "TMUS",
+    "CHTR",
+    "EA",
+    "TTWO",
+    "WBD",
+    "PARA",
+    "LYV",
+    "MTCH",
+    "FOXA",
+    "FOX",
     # Real Estate (XLRE)
-    "PLD", "AMT", "EQIX", "PSA", "O", "WELL", "SPG", "DLR", "CCI",
-    "SBAC", "AVB", "EQR", "VTR", "ARE", "VICI", "MAA",
+    "PLD",
+    "AMT",
+    "EQIX",
+    "PSA",
+    "O",
+    "WELL",
+    "SPG",
+    "DLR",
+    "CCI",
+    "SBAC",
+    "AVB",
+    "EQR",
+    "VTR",
+    "ARE",
+    "VICI",
+    "MAA",
 ]
 
 
@@ -68,8 +274,10 @@ def _maybe_prefilter_watchlist(skill_dir: Path, watchlist: list[str]) -> list[st
             get_quality_watchlist_prefilter_enabled,
             get_quality_watchlist_prefilter_max,
         )
+
         if get_quality_watchlist_prefilter_enabled(skill_dir):
             from watchlist_loader import prefilter_watchlist
+
             pre_max = get_quality_watchlist_prefilter_max(skill_dir)
             before = len(watchlist)
             watchlist = prefilter_watchlist(watchlist, max_tickers=pre_max, include_etf_hints=True)
@@ -179,24 +387,64 @@ def _record_quality_snapshot(skill_dir: Path, diagnostics: dict[str, Any], signa
     days = data.setdefault("days", {})
     day_bucket = days.setdefault(today, {"scans": []})
 
-    avg_score = round(
-        sum(float(s.get("signal_score", 0) or 0) for s in signals) / len(signals), 2
-    ) if signals else 0.0
-    avg_conv = round(
-        sum(float(s.get("mirofish_conviction", 0) or 0) for s in signals) / len(signals), 2
-    ) if signals else 0.0
-    day_bucket.setdefault("scans", []).append({
-        "signals_found": len(signals),
-        "avg_score": avg_score,
-        "avg_conviction": avg_conv,
-        "diagnostics": diagnostics,
-    })
+    avg_score = round(sum(float(s.get("signal_score", 0) or 0) for s in signals) / len(signals), 2) if signals else 0.0
+    avg_conv = (
+        round(sum(float(s.get("mirofish_conviction", 0) or 0) for s in signals) / len(signals), 2) if signals else 0.0
+    )
+    day_bucket.setdefault("scans", []).append(
+        {
+            "signals_found": len(signals),
+            "avg_score": avg_score,
+            "avg_conviction": avg_conv,
+            "diagnostics": diagnostics,
+        }
+    )
 
     cutoff = date.today() - timedelta(days=45)
     stale = [k for k in days.keys() if k < cutoff.isoformat()]
     for k in stale:
         days.pop(k, None)
     _save_quality_metrics(skill_dir, data)
+
+
+def _stamp_mirofish_llm_diagnostics(
+    diagnostics: dict[str, Any],
+    signals: list[dict[str, Any]],
+    skill_dir: Path | None = None,
+) -> None:
+    """Attach scan-level Grok/OpenAI routing metadata without changing rank."""
+    try:
+        from config import get_mirofish_weighting_mode
+        from core.llm_endpoint import resolve_llm_endpoint
+
+        endpoint = resolve_llm_endpoint()
+        scored = 0
+        missing = 0
+        models: set[str] = set()
+        providers: set[str] = set()
+        for sig in signals:
+            model = str(sig.get("mirofish_llm_model") or "")
+            provider = str(sig.get("mirofish_llm_provider") or "")
+            if model:
+                models.add(model)
+            if provider:
+                providers.add(provider)
+            if sig.get("mirofish_conviction") is None:
+                missing += 1
+            else:
+                scored += 1
+        diagnostics["mirofish_llm"] = {
+            "provider": endpoint.provider,
+            "model": endpoint.model,
+            "base_url": endpoint.base_url,
+            "weighting_mode": get_mirofish_weighting_mode(skill_dir),
+            "scored": scored,
+            "unavailable": missing,
+            "signal_models": sorted(models),
+            "signal_providers": sorted(providers),
+        }
+    except Exception as exc:
+        LOG.debug("mirofish_llm diagnostics skipped: %s", exc)
 
 
 def get_signal_quality_summary(skill_dir: Path | str | None = None, days: int = 7) -> dict[str, Any]:
@@ -271,31 +519,26 @@ def _resolve_calibrated_p_up(signal_row: dict[str, Any], confidence_bucket: str)
 def _compute_high_level_rank_score(
     *,
     composite_score: float,
-    edge_score: float,
     reliability_score: float,
     execution_score: float,
     p_up_calibrated: float,
-    ev_10d: float,
     sec_risk_tag: str,
     forensic_flags: list[str],
 ) -> float:
     """
     Compute a single explainable rank score (0-100) for final ordering.
 
-    The rank intentionally prioritizes composite quality while still carrying
-    execution/reliability, calibrated probability, and a bounded EV nudge.
+    The rank prioritizes composite quality and still carries execution,
+    reliability, and calibrated probability. It does not add an expected-return
+    term. Live book order uses ``signal_score``, not this rank.
     """
     # Reduce score-double-counting: composite already carries edge/reliability/execution.
-    base = (
+    rank_score = (
         (composite_score * 0.75)
         + ((p_up_calibrated * 100.0) * 0.15)
         + (execution_score * 0.05)
         + (reliability_score * 0.05)
     )
-
-    # Keep EV contribution informative but bounded so it cannot dominate rank.
-    ev_nudge = _clamp_float(ev_10d * 1000.0, -8.0, 8.0)
-    rank_score = base + ev_nudge
 
     # Reliability/execution hardening so fragile setups do not float too high.
     if reliability_score < 40.0:
@@ -336,7 +579,6 @@ def _apply_score_stack(
       - execution_score
       - composite_score
       - p_up_calibrated
-      - ev_10d
       - reliability_reasons
 
     Crowd conviction (MiroFish) contributes exactly once — via ``pts_mirofish``
@@ -349,7 +591,7 @@ def _apply_score_stack(
     from config import get_score_edge_exclude_52w
     from core.scoring_composite import (
         composite_quality_weights_from_config,
-        compute_composite_quality,
+        composite_quality_with_raw,
         compute_edge_score,
         normalized_component_scores,
         resolve_rank_volume_points,
@@ -418,12 +660,7 @@ def _apply_score_stack(
         execution -= 8.0
     execution = _clamp_float(execution, 0.0, 100.0)
 
-    avg_win = 0.01 + (max(0.0, edge_score - 50.0) / 100.0) * 0.06
-    avg_loss = 0.008 + (max(0.0, 50.0 - edge_score) / 100.0) * 0.05
-    friction = 0.002 + ((100.0 - execution) / 100.0) * 0.01
-    ev_10d = (p_up_calibrated * avg_win) - ((1.0 - p_up_calibrated) * avg_loss) - friction
-
-    composite = compute_composite_quality(
+    composite, composite_raw = composite_quality_with_raw(
         signal_score=score,
         pts_52w=pts_52w,
         pts_volume=rank_pts_volume,
@@ -443,11 +680,9 @@ def _apply_score_stack(
 
     rank_score = _compute_high_level_rank_score(
         composite_score=composite,
-        edge_score=edge_score,
         reliability_score=reliability,
         execution_score=execution,
         p_up_calibrated=p_up_calibrated,
-        ev_10d=ev_10d,
         sec_risk_tag=sec_risk_tag,
         forensic_flags=forensic_flags,
     )
@@ -456,11 +691,12 @@ def _apply_score_stack(
     signal_row["reliability_score"] = round(reliability, 2)
     signal_row["execution_score"] = round(execution, 2)
     signal_row["composite_score"] = round(composite, 2)
+    signal_row["composite_score_raw"] = composite_raw
     signal_row["pts_volume_rank"] = round(rank_pts_volume, 2)
     signal_row["rank_score"] = round(rank_score, 2)
     signal_row["rank_score_v1"] = round(rank_score, 2)
     signal_row["rank_basis"] = "composite_quality_v3"
-    signal_row["score_stack_version"] = "v3_direct"
+    signal_row["score_stack_version"] = "v3_direct_no_ev"
 
     from config import get_rank_score_v2_mode
 
@@ -472,7 +708,7 @@ def _apply_score_stack(
             signal_row["rank_score_v2_shadow"] = True
 
     signal_row["p_up_calibrated"] = round(p_up_calibrated, 4)
-    signal_row["ev_10d"] = round(ev_10d, 5)
+    signal_row.pop("ev_10d", None)
     signal_row["reliability_reasons"] = sorted(set(reliability_reasons))
     return signal_row
 
@@ -558,8 +794,23 @@ def evaluate_event_risk_policy(
         action = "block"
         downsize_factor = 0.5
 
+    earnings_lookup = "none_found"
+    try:
+        from config import get_schwab_only_data
+
+        schwab_only = bool(get_schwab_only_data(skill_dir))
+    except Exception:
+        schwab_only = False
     earnings_distance = _nearest_earnings_distance_days(ticker)
-    earnings_near = earnings_distance is not None and earnings_distance <= max(0, earnings_days)
+    if schwab_only and earnings_distance is None:
+        earnings_lookup = "unavailable"
+    elif earnings_distance is not None:
+        earnings_lookup = "measured"
+    earnings_near = (
+        earnings_lookup == "measured"
+        and earnings_distance is not None
+        and earnings_distance <= max(0, earnings_days)
+    )
 
     macro_blackout = False
     if macro_enabled:
@@ -577,6 +828,7 @@ def evaluate_event_risk_policy(
         "action": action if action in {"block", "downsize"} else "block",
         "downsize_factor": max(0.10, min(1.0, downsize_factor)),
         "earnings_distance_days": earnings_distance,
+        "earnings_lookup": earnings_lookup,
         "earnings_near": earnings_near,
         "macro_blackout": macro_blackout,
         "flagged": bool(reasons),
@@ -595,6 +847,10 @@ def _apply_event_risk_policy_to_signals(
     for sig in signals:
         ticker = str(sig.get("ticker") or "")
         policy = evaluate_event_risk_policy(ticker, skill_dir=skill_dir)
+        if policy.get("earnings_lookup") == "unavailable":
+            diagnostics["event_risk_earnings_unavailable"] = int(
+                diagnostics.get("event_risk_earnings_unavailable", 0)
+            ) + 1
         mode = policy.get("mode", "off")
         action = policy.get("action", "block")
         flagged = bool(policy.get("flagged"))
@@ -633,19 +889,20 @@ def _evaluate_quality_gates(signal: dict[str, Any], skill_dir: Path) -> list[str
         get_forensic_filter_mode,
         get_forensic_sloan_max,
         get_quality_breakout_volume_min_ratio,
-        get_quality_min_signal_score,
+        get_quality_min_signal_score_effective,
         get_quality_require_breakout_volume,
     )
+
     reasons: list[str] = []
-    horizon = str(signal.get("entry_family") or "").strip().lower() == "horizon"
+    research = _is_research_entry_family(signal.get("entry_family"))
     score = float(signal.get("signal_score", 0) or 0)
-    if not horizon and score < float(get_quality_min_signal_score(skill_dir)):
+    if not research and score < float(get_quality_min_signal_score_effective(skill_dir)):
         reasons.append("low_signal_score")
 
     # continuation_prob / bull_trap_prob removed: already baked into signal_score
     # via MiroFish conviction. Separate thresholds were double-counting the same signal.
 
-    if (not horizon) and get_quality_require_breakout_volume(skill_dir):
+    if (not research) and get_quality_require_breakout_volume(skill_dir):
         latest_vol = signal.get("latest_volume")
         avg_vol = signal.get("avg_vol_50")
         min_ratio = signal.get("breakout_volume_min_ratio")
@@ -750,9 +1007,9 @@ def _quality_mode_should_filter(reasons: list[str], skill_dir: Path) -> bool:
     # Stage 2c/2d evidence collection depends on this (rank-v2 shadow samples).
     if mode in {"off", "shadow"}:
         return False
-    # Breakout volume is a hard gate only when soft/hard enforcement is active.
-    if "weak_breakout_volume" in reasons and mode in {"soft", "hard"}:
-        return True
+    # weak_breakout_volume is logged either way. In soft mode it does not drop
+    # a name by itself, including when QUALITY_SOFT_MIN_REASONS is 1. It does
+    # count once another reason is present. Hard mode still drops it alone.
     forensic_reasons = {
         "forensic_sloan_high",
         "forensic_beneish_manipulator",
@@ -769,7 +1026,10 @@ def _quality_mode_should_filter(reasons: list[str], skill_dir: Path) -> bool:
     if mode == "hard":
         return True
     soft_min = max(1, int(get_quality_soft_min_reasons(skill_dir)))
-    return len(reasons) >= soft_min
+    others = [reason for reason in reasons if reason != "weak_breakout_volume"]
+    if "weak_breakout_volume" in reasons and others:
+        return len(reasons) >= soft_min
+    return len(others) >= soft_min
 
 
 def _sec_score_hint_delta(risk_tag: str, filing_recency_days: int | None) -> float:
@@ -835,6 +1095,109 @@ def _pead_shadow_sort_key(cand: dict[str, Any]) -> tuple[float, str]:
     return (-score, ticker)
 
 
+def _is_research_entry_family(entry_family: str | None) -> bool:
+    return str(entry_family or "").strip().lower() in {"horizon", "pead_primary"}
+
+
+def _horizon_stage_a_sort_key(cand: dict[str, Any]) -> tuple[float, str]:
+    """Horizon Stage A shortlist: best triggered plugin raw_score, not Stage 2 score."""
+    hits = cand.get("horizon_plugin_hits") if isinstance(cand.get("horizon_plugin_hits"), list) else []
+    best = 0.0
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        try:
+            best = max(best, float(hit.get("raw_score") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    ticker = str(cand.get("ticker") or "").upper()
+    return (-best, ticker)
+
+
+def _assemble_stage_a_shortlist(
+    *,
+    executable: list[dict[str, Any]],
+    horizon_only: list[dict[str, Any]],
+    pead_only: list[dict[str, Any]],
+    want_stage2: bool,
+    want_pead: bool,
+    want_horizon: bool,
+    top_n: int,
+    multiplier: float,
+    cap: int,
+    nocap_limit: int,
+    horizon_sidecar_cap: int,
+) -> dict[str, Any]:
+    """Build Stage B shortlist so each selected sleeve ranks on its own score.
+
+    Dedicated research scans (no Stage 2) get the same Stage B budget as the
+    live book, per selected family. Mixed Stage 2 + horizon keeps a sidecar cap
+    so research does not steal Stage 2 slots. Dedicated PEAD joins Stage B;
+    mixed PEAD stays shadow-only beside the live book.
+    """
+    horizon_pool = list(horizon_only) if want_horizon else []
+    horizon_pool.sort(key=_horizon_stage_a_sort_key)
+    pead_pool = list(pead_only) if want_pead else []
+    pead_pool.sort(key=_pead_shadow_sort_key)
+
+    def _limit_for(pool: list[dict[str, Any]]) -> int:
+        return _compute_stage_a_shortlist_limit(
+            total_candidates=len(pool),
+            top_n=top_n,
+            multiplier=multiplier,
+            cap=cap,
+            nocap_limit=nocap_limit,
+        )
+
+    if not want_stage2:
+        shortlist: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        horizon_extra: list[dict[str, Any]] = []
+        pead_stage_b: list[dict[str, Any]] = []
+        pruned = 0
+
+        def _take(pool: list[dict[str, Any]], bucket: list[dict[str, Any]]) -> None:
+            nonlocal pruned
+            limit = _limit_for(pool)
+            pruned += max(0, len(pool) - limit)
+            for cand in pool[:limit]:
+                ticker = str(cand.get("ticker") or "").upper()
+                if ticker and ticker in seen:
+                    continue
+                if ticker:
+                    seen.add(ticker)
+                shortlist.append(cand)
+                bucket.append(cand)
+
+        if want_horizon:
+            _take(horizon_pool, horizon_extra)
+        if want_pead:
+            _take(pead_pool, pead_stage_b)
+        return {
+            "shortlist": shortlist,
+            "shortlist_limit": len(shortlist),
+            "horizon_extra": horizon_extra,
+            "pead_stage_b": pead_stage_b,
+            "dedicated_research": True,
+            "stage_a_pruned": pruned,
+        }
+
+    exec_limit = _limit_for(executable)
+    shortlist = list(executable[:exec_limit])
+    horizon_extra = []
+    if want_horizon and horizon_sidecar_cap > 0:
+        horizon_extra = horizon_pool[: int(horizon_sidecar_cap)]
+        shortlist = shortlist + horizon_extra
+    return {
+        "shortlist": shortlist,
+        "shortlist_limit": exec_limit,
+        "horizon_extra": horizon_extra,
+        "pead_stage_b": [],
+        "dedicated_research": False,
+        "stage_a_pruned": max(0, len(executable) - len(executable[:exec_limit])),
+    }
+
+
 def _stage_a_edge_score_proxy(
     *,
     stage_a_score: float,
@@ -897,6 +1260,13 @@ def _stage_a_edge_score_proxy(
     )
 
 
+def _annotate_pead_shadow_name(row: dict[str, Any]) -> dict[str, Any]:
+    """Attach extension and large-surprise flags. Does not drop the name."""
+    from core.pead_canary_splits import annotate_pead_shadow_name
+
+    return annotate_pead_shadow_name(row)
+
+
 def _partition_stage_a_by_entry_family(
     candidates: list[dict[str, Any]],
     *,
@@ -933,11 +1303,7 @@ def _partition_stage_a_by_entry_family(
     combined = sorted(list(candidates), key=_executable_stage_a_sort_key)
     rank_n = int(top_n) if int(top_n) > 0 else len(combined)
     top_slice = combined[:rank_n] if rank_n > 0 else []
-    would_rank = sum(
-        1
-        for c in top_slice
-        if str(c.get("entry_family") or "") in {"pead_primary", "both"}
-    )
+    would_rank = sum(1 for c in top_slice if str(c.get("entry_family") or "") in {"pead_primary", "both"})
 
     # PEAD-native capacity arm: top-N by edge_score among PEAD-only admits.
     capacity_n = max(0, int(pead_capacity_top_n))
@@ -965,16 +1331,21 @@ def _partition_stage_a_by_entry_family(
         "pead_primary_shadow_truncated": truncated,
         "pead_primary_shadow_sort_key": "edge_score_desc,ticker_asc",
         "pead_primary_shadow_names": [
-            {
-                "ticker": str(c.get("ticker") or ""),
-                "entry_family": "pead_primary",
-                "stage_a_score": c.get("stage_a_score"),
-                "edge_score": c.get("edge_score"),
-                "pead_beat": c.get("pead_beat"),
-                "pead_surprise_pct": c.get("pead_surprise_pct"),
-                "capacity_top_n": str(c.get("ticker") or "").upper() in capacity_tickers,
-                "executable": False,
-            }
+            _annotate_pead_shadow_name(
+                {
+                    "ticker": str(c.get("ticker") or ""),
+                    "entry_family": "pead_primary",
+                    "price": c.get("price"),
+                    "sma_200": c.get("sma_200"),
+                    "close_vs_sma200_pct": c.get("close_vs_sma200_pct"),
+                    "stage_a_score": c.get("stage_a_score"),
+                    "edge_score": c.get("edge_score"),
+                    "pead_beat": c.get("pead_beat"),
+                    "pead_surprise_pct": c.get("pead_surprise_pct"),
+                    "capacity_top_n": str(c.get("ticker") or "").upper() in capacity_tickers,
+                    "executable": False,
+                }
+            )
             for c in shadow_names
         ],
     }
@@ -1027,7 +1398,13 @@ def _scan_stage_a_one(
     sector_penalty_points: float,
     sector_unresolved_penalty_points: float,
     horizon_strategy_ids: list[str] | None = None,
+    history_days: int | None = None,
+    want_stage2: bool = True,
+    want_pead: bool = False,
+    want_breakout_quotes: bool = False,
+    selected_strategy_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    from core.horizon_strategies import STAGE_A_DEFAULT_HISTORY_DAYS
     from market_data import extract_schwab_live_price, get_current_quote, get_daily_history_with_meta
     from sector_strength import get_ticker_sector_etf
     from stage_analysis import (
@@ -1040,7 +1417,8 @@ def _scan_stage_a_one(
     )
 
     try:
-        df, history_meta = get_daily_history_with_meta(ticker, days=300, auth=auth, skill_dir=skill_dir)
+        lookback_days = int(history_days or STAGE_A_DEFAULT_HISTORY_DAYS)
+        df, history_meta = get_daily_history_with_meta(ticker, days=lookback_days, auth=auth, skill_dir=skill_dir)
         provider = str(history_meta.get("provider") or "unknown")
         used_fallback = bool(history_meta.get("used_fallback"))
         if df.empty:
@@ -1088,7 +1466,7 @@ def _scan_stage_a_one(
         except Exception as _e:
             LOG.debug("Stale-bar gate check failed for %s: %s", ticker, _e)
         df = add_indicators(df)
-        stage2_ok = bool(is_stage_2(df, skill_dir))
+        stage2_ok = bool(is_stage_2(df, skill_dir)) if want_stage2 else False
 
         pead_mode_eff = "off"
         pead_configured = "off"
@@ -1102,7 +1480,7 @@ def _scan_stage_a_one(
 
             pead_configured = get_strategy_pead_primary_mode(skill_dir)
             pead_mode_eff = get_strategy_pead_primary_effective_mode(skill_dir)
-            if pead_mode_eff != "off":
+            if want_pead and pead_mode_eff != "off":
                 pead_eval = evaluate_pead_primary_entry(ticker, df, skill_dir=skill_dir)
                 pead_ok = bool(pead_eval.get("admitted"))
         except Exception as _e:
@@ -1145,23 +1523,22 @@ def _scan_stage_a_one(
 
         if not stage2_ok and not pead_ok and not horizon_ok:
             # Preserve legacy stage2_fail counter; PEAD miss is tracked separately.
+            pead_ran = bool(want_pead) and pead_mode_eff != "off"
             return {
                 "ok": False,
                 "reason": "stage2_fail",
                 "provider": provider,
                 "used_fallback": used_fallback,
                 "fallback_reason": history_meta.get("fallback_reason"),
-                "pead_primary_evaluated": pead_mode_eff != "off",
-                "pead_primary_fail": pead_mode_eff != "off",
+                "pead_primary_evaluated": pead_ran,
+                "pead_primary_fail": pead_ran,
                 "pead_primary_eval": pead_eval,
                 "strategy_pead_primary_mode": pead_configured,
                 "strategy_pead_primary_effective_mode": pead_mode_eff,
                 "horizon_hits": horizon_hits,
             }
 
-        entry_family = tag_entry_family(
-            stage2_ok=stage2_ok, pead_ok=pead_ok, horizon_ok=horizon_ok
-        ) or (
+        entry_family = tag_entry_family(stage2_ok=stage2_ok, pead_ok=pead_ok, horizon_ok=horizon_ok) or (
             "stage2" if stage2_ok else "pead_primary" if pead_ok else "horizon"
         )
         pead_only_admit = entry_family == "pead_primary"
@@ -1180,7 +1557,7 @@ def _scan_stage_a_one(
         def _with_stage2_shadow(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(entry_timing_at_stage2, dict):
                 payload["entry_timing_at_stage2"] = entry_timing_at_stage2
-            payload["pead_primary_evaluated"] = pead_mode_eff != "off"
+            payload["pead_primary_evaluated"] = bool(want_pead) and pead_mode_eff != "off"
             if pead_eval is not None:
                 payload["pead_primary_eval"] = pead_eval
             payload["strategy_pead_primary_mode"] = pead_configured
@@ -1203,7 +1580,8 @@ def _scan_stage_a_one(
         sector_etf = get_ticker_sector_etf(ticker, skill_dir=skill_dir)
         sector_unresolved = sector_etf is None
         sector_winning = sector_etf in winning_etfs if sector_etf is not None else False
-        if sector_unresolved and sector_gate_mode == "hard":
+        apply_sector_hard = sector_gate_mode == "hard" and not shadow_only_admit
+        if sector_unresolved and apply_sector_hard:
             return _with_stage2_shadow(
                 {
                     "ok": False,
@@ -1213,7 +1591,7 @@ def _scan_stage_a_one(
                     "fallback_reason": history_meta.get("fallback_reason"),
                 }
             )
-        if (not sector_unresolved and not sector_winning) and sector_gate_mode == "hard":
+        if (not sector_unresolved and not sector_winning) and apply_sector_hard:
             return _with_stage2_shadow(
                 {
                     "ok": False,
@@ -1232,7 +1610,7 @@ def _scan_stage_a_one(
         # extractor so a stale `closePrice` substitution cannot anchor a fresh
         # breakout decision (would compare today's high against yesterday's close).
         # PEAD-only admits skip breakout (backtest disables breakout for pead_primary).
-        apply_breakout = bool(breakout_enabled) and not shadow_only_admit
+        apply_breakout = bool(breakout_enabled) and not shadow_only_admit and bool(want_breakout_quotes)
         if apply_breakout:
             quote = get_current_quote(ticker, auth=auth, skill_dir=skill_dir)
             live = extract_schwab_live_price(quote) if isinstance(quote, dict) else None
@@ -1240,11 +1618,7 @@ def _scan_stage_a_one(
                 price = live
 
         prior_high = (
-            float(df["high"].iloc[-2])
-            if len(df) >= 2
-            else float(df["high"].iloc[-1])
-            if len(df) >= 1
-            else price
+            float(df["high"].iloc[-2]) if len(df) >= 2 else float(df["high"].iloc[-1]) if len(df) >= 1 else price
         )
         if apply_breakout:
             from datetime import datetime
@@ -1276,40 +1650,53 @@ def _scan_stage_a_one(
                         }
                     )
 
+        self_study_shadow_hit = False
         try:
-            from engine_analysis import compute_seed_fingerprint, get_cached_conviction
-            from self_study import get_learned_min_conviction
+            from core.llm_endpoint import resolve_llm_endpoint
+            from engine_analysis import MIROFISH_PROMPT_VERSION, compute_seed_fingerprint, get_cached_conviction
+            from self_study import resolve_self_study_floor
 
-            min_conv = get_learned_min_conviction(skill_dir)
-            if min_conv is not None and int(min_conv) > 0:
+            floor = resolve_self_study_floor(skill_dir)
+            if (
+                not _is_research_entry_family(entry_family)
+                and floor.min_conviction is not None
+                and int(floor.min_conviction) > 0
+                and floor.mode in {"shadow", "live"}
+            ):
                 fp = compute_seed_fingerprint(df, ticker, skill_dir)
                 cached = get_cached_conviction(
                     ticker,
                     skill_dir=skill_dir,
                     max_age_hours=12,
                     seed_fingerprint=fp,
+                    llm_model=resolve_llm_endpoint().model,
+                    prompt_version=MIROFISH_PROMPT_VERSION,
                 )
                 if isinstance(cached, dict) and cached.get("conviction_score") is not None:
                     try:
                         cv = float(cached["conviction_score"])
                     except (TypeError, ValueError):
                         cv = None
-                    if cv is not None and cv < float(min_conv):
-                        return _with_stage2_shadow(
-                            {
-                                "ok": False,
-                                "reason": "self_study_low_cached_conviction",
-                                "provider": provider,
-                                "used_fallback": used_fallback,
-                                "fallback_reason": history_meta.get("fallback_reason"),
-                            }
-                        )
+                    if cv is not None and cv < float(floor.min_conviction):
+                        if floor.mode == "live":
+                            return _with_stage2_shadow(
+                                {
+                                    "ok": False,
+                                    "reason": "self_study_low_cached_conviction",
+                                    "provider": provider,
+                                    "used_fallback": used_fallback,
+                                    "fallback_reason": history_meta.get("fallback_reason"),
+                                }
+                            )
+                        self_study_shadow_hit = True
         except Exception as _e:
             LOG.debug("Stage A self-study conviction gate skipped for %s: %s", ticker, _e)
 
         components = compute_signal_components(df, skill_dir=skill_dir)
         stage_a_score = float(components.get("score", 0) or 0)
         stage_a_penalties: list[str] = []
+        if self_study_shadow_hit:
+            stage_a_penalties.append("self_study_shadow_would_filter")
         if not vcp_ok:
             stage_a_score -= float(vcp_penalty_points)
             stage_a_penalties.append("vcp_fail")
@@ -1349,7 +1736,7 @@ def _scan_stage_a_one(
                     stage_a_penalties.append(f"entry_shadow_{reason}")
                 from stage_analysis import entry_timing_blocks_stage_a
 
-                if entry_timing_blocks_stage_a(entry_shadow, skill_dir):
+                if (not shadow_only_admit) and entry_timing_blocks_stage_a(entry_shadow, skill_dir):
                     return _with_stage2_shadow(
                         {
                             "ok": False,
@@ -1375,7 +1762,7 @@ def _scan_stage_a_one(
                 )
                 for reason in list(candidate_pts_52w_cap.get("would_filter_reasons") or []):
                     stage_a_penalties.append(reason)
-                if pts_52w_cap_blocks_stage_a(candidate_pts_52w_cap, skill_dir):
+                if (not shadow_only_admit) and pts_52w_cap_blocks_stage_a(candidate_pts_52w_cap, skill_dir):
                     return _with_stage2_shadow(
                         {
                             "ok": False,
@@ -1406,7 +1793,7 @@ def _scan_stage_a_one(
                 )
                 for reason in list(candidate_early_stop_gate.get("would_filter_reasons") or []):
                     stage_a_penalties.append(reason)
-                if early_stop_gate_blocks_stage_a(candidate_early_stop_gate, skill_dir):
+                if (not shadow_only_admit) and early_stop_gate_blocks_stage_a(candidate_early_stop_gate, skill_dir):
                     return _with_stage2_shadow(
                         {
                             "ok": False,
@@ -1423,6 +1810,9 @@ def _scan_stage_a_one(
         stage_a_score = max(0.0, stage_a_score)
         latest_volume = float(df["volume"].iloc[-1]) if "volume" in df.columns else None
         avg_vol_50 = float(df["avg_vol_50"].iloc[-1]) if "avg_vol_50" in df.columns else None
+        from stage_analysis import expansion_volume_ratio
+
+        entry_expansion_volume_ratio = expansion_volume_ratio(df)
         sma_200 = round(float(df["sma_200"].iloc[-1]), 2)
         # Stage-A edge proxy for PEAD shadow capacity ranking only; Stage B overwrites
         # edge_score on executable shortlist names during enrichment.
@@ -1444,9 +1834,11 @@ def _scan_stage_a_one(
             "df": df,
             "price": price,
             "sector_etf": sector_etf,
+            "sector_winning": bool(sector_winning),
             "breakout_confirmed": bool(price >= prior_high),
             "latest_volume": latest_volume,
             "avg_vol_50": avg_vol_50,
+            "expansion_volume_ratio": entry_expansion_volume_ratio,
             "sma_50": round(float(df["sma_50"].iloc[-1]), 2),
             "sma_200": sma_200,
             "stage_a_score": stage_a_score,
@@ -1468,6 +1860,8 @@ def _scan_stage_a_one(
                 for h in horizon_plugin_hits
                 if isinstance(h, dict)
             ],
+            "selected_strategy_ids": [str(s) for s in (selected_strategy_ids or []) if str(s).strip()],
+            "horizon_strategy_ids": [str(s) for s in (horizon_strategy_ids or []) if str(s).strip()],
             "pead_beat": (pead_eval or {}).get("pead_beat") if pead_eval else None,
             "pead_surprise_pct": (pead_eval or {}).get("pead_surprise_pct") if pead_eval else None,
             "data_provider": provider,
@@ -1475,6 +1869,24 @@ def _scan_stage_a_one(
             "used_fallback_data": used_fallback,
             "fallback_reason": history_meta.get("fallback_reason"),
         }
+        try:
+            from core.debate_grade import stamp_checklist_fields
+
+            stamped = stamp_checklist_fields(
+                df, skill_dir, include_points=False, include_vcp=False
+            )
+            candidate["vcp_present"] = bool(vcp_ok)
+            for key in ("trend_stack_ok", "sma200_rising"):
+                if key in stamped:
+                    candidate[key] = stamped[key]
+            try:
+                from backtest import _resolve_stop_pct_for_entry
+
+                candidate["stop_pct"] = float(_resolve_stop_pct_for_entry(df, len(df) - 1, skill_dir=skill_dir))
+            except Exception as stop_exc:
+                LOG.debug("Debate-grade stop skipped for %s: %s", ticker, stop_exc)
+        except Exception as stamp_exc:
+            LOG.debug("Debate-grade checklist skipped for %s: %s", ticker, stamp_exc)
         return _with_stage2_shadow({"ok": True, "candidate": candidate})
     except Exception as e:
         LOG.warning("Scan stage A error for %s: %s", ticker, e)
@@ -1486,6 +1898,356 @@ def _scan_stage_a_one(
             "used_fallback": False,
             "fallback_reason": f"stage_a_exception:{type(e).__name__}",
         }
+
+
+def _note_stage_a_outcome(
+    ticker: str,
+    out: dict[str, Any],
+    *,
+    diagnostics: dict[str, Any],
+    data_failures: list[str],
+    reason_keys: set[str],
+    scan_id: str,
+    skill_dir: Path,
+    record_nonfatal: Callable[..., None] | None,
+    count_decision: bool = True,
+) -> None:
+    """Count one Stage A decision. Does not admit the candidate into the shortlist."""
+    if not count_decision:
+        out = dict(out)
+    if count_decision and out.get("pead_primary_evaluated"):
+        diagnostics["pead_primary_evaluated"] = int(diagnostics.get("pead_primary_evaluated", 0) or 0) + 1
+    if count_decision and out.get("pead_primary_fail"):
+        diagnostics["pead_primary_fail"] = int(diagnostics.get("pead_primary_fail", 0) or 0) + 1
+    if count_decision:
+        _accumulate_provider_fallback_diagnostics(diagnostics, out)
+        _accumulate_entry_shadow_stage2_diagnostics(diagnostics, out)
+    reason = str(out.get("reason") or "exceptions")
+    if out.get("ok"):
+        candidate = out.get("candidate") if isinstance(out.get("candidate"), dict) else {}
+        for penalty in list(candidate.get("stage_a_penalties") or []):
+            if penalty == "vcp_fail":
+                diagnostics["stage_a_vcp_would_filter"] = int(diagnostics.get("stage_a_vcp_would_filter", 0) or 0) + 1
+            elif penalty == "sector_not_winning":
+                diagnostics["stage_a_sector_would_filter"] = (
+                    int(diagnostics.get("stage_a_sector_would_filter", 0) or 0) + 1
+                )
+            elif penalty == "no_sector_etf":
+                diagnostics["stage_a_no_sector_would_filter"] = (
+                    int(diagnostics.get("stage_a_no_sector_would_filter", 0) or 0) + 1
+                )
+            elif penalty == "self_study_shadow_would_filter":
+                diagnostics["self_study_would_filter_cached"] = (
+                    int(diagnostics.get("self_study_would_filter_cached", 0) or 0) + 1
+                )
+            elif penalty == "stage2_shadow_would_filter":
+                diagnostics["stage2_shadow_would_filter"] = (
+                    int(diagnostics.get("stage2_shadow_would_filter", 0) or 0) + 1
+                )
+            elif penalty == "entry_shadow_sma50_cushion_low":
+                diagnostics["entry_shadow_would_filter_sma50_low"] = (
+                    int(diagnostics.get("entry_shadow_would_filter_sma50_low", 0) or 0) + 1
+                )
+            elif penalty == "entry_shadow_sma50_extension_high":
+                diagnostics["entry_shadow_would_filter_sma50_high"] = (
+                    int(diagnostics.get("entry_shadow_would_filter_sma50_high", 0) or 0) + 1
+                )
+            elif penalty == "entry_shadow_breakout_buffer_low":
+                diagnostics["entry_shadow_would_filter_breakout_buffer"] = (
+                    int(diagnostics.get("entry_shadow_would_filter_breakout_buffer", 0) or 0) + 1
+                )
+            elif penalty == "pts_52w_cap_high":
+                diagnostics["pts_52w_cap_would_filter"] = int(diagnostics.get("pts_52w_cap_would_filter", 0) or 0) + 1
+            elif str(penalty).startswith("early_stop_"):
+                diagnostics["early_stop_gate_would_filter"] = (
+                    int(diagnostics.get("early_stop_gate_would_filter", 0) or 0) + 1
+                )
+        entry_shadow_hits = [
+            p for p in list(candidate.get("stage_a_penalties") or []) if str(p).startswith("entry_shadow_")
+        ]
+        if entry_shadow_hits:
+            diagnostics["entry_shadow_would_filter_any"] = (
+                int(diagnostics.get("entry_shadow_would_filter_any", 0) or 0) + 1
+            )
+    elif count_decision and reason == "stage_a_timeout":
+        diagnostics["stage_a_timeouts"] += 1
+        diagnostics["exceptions"] += 1
+        if out.get("error"):
+            data_failures.append(str(out["error"]))
+    elif count_decision and reason == "exceptions":
+        diagnostics["exceptions"] += 1
+        diagnostics["stage_a_task_exceptions"] += 1
+        if out.get("error"):
+            data_failures.append(str(out["error"]))
+    elif count_decision:
+        if reason in reason_keys:
+            diagnostics[reason] += 1
+        if out.get("error"):
+            data_failures.append(str(out["error"]))
+    try:
+        from feature_store import log_stage_a_result
+
+        log_stage_a_result(
+            scan_id=scan_id,
+            ticker=ticker,
+            result=out,
+            regime_bucket=diagnostics.get("regime_v2_bucket"),
+            skill_dir=skill_dir,
+        )
+    except Exception as exc:
+        if record_nonfatal is not None:
+            record_nonfatal(
+                "stage_a_logging_failures",
+                "Stage A feature-store logging failed for %s: %s",
+                ticker,
+                exc,
+            )
+        else:
+            diagnostics["stage_a_logging_failures"] = int(diagnostics.get("stage_a_logging_failures", 0) or 0) + 1
+            LOG.warning("Stage A feature-store logging failed for %s: %s", ticker, exc)
+
+
+def _run_coverage_stage_a(
+    *,
+    watchlist: list[str],
+    diagnostics: dict[str, Any],
+    data_failures: list[str],
+    reason_keys: set[str],
+    scan_id: str,
+    skill_dir: Path,
+    record_nonfatal: Callable[..., None] | None,
+    auth: Any,
+    winning_etfs: set[str] | None,
+    breakout_enabled: bool,
+    breakout_min_time: int,
+    vcp_gate_mode: str,
+    sector_gate_mode: str,
+    vcp_penalty_points: float,
+    sector_penalty_points: float,
+    sector_unresolved_penalty_points: float,
+    strategy_ids: list[str] | None,
+    scan_arms: dict[str, Any],
+    stage_a_workers: int,
+    stage_wall_budget_sec: float,
+    task_timeout_sec: float,
+) -> list[dict[str, Any]]:
+    """Executable coverage first. Horizon history cannot cancel those decisions."""
+    from config import get_scan_stage_a_max_stalls
+    from core.horizon_strategies import executable_stage_a_history_days, stage_a_history_days
+    from core.stage_a_coverage import (
+        checkpoint_path,
+        checkpoint_writes_enabled,
+        clear_checkpoint,
+        coverage_note,
+        load_checkpoint,
+        merge_horizon_candidates,
+        reusable_from_checkpoint,
+        run_stage_a_waves,
+        save_checkpoint,
+        session_date_et,
+        universe_key,
+    )
+
+    horizon_ids = [str(s) for s in (scan_arms.get("want_horizon") or []) if str(s).strip()]
+    want_stage2 = bool(scan_arms.get("want_stage2", True))
+    want_pead = bool(scan_arms.get("want_pead"))
+    want_horizon = bool(horizon_ids)
+    run_executable = want_stage2 or want_pead
+    executable_days = int(executable_stage_a_history_days())
+    horizon_days = int(stage_a_history_days(strategy_ids)) if want_horizon else 0
+    diagnostics["stage_a_history_days"] = executable_days
+    diagnostics["executable_history_days"] = executable_days
+    diagnostics["horizon_history_days"] = horizon_days
+    diagnostics["horizon_arm"] = int(want_horizon)
+    diagnostics["executable_arm"] = int(run_executable)
+    selected_ids = [str(s) for s in (strategy_ids or []) if str(s).strip()]
+    symbols = [str(t).upper().strip() for t in watchlist if str(t).strip()]
+    key = universe_key(
+        tickers=symbols,
+        strategy_ids=selected_ids,
+        executable_days=executable_days,
+        horizon_days=horizon_days,
+        want_stage2=want_stage2,
+        want_pead=want_pead,
+        want_horizon=want_horizon,
+    )
+    session_date = session_date_et()
+    path = checkpoint_path(skill_dir)
+    persist = checkpoint_writes_enabled(skill_dir)
+    resumed_exec, resumed_horizon, _horizon_started = ({}, {}, False)
+    if persist:
+        resumed_exec, resumed_horizon, _horizon_started = reusable_from_checkpoint(
+            load_checkpoint(path),
+            universe_key_value=key,
+            session_date=session_date,
+        )
+    diagnostics["stage_a_checkpoint_resumed"] = len(resumed_exec)
+
+    winners = set(winning_etfs or [])
+    max_stalls = int(get_scan_stage_a_max_stalls(skill_dir))
+
+    def _note(ticker: str, out: dict[str, Any], *, count_decision: bool = True) -> None:
+        _note_stage_a_outcome(
+            ticker,
+            out,
+            diagnostics=diagnostics,
+            data_failures=data_failures,
+            reason_keys=reason_keys,
+            scan_id=scan_id,
+            skill_dir=skill_dir,
+            record_nonfatal=record_nonfatal,
+            count_decision=count_decision,
+        )
+
+    def _save(executable: dict[str, dict[str, Any]], horizon: dict[str, dict[str, Any]], started: bool) -> None:
+        if not persist:
+            return
+        try:
+            save_checkpoint(
+                path,
+                universe_key_value=key,
+                session_date=session_date,
+                executable=executable,
+                horizon=horizon,
+                horizon_started=started,
+            )
+        except Exception as exc:
+            LOG.warning("Stage A checkpoint save failed: %s", exc)
+
+    for ticker, result in resumed_exec.items():
+        _note(ticker, result)
+
+    executable_args = (
+        auth,
+        winners,
+        skill_dir,
+        breakout_enabled,
+        breakout_min_time,
+        vcp_gate_mode,
+        sector_gate_mode,
+        vcp_penalty_points,
+        sector_penalty_points,
+        sector_unresolved_penalty_points,
+        [],
+        executable_days,
+        want_stage2,
+        want_pead,
+        bool(scan_arms.get("want_breakout_quotes")),
+        selected_ids,
+    )
+    executable_results: dict[str, dict[str, Any]] = dict(resumed_exec)
+    if run_executable:
+        exec_report = run_stage_a_waves(
+            symbols,
+            _scan_stage_a_one,
+            eval_args=executable_args,
+            max_workers=stage_a_workers,
+            wall_budget_sec=stage_wall_budget_sec,
+            task_timeout_sec=task_timeout_sec,
+            max_stalls=max_stalls,
+            executor_cls=cf.ThreadPoolExecutor,
+            as_completed=cf.as_completed,
+            timeout_error=cf.TimeoutError,
+            on_result=_note,
+            on_wave=lambda results, _pending: _save(results, resumed_horizon, False),
+            prior_results=resumed_exec,
+        )
+        executable_results = dict(exec_report["results"])
+        diagnostics["stage_a_executable_waves"] = int(exec_report["waves"])
+        diagnostics["stage_a_waves"] = int(diagnostics.get("stage_a_waves", 0) or 0) + int(exec_report["waves"])
+        diagnostics["stage_a_stalls"] = int(diagnostics.get("stage_a_stalls", 0) or 0) + int(exec_report["stalls"])
+        executable_unresolved = list(exec_report["unresolved"])
+    else:
+        executable_unresolved = []
+        diagnostics["executable_coverage_complete"] = 1
+
+    executable_complete = len(executable_unresolved) == 0
+    diagnostics["executable_coverage_complete"] = int(executable_complete or not run_executable)
+    diagnostics["stage_a_evaluated"] = len(symbols) - len(executable_unresolved) if run_executable else len(symbols)
+
+    horizon_results: dict[str, dict[str, Any]] = {}
+    horizon_unresolved: list[str] = []
+    if want_horizon and executable_complete:
+        horizon_results = dict(resumed_horizon)
+        horizon_args = (
+            auth,
+            winners,
+            skill_dir,
+            breakout_enabled,
+            breakout_min_time,
+            vcp_gate_mode,
+            sector_gate_mode,
+            vcp_penalty_points,
+            sector_penalty_points,
+            sector_unresolved_penalty_points,
+            horizon_ids,
+            max(horizon_days, executable_days),
+            False,
+            False,
+            False,
+            selected_ids,
+        )
+        horizon_report = run_stage_a_waves(
+            symbols,
+            _scan_stage_a_one,
+            eval_args=horizon_args,
+            max_workers=stage_a_workers,
+            wall_budget_sec=stage_wall_budget_sec,
+            task_timeout_sec=task_timeout_sec,
+            max_stalls=max_stalls,
+            executor_cls=cf.ThreadPoolExecutor,
+            as_completed=cf.as_completed,
+            timeout_error=cf.TimeoutError,
+            on_result=None,
+            on_wave=lambda results, _pending: _save(executable_results, results, True),
+            prior_results=resumed_horizon,
+        )
+        horizon_results = dict(horizon_report["results"])
+        horizon_unresolved = list(horizon_report["unresolved"])
+        diagnostics["stage_a_horizon_waves"] = int(horizon_report["waves"])
+        diagnostics["stage_a_waves"] = int(diagnostics.get("stage_a_waves", 0) or 0) + int(horizon_report["waves"])
+        diagnostics["stage_a_stalls"] = int(diagnostics.get("stage_a_stalls", 0) or 0) + int(horizon_report["stalls"])
+        for ticker in horizon_unresolved:
+            data_failures.append(f"{ticker}: horizon stage_a timeout")
+    elif want_horizon:
+        horizon_unresolved = list(symbols)
+        LOG.info(
+            "Horizon sidecar deferred: executable coverage incomplete (%s names)",
+            len(executable_unresolved),
+        )
+
+    horizon_complete = (not want_horizon) or len(horizon_unresolved) == 0
+    diagnostics["horizon_coverage_complete"] = int(horizon_complete)
+    diagnostics["horizon_unresolved"] = len(horizon_unresolved)
+    note = coverage_note(
+        watchlist=len(symbols),
+        executable_requested=run_executable,
+        executable_unresolved=len(executable_unresolved),
+        horizon_requested=want_horizon,
+        horizon_unresolved=len(horizon_unresolved),
+    )
+    diagnostics["coverage_note"] = note
+    diagnostics["scan_partial"] = int(bool(note))
+    if persist:
+        if executable_complete and horizon_complete:
+            clear_checkpoint(path)
+        else:
+            _save(executable_results, horizon_results, want_horizon and executable_complete)
+
+    candidates = merge_horizon_candidates(executable_results, horizon_results)
+    for candidate in candidates:
+        if str(candidate.get("entry_family") or "").lower() != "horizon":
+            continue
+        ticker = str(candidate.get("ticker") or "")
+        _note(ticker, {"ok": True, "candidate": candidate}, count_decision=False)
+    LOG.info(
+        "Stage A coverage: executable_complete=%s horizon_complete=%s unresolved=%s waves=%s",
+        int(executable_complete or not run_executable),
+        int(horizon_complete),
+        len(executable_unresolved),
+        int(diagnostics.get("stage_a_waves", 0) or 0),
+    )
+    return candidates
 
 
 def _scan_stage_b_enrich(
@@ -1522,6 +2284,7 @@ def _scan_stage_b_enrich(
     regime_is_bullish: bool | None,
     mgmt_integrity_mode: str = "off",
     mgmt_integrity_filter_min_score: int = 50,
+    session_data_quality: str | None = None,
 ) -> dict[str, Any]:
     from stage_analysis import compute_signal_components
 
@@ -1567,31 +2330,28 @@ def _scan_stage_b_enrich(
         # MiroFish simulation: use cache if fresh, else run and cache
         mirofish_result = None
         try:
+            from core.llm_endpoint import resolve_llm_endpoint
             from engine_analysis import (
+                MIROFISH_PROMPT_VERSION,
                 MarketSimulation,
                 cache_conviction,
                 compute_seed_fingerprint,
                 get_cached_conviction,
+                public_mirofish_view,
             )
 
             seed_fingerprint = compute_seed_fingerprint(df, ticker, skill_dir)
+            expected_model = resolve_llm_endpoint().model
             cached = get_cached_conviction(
                 ticker,
                 skill_dir=skill_dir,
                 max_age_hours=12,
                 seed_fingerprint=seed_fingerprint,
+                llm_model=expected_model,
+                prompt_version=MIROFISH_PROMPT_VERSION,
             )
             if cached:
-                mirofish_result = {
-                    "conviction_score": cached.get("conviction_score"),
-                    "summary": cached.get("summary"),
-                    "agent_votes": cached.get("agent_votes", []),
-                    "simulation_id": cached.get("simulation_id"),
-                    "continuation_probability": cached.get("continuation_probability"),
-                    "bull_trap_probability": cached.get("bull_trap_probability"),
-                    "mirofish_disagreement": cached.get("mirofish_disagreement"),
-                    "agent_weighting": cached.get("agent_weighting"),
-                }
+                mirofish_result = public_mirofish_view(cached)
             else:
                 sim = MarketSimulation(
                     ticker,
@@ -1610,16 +2370,7 @@ def _scan_stage_b_enrich(
                 # again until the LLM is reachable.
                 if result.get("conviction_score") is not None:
                     cache_conviction(ticker, result, skill_dir=skill_dir)
-                mirofish_result = {
-                    "conviction_score": result.get("conviction_score"),
-                    "summary": result.get("summary"),
-                    "agent_votes": result.get("agent_votes", []),
-                    "simulation_id": result.get("simulation_id"),
-                    "continuation_probability": result.get("continuation_probability"),
-                    "bull_trap_probability": result.get("bull_trap_probability"),
-                    "mirofish_disagreement": result.get("mirofish_disagreement"),
-                    "agent_weighting": result.get("agent_weighting"),
-                }
+                mirofish_result = public_mirofish_view(result)
         except Exception as e:
             LOG.warning("MiroFish for %s: %s", ticker, e)
 
@@ -1783,17 +2534,21 @@ def _scan_stage_b_enrich(
             "ticker": ticker,
             "price": round(float(candidate.get("price") or 0.0), 2),
             "sector_etf": candidate.get("sector_etf"),
+            "sector_winning": bool(candidate.get("sector_winning")),
             "sma_50": candidate.get("sma_50"),
             "sma_200": candidate.get("sma_200"),
             "mirofish_summary": mirofish_result.get("summary") if mirofish_result else None,
             "mirofish_conviction": mirofish_result.get("conviction_score") if mirofish_result else None,
             "mirofish_disagreement": mirofish_result.get("mirofish_disagreement") if mirofish_result else None,
+            "mirofish_llm_provider": mirofish_result.get("llm_provider") if mirofish_result else None,
+            "mirofish_llm_model": mirofish_result.get("llm_model") if mirofish_result else None,
             "agent_weighting": mirofish_result.get("agent_weighting") if mirofish_result else None,
             "mirofish_result": mirofish_result,
             "signal_score": score,
             "score_components": components,
             "latest_volume": latest_volume,
             "avg_vol_50": avg_vol_50,
+            "expansion_volume_ratio": candidate.get("expansion_volume_ratio"),
             "recent_8k": sec_recent_8k,
             "filing_recency_days": sec_filing_recency_days,
             "sec_risk_tag": sec_risk_tag,
@@ -1819,14 +2574,23 @@ def _scan_stage_b_enrich(
             "data_provider_primary": bool(candidate.get("data_provider_primary")),
             "used_fallback_data": bool(candidate.get("used_fallback_data")),
             "fallback_reason": candidate.get("fallback_reason"),
-            "_data_quality": candidate.get("data_quality"),
+            "_data_quality": session_data_quality or candidate.get("data_quality"),
             "entry_timing_shadow": candidate.get("entry_timing_shadow"),
+            "trend_stack_ok": candidate.get("trend_stack_ok"),
+            "sma200_rising": candidate.get("sma200_rising"),
+            "vcp_present": candidate.get("vcp_present"),
+            "stop_pct": candidate.get("stop_pct"),
         }
+        # Dated business observation for this scan only. Backtests do not stamp this.
+        if isinstance(forensic_snapshot, dict) and forensic_snapshot.get("ok"):
+            signal_row["forensic_observed"] = True
+        if str(sec_risk_tag).lower() in {"low", "medium", "high"} or signal_row.get("forensic_observed") is True:
+            signal_row["business_as_of"] = datetime.now(timezone.utc).date().isoformat()
         advisory_payload: dict[str, Any] | None = None
         try:
             from advisory_model import score_signal_advisory
 
-            advisory = score_signal_advisory(signal_row, skill_dir=skill_dir)
+            advisory = score_signal_advisory(signal_row, skill_dir=skill_dir, window=df)
             if advisory is not None:
                 adv_dict = advisory.to_dict()
                 signal_row["advisory"] = adv_dict
@@ -1985,6 +2749,18 @@ def _scan_stage_b_enrich(
             LOG.debug("Strategy plugin evaluation skipped for %s: %s", ticker, e)
 
         signal_row = _apply_score_stack(signal_row)
+        try:
+            from core.research_wave import annotate_research_wave
+
+            notes = annotate_research_wave(signal_row, skill_dir=skill_dir, df=df)
+            for key, count in notes.items():
+                if count:
+                    diag_delta[key] = int(diag_delta.get(key, 0) or 0) + int(count)
+            abstain = signal_row.get("mirofish_abstain") if isinstance(signal_row.get("mirofish_abstain"), dict) else {}
+            if abstain.get("mode") == "live" and abstain.get("would"):
+                signal_row = _apply_score_stack(signal_row)
+        except Exception as e:
+            LOG.debug("Research-wave annotation skipped for %s: %s", ticker, e)
         # Prob-rank shadow/live: score from Stage-B bars (selection applied later in cohort).
         try:
             from config import get_prob_rank_mode
@@ -1995,16 +2771,71 @@ def _scan_stage_b_enrich(
                 if block is not None:
                     diag_delta["prob_rank_scored"] = int(diag_delta.get("prob_rank_scored", 0) or 0) + 1
                 else:
-                    diag_delta["prob_rank_score_failed"] = (
-                        int(diag_delta.get("prob_rank_score_failed", 0) or 0) + 1
-                    )
+                    diag_delta["prob_rank_score_failed"] = int(diag_delta.get("prob_rank_score_failed", 0) or 0) + 1
         except Exception as e:
             LOG.debug("prob-rank Stage B scoring skipped for %s: %s", ticker, e)
             diag_delta["prob_rank_score_failed"] = int(diag_delta.get("prob_rank_score_failed", 0) or 0) + 1
+        # Setup confidence shadow: needs the same PIT registry features as prob-rank.
+        try:
+            _attach_setup_confidence(signal_row, df, skill_dir, diag_delta)
+        except Exception as e:
+            LOG.debug("setup-confidence Stage B scoring skipped for %s: %s", ticker, e)
+            diag_delta["confidence_rank_score_failed"] = (
+                int(diag_delta.get("confidence_rank_score_failed", 0) or 0) + 1
+            )
         return {"ok": True, "signal": signal_row, "diag": diag_delta}
     except Exception as e:
         diag_delta["stage_b_exceptions"] += 1
         return {"ok": False, "error": f"{ticker}: {e}", "diag": diag_delta}
+
+
+def _attach_setup_confidence(
+    signal_row: dict[str, Any],
+    df: Any,
+    skill_dir: Path,
+    diag_delta: dict[str, Any],
+) -> None:
+    """Attach the shadow survival readout from Stage-B bars. Never sorts or drops.
+
+    ``live`` is refused: walk-forward showed the blend clears the PF floors but
+    does not beat `pts_52w` alone by a meaningful margin.
+    """
+    from config import get_confidence_rank_artifact, get_confidence_rank_mode
+
+    mode = get_confidence_rank_mode(skill_dir)
+    if mode == "off":
+        return
+    if mode == "live":
+        diag_delta["confidence_rank_skipped"] = "live_not_approved"
+        return
+
+    from core.scoring_confidence import load_confidence_artifact, score_setup_confidence
+
+    artifact = load_confidence_artifact(skill_dir, get_confidence_rank_artifact(skill_dir))
+    if artifact is None:
+        diag_delta["confidence_rank_skipped"] = "artifact_missing"
+        return
+
+    from research.feature_engine import compute_feature_row, window_asof
+
+    pit = window_asof(df, df.index[-1])
+    feature_row = compute_feature_row(
+        ticker=str(signal_row.get("ticker") or "").upper(),
+        df=pit,
+        asof_date=str(pit.index[-1].date()),
+        require_stage2=False,
+        skill_dir=skill_dir,
+        bar_provider=str(signal_row.get("data_provider") or "") or None,
+    )
+    sort_before = signal_row.get("sort_score")
+    block = score_setup_confidence(signal_row, artifact, feature_row=feature_row)
+    if block is None:
+        diag_delta["confidence_rank_unscored"] = int(diag_delta.get("confidence_rank_unscored", 0) or 0) + 1
+        return
+    signal_row.update(block)
+    # Shadow must never retarget the live sort.
+    signal_row["sort_score"] = sort_before
+    diag_delta["confidence_rank_scored"] = int(diag_delta.get("confidence_rank_scored", 0) or 0) + 1
 
 
 def _accumulate_provider_fallback_diagnostics(
@@ -2020,27 +2851,21 @@ def _accumulate_provider_fallback_diagnostics(
     if provider == "schwab":
         diagnostics["data_provider_primary_count"] += 1
         if used_fallback or fb_reason:
-            diagnostics["fallback_inconsistent_count"] = int(
-                diagnostics.get("fallback_inconsistent_count", 0) or 0
-            ) + 1
+            diagnostics["fallback_inconsistent_count"] = int(diagnostics.get("fallback_inconsistent_count", 0) or 0) + 1
     elif provider == "yfinance":
-        diagnostics["data_provider_fallback_count"] = int(
-            diagnostics.get("data_provider_fallback_count", 0) or 0
-        ) + 1
+        diagnostics["data_provider_fallback_count"] = int(diagnostics.get("data_provider_fallback_count", 0) or 0) + 1
         if not fb_reason:
-            diagnostics["fallback_reason_missing_count"] = int(
-                diagnostics.get("fallback_reason_missing_count", 0) or 0
-            ) + 1
+            diagnostics["fallback_reason_missing_count"] = (
+                int(diagnostics.get("fallback_reason_missing_count", 0) or 0) + 1
+            )
         if not used_fallback:
-            diagnostics["fallback_inconsistent_count"] = int(
-                diagnostics.get("fallback_inconsistent_count", 0) or 0
-            ) + 1
+            diagnostics["fallback_inconsistent_count"] = int(diagnostics.get("fallback_inconsistent_count", 0) or 0) + 1
     else:
         diagnostics["data_provider_unknown_count"] += 1
         if used_fallback and not fb_reason:
-            diagnostics["fallback_reason_missing_count"] = int(
-                diagnostics.get("fallback_reason_missing_count", 0) or 0
-            ) + 1
+            diagnostics["fallback_reason_missing_count"] = (
+                int(diagnostics.get("fallback_reason_missing_count", 0) or 0) + 1
+            )
 
 
 def _accumulate_entry_shadow_stage2_diagnostics(
@@ -2051,19 +2876,17 @@ def _accumulate_entry_shadow_stage2_diagnostics(
     shadow = out.get("entry_timing_at_stage2")
     if not isinstance(shadow, dict):
         return
-    diagnostics["entry_shadow_stage2_evaluated"] = int(
-        diagnostics.get("entry_shadow_stage2_evaluated", 0) or 0
-    ) + 1
+    diagnostics["entry_shadow_stage2_evaluated"] = int(diagnostics.get("entry_shadow_stage2_evaluated", 0) or 0) + 1
     if not bool(shadow.get("would_filter")):
         return
-    diagnostics["entry_shadow_stage2_would_filter_any"] = int(
-        diagnostics.get("entry_shadow_stage2_would_filter_any", 0) or 0
-    ) + 1
+    diagnostics["entry_shadow_stage2_would_filter_any"] = (
+        int(diagnostics.get("entry_shadow_stage2_would_filter_any", 0) or 0) + 1
+    )
     for reason in list(shadow.get("would_filter_reasons") or []):
         if reason == "breakout_buffer_low":
-            diagnostics["entry_shadow_stage2_would_filter_breakout_buffer"] = int(
-                diagnostics.get("entry_shadow_stage2_would_filter_breakout_buffer", 0) or 0
-            ) + 1
+            diagnostics["entry_shadow_stage2_would_filter_breakout_buffer"] = (
+                int(diagnostics.get("entry_shadow_stage2_would_filter_breakout_buffer", 0) or 0) + 1
+            )
 
 
 def _score_quantile_threshold(values: list[float], min_percentile: int) -> float:
@@ -2172,9 +2995,9 @@ def _apply_signal_edge_shadow_diagnostics(
         if any(bool(per_signal.get(f"{col}_would_drop")) for col, _, _ in specs):
             per_signal["would_drop_any"] = True
             would_drop_any += 1
-    diagnostics["rank_filter_would_drop_any"] = int(
-        diagnostics.get("rank_filter_would_drop_any", 0) or 0
-    ) + would_drop_any
+    diagnostics["rank_filter_would_drop_any"] = (
+        int(diagnostics.get("rank_filter_would_drop_any", 0) or 0) + would_drop_any
+    )
     diagnostics["rank_filter_shadow"] = shadow_meta
 
 
@@ -2194,8 +3017,11 @@ def _apply_rank_v2_percentile_filter(
     if mode == "off" or not signals:
         return signals
 
+    research_ids = {id(signal) for signal in signals if _is_research_entry_family(signal.get("entry_family"))}
     scored: list[tuple[dict[str, Any], float]] = []
     for signal in signals:
+        if id(signal) in research_ids:
+            continue
         raw = signal.get("rank_score_v2")
         if raw is None:
             try:
@@ -2227,9 +3053,156 @@ def _apply_rank_v2_percentile_filter(
 
     if mode != "live":
         return signals
-    kept = [signal for signal in signals if id(signal) not in would_drop_ids]
+    kept = [signal for signal in signals if id(signal) in research_ids or id(signal) not in would_drop_ids]
     diagnostics["rank_filter_v2_dropped"] = len(signals) - len(kept)
     return kept
+
+
+def _apply_historical_rank_cohort(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    skill_dir: Path,
+) -> list[dict[str, Any]]:
+    """Score the fitted historical blend and attach cohort percentiles.
+
+    ``shadow`` annotates only. ``live`` additionally re-points ``sort_score``
+    at the blend, which stays blocked until the five-era counterfactual beats
+    the current rank-v2 p76 + ``signal_score`` stack.
+    """
+    from config import get_historical_rank_artifact, get_historical_rank_mode
+    from core.scoring_historical import (
+        cohort_percentile,
+        compute_historical_rank,
+        load_blend_artifact,
+    )
+
+    mode = get_historical_rank_mode(skill_dir)
+    diagnostics["historical_rank_mode"] = mode
+    if mode == "off" or not signals:
+        return signals
+
+    artifact = load_blend_artifact(skill_dir, get_historical_rank_artifact(skill_dir))
+    if artifact is None:
+        diagnostics["historical_rank_skipped"] = "artifact_missing"
+        return signals
+    diagnostics["historical_rank_model_id"] = artifact.get("model_id")
+
+    scored: list[tuple[dict[str, Any], float]] = []
+    for signal in signals:
+        block = compute_historical_rank(signal, artifact, skill_dir=skill_dir)
+        if block is None:
+            diagnostics["historical_rank_unscored"] = int(diagnostics.get("historical_rank_unscored", 0) or 0) + 1
+            continue
+        signal["historical_rank"] = block["score"]
+        signal["historical_rank_raw"] = block["blend_raw"]
+        signal["historical_rank_reasons"] = block["reasons"]
+        signal["historical_rank_features"] = block["features"]
+        scored.append((signal, float(block["score"])))
+
+    diagnostics["historical_rank_scored"] = len(scored)
+    if not scored:
+        return signals
+
+    ordered = sorted(score for _, score in scored)
+    for signal, score in scored:
+        signal["rank_percentile"] = round(cohort_percentile(ordered, score), 2)
+
+    if mode == "live":
+        for signal, score in scored:
+            signal["sort_score"] = score
+            signal["rank_basis"] = "historical_rank_blend"
+        diagnostics["historical_rank_sorted"] = 1
+    return signals
+
+
+def _apply_analog_overlay(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    skill_dir: Path,
+) -> list[dict[str, Any]]:
+    """Attach winner-neighborhood analog fields. Shadow only — never sorts.
+
+    ``live`` is a refused stub this wave: it does not retarget ``sort_score``
+    and does not drop rows.
+    """
+    from config import (
+        get_analog_overlay_artifact,
+        get_analog_overlay_k,
+        get_analog_overlay_min_n,
+        get_analog_overlay_mode,
+    )
+    from core.scoring_analog import library_from_artifact, load_analog_artifact, score_analog
+
+    mode = get_analog_overlay_mode(skill_dir)
+    diagnostics["analog_overlay_mode"] = mode
+    if mode == "off" or not signals:
+        return signals
+    if mode == "live":
+        diagnostics["analog_overlay_skipped"] = "live_not_approved"
+        return signals
+
+    artifact = load_analog_artifact(skill_dir, get_analog_overlay_artifact(skill_dir))
+    if artifact is None:
+        diagnostics["analog_overlay_skipped"] = "artifact_missing"
+        return signals
+    lib = library_from_artifact(artifact)
+    if lib is None:
+        diagnostics["analog_overlay_skipped"] = "artifact_invalid"
+        return signals
+    diagnostics["analog_overlay_model_id"] = lib.model_id
+    k = get_analog_overlay_k(skill_dir)
+    min_n = get_analog_overlay_min_n(skill_dir)
+
+    scored = 0
+    unscored = 0
+    thin = 0
+    for signal in signals:
+        sort_before = signal.get("sort_score")
+        block = score_analog(signal, lib, k=k, min_n=min_n)
+        if block is None:
+            unscored += 1
+            continue
+        signal["analog_p_win"] = block.get("analog_p_win")
+        signal["analog_neighborhood_pf"] = block.get("analog_neighborhood_pf")
+        signal["analog_n"] = block.get("analog_n")
+        signal["analog_thin"] = block.get("analog_thin")
+        signal["analog_regime"] = block.get("analog_regime")
+        signal["analog_reasons"] = block.get("analog_reasons")
+        signal["analog_neighbors"] = block.get("analog_neighbors")
+        signal["analog_score"] = block.get("analog_score")
+        signal["analog_calibration_note"] = block.get("analog_calibration_note")
+        if block.get("analog_thin"):
+            thin += 1
+        scored += 1
+        # Shadow must never retarget live sort, even if a caller mutates later.
+        if signal.get("sort_score") != sort_before:
+            signal["sort_score"] = sort_before
+    diagnostics["analog_overlay_scored"] = scored
+    diagnostics["analog_overlay_unscored"] = unscored
+    diagnostics["analog_overlay_thin"] = thin
+    return signals
+
+
+def _stamp_confidence_rank_diagnostics(
+    signals: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+    skill_dir: Path,
+) -> None:
+    """Roll the per-ticker confidence attach up to scan-level diagnostics."""
+    from config import get_confidence_rank_mode
+
+    mode = get_confidence_rank_mode(skill_dir)
+    diagnostics["confidence_rank_mode"] = mode
+    if mode == "off" or not signals:
+        return
+    scored = [s for s in signals if s.get("setup_confidence") is not None]
+    diagnostics["confidence_rank_scored"] = len(scored)
+    diagnostics["confidence_rank_unscored"] = len(signals) - len(scored)
+    if scored:
+        model_ids = {str(s.get("setup_confidence_model_id") or "") for s in scored}
+        diagnostics["confidence_rank_model_id"] = sorted(m for m in model_ids if m)[:1] or None
+        if diagnostics["confidence_rank_model_id"]:
+            diagnostics["confidence_rank_model_id"] = diagnostics["confidence_rank_model_id"][0]
 
 
 def _apply_post_stage_b_chain(
@@ -2303,34 +3276,51 @@ def _apply_post_stage_b_chain(
             if reasons_by_ticker and ticker in reasons_by_ticker:
                 snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
 
-    # Self-study: optionally filter by learned min conviction
+    # Self-study: optionally filter by learned min conviction (live) or count
+    # would-filter only (shadow). Demo / under-sampled floors are refused.
     try:
-        from self_study import get_learned_min_conviction
-        min_conv = get_learned_min_conviction(skill_dir)
-        if min_conv is not None:
+        from self_study import resolve_self_study_floor, signal_below_self_study_floor
+
+        floor = resolve_self_study_floor(skill_dir)
+        diagnostics["self_study_mode"] = floor.mode
+        diagnostics["self_study_min_conviction"] = floor.min_conviction
+        diagnostics["self_study_floor_reason"] = floor.reason
+        if floor.min_conviction is not None:
             before = list(signals)
-            signals = [
-                s
-                for s in signals
-                if str(s.get("entry_family") or "") == "horizon"
-                or (s.get("mirofish_conviction") or 0) >= min_conv
-            ]
-            if len(before) > len(signals):
+            below = [s for s in before if signal_below_self_study_floor(s, floor.min_conviction)]
+            if floor.mode == "live" and below:
+                signals = [s for s in before if not signal_below_self_study_floor(s, floor.min_conviction)]
                 diagnostics["self_study_filtered"] = len(before) - len(signals)
                 LOG.info(
                     "Self-study: filtered %d signals (min_conviction=%d)",
                     diagnostics["self_study_filtered"],
-                    min_conv,
+                    floor.min_conviction,
                 )
                 _tag_shortlist_drop(before, signals, "filtered_self_study")
+            elif floor.mode == "shadow" and below:
+                diagnostics["self_study_would_filter"] = len(below)
+                LOG.info(
+                    "Self-study shadow: %d signals below min_conviction=%d (not filtered)",
+                    diagnostics["self_study_would_filter"],
+                    floor.min_conviction,
+                )
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Self-study filter skipped: %s", e)
 
     # Optional quality gates (default off). When disabled, count would-filter diagnostics only.
     try:
-        from config import get_quality_gates_mode
+        from config import (
+            get_quality_gates_mode,
+            get_quality_min_signal_score,
+            get_quality_min_signal_score_effective,
+            quality_signal_score_ceiling,
+        )
+
         quality_mode = get_quality_gates_mode(skill_dir)
         diagnostics["quality_gates_mode"] = quality_mode
+        diagnostics["quality_min_signal_score"] = float(get_quality_min_signal_score(skill_dir))
+        diagnostics["quality_min_signal_score_effective"] = float(get_quality_min_signal_score_effective(skill_dir))
+        diagnostics["quality_score_ceiling"] = float(quality_signal_score_ceiling(skill_dir))
         gated: list[dict[str, Any]] = []
         for s in signals:
             reasons = _evaluate_quality_gates(s, skill_dir)
@@ -2380,9 +3370,12 @@ def _apply_post_stage_b_chain(
                     )
                 try:
                     from feature_store import log_stage_b_signal
+
                     log_stage_b_signal(
-                        scan_id=scan_id, signal=s,
-                        quality_reasons=reasons, quality_filtered=True,
+                        scan_id=scan_id,
+                        signal=s,
+                        quality_reasons=reasons,
+                        quality_filtered=True,
                         regime_bucket=diagnostics.get("regime_v2_bucket"),
                         skill_dir=skill_dir,
                     )
@@ -2418,6 +3411,9 @@ def _apply_post_stage_b_chain(
                 s["confluence_confirmations"] = confirmations
                 if len(confirmations) >= require_count:
                     diagnostics["confluence_confirmed"] += 1
+                    kept_confluence.append(s)
+                    continue
+                if _is_research_entry_family(s.get("entry_family")):
                     kept_confluence.append(s)
                     continue
                 if confluence_mode == "live":
@@ -2457,15 +3453,44 @@ def _apply_post_stage_b_chain(
 
     # Meta-policy/uncertainty combiner: optional final decision layer.
     try:
-        from agent_intelligence import apply_meta_policy_to_signal, log_counterfactual_event
+        from agent_intelligence import (
+            apply_meta_policy_to_signal,
+            log_counterfactual_event,
+            meta_policy_counterfactual_reason,
+        )
 
         before_meta = list(signals)
         next_signals: list[dict[str, Any]] = []
         for s in signals:
             enriched, keep = apply_meta_policy_to_signal(signal=s, diagnostics=diagnostics, skill_dir=skill_dir)
-            if not keep:
-                if log_counterfactual_event(signal=enriched, reason="meta_policy_suppressed", skill_dir=skill_dir):
+            try:
+                from core.debate_grade import attach_debate_grade
+
+                enriched = attach_debate_grade(enriched, diagnostics=diagnostics, skill_dir=skill_dir)
+                try:
+                    from core.debate_committee import maybe_attach_committee
+
+                    enriched = maybe_attach_committee(enriched, diagnostics=diagnostics, skill_dir=skill_dir)
+                except Exception as committee_exc:
+                    LOG.debug("Debate committee skipped for %s: %s", enriched.get("ticker"), committee_exc)
+                grade = enriched.get("debate_grade") if isinstance(enriched.get("debate_grade"), dict) else {}
+                if grade.get("would_skip") and log_counterfactual_event(
+                    signal=enriched,
+                    reason="debate_grade_would_skip",
+                    skill_dir=skill_dir,
+                ):
+                    diagnostics["counterfactual_logged"] = int(diagnostics.get("counterfactual_logged", 0) or 0) + 1
+            except Exception as grade_exc:
+                LOG.debug("Debate grade skipped for %s: %s", enriched.get("ticker"), grade_exc)
+            cf_reason = meta_policy_counterfactual_reason(keep=keep, meta=enriched.get("meta_policy"))
+            if cf_reason:
+                if log_counterfactual_event(signal=enriched, reason=cf_reason, skill_dir=skill_dir):
                     diagnostics["counterfactual_logged"] += 1
+                    if cf_reason.startswith("meta_policy_would_"):
+                        diagnostics["counterfactual_shadow_logged"] = (
+                            int(diagnostics.get("counterfactual_shadow_logged", 0) or 0) + 1
+                        )
+            if not keep:
                 continue
             next_signals.append(enriched)
         signals = next_signals
@@ -2533,6 +3558,30 @@ def _apply_post_stage_b_chain(
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Prob-rank cohort skipped: %s", e)
     try:
+        signals = _apply_historical_rank_cohort(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Historical rank cohort skipped: %s", e)
+    try:
+        signals = _apply_analog_overlay(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Analog overlay skipped: %s", e)
+    try:
+        _stamp_confidence_rank_diagnostics(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Confidence rank diagnostics skipped: %s", e)
+    try:
+        from core.extension_sort import apply_extension_sort_shadow
+
+        apply_extension_sort_shadow(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Extension sort shadow skipped: %s", e)
+    try:
+        from core.pead_extension_drop import apply_pead_extension_drop_shadow
+
+        apply_pead_extension_drop_shadow(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "PEAD extension drop shadow skipped: %s", e)
+    try:
         from core.horizon_strategies import partition_live_and_research, research_score_from_plugins
 
         live_book, research_book = partition_live_and_research(signals)
@@ -2541,15 +3590,24 @@ def _apply_post_stage_b_chain(
             row["research_score"] = research_score_from_plugins(plugins)
             row["sort_score"] = float(row.get("research_score") or 0.0)
             row["rank_basis"] = "research_score"
+        # Deterministic order within each book: primary book score, then the
+        # live signal_score, then ticker. Research scores saturate at 100 for
+        # whole sleeves (e.g. weekly_swing), so without the secondary keys the
+        # desk order was just Stage B arrival order on a tied sort_score.
+        def _book_sort_key(s: dict[str, Any], primary: float) -> tuple[float, float, str]:
+            try:
+                secondary = float(s.get("signal_score") or 0.0)
+            except (TypeError, ValueError):
+                secondary = 0.0
+            return (-float(primary or 0.0), -secondary, str(s.get("ticker") or ""))
+
         live_book.sort(
-            key=lambda s: s.get("sort_score")
-            or s.get(live_sort_key)
-            or s.get("composite_score")
-            or s.get("rank_score")
-            or 0.0,
-            reverse=True,
+            key=lambda s: _book_sort_key(
+                s,
+                s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0,
+            )
         )
-        research_book.sort(key=lambda s: float(s.get("research_score") or 0.0), reverse=True)
+        research_book.sort(key=lambda s: _book_sort_key(s, float(s.get("research_score") or 0.0)))
         diagnostics["live_signal_count"] = len(live_book)
         diagnostics["research_signal_count"] = len(research_book)
         diagnostics["ranked_on_research_score"] = int(not live_book and bool(research_book))
@@ -2557,11 +3615,9 @@ def _apply_post_stage_b_chain(
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Live/research rank split skipped: %s", e)
         signals.sort(
-            key=lambda s: s.get("sort_score")
-            or s.get(live_sort_key)
-            or s.get("composite_score")
-            or s.get("rank_score")
-            or 0.0,
+            key=lambda s: (
+                s.get("sort_score") or s.get(live_sort_key) or s.get("composite_score") or s.get("rank_score") or 0.0
+            ),
             reverse=True,
         )
 
@@ -2686,10 +3742,13 @@ def _apply_post_stage_b_chain(
 
     try:
         from feature_store import log_stage_b_signal
+
         for s in signals:
             log_stage_b_signal(
-                scan_id=scan_id, signal=s,
-                quality_reasons=None, quality_filtered=False,
+                scan_id=scan_id,
+                signal=s,
+                quality_reasons=None,
+                quality_filtered=False,
                 regime_bucket=diagnostics.get("regime_v2_bucket"),
                 skill_dir=skill_dir,
             )
@@ -2697,6 +3756,24 @@ def _apply_post_stage_b_chain(
         record_nonfatal(
             "stage_b_logging_failures",
             "Stage B feature-store final logging failed: %s",
+            e,
+        )
+
+    try:
+        from agent_intelligence import log_counterfactual_event
+
+        for s in signals:
+            if s.get("_demo"):
+                continue
+            if log_counterfactual_event(signal=s, reason="fired", skill_dir=skill_dir):
+                diagnostics["counterfactual_logged"] += 1
+                diagnostics["counterfactual_fired_logged"] = (
+                    int(diagnostics.get("counterfactual_fired_logged", 0) or 0) + 1
+                )
+    except Exception as e:
+        record_nonfatal(
+            "stage_b_logging_failures",
+            "Counterfactual fired logging failed: %s",
             e,
         )
 
@@ -2794,156 +3871,198 @@ def scan_for_signals_detailed(
     # seed below is preserved so every documented counter is present (key
     # presence is part of the diagnostics contract consumed by the dashboard
     # and digests). A defaultdict is-a dict, so the return contract is unchanged.
-    diagnostics: dict[str, Any] = defaultdict(int, {
-        "scan_blocked": 0,
-        "scan_blocked_reason": None,
-        "watchlist_size": 0,
-        "df_empty": 0,
-        "too_few_candles": 0,
-        "bars_stale": 0,
-        "self_study_low_cached_conviction": 0,
-        "stage2_fail": 0,
-        "vcp_fail": 0,
-        "no_sector_etf": 0,
-        "sector_not_winning": 0,
-        "breakout_not_confirmed": 0,
-        "exceptions": 0,
-        "self_study_filtered": 0,
-        "quality_gates_filtered": 0,
-        "forensic_filtered": 0,
-        "quality_gates_would_filter": 0,
-        "confluence_confirmed": 0,
-        "confluence_blocked": 0,
-        "confluence_would_block": 0,
-        "weak_mirofish_alignment": 0,
-        "low_breakout_volume": 0,
-        "forensic_sloan_flags": 0,
-        "forensic_beneish_flags": 0,
-        "forensic_altman_flags": 0,
-        "pead_boosted": 0,
-        "pead_penalized": 0,
-        "guidance_boosted": 0,
-        "sec_tagged_signals": 0,
-        "sec_recent_8k_count": 0,
-        "sec_high_risk_tag_count": 0,
-        "sec_data_failures": 0,
-        "sec_score_hint_shadow_adjustments": 0,
-        "sec_score_hint_applied_count": 0,
-        "advisory_scored": 0,
-        "advisory_high_confidence": 0,
-        "advisory_medium_confidence": 0,
-        "advisory_low_confidence": 0,
-        "mgmt_integrity_scored": 0,
-        "mgmt_integrity_high": 0,
-        "mgmt_integrity_medium": 0,
-        "mgmt_integrity_low": 0,
-        "mgmt_integrity_would_filter": 0,
-        "mgmt_integrity_unavailable": 0,
-        "mgmt_integrity_errors": 0,
-        "top_n_applied": 0,
-        "ranked_on_fallback_basis": 0,
-        "correlation_guard_demoted": 0,
-        "correlation_guard_would_demote": 0,
-        "correlation_guard_pair_demotions": 0,
-        "event_risk_flagged": 0,
-        "event_risk_blocked": 0,
-        "event_risk_downsized": 0,
-        "data_failure_count": 0,
-        "unresolved_sector_symbols": 0,
-        "stage_a_candidates": 0,
-        "stage_a_shortlisted": 0,
-        "stage_a_pruned": 0,
-        "stage_a_vcp_would_filter": 0,
-        "stage_a_sector_would_filter": 0,
-        "stage_a_no_sector_would_filter": 0,
-        "stage2_shadow_would_filter": 0,
-        "entry_timing_shadow_mode": None,
-        "entry_shadow_would_filter_sma50_low": 0,
-        "entry_shadow_would_filter_sma50_high": 0,
-        "entry_shadow_would_filter_breakout_buffer": 0,
-        "entry_shadow_would_filter_any": 0,
-        "entry_shadow_stage2_evaluated": 0,
-        "entry_shadow_stage2_would_filter_any": 0,
-        "entry_shadow_stage2_would_filter_breakout_buffer": 0,
-        "entry_timing_blocked": 0,
-        "entry_timing_live_enforced": 0,
-        "pts_52w_cap_mode": None,
-        "pts_52w_cap_max": None,
-        "pts_52w_cap_would_filter": 0,
-        "pts_52w_cap_blocked": 0,
-        "early_stop_gate_mode": None,
-        "early_stop_gate_would_filter": 0,
-        "early_stop_gate_blocked": 0,
-        "horizon_admitted": 0,
-        "horizon_shortlisted": 0,
-        "strategy_pead_primary_mode": "off",
-        "strategy_pead_primary_effective_mode": "off",
-        "pead_primary_live_coerced_to_shadow": 0,
-        "pead_primary_evaluated": 0,
-        "pead_primary_admitted": 0,
-        "overlap_with_stage2": 0,
-        "pead_primary_would_rank_top_n": 0,
-        "pead_primary_would_rank_capacity_top_n": 0,
-        "pead_primary_capacity_rank_arm": "top5_by_edge_score",
-        "pead_primary_capacity_rank_top_n": 5,
-        "pead_primary_shadow_truncated": 0,
-        "pead_primary_shadow_sort_key": "edge_score_desc,ticker_asc",
-        "pead_primary_shadow_names": [],
-        "pead_primary_fail": 0,
-        "pead_primary_lookback_days": None,
-        "rank_filter_would_drop_composite": 0,
-        "rank_filter_would_drop_rank_v2": 0,
-        "rank_filter_would_drop_signal": 0,
-        "rank_filter_would_drop_any": 0,
-        "prob_rank_mode": "off",
-        "prob_rank_scored": 0,
-        "prob_rank_unscored": 0,
-        "prob_rank_score_failed": 0,
-        "prob_rank_would_keep": 0,
-        "prob_rank_would_drop": 0,
-        "prob_rank_dropped": 0,
-        "stage_a_timeouts": 0,
-        "stage_b_processed": 0,
-        "stage_b_exceptions": 0,
-        "stage_b_timeouts": 0,
-        "prediction_market_processed": 0,
-        "prediction_market_applied": 0,
-        "prediction_market_skipped": 0,
-        "prediction_market_errors": 0,
-        "meta_policy_processed": 0,
-        "meta_policy_suppressed": 0,
-        "meta_policy_downsized": 0,
-        "meta_policy_applied": 0,
-        "meta_policy_shadow_actions": 0,
-        "uncertainty_high_count": 0,
-        "uncertainty_medium_count": 0,
-        "counterfactual_logged": 0,
-        "scan_stage_a_ms": 0,
-        "scan_stage_b_ms": 0,
-        "regime_v2_score": None,
-        "regime_v2_bucket": "unknown",
-        "regime_v2_blocked": 0,
-        "strategy_plugins_evaluated": 0,
-        "strategy_pullback_evaluated": 0,
-        "strategy_pullback_triggered": 0,
-        "data_quality": None,
-        "data_quality_reasons": [],
-        "session_data_health": None,
-        "data_provider_primary_count": 0,
-        "data_provider_fallback_count": 0,
-        "data_provider_unknown_count": 0,
-        "fallback_reason_missing_count": 0,
-        "fallback_inconsistent_count": 0,
-        "silent_fallback_count": 0,
-        "primary_provider_filtered": 0,
-        "regime_check_failed": 0,
-        "regime_check_error": None,
-        "regime_fail_closed_mode": None,
-        "stage_a_logging_failures": 0,
-        "stage_b_logging_failures": 0,
-        "chain_layer_failures": 0,
-        "post_scan_observability_failures": 0,
-    })
+    diagnostics: dict[str, Any] = defaultdict(
+        int,
+        {
+            "scan_blocked": 0,
+            "scan_blocked_reason": None,
+            "watchlist_size": 0,
+            "df_empty": 0,
+            "too_few_candles": 0,
+            "bars_stale": 0,
+            "self_study_low_cached_conviction": 0,
+            "self_study_filtered": 0,
+            "self_study_would_filter": 0,
+            "self_study_would_filter_cached": 0,
+            "self_study_mode": None,
+            "self_study_min_conviction": None,
+            "self_study_floor_reason": None,
+            "stage2_fail": 0,
+            "vcp_fail": 0,
+            "no_sector_etf": 0,
+            "sector_not_winning": 0,
+            "breakout_not_confirmed": 0,
+            "exceptions": 0,
+            "quality_gates_filtered": 0,
+            "forensic_filtered": 0,
+            "quality_gates_would_filter": 0,
+            "confluence_confirmed": 0,
+            "confluence_blocked": 0,
+            "confluence_would_block": 0,
+            "weak_mirofish_alignment": 0,
+            "low_breakout_volume": 0,
+            "forensic_sloan_flags": 0,
+            "forensic_beneish_flags": 0,
+            "forensic_altman_flags": 0,
+            "pead_boosted": 0,
+            "pead_penalized": 0,
+            "guidance_boosted": 0,
+            "sec_tagged_signals": 0,
+            "sec_recent_8k_count": 0,
+            "sec_high_risk_tag_count": 0,
+            "sec_data_failures": 0,
+            "sec_score_hint_shadow_adjustments": 0,
+            "sec_score_hint_applied_count": 0,
+            "advisory_scored": 0,
+            "advisory_high_confidence": 0,
+            "advisory_medium_confidence": 0,
+            "advisory_low_confidence": 0,
+            "mgmt_integrity_scored": 0,
+            "mgmt_integrity_high": 0,
+            "mgmt_integrity_medium": 0,
+            "mgmt_integrity_low": 0,
+            "mgmt_integrity_would_filter": 0,
+            "mgmt_integrity_unavailable": 0,
+            "mgmt_integrity_errors": 0,
+            "top_n_applied": 0,
+            "ranked_on_fallback_basis": 0,
+            "correlation_guard_demoted": 0,
+            "correlation_guard_would_demote": 0,
+            "correlation_guard_pair_demotions": 0,
+            "event_risk_flagged": 0,
+            "event_risk_blocked": 0,
+            "event_risk_downsized": 0,
+            "event_risk_earnings_unavailable": 0,
+            "data_failure_count": 0,
+            "unresolved_sector_symbols": 0,
+            "stage_a_candidates": 0,
+            "stage_a_shortlisted": 0,
+            "stage_a_pruned": 0,
+            "stage_a_vcp_would_filter": 0,
+            "stage_a_sector_would_filter": 0,
+            "stage_a_no_sector_would_filter": 0,
+            "stage2_shadow_would_filter": 0,
+            "entry_timing_shadow_mode": None,
+            "entry_shadow_would_filter_sma50_low": 0,
+            "entry_shadow_would_filter_sma50_high": 0,
+            "entry_shadow_would_filter_breakout_buffer": 0,
+            "entry_shadow_would_filter_any": 0,
+            "entry_shadow_stage2_evaluated": 0,
+            "entry_shadow_stage2_would_filter_any": 0,
+            "entry_shadow_stage2_would_filter_breakout_buffer": 0,
+            "entry_timing_blocked": 0,
+            "entry_timing_live_enforced": 0,
+            "pts_52w_cap_mode": None,
+            "pts_52w_cap_max": None,
+            "pts_52w_cap_would_filter": 0,
+            "pts_52w_cap_blocked": 0,
+            "early_stop_gate_mode": None,
+            "early_stop_gate_would_filter": 0,
+            "early_stop_gate_blocked": 0,
+            "horizon_admitted": 0,
+            "horizon_shortlisted": 0,
+            "stage_a_history_days": 300,
+            "strategy_pead_primary_mode": "off",
+            "strategy_pead_primary_effective_mode": "off",
+            "pead_primary_live_coerced_to_shadow": 0,
+            "pead_primary_evaluated": 0,
+            "pead_primary_admitted": 0,
+            "overlap_with_stage2": 0,
+            "pead_primary_would_rank_top_n": 0,
+            "pead_primary_would_rank_capacity_top_n": 0,
+            "pead_primary_capacity_rank_arm": "top5_by_edge_score",
+            "pead_primary_capacity_rank_top_n": 5,
+            "pead_primary_shadow_truncated": 0,
+            "pead_primary_shadow_sort_key": "edge_score_desc,ticker_asc",
+            "pead_primary_shadow_names": [],
+            "pead_primary_fail": 0,
+            "pead_primary_lookback_days": None,
+            "rank_filter_would_drop_composite": 0,
+            "rank_filter_would_drop_rank_v2": 0,
+            "rank_filter_would_drop_signal": 0,
+            "rank_filter_would_drop_any": 0,
+            "historical_rank_mode": "off",
+            "historical_rank_scored": 0,
+            "historical_rank_unscored": 0,
+            "analog_overlay_mode": "off",
+            "analog_overlay_scored": 0,
+            "analog_overlay_unscored": 0,
+            "analog_overlay_thin": 0,
+            "prob_rank_mode": "off",
+            "prob_rank_scored": 0,
+            "prob_rank_unscored": 0,
+            "prob_rank_score_failed": 0,
+            "prob_rank_would_keep": 0,
+            "prob_rank_would_drop": 0,
+            "prob_rank_dropped": 0,
+            "stage_a_timeouts": 0,
+            "stage_a_task_exceptions": 0,
+            "stage_a_evaluated": 0,
+            "stage_a_waves": 0,
+            "stage_a_executable_waves": 0,
+            "stage_a_horizon_waves": 0,
+            "stage_a_stalls": 0,
+            "stage_a_checkpoint_resumed": 0,
+            "executable_coverage_complete": 0,
+            "horizon_coverage_complete": 0,
+            "horizon_unresolved": 0,
+            "executable_arm": 0,
+            "horizon_arm": 0,
+            "scan_partial": 0,
+            "executable_history_days": 0,
+            "horizon_history_days": 0,
+            "stage_b_processed": 0,
+            "stage_b_exceptions": 0,
+            "stage_b_timeouts": 0,
+            "prediction_market_processed": 0,
+            "prediction_market_applied": 0,
+            "prediction_market_skipped": 0,
+            "prediction_market_errors": 0,
+            "meta_policy_processed": 0,
+            "debate_grade_evaluated": 0,
+            "debate_grade_abstain": 0,
+            "debate_grade_would_skip": 0,
+            "debate_grade_live_coerced": 0,
+            "debate_committee_ran": 0,
+            "debate_committee_skipped_no_key": 0,
+            "debate_committee_parse_failed": 0,
+            "debate_committee_live_coerced": 0,
+            "meta_policy_suppressed": 0,
+            "meta_policy_downsized": 0,
+            "meta_policy_applied": 0,
+            "meta_policy_shadow_actions": 0,
+            "uncertainty_high_count": 0,
+            "uncertainty_medium_count": 0,
+            "counterfactual_logged": 0,
+            "counterfactual_shadow_logged": 0,
+            "counterfactual_fired_logged": 0,
+            "scan_stage_a_ms": 0,
+            "scan_stage_b_ms": 0,
+            "regime_v2_score": None,
+            "regime_v2_bucket": "unknown",
+            "regime_v2_blocked": 0,
+            "strategy_plugins_evaluated": 0,
+            "strategy_pullback_evaluated": 0,
+            "strategy_pullback_triggered": 0,
+            "data_quality": None,
+            "data_quality_reasons": [],
+            "session_data_health": None,
+            "data_provider_primary_count": 0,
+            "data_provider_fallback_count": 0,
+            "data_provider_unknown_count": 0,
+            "fallback_reason_missing_count": 0,
+            "fallback_inconsistent_count": 0,
+            "silent_fallback_count": 0,
+            "primary_provider_filtered": 0,
+            "regime_check_failed": 0,
+            "regime_check_error": None,
+            "regime_fail_closed_mode": None,
+            "stage_a_logging_failures": 0,
+            "stage_b_logging_failures": 0,
+            "chain_layer_failures": 0,
+            "post_scan_observability_failures": 0,
+        },
+    )
     diagnostics["prediction_market"] = {
         "enabled": False,
         "mode": "off",
@@ -2966,8 +4085,19 @@ def scan_for_signals_detailed(
         "high_count": 0,
         "medium_count": 0,
     }
+    diagnostics["mirofish_llm"] = {
+        "provider": "",
+        "model": "",
+        "base_url": "",
+        "weighting_mode": "off",
+        "scored": 0,
+        "unavailable": 0,
+        "signal_models": [],
+        "signal_providers": [],
+    }
 
     import uuid as _uuid_mod
+
     _scan_id = _uuid_mod.uuid4().hex[:12]
     diagnostics["scan_id"] = _scan_id
 
@@ -2988,6 +4118,7 @@ def scan_for_signals_detailed(
 
     try:
         from schwab_auth import DualSchwabAuth
+
         auth = DualSchwabAuth(skill_dir=skill_dir)
     except Exception as e:
         data_failures.append(f"Auth failed: {e}")
@@ -3013,8 +4144,10 @@ def scan_for_signals_detailed(
     # DEMO_SIGNAL=1: inject a test signal (with MiroFish) to verify full flow; no real order.
     # Keep this before regime/sector checks so smoke tests do not depend on live market state.
     import os
+
     if os.environ.get("DEMO_SIGNAL", "").strip().lower() in ("1", "true", "yes"):
         from market_data import extract_schwab_last_price, get_current_quote, get_daily_history
+
         demo_ticker = "AAPL"
         try:
             df = get_daily_history(demo_ticker, days=300, auth=auth, skill_dir=skill_dir)
@@ -3027,7 +4160,8 @@ def scan_for_signals_detailed(
             price = 220.0
         mirofish_result = None
         try:
-            from engine_analysis import MarketSimulation, cache_conviction
+            from engine_analysis import MarketSimulation, cache_conviction, public_mirofish_view
+
             sim = MarketSimulation(demo_ticker, auth=auth, skill_dir=skill_dir)
             result = sim.run()
             # Skip cache write when MiroFish came back unavailable (None
@@ -3035,33 +4169,31 @@ def scan_for_signals_detailed(
             # the 12h cache with a placeholder.
             if result.get("conviction_score") is not None:
                 cache_conviction(demo_ticker, result, skill_dir=skill_dir)
-            mirofish_result = {
-                "conviction_score": result.get("conviction_score"),
-                "summary": result.get("summary"),
-                "agent_votes": result.get("agent_votes", []),
-                "simulation_id": result.get("simulation_id"),
-                "mirofish_disagreement": result.get("mirofish_disagreement"),
-                "agent_weighting": result.get("agent_weighting"),
-            }
+            mirofish_result = public_mirofish_view(result)
         except Exception as e:
             LOG.warning("Demo MiroFish: %s", e)
-        signals.append({
-            "ticker": demo_ticker,
-            "price": round(price, 2),
-            "sector_etf": "XLK",
-            "sma_50": round(price * 0.98, 2),
-            "sma_200": round(price * 0.95, 2),
-            "mirofish_summary": mirofish_result.get("summary") if mirofish_result else None,
-            "mirofish_conviction": mirofish_result.get("conviction_score") if mirofish_result else None,
-            "mirofish_disagreement": mirofish_result.get("mirofish_disagreement") if mirofish_result else None,
-            "agent_weighting": mirofish_result.get("agent_weighting") if mirofish_result else None,
-            "mirofish_result": mirofish_result,
-            "signal_score": 75.0,
-            "_demo": True,
-        })
+        signals.append(
+            {
+                "ticker": demo_ticker,
+                "price": round(price, 2),
+                "sector_etf": "XLK",
+                "sma_50": round(price * 0.98, 2),
+                "sma_200": round(price * 0.95, 2),
+                "mirofish_summary": mirofish_result.get("summary") if mirofish_result else None,
+                "mirofish_conviction": mirofish_result.get("conviction_score") if mirofish_result else None,
+                "mirofish_disagreement": mirofish_result.get("mirofish_disagreement") if mirofish_result else None,
+                "mirofish_llm_provider": mirofish_result.get("llm_provider") if mirofish_result else None,
+                "mirofish_llm_model": mirofish_result.get("llm_model") if mirofish_result else None,
+                "agent_weighting": mirofish_result.get("agent_weighting") if mirofish_result else None,
+                "mirofish_result": mirofish_result,
+                "signal_score": 75.0,
+                "_demo": True,
+            }
+        )
         if signals:
             signals[0] = _apply_score_stack(signals[0])
         LOG.info("DEMO_SIGNAL: injected test signal for %s", demo_ticker)
+        _stamp_mirofish_llm_diagnostics(diagnostics, signals, skill_dir)
         return signals, diagnostics
 
     # Regime gate: SPY must be above 200 SMA unless explicitly overridden.
@@ -3125,10 +4257,7 @@ def scan_for_signals_detailed(
         if fail_closed_on_outage:
             diagnostics["scan_blocked"] = 1
             diagnostics["scan_blocked_reason"] = "regime_check_failed_data_unavailable"
-            msg = (
-                "Scan blocked: regime gate failed and fail-closed mode is enabled "
-                f"(error={type(e).__name__}: {e})."
-            )
+            msg = f"Scan blocked: regime gate failed and fail-closed mode is enabled (error={type(e).__name__}: {e})."
             send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
             LOG.warning(msg)
             return [], diagnostics
@@ -3313,10 +4442,22 @@ def scan_for_signals_detailed(
             diagnostics["watchlist_source"] = f"universe_{preset}"
         diagnostics["universe_preset"] = preset if preset != "watchlist" else "sp1500"
     diagnostics["watchlist_size"] = len(watchlist)
+    from core.scan_catalog import scan_arm_flags
+
+    scan_arms = scan_arm_flags(strategy_ids)
+    diagnostics["scan_arm_flags"] = {
+        "want_stage2": bool(scan_arms.get("want_stage2")),
+        "want_pead": bool(scan_arms.get("want_pead")),
+        "want_breakout_quotes": bool(scan_arms.get("want_breakout_quotes")),
+        "want_horizon": list(scan_arms.get("want_horizon") or []),
+    }
     try:
         from earnings_signal import maybe_warm_earnings_for_scan
 
-        diagnostics["pead_cache"] = maybe_warm_earnings_for_scan(watchlist, skill_dir)
+        if scan_arms.get("want_pead"):
+            diagnostics["pead_cache"] = maybe_warm_earnings_for_scan(watchlist, skill_dir)
+        else:
+            diagnostics["pead_cache"] = {"skipped": True, "reason": "strategy_not_selected"}
     except Exception as exc:
         LOG.debug("PEAD pre-scan warm skipped: %s", exc)
         diagnostics["pead_cache"] = {"skipped": True, "reason": "error", "detail": str(exc)}
@@ -3348,9 +4489,7 @@ def scan_for_signals_detailed(
 
         diagnostics["entry_timing_shadow_mode"] = get_entry_timing_shadow_mode(skill_dir)
         diagnostics["entry_timing_shadow_profile"] = get_entry_timing_shadow_profile(skill_dir)
-        diagnostics["entry_timing_live_enforced"] = int(
-            diagnostics.get("entry_timing_shadow_mode") == "live"
-        )
+        diagnostics["entry_timing_live_enforced"] = int(diagnostics.get("entry_timing_shadow_mode") == "live")
     except Exception:
         diagnostics["entry_timing_shadow_mode"] = "off"
         diagnostics["entry_timing_shadow_profile"] = "off"
@@ -3387,14 +4526,27 @@ def scan_for_signals_detailed(
     # Optional composite regime diagnostics/gate.
     regime_v2_snapshot: dict[str, Any] | None = None
     try:
-        from sector_strength import get_regime_v2_snapshot
+        from sector_strength import get_regime_v2_snapshot, regime_v2_is_unavailable
 
         regime_v2_snapshot = get_regime_v2_snapshot(auth, skill_dir)
         diagnostics["regime_v2_mode"] = regime_v2_mode
         diagnostics["regime_v2_score"] = regime_v2_snapshot.get("score")
         diagnostics["regime_v2_bucket"] = regime_v2_snapshot.get("bucket")
         diagnostics["regime_v2_entry_min_score"] = regime_v2_entry_min_score
-        if regime_v2_mode == "live" and float(regime_v2_snapshot.get("score", 0) or 0) < float(regime_v2_entry_min_score):
+        regime_unavailable = regime_v2_is_unavailable(regime_v2_snapshot)
+        if regime_unavailable:
+            diagnostics["regime_v2_unavailable"] = 1
+        if regime_v2_mode == "live" and regime_unavailable:
+            diagnostics["regime_v2_blocked"] = 1
+            send_alert(
+                "Scan skipped: regime v2 snapshot unavailable. Entry is fail-closed.",
+                kind="regime_bearish",
+                env_path=skill_dir / ".env",
+            )
+            return [], diagnostics
+        if regime_v2_mode == "live" and float(regime_v2_snapshot.get("score", 0) or 0) < float(
+            regime_v2_entry_min_score
+        ):
             diagnostics["regime_v2_blocked"] = 1
             send_alert(
                 (
@@ -3406,17 +4558,20 @@ def scan_for_signals_detailed(
             )
             return [], diagnostics
     except Exception as e:
-        LOG.debug("Regime v2 scan diagnostics skipped: %s", e)
+        LOG.warning("Regime v2 scan diagnostics failed: %s", e)
+        diagnostics["regime_v2_unavailable"] = 1
+        if regime_v2_mode == "live":
+            diagnostics["regime_v2_blocked"] = 1
+            return [], diagnostics
 
-    # Stage A: fast structural filter on broad universe.
-    from core.horizon_strategies import HORIZON_STAGE_B_CAP, selected_dual_admit_ids
+    # Stage A: executable coverage first, then a horizon sidecar that cannot cancel it.
+    from core.horizon_strategies import HORIZON_STAGE_B_CAP
 
-    horizon_ids = selected_dual_admit_ids(strategy_ids)
+    horizon_ids = list(scan_arms.get("want_horizon") or [])
     diagnostics["scan_timeframe"] = str(scan_timeframe or "daily")
     diagnostics["strategy_ids_requested"] = [str(s) for s in (strategy_ids or []) if str(s).strip()]
     diagnostics["horizon_dual_admit_ids"] = list(horizon_ids)
     stage_a_start = time.perf_counter()
-    stage_a_candidates: list[dict[str, Any]] = []
     stage_a_reason_keys = {
         "df_empty",
         "too_few_candles",
@@ -3432,140 +4587,30 @@ def scan_for_signals_detailed(
         "early_stop_gate_blocked",
         "exceptions",
     }
-    future_map_a: dict[cf.Future[Any], str] = {}
-    stage_a_timed_out = False
-    ex = cf.ThreadPoolExecutor(max_workers=max(1, stage_a_workers))
-    try:
-        for ticker in watchlist:
-            fut = ex.submit(
-                _scan_stage_a_one,
-                ticker,
-                auth,
-                set(winning_etfs or []),
-                skill_dir,
-                breakout_enabled,
-                breakout_min_time,
-                vcp_gate_mode,
-                sector_gate_mode,
-                vcp_penalty_points,
-                sector_penalty_points,
-                sector_unresolved_penalty_points,
-                list(horizon_ids),
-            )
-            future_map_a[fut] = ticker
-        try:
-            for fut in cf.as_completed(
-                future_map_a.keys(),
-                timeout=min(
-                    stage_wall_budget_sec,
-                    max(task_timeout_sec, task_timeout_sec * max(1, len(future_map_a))),
-                ),
-            ):
-                ticker = future_map_a[fut]
-                try:
-                    out = fut.result()
-                    _accumulate_provider_fallback_diagnostics(diagnostics, out)
-                    _accumulate_entry_shadow_stage2_diagnostics(diagnostics, out)
-                    if out.get("pead_primary_evaluated"):
-                        diagnostics["pead_primary_evaluated"] = int(
-                            diagnostics.get("pead_primary_evaluated", 0) or 0
-                        ) + 1
-                    if out.get("pead_primary_fail"):
-                        diagnostics["pead_primary_fail"] = int(
-                            diagnostics.get("pead_primary_fail", 0) or 0
-                        ) + 1
-                    if out.get("ok"):
-                        candidate = out["candidate"]
-                        stage_a_candidates.append(candidate)
-                        for penalty in list(candidate.get("stage_a_penalties") or []):
-                            if penalty == "vcp_fail":
-                                diagnostics["stage_a_vcp_would_filter"] = int(
-                                    diagnostics.get("stage_a_vcp_would_filter", 0) or 0
-                                ) + 1
-                            elif penalty == "sector_not_winning":
-                                diagnostics["stage_a_sector_would_filter"] = int(
-                                    diagnostics.get("stage_a_sector_would_filter", 0) or 0
-                                ) + 1
-                            elif penalty == "no_sector_etf":
-                                diagnostics["stage_a_no_sector_would_filter"] = int(
-                                    diagnostics.get("stage_a_no_sector_would_filter", 0) or 0
-                                ) + 1
-                            elif penalty == "stage2_shadow_would_filter":
-                                diagnostics["stage2_shadow_would_filter"] = int(
-                                    diagnostics.get("stage2_shadow_would_filter", 0) or 0
-                                ) + 1
-                            elif penalty == "entry_shadow_sma50_cushion_low":
-                                diagnostics["entry_shadow_would_filter_sma50_low"] = int(
-                                    diagnostics.get("entry_shadow_would_filter_sma50_low", 0) or 0
-                                ) + 1
-                            elif penalty == "entry_shadow_sma50_extension_high":
-                                diagnostics["entry_shadow_would_filter_sma50_high"] = int(
-                                    diagnostics.get("entry_shadow_would_filter_sma50_high", 0) or 0
-                                ) + 1
-                            elif penalty == "entry_shadow_breakout_buffer_low":
-                                diagnostics["entry_shadow_would_filter_breakout_buffer"] = int(
-                                    diagnostics.get("entry_shadow_would_filter_breakout_buffer", 0) or 0
-                                ) + 1
-                            elif penalty == "pts_52w_cap_high":
-                                diagnostics["pts_52w_cap_would_filter"] = int(
-                                    diagnostics.get("pts_52w_cap_would_filter", 0) or 0
-                                ) + 1
-                            elif str(penalty).startswith("early_stop_"):
-                                diagnostics["early_stop_gate_would_filter"] = int(
-                                    diagnostics.get("early_stop_gate_would_filter", 0) or 0
-                                ) + 1
-                        entry_shadow_hits = [
-                            p
-                            for p in list(candidate.get("stage_a_penalties") or [])
-                            if str(p).startswith("entry_shadow_")
-                        ]
-                        if entry_shadow_hits:
-                            diagnostics["entry_shadow_would_filter_any"] = int(
-                                diagnostics.get("entry_shadow_would_filter_any", 0) or 0
-                            ) + 1
-                    else:
-                        reason = str(out.get("reason") or "exceptions")
-                        if reason in stage_a_reason_keys:
-                            diagnostics[reason] += 1
-                        if out.get("error"):
-                            data_failures.append(str(out["error"]))
-                    try:
-                        from feature_store import log_stage_a_result
-                        log_stage_a_result(
-                            scan_id=_scan_id,
-                            ticker=ticker,
-                            result=out,
-                            regime_bucket=diagnostics.get("regime_v2_bucket"),
-                            skill_dir=skill_dir,
-                        )
-                    except Exception as e:
-                        _record_nonfatal(
-                            "stage_a_logging_failures",
-                            "Stage A feature-store logging failed for %s: %s",
-                            ticker,
-                            e,
-                        )
-                except Exception as e:
-                    diagnostics["exceptions"] += 1
-                    data_failures.append(f"{ticker}: {e}")
-        except cf.TimeoutError:
-            stage_a_timed_out = True
-            pending = [future_map_a[f] for f in future_map_a if not f.done()]
-            diagnostics["stage_a_timeouts"] += len(pending)
-            diagnostics["exceptions"] += len(pending)
-            for ticker in pending[:10]:
-                data_failures.append(f"{ticker}: stage_a timeout")
-            for fut in future_map_a:
-                if not fut.done():
-                    _cancel_future_safe(fut)
-    finally:
-        _shutdown_executor_safe(
-            ex,
-            wait=not stage_a_timed_out,
-            cancel_futures=stage_a_timed_out,
-        )
+    stage_a_candidates = _run_coverage_stage_a(
+        watchlist=list(watchlist),
+        diagnostics=diagnostics,
+        data_failures=data_failures,
+        reason_keys=stage_a_reason_keys,
+        scan_id=_scan_id,
+        skill_dir=skill_dir,
+        record_nonfatal=_record_nonfatal,
+        auth=auth,
+        winning_etfs=set(winning_etfs or []),
+        breakout_enabled=breakout_enabled,
+        breakout_min_time=breakout_min_time,
+        vcp_gate_mode=vcp_gate_mode,
+        sector_gate_mode=sector_gate_mode,
+        vcp_penalty_points=vcp_penalty_points,
+        sector_penalty_points=sector_penalty_points,
+        sector_unresolved_penalty_points=sector_unresolved_penalty_points,
+        strategy_ids=list(strategy_ids or []),
+        scan_arms=scan_arms,
+        stage_a_workers=stage_a_workers,
+        stage_wall_budget_sec=stage_wall_budget_sec,
+        task_timeout_sec=task_timeout_sec,
+    )
     diagnostics["scan_stage_a_ms"] = int((time.perf_counter() - stage_a_start) * 1000)
-
     diagnostics["stage_a_candidates"] = len(stage_a_candidates)
     stage_a_candidates.sort(key=lambda c: c.get("stage_a_score", 0), reverse=True)
     provider_mode = _scan_primary_provider_mode()
@@ -3614,19 +4659,10 @@ def scan_for_signals_detailed(
         diagnostics["pead_primary_lookback_days"] = int(get_pead_primary_lookback_days(skill_dir))
     except Exception:
         diagnostics["pead_primary_lookback_days"] = None
-    # Executable Stage B shortlist excludes PEAD-only shadow admits.
+    # Executable Stage B shortlist excludes PEAD-only unless this scan is a
+    # dedicated PEAD / research sleeve (no Stage 2 arm).
     executable_candidates = list(pead_partition["executable"])
-    shortlist_limit = _compute_stage_a_shortlist_limit(
-        total_candidates=len(executable_candidates),
-        top_n=top_n,
-        multiplier=shortlist_multiplier,
-        cap=shortlist_cap,
-        nocap_limit=shortlist_nocap_limit,
-    )
-    shortlist = executable_candidates[:shortlist_limit]
-    horizon_only = [
-        c for c in stage_a_candidates if str(c.get("entry_family") or "") == "horizon"
-    ]
+    horizon_only = [c for c in stage_a_candidates if str(c.get("entry_family") or "") == "horizon"]
     try:
         from core.horizon_strategies import cap_cross_section_horizon
 
@@ -3642,20 +4678,33 @@ def scan_for_signals_detailed(
             ]
     except Exception as e:
         LOG.debug("Horizon cross-section cap skipped: %s", e)
-    horizon_only.sort(key=_executable_stage_a_sort_key)
+    assembled = _assemble_stage_a_shortlist(
+        executable=executable_candidates,
+        horizon_only=horizon_only,
+        pead_only=list(pead_partition.get("pead_only") or []),
+        want_stage2=bool(scan_arms.get("want_stage2", True)),
+        want_pead=bool(scan_arms.get("want_pead")),
+        want_horizon=bool(horizon_ids),
+        top_n=top_n,
+        multiplier=shortlist_multiplier,
+        cap=shortlist_cap,
+        nocap_limit=shortlist_nocap_limit,
+        horizon_sidecar_cap=int(HORIZON_STAGE_B_CAP),
+    )
+    shortlist = list(assembled["shortlist"])
+    horizon_extra = list(assembled["horizon_extra"])
     diagnostics["horizon_admitted"] = len(horizon_only)
-    horizon_extra: list[dict[str, Any]] = []
-    if horizon_ids:
-        horizon_extra = horizon_only[: int(HORIZON_STAGE_B_CAP)]
-        shortlist = list(shortlist) + horizon_extra
     diagnostics["horizon_shortlisted"] = len(horizon_extra)
+    diagnostics["horizon_shortlist_sort"] = "plugin_raw_score"
+    diagnostics["pead_stage_b_shortlisted"] = len(assembled.get("pead_stage_b") or [])
+    diagnostics["dedicated_research_scan"] = int(bool(assembled.get("dedicated_research")))
     diagnostics["stage_a_shortlisted"] = len(shortlist)
-    diagnostics["stage_a_pruned"] = max(0, len(executable_candidates) - len(executable_candidates[:shortlist_limit]))
+    diagnostics["stage_a_pruned"] = int(assembled.get("stage_a_pruned") or 0)
 
     # Free the per-ticker DataFrames carried on pruned (non-shortlisted)
     # candidates before Stage B. On a broad universe this releases ~1500 frames
     # that Stage B never touches, cutting peak memory; shortlisted candidates
-    # keep their `df` for enrichment. PEAD-only shadow names are never Stage B.
+    # keep their `df` for enrichment. Mixed-book PEAD-only names stay shadow.
     _shortlist_ids = {id(c) for c in shortlist}
     for _cand in stage_a_candidates:
         if id(_cand) not in _shortlist_ids:
@@ -3704,6 +4753,7 @@ def scan_for_signals_detailed(
                 diagnostics.get("regime_bullish"),
                 mgmt_integrity_mode,
                 mgmt_integrity_filter_min_score,
+                diagnostics.get("data_quality"),
             )
             future_map_b[fut] = ticker
         try:
@@ -3785,6 +4835,7 @@ def scan_for_signals_detailed(
         "high_count": int(diagnostics.get("uncertainty_high_count", 0) or 0),
         "medium_count": int(diagnostics.get("uncertainty_medium_count", 0) or 0),
     }
+    _stamp_mirofish_llm_diagnostics(diagnostics, signals, skill_dir)
 
     diagnostics["data_failure_count"] = len(data_failures)
     diagnostics["silent_fallback_count"] = (
@@ -3800,7 +4851,14 @@ def scan_for_signals_detailed(
         )
     try:
         from sector_strength import get_unresolved_sector_symbols
-        diagnostics["unresolved_sector_symbols"] = len(get_unresolved_sector_symbols(skill_dir=skill_dir))
+
+        unresolved_global = get_unresolved_sector_symbols(skill_dir=skill_dir)
+        # Scan-scoped count: the global cache also holds ETFs / option symbols
+        # resolved outside this scan, so reporting its raw length (e.g. 88)
+        # misstates how many *scanned* names lack a sector.
+        scanned = {str(t).strip().upper() for t in (watchlist or []) if str(t).strip()}
+        diagnostics["unresolved_sector_symbols"] = len([t for t in unresolved_global if t in scanned])
+        diagnostics["unresolved_sector_symbols_cache"] = len(unresolved_global)
     except Exception as e:
         _record_nonfatal(
             "post_scan_observability_failures",
@@ -3938,16 +4996,6 @@ def send_signal_alert(signal: dict[str, Any], skill_dir: Path) -> None:
     except Exception:
         pass
 
-    try:
-        from config import get_hypothesis_ledger_enabled
-        from hypothesis_ledger import append_hypothesis, record_from_signal
-
-        if get_hypothesis_ledger_enabled(skill_dir):
-            rec = record_from_signal(signal, skill_dir=skill_dir, sleeve_id="S0")
-            append_hypothesis(rec, skill_dir=skill_dir)
-    except Exception as e:
-        LOG.debug("Hypothesis ledger append skipped: %s", e)
-
     if send_alert(msg, kind="signal", env_path=skill_dir / ".env", operator_context=op_ctx or None):
         record_alert_sent(t, skill_dir)
 
@@ -3972,11 +5020,13 @@ def _build_comparison_embed(signals: list[dict[str, Any]]) -> dict[str, Any] | N
         conv = s.get("mirofish_conviction")
         conv_str = f"{conv:+d}" if conv is not None else "N/A"
         sector = s.get("sector_etf", "?")
-        embed["fields"].append({
-            "name": f"{s['ticker']}  Score: {score:.0f}",
-            "value": f"Conv: {conv_str} | Sector: {sector}",
-            "inline": True,
-        })
+        embed["fields"].append(
+            {
+                "name": f"{s['ticker']}  Score: {score:.0f}",
+                "value": f"Conv: {conv_str} | Sector: {sector}",
+                "inline": True,
+            }
+        )
     if len(embed["fields"]) > 12:
         embed["fields"] = embed["fields"][:12]
         embed["fields"].append(
@@ -3996,6 +5046,7 @@ def _send_comparison_embed(signals: list[dict[str, Any]], skill_dir: Path) -> No
     if not embed:
         return
     from notifier import send_embed_alert
+
     send_embed_alert(embed, env_path=skill_dir / ".env")
 
 
@@ -4007,6 +5058,7 @@ def run_scan_and_notify(skill_dir: Path | None = None, send_summary: bool = True
     signals, diagnostics = scan_for_signals_detailed(skill_dir)
     if signals:
         from discord_confirm import ensure_bot_ready
+
         ensure_bot_ready(timeout=15)
 
     if len(signals) >= 2:
@@ -4048,6 +5100,19 @@ def run_scan_and_notify(skill_dir: Path | None = None, send_summary: bool = True
                     "data_quality_reasons": diagnostics.get("data_quality_reasons") or [],
                 },
             )
+    try:
+        from core.experiment_collector import harvest_scan
+
+        harvest_scan(
+            skill_dir,
+            diagnostics,
+            signals=signals,
+            signals_found=len(signals),
+            persist_last_scan=True,
+            scan_label="bot",
+        )
+    except Exception:
+        LOG.warning("Experiment harvest after scan failed", exc_info=True)
     return len(signals)
 
 
@@ -4056,6 +5121,7 @@ if __name__ == "__main__":
     import time
 
     from logger_setup import setup_logging
+
     setup_logging()
     n = run_scan_and_notify()
     print(f"Found {n} signals, notifications sent.")

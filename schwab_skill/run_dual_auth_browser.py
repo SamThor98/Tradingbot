@@ -12,6 +12,7 @@ STEP 2: Stop the local dashboard if it is running on port 8182, then run:
 You'll get a browser security warning (self-signed cert) - click Advanced -> Proceed.
 """
 import datetime
+import ipaddress
 import os
 import secrets
 import ssl
@@ -84,17 +85,57 @@ class OAuthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _make_cert():
-    """Create self-signed cert with cryptography (already a dependency)."""
+def _localhost_cert_paths(skill_dir: Path | None = None) -> tuple[Path, Path]:
+    root = Path(skill_dir) if skill_dir is not None else SKILL_DIR
+    return root / "localhost.pem", root / "localhost-key.pem"
+
+
+def _existing_localhost_cert_ok(cert_path: Path, key_path: Path) -> bool:
+    """True when the on-disk self-signed pair is still usable.
+
+    Regenerating on every dashboard start mints a new untrusted cert, so an
+    already-open tab's ``fetch()`` fails with Chrome's ``Failed to fetch``.
+    """
+    if not cert_path.is_file() or not key_path.is_file():
+        return False
+    if cert_path.stat().st_size < 100 or key_path.stat().st_size < 100:
+        return False
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+
+        cert = x509.load_pem_x509_certificate(cert_path.read_bytes(), default_backend())
+        now = datetime.datetime.now(datetime.timezone.utc)
+        expiry = getattr(cert, "not_valid_after_utc", None)
+        if expiry is None:
+            expiry = cert.not_valid_after
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=datetime.timezone.utc)
+        return expiry > now + datetime.timedelta(days=7)
+    except Exception:
+        return False
+
+
+def _make_cert(skill_dir: Path | None = None):
+    """Return a self-signed localhost cert, reusing a still-valid pair when present."""
     from cryptography import x509
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
 
+    cert_path, key_path = _localhost_cert_paths(skill_dir)
+    if _existing_localhost_cert_ok(cert_path, key_path):
+        return cert_path, key_path
+
     key = rsa.generate_private_key(65537, 2048, default_backend())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
-    san = x509.SubjectAlternativeName([x509.DNSName("127.0.0.1")])
+    san = x509.SubjectAlternativeName(
+        [
+            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            x509.DNSName("localhost"),
+        ]
+    )
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -112,8 +153,6 @@ def _make_cert():
         serialization.PrivateFormat.TraditionalOpenSSL,
         serialization.NoEncryption(),
     )
-    cert_path = SKILL_DIR / "localhost.pem"
-    key_path = SKILL_DIR / "localhost-key.pem"
     cert_path.write_bytes(cert_pem)
     key_path.write_bytes(key_pem)
     return cert_path, key_path

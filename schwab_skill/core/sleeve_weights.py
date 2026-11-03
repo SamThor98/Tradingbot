@@ -145,6 +145,9 @@ def build_multi_sleeve_targets(
     s0_score_field: str = "signal_score",
     s1_score_field: str = "edge_score",
     s1_paper_only: bool = True,
+    optimizer_mode: str | None = None,
+    corr: dict[tuple[str, str], float] | None = None,
+    drawdown_from_peak: float | None = None,
 ) -> dict[str, Any]:
     """Build S0 (+ optional S1) desired weights and net book under allocator decision."""
     s0_w = build_sleeve_desired_weights(
@@ -188,7 +191,7 @@ def build_multi_sleeve_targets(
     book[SLEEVE_S3] = book["cash_weight"]
 
     traded = apply_hysteresis(book["weights"], current_weights or {})
-    return {
+    result = {
         "sleeves": {
             SLEEVE_S0: s0_w,
             SLEEVE_S1: s1_w if not s1_paper_only else s1_w_paper,
@@ -199,3 +202,27 @@ def build_multi_sleeve_targets(
         "trade_targets": traded,
         "allocator": decision.as_dict(),
     }
+    mode_n = str(optimizer_mode or "").strip().lower()
+    if mode_n in ("shadow", "live"):
+        from config import get_allocator_corr_cap, get_allocator_hysteresis_abs, get_allocator_max_dd_cap
+        from core.sleeve_optimizer import optimize_net_weights
+
+        opt = optimize_net_weights(
+            {k: v for k, v in result["sleeves"].items() if k != SLEEVE_S3},
+            corr=corr,
+            drawdown_from_peak=drawdown_from_peak,
+            current_weights=current_weights,
+            sector_by_ticker=sector_by_ticker,
+            corr_cap=get_allocator_corr_cap(),
+            max_dd=get_allocator_max_dd_cap(),
+            mode=mode_n,
+            hysteresis_band=get_allocator_hysteresis_abs(),
+        )
+        result["optimizer"] = opt
+        if mode_n == "live":
+            result["trade_targets"] = opt.get("trade_targets") or traded
+            result["net_book"] = dict(book)
+            result["net_book"]["weights"] = opt.get("weights") or book.get("weights")
+            result["net_book"]["cash_weight"] = float(opt.get("cash_weight") or book.get("cash_weight") or 0.0)
+            result["sleeves"][SLEEVE_S3] = {"CASH": result["net_book"]["cash_weight"]}
+    return result

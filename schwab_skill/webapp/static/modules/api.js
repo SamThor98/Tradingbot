@@ -82,6 +82,32 @@ function classifyApiError(status, rawError) {
   };
 }
 
+function classifyNetworkFailure(err) {
+  const msg = String(err?.message || "Request failed.").trim() || "Request failed.";
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("load failed") ||
+    lower.includes("err_cert") ||
+    lower.includes("err_connection")
+  ) {
+    return {
+      error: msg,
+      user_message:
+        "Can't reach the dashboard. Reload this page and accept the HTTPS certificate warning, or restart the local dashboard on port 8182.",
+      hint: "A new self-signed cert after a dashboard restart makes already-open tabs fail every API call.",
+      retryable: true,
+    };
+  }
+  return {
+    error: msg,
+    user_message: msg,
+    hint: "",
+    retryable: true,
+  };
+}
+
 function isApiKeyAuthFailure(status, payload) {
   if (status !== 401) return false;
   if (!state.publicConfig?.api_key_required) return false;
@@ -248,13 +274,13 @@ export const api = {
           retryable: true,
         };
       }
-      const msg = err?.message || "Request failed.";
+      const mapped = classifyNetworkFailure(err);
       return {
         ok: false,
-        error: msg,
-        user_message: msg,
-        hint: "",
-        retryable: true,
+        error: mapped.error,
+        user_message: mapped.user_message,
+        hint: mapped.hint,
+        retryable: mapped.retryable,
       };
     } finally {
       clearTimeout(timeout);
@@ -354,7 +380,8 @@ export const api = {
       if (err?.name === "AbortError") {
         return { ok: false, error: "Download timed out. Please retry." };
       }
-      return { ok: false, error: err?.message || "Download failed." };
+      const mapped = classifyNetworkFailure(err);
+      return { ok: false, error: mapped.user_message || mapped.error };
     } finally {
       clearTimeout(timeout);
     }
@@ -440,6 +467,51 @@ export const api = {
     const { composeId: _composeId, ...requestOptions } = options;
     return this.download(
       `/api/research/dossier/${encodeURIComponent(safeTicker)}/fundamental-workbook${suffix}`,
+      requestOptions,
+    );
+  },
+
+  getResearchPricing(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    const qs = new URLSearchParams();
+    if (options.refresh) qs.set("refresh", "1");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const { refresh: _refresh, ...requestOptions } = options;
+    return this.get(`/api/research/pricing/${encodeURIComponent(safeTicker)}${suffix}`, requestOptions);
+  },
+
+  ingestResearchPricing(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    return this.post(`/api/research/pricing/${encodeURIComponent(safeTicker)}/ingest`, {}, options);
+  },
+
+  recomputeResearchPricing(ticker, assumptions = {}, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    return this.post(
+      `/api/research/pricing/${encodeURIComponent(safeTicker)}/recompute`,
+      assumptions,
+      options,
+    );
+  },
+
+  getResearchSharadar(ticker, options = {}) {
+    const safeTicker = String(ticker || "").trim().toUpperCase();
+    const qs = new URLSearchParams();
+    if (options.refresh) qs.set("refresh", "1");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const { refresh: _refresh, ...requestOptions } = options;
+    return this.get(`/api/research/sharadar/${encodeURIComponent(safeTicker)}${suffix}`, requestOptions);
+  },
+
+  getResearchSharadarCompare(tickerA, tickerB, options = {}) {
+    const a = String(tickerA || "").trim().toUpperCase();
+    const b = String(tickerB || "").trim().toUpperCase();
+    const qs = new URLSearchParams();
+    if (options.refresh) qs.set("refresh", "1");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const { refresh: _refresh, ...requestOptions } = options;
+    return this.get(
+      `/api/research/sharadar-compare/${encodeURIComponent(a)}/${encodeURIComponent(b)}${suffix}`,
       requestOptions,
     );
   },

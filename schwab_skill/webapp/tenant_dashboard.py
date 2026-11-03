@@ -47,7 +47,8 @@ from sec_filing_compare import (
     compare_ticker_vs_ticker,
 )
 from sector_strength import get_sector_heatmap
-from webapp.routes.research import _dossier_to_xlsx
+from sharadar_data import get_sharadar_research_snapshot, sharadar_preflight_item
+from webapp.routes.research import _chart_payload, _dossier_to_xlsx
 
 from ._shared import (
     build_portfolio_risk_analytics as _build_portfolio_risk_analytics,
@@ -1029,11 +1030,22 @@ def _build_dossier_preflight_sd(ticker: str, *, skill_dir: Path) -> dict[str, An
                 else "FINNHUB_API_KEY is missing; report-stack fallbacks will be used."
             ),
         },
+        sharadar_preflight_item(skill_dir),
         {
             "id": "edgar_user_agent",
             "label": "SEC EDGAR contact",
             "status": "ok" if edgar_real else "warn",
             "detail": "EDGAR_USER_AGENT looks valid." if edgar_real else "EDGAR_USER_AGENT is missing or placeholder.",
+        },
+        {
+            "id": "companyfacts",
+            "label": "SEC companyfacts pricing",
+            "status": "ok" if edgar_real else "warn",
+            "detail": (
+                "Pricing models load from cached SEC XBRL companyfacts."
+                if edgar_real
+                else "Set a real EDGAR_USER_AGENT to ingest companyfacts; DCF may fall back to Yahoo."
+            ),
         },
         {
             "id": "sec_analysis",
@@ -1202,14 +1214,44 @@ def _compose_research_dossier_sd(
         )
     )
 
+    sharadar = get_sharadar_research_snapshot(symbol, skill_dir=skill_dir)
+    sharadar_errors = list(sharadar.get("errors") or []) if isinstance(sharadar, dict) else []
+    sharadar_status = "ok" if sharadar.get("ok") else ("disabled" if not sharadar.get("enabled") else "degraded")
+    if sharadar.get("status") == "error":
+        sharadar_status = "degraded"
+    source_metadata.append(
+        _source_entry_sd(
+            "sharadar",
+            status=sharadar_status,
+            detail=(
+                ", ".join(sharadar_errors)
+                if sharadar_errors
+                else "Bundle PIT: daily multiples, ART fundamentals, insiders, 13F, S&P 500 membership"
+            ),
+            as_of=str(sharadar.get("as_of") or generated_at),
+            fallback_used=sharadar_status != "ok",
+        )
+    )
+    try:
+        from sharadar_research import overlay_research_forensic
+
+        forensic_snapshot = overlay_research_forensic(forensic_snapshot, sharadar, skill_dir=skill_dir)
+        art_lineage = str(forensic_snapshot.get("data_lineage") or "")
+        if "sharadar_art" in art_lineage:
+            for entry in source_metadata:
+                if entry.get("name") == "forensic":
+                    entry["detail"] = art_lineage
+                    entry["status"] = "ok" if forensic_snapshot.get("ok") else entry.get("status")
+                    break
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("Sharadar research forensic overlay skipped: %s", exc)
+
     report_v2 = build_report_v2(report_data, portfolio_summary=portfolio_summary or None)
     if isinstance(finnhub, dict):
-        finnhub = merge_research_snapshot(finnhub, report_data)
+        finnhub = merge_research_snapshot(finnhub, report_data, sharadar)
         merged_sources = finnhub.get("merged_sources") or {}
         fallback_fields = [
-            key
-            for key, source in (merged_sources.get("metrics") or {}).items()
-            if str(source).startswith("report.")
+            key for key, source in (merged_sources.get("metrics") or {}).items() if str(source).startswith("report.")
         ]
         if fallback_fields:
             source_metadata.append(
@@ -1234,7 +1276,9 @@ def _compose_research_dossier_sd(
                 ruthless_mode=False,
                 profile_override=None,
             )
-            source_metadata.append(_source_entry_sd("management_integrity", status="ok", detail="SEC compare scorecard"))
+            source_metadata.append(
+                _source_entry_sd("management_integrity", status="ok", detail="SEC compare scorecard")
+            )
         except Exception as exc:  # noqa: BLE001
             management_dashboard = {"ok": False, "error": str(exc)}
             source_metadata.append(
@@ -1243,7 +1287,9 @@ def _compose_research_dossier_sd(
     else:
         management_dashboard = {"ok": False, "error": sec_compare_data.get("error") or "SEC compare unavailable"}
         source_metadata.append(
-            _source_entry_sd("management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True)
+            _source_entry_sd(
+                "management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True
+            )
         )
     report_trust = build_report_trust_payload(
         {
@@ -1286,6 +1332,7 @@ def _compose_research_dossier_sd(
                 "catalysts": catalyst_risk["catalysts"],
                 "risks": catalyst_risk["risks"],
             },
+            "sharadar_bundle": sharadar,
             "management_integrity": management_dashboard,
             "forensic": forensic_snapshot,
         },
@@ -1382,6 +1429,8 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
 
     def _metric_source(key: str) -> str:
         source = str(metric_sources.get(key) or "finnhub")
+        if source == "sharadar":
+            return "Sharadar ART/daily"
         if source.startswith("report."):
             return f"{source} fallback"
         return "Finnhub metrics"
@@ -1468,7 +1517,7 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
             f"| P/S (TTM) | {_num(metrics.get('ps_ttm'))} |",
             f"| EV / EBITDA | {_num(metrics.get('ev_to_ebitda'))} |",
             f"| EV / Sales | {_num(metrics.get('ev_to_sales'))} |",
-            f"| Technical Signal Score | {_num(technical.get('signal_score'), 0)} |",
+            f"| Technical signal points | {_num(technical.get('signal_score'), 0)} (composite, not a probability) |",
             f"| Stage 2 / VCP | {bool(technical.get('stage_2'))} / {bool(technical.get('vcp'))} |",
             "",
             f"Technical structure implies {'constructive trend continuation' if technical.get('stage_2') else 'non-trending or transitional tape'} with sector monitor {technical.get('sector_etf') or 'n/a'}. "
@@ -1532,8 +1581,8 @@ def _dossier_to_markdown_sd(dossier: dict[str, Any]) -> str:
             "| Metric | Value | Source |",
             "|---|---:|---|",
             f"| Current Price | ${_num(quote.get('current'))} | Finnhub quote |",
-            f"| 52-Week High | ${_num(metrics.get('52week_high'))} | Finnhub metrics |",
-            f"| 52-Week Low | ${_num(metrics.get('52week_low'))} | Finnhub metrics |",
+            f"| 52-Week High | ${_num(metrics.get('52week_high'))} | {_metric_source('52week_high')} |",
+            f"| 52-Week Low | ${_num(metrics.get('52week_low'))} | {_metric_source('52week_low')} |",
             f"| DCF Margin of Safety | {_pct(dcf.get('margin_of_safety'))} | Full report DCF |",
             f"| Health Flag Count | {len(health.get('flags') or [])} | Full report health |",
             f"| Portfolio Concentration | {hhi_label} | Portfolio risk analytics |",
@@ -1747,28 +1796,54 @@ def tenant_portfolio(user: User = Depends(get_current_user), db: OrmSession = De
         return _err("Link Schwab account before loading portfolio.")
     try:
         state = None
+        summary = None
         with tenant_skill_dir(db, user.id) as skill_dir:
             status_data = get_account_status(skill_dir=skill_dir)
             if not isinstance(status_data, str):
                 try:
                     from core.providers import PortfolioProvider
-                    from sector_strength import get_ticker_sector_etf
 
-                    state = PortfolioProvider.normalize_account(
-                        status_data,
-                        sector_lookup=lambda t: get_ticker_sector_etf(t, skill_dir=skill_dir),
-                    )
+                    state = PortfolioProvider.normalize_account(status_data)
                 except Exception as snap_exc:
                     LOG.debug("Tenant portfolio normalization skipped: %s", snap_exc)
+                summary = _build_portfolio_summary(status_data)
+                from core.protective_orders import annotate_portfolio_protection
+
+                annotate_portfolio_protection(summary, skill_dir)
         if isinstance(status_data, str):
             return _err(status_data)
         if state is not None:
             from core.portfolio_equity_snapshot import record_equity_snapshot
 
             record_equity_snapshot(db, state, user_id=user.id)
-        return _ok(_build_portfolio_summary(status_data))
+        return _ok(summary)
     except Exception as exc:
         return _saas_error_response(exc, source="portfolio", fallback="Unable to load portfolio right now.")
+
+
+@router.post("/api/execution/ambiguity/resolve", response_model=ApiResponse)
+def tenant_resolve_order_ambiguity(
+    body: dict[str, Any] = Body(...),
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    """Clear a symbol lock after the operator checks the order at Schwab."""
+    from execution import resolve_order_ambiguity
+
+    if not user_has_account_session(db, user.id):
+        return _err("Link Schwab account before resolving an order.")
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            result = resolve_order_ambiguity(
+                skill_dir,
+                str((body or {}).get("ticker") or ""),
+                str((body or {}).get("outcome") or ""),
+            )
+    except Exception as exc:
+        return _saas_error_response(exc, source="ambiguity_resolve", fallback="Unable to resolve that order.")
+    if not result.get("ok"):
+        return _err(str(result.get("error") or "resolve failed"))
+    return _ok(result)
 
 
 @router.get("/api/portfolio/risk", response_model=ApiResponse)
@@ -1902,7 +1977,17 @@ def tenant_cockpit_market(user: User = Depends(get_current_user), db: OrmSession
 
         last_scan = _load_state(db, user.id, "last_scan", {})
         diagnostics = last_scan.get("diagnostics") if isinstance(last_scan, dict) else None
-        return _ok(cockpit_service.build_market(diagnostics or {}))
+        diag = diagnostics if isinstance(diagnostics, dict) else {}
+        hmm = None
+        try:
+            from core.hmm_regime import load_spy_hmm_view
+
+            with tenant_skill_dir(db, user.id) as skill_dir:
+                hmm = load_spy_hmm_view(skill_dir, diag)
+        except Exception as exc:
+            LOG.warning("HMM regime view failed: %s", exc)
+            hmm = None
+        return _ok(cockpit_service.build_market(diag, hmm_regime=hmm))
     except Exception as exc:
         return _saas_error_response(exc, source="cockpit_market", fallback="Unable to load market regime.")
 
@@ -2107,9 +2192,7 @@ def tenant_decision_dashboard(user: User = Depends(get_current_user), db: OrmSes
         payload = build_decision_dashboard_snapshot(skill_dir=SKILL_DIR, last_scan=last_scan)
         return _ok(payload)
     except Exception as exc:
-        return _saas_error_response(
-            exc, source="decision_dashboard", fallback="Unable to load decision dashboard."
-        )
+        return _saas_error_response(exc, source="decision_dashboard", fallback="Unable to load decision dashboard.")
 
 
 @router.get("/api/cockpit/decision-packets", response_model=ApiResponse)
@@ -2416,6 +2499,40 @@ def tenant_challenger_run(
         return _saas_error_response(exc, source="challenger", fallback="Challenger scan failed.")
 
 
+@router.get("/api/ablation/status", response_model=ApiResponse)
+def tenant_ablation_status(_user: User = Depends(get_current_user)) -> ApiResponse:
+    """Hosted API does not run in-process ablation; keep the dashboard from 404ing."""
+    return _ok(
+        {
+            "run_status": "idle",
+            "started_at": None,
+            "finished_at": None,
+            "last_error": None,
+            "returncode": None,
+            "raw_artifact": None,
+            "report_json": None,
+            "report_md": None,
+            "running": False,
+            "hosted_unavailable": True,
+            "latest_report": {"exists": False},
+        }
+    )
+
+
+@router.post("/api/ablation/run", response_model=ApiResponse)
+def tenant_ablation_run(_user: User = Depends(get_current_user)) -> ApiResponse:
+    return ApiResponse(
+        ok=False,
+        error="Strategy comparison cycles run on the local operator dashboard, not the hosted API.",
+        data={"hosted_unavailable": True, "started": False},
+    )
+
+
+@router.get("/api/validation/status", response_model=ApiResponse)
+def tenant_validation_status(_user: User = Depends(get_current_user)) -> ApiResponse:
+    return _ok(latest_validation_status(SKILL_DIR))
+
+
 @router.get("/api/scan/status", response_model=ApiResponse)
 def tenant_scan_status(user: User = Depends(get_current_user), db: OrmSession = Depends(_db)) -> ApiResponse:
     """SaaS has no in-process scan worker; expose last_scan so the dashboard refresh path matches local shape."""
@@ -2454,59 +2571,32 @@ def tenant_decision_card(
     if not isinstance(signal, dict) or not signal:
         return ApiResponse(ok=False, error=f"{symbol} scan payload is unavailable.")
 
+    from .decision_card_service import build_decision_card_payload
+
     price = float(signal.get("price", 0) or 0)
     with tenant_skill_dir(db, user.id) as skill_dir:
         size_usd = get_position_size_usd(ticker=symbol, price=price if price > 0 else None, skill_dir=skill_dir)
-
-    qty = max(1, int(size_usd / price)) if price > 0 else 1
-    stop_pct = max(0.03, min(0.15, 0.07))
-    stop_level = round(price * (1.0 - stop_pct), 2) if price > 0 else None
-    entry_zone = (
-        {"low": round(price * 0.995, 2), "high": round(price * 1.005, 2)} if price > 0 else {"low": None, "high": None}
-    )
-    confidence_bucket = str(((signal.get("advisory") or {}).get("confidence_bucket") or "unknown")).lower()
-    score = float(signal.get("signal_score", 0) or 0)
-    conviction = signal.get("mirofish_conviction")
-    reasons = [
-        f"signal_score={score:.1f}",
-        f"confidence={confidence_bucket}",
-        f"strategy={((signal.get('strategy_attribution') or {}).get('top_live') or 'unknown')}",
-    ]
-    if conviction is not None:
-        reasons.append(f"mirofish_conviction={conviction}")
-    ev = signal.get("event_risk")
-    if isinstance(ev, dict) and ev.get("flagged"):
-        rlist = ev.get("reasons") or []
-        reasons.append(f"event_risk={','.join(str(x) for x in rlist)}")
-
-    mock_trade = PendingTrade(
-        id="preview",
-        user_id=user.id,
-        ticker=symbol,
-        qty=qty,
-        price=price,
-        status="pending",
-        signal_json=json.dumps(signal),
-        note=None,
-    )
-    checklist = _saas_pretrade_checklist(mock_trade, signal)
-
-    return _ok(
-        {
-            "ticker": symbol,
-            "entry_zone": entry_zone,
-            "stop_invalidation": stop_level,
-            "size": {"qty": qty, "usd": size_usd},
-            "confidence": {
-                "bucket": confidence_bucket,
-                "signal_score": score,
-                "mirofish_conviction": conviction,
-            },
-            "key_reasons": reasons[:6],
-            "block_reason": (checklist.get("block_reasons") or [None])[0],
-            "checklist": checklist,
-        }
-    )
+        qty = max(1, int(size_usd / price)) if price > 0 else 1
+        mock_trade = PendingTrade(
+            id="preview",
+            user_id=user.id,
+            ticker=symbol,
+            qty=qty,
+            price=price,
+            status="pending",
+            signal_json=json.dumps(signal),
+            note=None,
+        )
+        checklist = _saas_pretrade_checklist(mock_trade, signal)
+        return _ok(
+            build_decision_card_payload(
+                signal,
+                ticker=symbol,
+                skill_dir=skill_dir,
+                checklist=checklist,
+                size_usd=size_usd,
+            )
+        )
 
 
 @router.get("/api/check/{ticker}", response_model=ApiResponse)
@@ -2548,12 +2638,7 @@ def tenant_chart_data(
             return ApiResponse(
                 ok=False,
                 error=f"No price data for {ticker}",
-                data={
-                    "ticker": ticker.upper().strip(),
-                    "provider": meta.get("provider"),
-                    "used_fallback": meta.get("used_fallback"),
-                    "fallback_reason": meta.get("fallback_reason"),
-                },
+                data=_chart_payload(ticker, df, meta, []),
             )
         candles: list[dict[str, Any]] = []
         for _, row in df.iterrows():
@@ -2578,7 +2663,7 @@ def tenant_chart_data(
                 }
             )
         candles.sort(key=lambda c: c["time"])
-        return _ok({"ticker": ticker.upper().strip(), "candles": candles})
+        return _ok(_chart_payload(ticker, df, meta, candles))
     except Exception as exc:
         return _saas_error_response(exc, source="chart_data", fallback="Chart data lookup failed.")
 
@@ -2645,6 +2730,44 @@ def tenant_report_ticker(
             return _ok(data)
     except Exception as exc:
         return _saas_error_response(exc, source="report", fallback="Full report generation failed.")
+
+
+@router.get("/api/sec/analyze/{ticker}", response_model=ApiResponse)
+def tenant_sec_analyze(
+    ticker: str,
+    form_type: str = "10-K",
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            cfg = _sec_analysis_settings_sd(skill_dir)
+            if not cfg["analysis_enabled"]:
+                return ApiResponse(ok=False, error="SEC filing analysis is disabled by configuration.")
+            out = analyze_latest_filing_for_ticker(
+                ticker=ticker.upper().strip(),
+                form_type=form_type.upper().strip(),
+                user_agent=cfg["user_agent"],
+                skill_dir=skill_dir,
+                cache_hours=cfg["cache_hours"],
+                max_chars=cfg["max_chars"],
+                enable_llm=cfg["llm_enabled"],
+            )
+            if not out.get("ok"):
+                return ApiResponse(ok=False, error=str(out.get("error", "SEC analysis failed")))
+            return _ok(_normalize_sec_analysis_payload_sd(out))
+    except Exception as exc:
+        return _saas_error_response(exc, source="sec_analyze", fallback="SEC filing analysis failed.")
+
+
+@router.get("/sec/analyze/{ticker}", response_model=ApiResponse)
+def tenant_sec_analyze_alias(
+    ticker: str,
+    form_type: str = "10-K",
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(_db),
+) -> ApiResponse:
+    return tenant_sec_analyze(ticker=ticker, form_type=form_type, user=user, db=db)
 
 
 @router.get("/api/sec/compare", response_model=ApiResponse)

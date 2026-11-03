@@ -22,7 +22,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-from circuit_breaker import maybe_trip_breaker, schwab_circuit
+from circuit_breaker import is_transient_network_error, maybe_trip_breaker, schwab_circuit
 from config import get_schwab_only_data
 from schwab_auth import DualSchwabAuth
 
@@ -160,8 +160,15 @@ def _request_with_backoff(
         except Exception as e:
             _emit_obs("record_request_latency", None, endpoint, "market", (time.perf_counter() - _t0) * 1000.0)
             _emit_obs("record_request_error", None, endpoint, None)
+            # One transient retry before counting a failure so a single
+            # read/connect timeout cannot latch the process-wide breaker.
+            if is_transient_network_error(e) and attempt < 1:
+                time.sleep(min(backoff, MAX_BACKOFF))
+                backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF)
+                continue
             maybe_trip_breaker(e, schwab_circuit)
             raise
+        schwab_circuit.record_success()
         _emit_obs("record_request_latency", None, endpoint, "market", (time.perf_counter() - _t0) * 1000.0)
         if resp.status_code >= 400:
             _emit_obs("record_request_error", None, endpoint, resp.status_code)

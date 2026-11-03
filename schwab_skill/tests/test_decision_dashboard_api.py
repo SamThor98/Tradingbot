@@ -225,6 +225,38 @@ def test_decision_dashboard_blocked_when_gates_fail(monkeypatch: pytest.MonkeyPa
     assert data["reliability"]["slo_failures"] == ["api_5xx_rate"]
 
 
+def test_signal_stack_summary_names_headline_scenario(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from webapp import decision_dashboard_service as dds
+
+    def _load(_skill_dir, name: str):
+        if name.startswith("signal_stack_counterfactual_"):
+            return {
+                "generated_at": "2026-06-01T00:00:00+00:00",
+                "scenarios": {
+                    "exit_grace_breakout_buffer_0.010": {
+                        "label": "buffer",
+                        "pf_mean": 1.11,
+                        "worst_era_pf": 1.01,
+                        "retention_pct": 70,
+                        "passes_promotion_gates": True,
+                    }
+                },
+                "promotion_gates": {"pf_mean_min": 1.2, "worst_era_pf_min": 1.0},
+                "recommendation": {"action": "keep"},
+            }
+        return None
+
+    monkeypatch.setattr(dds, "load_validation_artifact", _load)
+    edge = dds.signal_edge_validation_status(tmp_path, run_id="control_legacy_aug")
+    stack = edge["signal_stack_counterfactual"]
+    assert stack["headline_scenario_key"] == "exit_grace_breakout_buffer_0.010"
+    assert stack["artifact"] == "validation_artifacts/signal_stack_counterfactual_control_legacy_aug.json"
+    assert stack["generated_at"] == "2026-06-01T00:00:00+00:00"
+    assert stack["pf_mean"] == 1.11
+    book = dds.summarize_book_width_artifact(None)
+    assert book["source"] == "validation_artifacts/cap37_unsorted_vs_live.json"
+
+
 def test_decision_dashboard_includes_scan_preflight(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     from webapp import decision_dashboard_service as dds
     from webapp import main as webapp_main
@@ -274,3 +306,36 @@ def test_scan_lifecycle_includes_signal_edge_preflight(monkeypatch: pytest.Monke
     assert resp.status_code == 200
     preflight = resp.json()["data"]["signal_edge_preflight"]
     assert preflight["experiment_env_ready"] is True
+
+
+def test_scan_lifecycle_skips_preflight_while_running(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    from webapp import main as webapp_main
+
+    calls = {"n": 0}
+
+    def _preflight(skill_dir, run_id="control_legacy_aug"):
+        calls["n"] += 1
+        return {"experiment_env_ready": True}
+
+    monkeypatch.setattr(webapp_main, "_signal_edge_scan_preflight", _preflight)
+    monkeypatch.setattr(
+        webapp_main,
+        "_scan_snapshot",
+        lambda: {
+            "job_id": "job_running",
+            "status": "running",
+            "started_at": "2026-08-24T12:00:00+00:00",
+            "finished_at": None,
+            "elapsed_seconds": 12,
+            "signals_found": None,
+            "error": None,
+        },
+    )
+    resp = client.get("/api/scan-lifecycle", headers=_auth_headers())
+    assert resp.status_code == 200
+    payload = resp.json()["data"]
+    assert payload["status"] == "running"
+    assert "signal_edge_preflight" not in payload
+    assert calls["n"] == 0

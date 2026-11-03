@@ -35,6 +35,7 @@ SIGNAL_STACK_SHADOW_ENV: dict[str, str] = {
     "CONFLUENCE_GATE_MODE": "shadow",
     "EVENT_RISK_MODE": "off",
     "EXEC_QUALITY_MODE": "off",
+    "SELF_STUDY_MODE": "shadow",
 }
 
 # Promoted operating stack: live 1% breakout buffer + live exit grace (15/40)
@@ -56,6 +57,17 @@ SIGNAL_STACK_ENFORCED_ENV: dict[str, str] = {
     "BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL": "15",
     "BACKTEST_MIN_HOLD_DEFER_SOFT_EXITS": "true",
     "COUNTERFACTUAL_LOGGING_ENABLED": "true",
+    "SELF_STUDY_MODE": "shadow",
+}
+
+# PEAD S1 paper canary: shadow dual-admit, capacity top-5, never executable.
+# Does NOT set STRATEGY_PEAD_PRIMARY_ALLOW_LIVE=true.
+PEAD_CANARY_PAPER_ENV: dict[str, str] = {
+    "STRATEGY_PEAD_PRIMARY_MODE": "shadow",
+    "STRATEGY_PEAD_PRIMARY_ALLOW_LIVE": "false",
+    "PEAD_PRIMARY_SHADOW_MAX_NAMES": "50",
+    "PEAD_PRIMARY_SHADOW_RANK_TOP_N": "5",
+    "PEAD_ENABLED": "true",
 }
 
 # Multi-sleeve Phase 2 shadow + R7 ledger collection for RTH sessions.
@@ -66,10 +78,22 @@ MULTI_SLEEVE_RTH_SHADOW_ENV: dict[str, str] = {
     "MULTI_SLEEVE_S1_PROMOTED_CAP": "false",
     "HYPOTHESIS_LEDGER_ENABLED": "true",
     "HYPOTHESIS_SELF_STUDY_MERGE": "true",
+    "EXPERIMENT_COLLECTOR_ENABLED": "true",
     "HYPOTHESIS_SCORE_HORIZONS": "1,5,20",
     "R7_PROMOTION_MIN_N": "40",
     "R7_PRIMARY_HORIZON": "5",
     "COUNTERFACTUAL_LOGGING_ENABLED": "true",
+    "SELF_STUDY_MODE": "shadow",
+    **PEAD_CANARY_PAPER_ENV,
+}
+
+# MiroFish Grok challenger: persona weighting stays shadow (never live from this apply).
+# Does not write API keys. Operator must set XAI_API_KEY (or MIROFISH_API_KEY).
+MIROFISH_GROK_SHADOW_ENV: dict[str, str] = {
+    "MIROFISH_WEIGHTING_MODE": "shadow",
+    "MIROFISH_ABSTAIN_MODE": "shadow",
+    "LLM_BASE_URL": "https://api.x.ai/v1",
+    "LLM_MODEL_NAME": "grok-4.6",
 }
 
 
@@ -308,16 +332,58 @@ def apply_signal_stack_enforced_env(env_path: Path) -> list[str]:
     return upsert_env_file(env_path, SIGNAL_STACK_ENFORCED_ENV)
 
 
+def pead_canary_paper_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
+    """Ready when PEAD dual-admit is shadow paper and ALLOW_LIVE stays false."""
+    mode = str(values.get("STRATEGY_PEAD_PRIMARY_MODE", "off")).strip().lower()
+    allow_live = _env_bool(values.get("STRATEGY_PEAD_PRIMARY_ALLOW_LIVE"), False)
+    top_n = max(0, int(_env_float(values.get("PEAD_PRIMARY_SHADOW_RANK_TOP_N"), 5)))
+    max_names = max(0, int(_env_float(values.get("PEAD_PRIMARY_SHADOW_MAX_NAMES"), 50)))
+    pead_on = _env_bool(values.get("PEAD_ENABLED"), True)
+
+    missing: list[str] = []
+    if mode != "shadow":
+        missing.append("STRATEGY_PEAD_PRIMARY_MODE=shadow")
+    if allow_live:
+        missing.append("STRATEGY_PEAD_PRIMARY_ALLOW_LIVE=false")
+    if top_n != 5:
+        missing.append("PEAD_PRIMARY_SHADOW_RANK_TOP_N=5")
+    if max_names <= 0:
+        missing.append("PEAD_PRIMARY_SHADOW_MAX_NAMES>0")
+    if not pead_on:
+        missing.append("PEAD_ENABLED=true")
+
+    return {
+        "ready": not missing,
+        "pead_mode": mode,
+        "allow_live": allow_live,
+        "rank_top_n": top_n,
+        "shadow_max_names": max_names,
+        "missing_env": missing,
+        "recommended_env": dict(PEAD_CANARY_PAPER_ENV),
+    }
+
+
+def pead_canary_paper_file_readiness(env_path: Path) -> dict[str, Any]:
+    return pead_canary_paper_readiness_from_values(parse_env_file(env_path))
+
+
+def apply_pead_canary_paper_env(env_path: Path) -> list[str]:
+    """Enable PEAD shadow paper canary. Never writes ALLOW_LIVE=true."""
+    return upsert_env_file(env_path, PEAD_CANARY_PAPER_ENV)
+
+
 def multi_sleeve_rth_shadow_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
     """Ready when allocator is shadow, ledger on, and S1 live capital stays off."""
     alloc = str(values.get("ALLOCATOR_MODE", "off")).strip().lower()
     s1_live = _env_bool(values.get("MULTI_SLEEVE_S1_LIVE"), False)
     s1_promoted = _env_bool(values.get("MULTI_SLEEVE_S1_PROMOTED_CAP"), False)
     ledger = _env_bool(values.get("HYPOTHESIS_LEDGER_ENABLED"), False)
+    collector = _env_bool(values.get("EXPERIMENT_COLLECTOR_ENABLED"), False)
     horizons = str(values.get("HYPOTHESIS_SCORE_HORIZONS", "")).strip()
     r7_n = max(1, int(_env_float(values.get("R7_PROMOTION_MIN_N"), 40)))
     r7_h = str(values.get("R7_PRIMARY_HORIZON", "5")).strip() or "5"
     cf_log = _env_bool(values.get("COUNTERFACTUAL_LOGGING_ENABLED"), True)
+    pead = pead_canary_paper_readiness_from_values(values)
 
     missing: list[str] = []
     if alloc != "shadow":
@@ -328,6 +394,8 @@ def multi_sleeve_rth_shadow_readiness_from_values(values: dict[str, str]) -> dic
         missing.append("MULTI_SLEEVE_S1_PROMOTED_CAP=false")
     if not ledger:
         missing.append("HYPOTHESIS_LEDGER_ENABLED=true")
+    if not collector:
+        missing.append("EXPERIMENT_COLLECTOR_ENABLED=true")
     if "5" not in {p.strip() for p in horizons.replace(";", ",").split(",") if p.strip()}:
         missing.append("HYPOTHESIS_SCORE_HORIZONS includes 5")
     if r7_n < 40:
@@ -336,12 +404,16 @@ def multi_sleeve_rth_shadow_readiness_from_values(values: dict[str, str]) -> dic
         missing.append("R7_PRIMARY_HORIZON=5")
     if not cf_log:
         missing.append("COUNTERFACTUAL_LOGGING_ENABLED=true")
+    missing.extend(pead.get("missing_env") or [])
 
     return {
         "ready": not missing,
         "allocator_mode": alloc,
         "hypothesis_ledger_enabled": ledger,
+        "experiment_collector_enabled": collector,
         "s1_live": s1_live,
+        "allow_live": pead.get("allow_live"),
+        "pead_mode": pead.get("pead_mode"),
         "r7_min_n": r7_n,
         "r7_primary_horizon": r7_h,
         "missing_env": missing,
@@ -356,6 +428,50 @@ def multi_sleeve_rth_shadow_file_readiness(env_path: Path) -> dict[str, Any]:
 def apply_multi_sleeve_rth_shadow_env(env_path: Path) -> list[str]:
     """Enable allocator shadow + hypothesis ledger for RTH evidence collection."""
     return upsert_env_file(env_path, MULTI_SLEEVE_RTH_SHADOW_ENV)
+
+
+def _env_has_any_key(values: dict[str, str], *keys: str) -> bool:
+    return any(str(values.get(key, "")).strip() for key in keys)
+
+
+def mirofish_grok_shadow_readiness_from_values(values: dict[str, str]) -> dict[str, Any]:
+    """Ready when weighting is shadow and LLM routing points at xAI Grok."""
+    mode = str(values.get("MIROFISH_WEIGHTING_MODE", "off")).strip().lower()
+    model = str(values.get("LLM_MODEL_NAME", "")).strip()
+    base_url = str(values.get("LLM_BASE_URL", "")).strip().lower()
+    has_key = _env_has_any_key(values, "XAI_API_KEY", "MIROFISH_API_KEY")
+
+    missing: list[str] = []
+    if mode != "shadow":
+        missing.append("MIROFISH_WEIGHTING_MODE=shadow")
+    if not model.lower().startswith("grok"):
+        missing.append("LLM_MODEL_NAME=grok-4.6")
+    if "x.ai" not in base_url:
+        missing.append("LLM_BASE_URL=https://api.x.ai/v1")
+
+    warnings: list[str] = []
+    if not has_key:
+        warnings.append("Set XAI_API_KEY (or MIROFISH_API_KEY) — not written by apply script")
+
+    return {
+        "ready": not missing,
+        "key_present": has_key,
+        "weighting_mode": mode,
+        "llm_model": model,
+        "llm_base_url": values.get("LLM_BASE_URL", ""),
+        "missing_env": missing,
+        "warnings": warnings,
+        "recommended_env": dict(MIROFISH_GROK_SHADOW_ENV),
+    }
+
+
+def mirofish_grok_shadow_file_readiness(env_path: Path) -> dict[str, Any]:
+    return mirofish_grok_shadow_readiness_from_values(parse_env_file(env_path))
+
+
+def apply_mirofish_grok_shadow_env(env_path: Path) -> list[str]:
+    """Point MiroFish at Grok with shadow persona weighting. Does not write keys."""
+    return upsert_env_file(env_path, MIROFISH_GROK_SHADOW_ENV)
 
 
 def reload_env_file_into_process(env_path: Path, keys: list[str] | None = None) -> dict[str, str | None]:

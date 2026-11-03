@@ -73,6 +73,20 @@ def feature_entries(registry: dict[str, Any] | None = None) -> list[dict[str, An
     return list(reg.get("features") or [])
 
 
+def deferred_pit_feature_names(registry: dict[str, Any] | None = None) -> list[str]:
+    """Deferred fundamental/macro names — enabled only after coverage unlock."""
+    names: list[str] = []
+    for feat in feature_entries(registry):
+        if str(feat.get("status") or "") != "deferred":
+            continue
+        if str(feat.get("data_source") or "") not in {"fundamentals", "macro"}:
+            continue
+        name = str(feat.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def enabled_feature_names(
     registry: dict[str, Any] | None = None,
     *,

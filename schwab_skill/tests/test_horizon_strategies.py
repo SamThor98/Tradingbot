@@ -4,6 +4,7 @@ import pandas as pd
 
 from core.horizon_strategies import (
     DUAL_ADMIT_STRATEGY_IDS,
+    STAGE_A_DEFAULT_HISTORY_DAYS,
     evaluate_donchian_20,
     evaluate_gap_and_go,
     evaluate_horizon_plugins,
@@ -20,6 +21,7 @@ from core.horizon_strategies import (
     resample_monthly,
     resample_weekly,
     selected_dual_admit_ids,
+    stage_a_history_days,
     triggered_dual_admit_ids,
 )
 from core.scan_catalog import (
@@ -114,7 +116,7 @@ def test_nr7_breakout_requires_narrow_bar_then_close_through() -> None:
 def test_weekly_swing_on_rising_weekly_structure() -> None:
     df = _ohlcv(n=280)
     weekly = resample_weekly(df)
-    assert len(weekly) >= 36
+    assert len(weekly) >= 38
     out = evaluate_weekly_swing(df)
     assert out["triggered"] is True
     assert out["meta"]["sma_30w_rising"] is True
@@ -123,10 +125,28 @@ def test_weekly_swing_on_rising_weekly_structure() -> None:
 def test_monthly_faber_on_rising_ten_month_sma() -> None:
     df = _ohlcv(n=400, start="2018-01-02")
     monthly = resample_monthly(df)
-    assert len(monthly) >= 12
+    assert len(monthly) >= 13
     out = evaluate_monthly_position(df)
     assert out["triggered"] is True
     assert out["meta"]["sma_10m_rising"] is True
+
+
+def test_stage_a_history_days_lengthens_for_monthly_sleeves() -> None:
+    assert stage_a_history_days(["trend_breakout"]) == STAGE_A_DEFAULT_HISTORY_DAYS
+    assert stage_a_history_days(["monthly_position"]) > STAGE_A_DEFAULT_HISTORY_DAYS
+    assert stage_a_history_days(["momentum_12_1"]) > STAGE_A_DEFAULT_HISTORY_DAYS
+    assert stage_a_history_days(["donchian_20"]) > STAGE_A_DEFAULT_HISTORY_DAYS
+
+
+def test_three_hundred_calendar_days_cannot_fill_monthly_sma() -> None:
+    # Stage A used to fetch days=300 calendar (~207 sessions). That is below
+    # the 13 completed months needed for SMA10 rising.
+    df = _ohlcv(n=207, start="2025-10-24")
+    monthly = resample_monthly(df)
+    assert len(monthly) < 13
+    out = evaluate_monthly_position(df)
+    assert out["triggered"] is False
+    assert out["meta"].get("reason") == "insufficient_monthly_bars"
 
 
 def test_evaluate_horizon_plugins_covers_catalog_sleeves() -> None:
@@ -162,6 +182,12 @@ def test_dual_admit_selection_and_trigger_filter() -> None:
     assert "monthly_position" not in hits  # too few completed months
 
 
+def test_evaluate_horizon_plugins_names_empty_is_none_not_all() -> None:
+    assert evaluate_horizon_plugins(_ohlcv(n=80), names=set()) == []
+    names = {p["name"] for p in evaluate_horizon_plugins(_ohlcv(n=80), names={"donchian_20"})}
+    assert names == {"donchian_20"}
+
+
 def test_stage2_plugins_keep_live_breakout_and_add_shadow_sleeves() -> None:
     df = _ohlcv(n=80)
     plugins = build_default_strategy_plugins(
@@ -184,6 +210,19 @@ def test_horizon_only_does_not_trigger_live_breakout() -> None:
     )
     by_name = {p["name"]: p for p in plugins}
     assert by_name["trend_breakout"]["triggered"] is False
+
+
+def test_selected_strategy_ids_restrict_stage_b_plugins() -> None:
+    df = _ohlcv(n=80)
+    plugins = build_default_strategy_plugins(
+        signal={"signal_score": 70.0, "entry_family": "horizon"},
+        candidate={"df": df, "entry_family": "horizon", "selected_strategy_ids": ["weekly_swing"]},
+        pullback_mode="shadow",
+    )
+    names = {p["name"] for p in plugins}
+    assert names == {"weekly_swing"}
+    assert "trend_breakout" not in names
+    assert "donchian_20" not in names
 
 
 def test_catalog_lists_multiple_strategies_per_timeframe() -> None:
@@ -324,7 +363,9 @@ def test_donchian_fails_closed_without_sma200() -> None:
     n = 40
     close = [100.0] * (n - 1) + [108.0]
     high = [101.0] * (n - 1) + [108.5]
-    out = evaluate_donchian_20(_ohlcv(n=n, close=close, high=high, low=[99.0] * (n - 1) + [107.0], open_=[100.0] * (n - 1) + [101.0]))
+    out = evaluate_donchian_20(
+        _ohlcv(n=n, close=close, high=high, low=[99.0] * (n - 1) + [107.0], open_=[100.0] * (n - 1) + [101.0])
+    )
     assert out["triggered"] is False
 
 
@@ -334,7 +375,9 @@ def test_share_count_is_not_enough_liquidity() -> None:
     high = [1.05] * (n - 1) + [1.25]
     volume = [300_000.0] * n  # $300k ADV, below $2M
     out = evaluate_donchian_20(
-        _ohlcv(n=n, close=close, high=high, low=[0.95] * (n - 1) + [1.15], open_=[1.0] * (n - 1) + [1.05], volume=volume)
+        _ohlcv(
+            n=n, close=close, high=high, low=[0.95] * (n - 1) + [1.15], open_=[1.0] * (n - 1) + [1.05], volume=volume
+        )
     )
     assert out["meta"].get("liquid") is False
     assert out["triggered"] is False
@@ -390,12 +433,15 @@ def test_partition_live_and_research_uses_plugin_score() -> None:
                 "executable": False,
                 "strategy_plugins": [{"name": "weekly_swing", "triggered": True, "raw_score": 71.0, "mode": "shadow"}],
             },
+            {"ticker": "PEP", "entry_family": "pead_primary", "edge_score": 62.0, "executable": False},
         ]
     )
     assert [r["ticker"] for r in live] == ["AAPL"]
-    assert [r["ticker"] for r in research] == ["MSFT"]
+    assert [r["ticker"] for r in research] == ["MSFT", "PEP"]
     assert research[0]["research_score"] == 71.0
     assert research[0]["rank_basis"] == "research_score"
+    assert research[1]["research_score"] == 62.0
+    assert research[1]["rank_basis"] == "research_score"
 
 
 def test_cap_cross_section_keeps_top_n_only() -> None:

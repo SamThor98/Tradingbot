@@ -264,6 +264,7 @@ def _markdown(
     lines.append("# Phase 2 — Stage 1 edge audit")
     lines.append("")
     lines.append(f"_Generated: {datetime.now(timezone.utc).isoformat()}_  ")
+    lines.append("_Equity replay: 10% of equity per trade, gross exposure capped at 100%._  ")
     lines.append(f"_Verdict: **{verdict}**_  ")
     lines.append(f"_Overlay finding: **{finding}**_  ")
     lines.append("")
@@ -384,6 +385,7 @@ def main() -> int:
             "overlays_material_delta": OVERLAYS_MATERIAL_DELTA,
             "min_eras_for_verdict": MIN_ERAS_FOR_VERDICT,
         },
+        "equity_replay": {"position_pct": 0.10, "max_gross_pct": 1.0},
         "verdict": verdict,
         "overlay_finding": finding,
         "recommendation": recommendation,

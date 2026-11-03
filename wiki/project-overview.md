@@ -1,7 +1,7 @@
 ---
 source: n/a (manually created)
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-09-11
 tags: [overview, architecture]
 ---
 
@@ -29,7 +29,7 @@ A momentum/breakout trading system that scans for Stage 2 + VCP setups, enriches
 | Local | SQLite | API key | `schedule` loop | `main.py` |
 | SaaS | Postgres | Supabase JWT | Celery + Redis | `main_saas.py` |
 
-See [[deployment]] for setup instructions.
+See [[deployment]] for SaaS setup. See [[local-ops-box]] for the dedicated local mini PC.
 
 ## Related Pages
 

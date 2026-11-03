@@ -107,12 +107,32 @@ def _load_trade_frame(run_id: str) -> pd.DataFrame:
         "rank_score",
         "rank_score_v2",
         "p_up_calibrated",
-        "ev_10d",
         "advisory_confidence_bucket",
         "advisory_feature_coverage",
         "data_provider",
         "data_provider_primary",
         "used_fallback_data",
+        "qual_raw",
+        "qual_raw_equal",
+        "qual_raw_with_business",
+        "qual_raw_with_asymmetry_distance",
+        "qual_score",
+        "qual_letter",
+        "qual_trend",
+        "qual_setup",
+        "qual_asymmetry",
+        "qual_asymmetry_distance",
+        "qual_crowding",
+        "qual_business",
+        "debate_score",
+        "qual_coverage_trend",
+        "qual_coverage_setup",
+        "qual_coverage_asymmetry",
+        "qual_coverage_crowding",
+        "qual_disagreement",
+        "disagreement_source",
+        "qual_abstain",
+        "debate_grade_would_skip",
     ]
     rows: list[dict[str, Any]] = []
     for era in ERA_BOUNDS:
@@ -462,6 +482,11 @@ def _render_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {warn}")
     if report.get("guardrail_note"):
         lines.extend(["", "## Note", "", str(report["guardrail_note"])])
+    debate = report.get("debate_grade")
+    if isinstance(debate, dict):
+        from core.scoring_metrics import render_debate_grade_markdown
+
+        lines.extend(render_debate_grade_markdown(debate))
     return "\n".join(lines) + "\n"
 
 
@@ -550,6 +575,9 @@ def main() -> int:
         "ablation": primary_block.get("ablation") or [],
         "sma_sensitivity": primary_block.get("sma_sensitivity") or [],
     }
+    from core.scoring_metrics import debate_grade_report
+
+    report["debate_grade"] = debate_grade_report(df, ret_col=ret_col)
     from config import get_score_pts_sma_multiplier
 
     current_sma_mult = float(get_score_pts_sma_multiplier(SKILL_DIR))

@@ -59,6 +59,7 @@ def hermetic_chain(monkeypatch):
         types.SimpleNamespace(
             apply_meta_policy_to_signal=lambda *, signal, diagnostics, skill_dir: (signal, True),
             log_counterfactual_event=lambda *_a, **_k: False,
+            meta_policy_counterfactual_reason=lambda **_k: None,
         ),
     )
     monkeypatch.setitem(
@@ -73,7 +74,13 @@ def hermetic_chain(monkeypatch):
         lambda signals, diagnostics, skill_dir: signals,
     )
     monkeypatch.setattr(signal_scanner, "_record_quality_snapshot", lambda *_a, **_k: None)
-    for var in ("QUALITY_GATES_MODE", "EVENT_RISK_MODE", "CORRELATION_GUARD_MODE"):
+    for var in (
+        "QUALITY_GATES_MODE",
+        "EVENT_RISK_MODE",
+        "CORRELATION_GUARD_MODE",
+        "HISTORICAL_RANK_MODE",
+        "ANALOG_OVERLAY_MODE",
+    ):
         monkeypatch.setenv(var, "off")
 
 

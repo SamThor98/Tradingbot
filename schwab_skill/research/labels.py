@@ -164,4 +164,9 @@ LABEL_COLUMNS = [
     "drawdown_40d",
     "net_return",
     "r_multiple",
+    "barrier_label",
+    "barrier_hit",
+    "barrier_holding_days",
+    "barrier_ret_net",
+    "y_win_barrier",
 ]

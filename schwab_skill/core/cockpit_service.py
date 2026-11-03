@@ -13,11 +13,13 @@ in, which keeps these functions unit-testable offline.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
 from core import post_fill_risk, pretrade_gates, scan_delta
 from core.contracts.execution import ExecutionQuality, ExecutionState, OrderIntent
+from core.contracts.market import HmmRegimeView
 from core.contracts.provenance import Provenance, utc_now
 from core.providers import (
     ExecutionProvider,
@@ -26,6 +28,8 @@ from core.providers import (
     PortfolioProvider,
     SymbolIntelProvider,
 )
+
+LOG = logging.getLogger(__name__)
 
 
 def _f(value: Any) -> float | None:
@@ -40,9 +44,30 @@ def _f(value: Any) -> float | None:
 # --------------------------------------------------------------------------- #
 # Lane 1: Market Regime
 # --------------------------------------------------------------------------- #
-def build_market(diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+def build_market(
+    diagnostics: dict[str, Any] | None,
+    *,
+    hmm_regime: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Market lane. ``hmm_regime`` is advisory and is dropped if it does not validate."""
     snap = MarketContextProvider.from_diagnostics(diagnostics)
-    return snap.model_dump(mode="json")
+    payload = snap.model_dump(mode="json")
+    if hmm_regime is None:
+        payload["hmm_regime"] = None
+        return payload
+    try:
+        payload["hmm_regime"] = HmmRegimeView.model_validate(hmm_regime).model_dump(mode="json")
+    except Exception as exc:
+        LOG.warning("HMM regime card dropped: %s", exc)
+        payload["hmm_regime"] = HmmRegimeView(
+            status="unavailable",
+            reason="invalid_hmm_payload",
+            action="flat",
+            action_reason="invalid_hmm_payload",
+            entries_frozen=True,
+            freeze_reasons=["invalid_hmm_payload"],
+        ).model_dump(mode="json")
+    return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +103,16 @@ def build_opportunities(
             card.pre_trade = pretrade_gates.from_signal(sig, skill_dir=skill_dir)
         cards.append(card.model_dump(mode="json"))
 
-    cards.sort(key=lambda c: (c.get("rank") or {}).get("rank_score") or -1e9, reverse=True)
+    def _display_rank(card: dict[str, Any]) -> float:
+        """Sort on the score the opportunities lane actually renders."""
+        rank = card.get("rank") or {}
+        for key in ("historical_rank", "rank_score_v2", "composite_score", "rank_score"):
+            value = rank.get(key)
+            if value is not None:
+                return float(value)
+        return -1e9
+
+    cards.sort(key=_display_rank, reverse=True)
     if limit is not None:
         cards = cards[: max(0, int(limit))]
     return cards

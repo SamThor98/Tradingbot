@@ -529,7 +529,7 @@ class TestHealthAndStatus:
         data = resp.json()
         assert data["ok"] is True
         catalog = data["data"]
-        assert [t["id"] for t in catalog["timeframes"]] == ["intraday", "daily", "weekly", "monthly"]
+        assert [t["id"] for t in catalog["timeframes"]] == ["daily", "weekly", "monthly"]
         assert any(s["id"] == "trend_breakout" for s in catalog["strategies"])
         assert any(u["id"] == "nasdaq100" and u["available"] for u in catalog["universes"])
 

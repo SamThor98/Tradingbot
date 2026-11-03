@@ -52,6 +52,9 @@ export function wireScanRankWhyTooltips(root = document) {
   scope.querySelectorAll(".scan-rank-why[data-rank-tip]").forEach((el) => {
     attachFloatTooltip(el, el.getAttribute("data-rank-tip") || "");
   });
+  scope.querySelectorAll(".scan-analog-why[data-analog-tip], .scan-analog-num[data-analog-tip]").forEach((el) => {
+    attachFloatTooltip(el, el.getAttribute("data-analog-tip") || "");
+  });
 }
 
 if (typeof document !== "undefined") {

@@ -312,9 +312,15 @@ def main() -> int:
         else:
             print(f"Multi-sleeve RTH shadow env already set in {ENV_PATH}")
 
-    from run_dual_auth_browser import _make_cert
+    from run_dual_auth_browser import _existing_localhost_cert_ok, _localhost_cert_paths, _make_cert
 
+    existing_cert, existing_key = _localhost_cert_paths()
+    reused_tls = _existing_localhost_cert_ok(existing_cert, existing_key)
     cert_path, key_path = _make_cert()
+    if reused_tls:
+        print(f"Reusing HTTPS cert: {cert_path}")
+    else:
+        print(f"Wrote new HTTPS cert: {cert_path}")
     callback = f"https://{args.host}:{args.port}/"
     if not args.no_sync_env:
         callback = _sync_callback_env(args.port)

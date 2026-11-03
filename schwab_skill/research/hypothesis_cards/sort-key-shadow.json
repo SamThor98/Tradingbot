@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "card_id": "sort-key-shadow",
+  "status": "proposed",
+  "theory_name": "cap37 unsorted book versus live p76 top 5",
+  "question": "Does the unsorted cap37 book separate from the live top-5 cut on week-block intervals?",
+  "single_change": {
+    "field": "SCAN_LIVE_SORT_KEY",
+    "baseline": "signal_score",
+    "candidate": "cap37_unsorted"
+  },
+  "floors": {
+    "pf_mean": 1.2,
+    "worst_era_pf": 1.0
+  },
+  "decision": "quote_only",
+  "kind": "artifact",
+  "command": [
+    "python",
+    "scripts/compare_cap37_unsorted_vs_live.py"
+  ],
+  "artifact": "validation_artifacts/cap37_unsorted_vs_live.json",
+  "metrics": {
+    "pf_mean": "arms.pts52w_cap37_unsorted.pf_mean",
+    "worst_era_pf": "arms.pts52w_cap37_unsorted.worst_era_pf",
+    "n_trades": "arms.pts52w_cap37_unsorted.n",
+    "verdict": "verdict",
+    "retention_pct": "arms.pts52w_cap37_unsorted.retention"
+  },
+  "also_quote": {
+    "live_pf_mean": "arms.current_live_p76_top5.pf_mean",
+    "live_worst_era_pf": "arms.current_live_p76_top5.worst_era_pf",
+    "live_n": "arms.current_live_p76_top5.n",
+    "promote_sort": "promote_sort",
+    "week_block_ci_separates": "week_block_ci_separates"
+  }
+}

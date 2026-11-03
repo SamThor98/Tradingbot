@@ -40,6 +40,7 @@ def main() -> int:
         get_entry_timing_shadow_mode,
         get_pead_enabled,
         get_pead_prescan_warm_enabled,
+        get_strategy_pead_primary_allow_live,
         get_strategy_pead_primary_effective_mode,
         get_strategy_pead_primary_mode,
     )
@@ -62,12 +63,19 @@ def main() -> int:
     try:
         mode = get_strategy_pead_primary_mode(SKILL_DIR)
         eff = get_strategy_pead_primary_effective_mode(SKILL_DIR)
-        print(f"pead_mode={mode} effective={eff}")
+        allow_live = bool(get_strategy_pead_primary_allow_live(SKILL_DIR))
+        print(f"pead_mode={mode} effective={eff} allow_live={allow_live}")
         print(
             f"pead_enabled={get_pead_enabled(SKILL_DIR)} "
             f"prescan_warm={get_pead_prescan_warm_enabled(SKILL_DIR)} "
             f"entry_timing={get_entry_timing_shadow_mode(SKILL_DIR)}"
         )
+        if allow_live:
+            print(
+                "FAIL: STRATEGY_PEAD_PRIMARY_ALLOW_LIVE is true — "
+                "this paper cycle requires false"
+            )
+            return 1
         if eff == "off":
             print("FAIL: STRATEGY_PEAD_PRIMARY_MODE effective is off — set shadow in .env")
             return 1
@@ -166,6 +174,45 @@ def main() -> int:
         }
         art.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         print(f"ARTIFACT {art}", flush=True)
+
+        from config import get_hypothesis_ledger_enabled
+        from core.experiment_collector import today_et
+        from hypothesis_ledger import append_hypotheses_from_canary_sleeve
+
+        if get_hypothesis_ledger_enabled(SKILL_DIR) and str(diag.get("data_quality") or "").lower() == "ok":
+            s1 = append_hypotheses_from_canary_sleeve(
+                diag,
+                SKILL_DIR,
+                et_date=today_et(),
+                scan_at=finished,
+            )
+            print(
+                f"s1_hypotheses appended={s1.get('appended')} "
+                f"skipped={s1.get('skipped')} errors={s1.get('errors')}",
+                flush=True,
+            )
+        else:
+            print("s1_hypotheses skipped (ledger off or data_quality != ok)", flush=True)
+
+        try:
+            from core.pead_canary_splits import format_s1_split_lines, summarize_s1_splits
+            from core.r7_promotion import r7_may_promote
+            from hypothesis_ledger import load_ledger_data
+
+            records = [
+                r for r in (load_ledger_data(SKILL_DIR).get("records") or []) if isinstance(r, dict)
+            ]
+            gate = r7_may_promote(records, sleeve_id="S1", offline_floors_ok=True)
+            summ = gate.get("summary") or {}
+            print(
+                f"r7_s1 n={summ.get('n')} expectancy={summ.get('expectancy')} "
+                f"ok={gate.get('ok')} reasons={gate.get('reasons')} allow_live=false",
+                flush=True,
+            )
+            for line in format_s1_split_lines(summarize_s1_splits(records, horizon="5", skill_dir=SKILL_DIR)):
+                print(line, flush=True)
+        except Exception as exc:
+            print(f"r7_s1 status unavailable: {exc}", flush=True)
 
         if leaked:
             print("FAIL: PEAD-only names leaked into executable signals")

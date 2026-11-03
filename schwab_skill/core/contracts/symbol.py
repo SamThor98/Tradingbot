@@ -47,8 +47,15 @@ class RankScores(BaseModel):
     reliability_score: float | None = None
     execution_score: float | None = None
     p_up_calibrated: float | None = None
-    ev_10d: float | None = None
     rank_basis: str | None = None
+    # Score the live percentile cut is taken on, the score the live book is
+    # sorted by, and the shadow historical blend — so every surface can render
+    # the same rank the scanner selected on.
+    rank_score_v2: float | None = None
+    sort_score: float | None = None
+    historical_rank: float | None = None
+    rank_percentile: float | None = None
+    expected_return_40d: float | None = None
 
 
 class SetupInfo(BaseModel):

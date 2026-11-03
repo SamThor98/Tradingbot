@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Scanner Tunables.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-09-11
 tags: [config, scanner, tunables]
 ---
 
@@ -39,8 +39,8 @@ tags: [config, scanner, tunables]
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `SCAN_STAGE_A_MAX_WORKERS` | 4 | Stage A concurrent threads |
-| `SCAN_STAGE_B_MAX_WORKERS` | 4 | Stage B concurrent threads |
+| `SCAN_STAGE_A_MAX_WORKERS` | 4 | Stage A concurrent threads. Local ops box (8-core UM790): 6. Do not scale to logical thread count — Schwab 429s dominate. See [[local-ops-box]]. |
+| `SCAN_STAGE_B_MAX_WORKERS` | 4 | Stage B concurrent threads. Local ops box: 6. |
 | `SCAN_STAGE_TASK_TIMEOUT_SEC` | 120 | Per-ticker timeout (seconds) |
 
 ## Shortlist Sizing
@@ -76,8 +76,12 @@ produced fictional drawdowns. See [[backtest]] for full context.
 | `BACKTEST_POSITION_SIZE_PCT` | 0.05 | Fallback fixed allocation per trade when no stop distance available |
 | `BACKTEST_RISK_PER_TRADE_PCT` | 0.0075 | Per-trade equity risk for stop-distance sizing (0 to disable) |
 
+The dashboard Backtest composer can override Stage 2 / VCP / quality-score
+knobs per run via StrategySpec `overrides` (same env names). See [[backtest]].
+
 ## Related Pages
 
+- [[local-ops-box]] — host worker recommendations (UM790 / dedicated mini PC)
 - [[signal-scanner]] — how the scanner works
 - [[stage-2-analysis]], [[vcp-detection]] — what the thresholds mean
 - [[quality-gates]] — quality gate tunables

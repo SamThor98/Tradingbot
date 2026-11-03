@@ -74,3 +74,18 @@ test("POSTs are never deduplicated", async () => {
   await Promise.all([api.post("/api/scan", { a: 1 }), api.post("/api/scan", { a: 1 })]);
   assert.equal(fetchCalls.filter((c) => c.method === "POST").length, 2);
 });
+
+test("Failed to fetch maps to a reload-and-accept-cert message", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  try {
+    const out = await api.get("/api/portfolio");
+    assert.equal(out.ok, false);
+    assert.match(String(out.user_message), /HTTPS certificate/i);
+    assert.equal(out.retryable, true);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

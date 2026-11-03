@@ -38,6 +38,8 @@ def main() -> int:
     os.environ["EXECUTION_SHADOW_MODE"] = "true"
     os.environ["SECTOR_FILTER_ENABLED"] = "false"
     os.environ["EVENT_RISK_MODE"] = "off"
+    os.environ["EXEC_QUALITY_MODE"] = "off"
+    os.environ["ENTRY_PROTECTION_MODE"] = "bracket"
 
     with (
         patch.object(execution, "DualSchwabAuth", _FakeAuth),
@@ -45,6 +47,12 @@ def main() -> int:
         patch.object(execution, "send_alert", return_value=True),
         patch.object(execution.GuardrailWrapper, "_check_guardrails", return_value=None),
         patch.object(execution.GuardrailWrapper, "_get_quote_price", return_value=200.0),
+        patch.object(
+            execution,
+            "_get_quote_quality_snapshot",
+            return_value={"bid": 199.5, "ask": 200.0, "last": 200.0, "mid": 199.75, "spread_bps": 25.0},
+        ),
+        patch.object(execution, "_compute_adaptive_stop_pct", return_value=0.07),
         patch("requests.post") as post_mock,
     ):
         result = execution.place_order(
@@ -69,8 +77,16 @@ def main() -> int:
         print("FAIL: requests.post was called during shadow mode.")
         return 1
     stop_state = (result.get("_stop_protection") or {}).get("status")
-    if stop_state not in {"shadow_simulated", "not_applicable"}:
+    preview = result.get("order_payload_preview") or {}
+    if stop_state != "shadow_bracket":
         print(f"FAIL: unexpected stop protection state: {stop_state}")
+        return 1
+    if preview.get("orderStrategyType") != "TRIGGER":
+        print(f"FAIL: shadow preview should be a TRIGGER bracket, got {preview.get('orderStrategyType')}")
+        return 1
+    children = preview.get("childOrderStrategies") or []
+    if len(children) != 1 or children[0].get("orderType") != "STOP":
+        print(f"FAIL: shadow preview should carry one STOP child, got {children}")
         return 1
 
     print("PASS: execution shadow mode validation succeeded")

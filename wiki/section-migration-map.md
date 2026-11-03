@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/index.html, frontend redesign roadmap
 created: 2026-06-10
-updated: 2026-07-04
+updated: 2026-09-14
 tags: [frontend, ux, migration, rollout, feature-flags, locked]
 ---
 
@@ -16,9 +16,12 @@ tags: [frontend, ux, migration, rollout, feature-flags, locked]
 | Tab | Landing | Primary workflow | Collapsed by default |
 |-----|---------|------------------|----------------------|
 | **Today** | `#todaySummaryLanding` | Scan → detail → pending kanban | Scan diagnostics (Pro) |
-| **Research** | `#researchSummaryLanding` | Quick check sub-tab | Sectors, movers, advanced tools, cockpit |
+| **Research** | `#researchSummaryLanding` (Portfolio tab only) | Portfolio book / Quick check ticker | Sectors, movers, recovery/learning (parked; `?section=` still works) |
+| **Backtest** | `#backtestSummaryLanding` | Leaderboard, queue, selected result, related evidence | Live monitor (`#backtestLiveMonitor`); run-another form (`#backtestSection`) |
 | **System** | `#systemSummaryLanding` | Health ribbon tiles | Status, decision dashboard, calibration bundle |
 | **Settings** | `#settingsSummaryLanding` | Connect Schwab + live-order controls in summary | Account security (2FA); presets hidden in Simple |
+
+Research cards stack full-width (`layout-2` / check panel are 1-col). `#backtestSection` lives on the Backtest screen inside `#researchBacktestWrap` as a collapsed “Run another backtest” form. `#backtestLeaderboard` ranks finished queue runs (min 35 trades, finite PF). Result summary shows net PF vs the mean ≥ 1.20 gate; last-N compare is per-window, not a multi-era verdict.
 
 Cross-mode banners: `#platformKillSwitchBanner`, `#connectSchwabBanner` (SaaS onboarding incomplete; tabs stay usable).
 
@@ -48,12 +51,13 @@ Validation at lock: `pytest tests/test_static_router.py tests/test_scan_transpar
 | `systemQualityDiagnostics` | diagnostics | diagnostics | collapsed calibration, shadow scoreboard, review loop | — |
 | `diagnosticsWorkflowStrip` | diagnostics | deprecated | replaced by summary landing shortcuts | — |
 | `operationsWorkspaceIntro`, `workflowPrimary`, `scanSection`, `scanDetailPanel`, `pendingSection` | operations | operations | **Today is kanban-only** — scan → evaluate → approve | — |
-| `researchSummaryLanding` | — | research | summary landing with shortcuts | — |
-| `quickCheckSection`, `sectorsSection`, `moversSection` | research | research | **Quick check sub-tab** (market context collapsed) | — |
-| `backtestSection` | research (Validate tab) | research | **Backtest sub-tab** (split from Validate) | — |
-| `reportSectionCard`, `secCompareSection` | research (Validate tab) | research | **Diligence sub-tab** | — |
-| `portfolioSection`, `performanceSection`, `cockpitMergedPanel`, `cockpitSection` | research | research | **Portfolio sub-tab** — order: positions → performance → cockpit | — |
-| `recoverySection`, `learningSection` | research (Advanced tab) | research | **Quick check sub-tab** — collapsed `#researchAdvancedTools` disclosure | — |
+| `researchSummaryLanding` | — | research | Portfolio-tab triage KPIs (hidden on Quick check) | — |
+| `quickCheckSection`, `sectorsSection`, `moversSection` | research | research | **Quick check** shows ticker Brief/Deep only; sectors/movers parked, revealed by `?section=sectors` / `movers` | — |
+| `backtestSection` | research (Validate tab) | **backtest** | Own top-level tab; form collapsed as Run another | — |
+| `backtestSummaryLanding`, `backtestLeaderboard`, `backtestQueuePanel`, `backtestResultPanel`, `backtestRelatedPanel` | — | backtest | Results-first landing, ranked board, queue, next steps, related evidence | — |
+| `reportSectionCard`, `secCompareSection` | research (Validate tab) | research | **Quick check → Deep** | — |
+| `portfolioSection`, `performanceSection`, `cockpitMergedPanel`, `cockpitSection` | research | research | **Portfolio sub-tab** — positions → performance → cockpit (opportunities lane parked) | — |
+| `recoverySection`, `learningSection` | research (Advanced tab) | research | Parked `#researchAdvancedTools` — not on the default Quick check workspace | — |
 | `toolsSection` | research | removed | replaced by `researchSummaryLanding` shortcuts | — |
 | `healthRibbon`, `decisionDashboardCard`, `statusDetailsPanel`, `calibrationSection`, `shadowScoreboardSection`, `reviewLoopSection` | diagnostics | diagnostics | nested under summary + disclosures; priority feed stays on Today | — |
 | `onboardingSection` | settings | settings | Connect Schwab wizard; auto-scroll when link incomplete | — |
@@ -96,4 +100,4 @@ The same health/token state was shown in >= 4 places. Target model:
 
 ---
 
-*Last compiled: 2026-07-04*
+*Last compiled: 2026-08-20*

@@ -25,8 +25,8 @@ def test_mirofish_llm_budget_caps_fresh_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(ea, "_call_llm", _fake_llm)
     monkeypatch.setattr(ea.MarketSimulation, "_fetch_seed_data", _fake_seed)
 
-    first = ea.MarketSimulation("AAA").run()
-    second = ea.MarketSimulation("BBB").run()
+    first = ea.MarketSimulation("AAA", skill_dir=tmp_path).run()
+    second = ea.MarketSimulation("BBB", skill_dir=tmp_path).run()
 
     assert first.get("conviction_score") is not None
     assert second.get("conviction_score") is None

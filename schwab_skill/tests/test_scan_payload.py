@@ -106,9 +106,20 @@ def test_parse_custom_preset_requires_tickers() -> None:
     assert scan_runtime_kwargs(out)["watchlist_override"] == ["AAPL"]
 
 
-def test_breakout_confirm_strategy_sets_env() -> None:
-    out = parse_scan_run_body({"strategy_ids": ["breakout_confirm"], "scan_timeframe": "intraday"})
-    assert out["env_overrides"].get("BREAKOUT_CONFIRM_ENABLED") == "true"
+def test_parse_keeps_mixed_horizon_strategy_ids() -> None:
+    out = parse_scan_run_body(
+        {
+            "strategy_ids": ["trend_breakout", "weekly_swing", "donchian_20"],
+            "scan_timeframe": "daily",
+        }
+    )
+    assert out["strategy_ids"] == ["trend_breakout", "weekly_swing", "donchian_20"]
+    assert out["scan_timeframe"] == "daily"
+
+
+def test_rejects_intraday_scan_timeframe() -> None:
+    with pytest.raises(ValueError):
+        parse_scan_run_body({"scan_timeframe": "intraday"})
 
 
 def test_rejects_unavailable_russell() -> None:

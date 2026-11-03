@@ -22,11 +22,47 @@ _UNIVERSE_CACHE_PREFIX = ".universe_cache_"
 
 def _utc_calendar_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-LIQUID_ETF_HINTS = {"SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLB", "XLU", "XLC", "XLRE"}
+
+
+LIQUID_ETF_HINTS = {
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLY",
+    "XLP",
+    "XLI",
+    "XLB",
+    "XLU",
+    "XLC",
+    "XLRE",
+}
 
 _NASDAQ100_FALLBACK = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "AVGO", "TSLA", "NFLX",
-    "COST", "AMD", "PEP", "ADBE", "CSCO", "INTC", "QCOM", "TXN", "AMGN", "INTU",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "GOOG",
+    "AVGO",
+    "TSLA",
+    "NFLX",
+    "COST",
+    "AMD",
+    "PEP",
+    "ADBE",
+    "CSCO",
+    "INTC",
+    "QCOM",
+    "TXN",
+    "AMGN",
+    "INTU",
 ]
 
 
@@ -85,7 +121,8 @@ def _fetch_sp600() -> list[str]:
 
 def _fetch_nasdaq100() -> list[str]:
     """Fetch Nasdaq-100 tickers from Wikipedia."""
-    return _fetch_wiki_symbols("https://en.wikipedia.org/wiki/Nasdaq-100")
+    # Constituents moved off the Nasdaq-100 article onto a dedicated list page.
+    return _fetch_wiki_symbols("https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies")
 
 
 def _cache_path(name: str) -> Path:
@@ -232,8 +269,24 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
 def _fallback_watchlist() -> list[str]:
     """Minimal fallback if fetch fails."""
     return [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "V", "UNH",
-        "XOM", "JNJ", "WMT", "PG", "HD", "DIS", "BAC", "KO", "PEP",
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "AMZN",
+        "META",
+        "NVDA",
+        "JPM",
+        "V",
+        "UNH",
+        "XOM",
+        "JNJ",
+        "WMT",
+        "PG",
+        "HD",
+        "DIS",
+        "BAC",
+        "KO",
+        "PEP",
     ]
 
 
@@ -283,4 +336,3 @@ def load_universe(preset: str, *, force_refresh: bool = False) -> list[str]:
     if key == "focused":
         return load_full_watchlist(force_refresh=force_refresh)
     raise ValueError(f"unknown or unavailable universe preset: {preset!r}")
-

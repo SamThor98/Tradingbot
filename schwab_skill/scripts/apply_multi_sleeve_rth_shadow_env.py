@@ -57,7 +57,10 @@ def main() -> int:
             f"R7_min_n={readiness.get('r7_min_n')} horizon={readiness.get('r7_primary_horizon')}"
         )
         print("Restart the dashboard (uvicorn) if it is already running.")
-        print("After RTH scans: python scripts/score_hypothesis_outcomes.py")
+        print(
+            "Close loop: 16:00 ET scores the ledger, then refreshes self-study. "
+            "Manual: python scripts/score_hypothesis_outcomes.py"
+        )
         return 0
 
     print("WARN: file updated but readiness check failed.")

@@ -25,6 +25,53 @@ def _safe_pf(series: pd.Series) -> float | None:
     return round(wins / losses, 4)
 
 
+def _pf_ci_from_samples(pfs: list[float]) -> dict[str, float | None]:
+    if not pfs:
+        return {"pf_mean": None, "pf_lo": None, "pf_hi": None}
+    return {
+        "pf_mean": round(float(statistics.mean(pfs)), 4),
+        "pf_lo": round(float(np.quantile(pfs, 0.025)), 4),
+        "pf_hi": round(float(np.quantile(pfs, 0.975)), 4),
+    }
+
+
+def bootstrap_pf_ci_blocked(
+    returns: pd.Series,
+    blocks: pd.Series,
+    *,
+    n_boot: int = 200,
+    seed: int = 42,
+) -> dict[str, float | None]:
+    """Resample whole blocks (weeks) so overlapping trades are one draw.
+
+    Falls back to the trade-level bootstrap when there are fewer than two
+    blocks. Intervals from ``bootstrap_pf_ci`` treat each trade as independent
+    and run too narrow on a book where many names are open on the same days.
+    """
+    frame = pd.DataFrame(
+        {
+            "ret": pd.to_numeric(returns, errors="coerce"),
+            "block": blocks.astype(str),
+        }
+    ).dropna(subset=["ret"])
+    frame = frame[frame["block"].ne("NaT") & frame["block"].ne("nan") & frame["block"].ne("")]
+    if len(frame) < 10:
+        return bootstrap_pf_ci(frame["ret"], n_boot=n_boot, seed=seed)
+    grouped = [grp["ret"].to_numpy(dtype=np.float64) for _, grp in frame.groupby("block", sort=False)]
+    if len(grouped) < 2:
+        return bootstrap_pf_ci(frame["ret"], n_boot=n_boot, seed=seed)
+    rng = np.random.default_rng(seed)
+    pfs: list[float] = []
+    n_blocks = len(grouped)
+    for _ in range(n_boot):
+        pick = rng.integers(0, n_blocks, size=n_blocks)
+        sample = np.concatenate([grouped[int(i)] for i in pick])
+        pf = _safe_pf(pd.Series(sample))
+        if pf is not None:
+            pfs.append(float(pf))
+    return _pf_ci_from_samples(pfs)
+
+
 def bootstrap_pf_ci(returns: pd.Series, *, n_boot: int = 200, seed: int = 42) -> dict[str, float | None]:
     rng = np.random.default_rng(seed)
     s = pd.to_numeric(returns, errors="coerce").dropna().to_numpy(dtype=np.float64)
@@ -36,13 +83,7 @@ def bootstrap_pf_ci(returns: pd.Series, *, n_boot: int = 200, seed: int = 42) ->
         pf = _safe_pf(pd.Series(sample))
         if pf is not None:
             pfs.append(float(pf))
-    if not pfs:
-        return {"pf_mean": None, "pf_lo": None, "pf_hi": None}
-    return {
-        "pf_mean": round(float(statistics.mean(pfs)), 4),
-        "pf_lo": round(float(np.quantile(pfs, 0.025)), 4),
-        "pf_hi": round(float(np.quantile(pfs, 0.975)), 4),
-    }
+    return _pf_ci_from_samples(pfs)
 
 
 def per_era_table(df: pd.DataFrame, *, score_col: str = "expected_return_40d") -> list[dict[str, Any]]:

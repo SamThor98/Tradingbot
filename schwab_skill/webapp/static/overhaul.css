@@ -18,7 +18,9 @@
 ============================================================ */
 
 body[data-theme="editorial"] {
-  /* Tokens ---------------------------------------------------- */
+  /* Dark-first tokens used to live here and painted a navy page before the
+     remap at the bottom of this file. readability.css is the visual contract.
+     Keep the custom properties; do not set a dark page background. */
   --ink: #0a0d14;
   --ink-2: #0e1320;
   --ink-3: #131a2a;
@@ -48,12 +50,6 @@ body[data-theme="editorial"] {
   --shadow-2: 0 18px 40px rgba(0, 0, 0, 0.55);
   --shadow-glow: 0 0 0 1px rgba(201, 166, 107, 0.22) inset;
 
-  /* Reset noisy backdrops -------------------------------------- */
-  background:
-    radial-gradient(900px 600px at 12% -10%, rgba(201, 166, 107, 0.08), transparent 60%),
-    radial-gradient(1100px 720px at 100% 0%, rgba(127, 180, 122, 0.05), transparent 65%),
-    linear-gradient(180deg, var(--ink) 0%, #070a13 100%) !important;
-  color: var(--paper);
   font-family: var(--sans);
   font-feature-settings: "ss01", "cv11", "cv05", "tnum" 0;
   letter-spacing: -0.005em;
@@ -1029,9 +1025,9 @@ body[data-theme="editorial"] #platformKillSwitchBanner {
   display: none !important;
 }
 
-/* Only force the Today summary on Operations — never leak onto Research/System/Settings. */
+/* Duplicate Today KPI card is hidden — workflow snapshot owns the numbers. */
 body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding {
-  display: block !important;
+  display: none !important;
 }
 body.ui-pro[data-theme="editorial"] #actionCenter {
   display: block !important;
@@ -1291,16 +1287,6 @@ body[data-theme="editorial"] .mode-header {
   overflow: hidden;
 }
 
-body[data-theme="editorial"] .mode-header::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 30px;
-  width: 56px;
-  height: 2px;
-  background: var(--gold);
-}
-
 body[data-theme="editorial"] .mode-header-copy {
   display: flex;
   flex-direction: column;
@@ -1315,13 +1301,15 @@ body[data-theme="editorial"] .mode-header .mode-eyebrow {
 
 body[data-theme="editorial"].ui-screen-operations .mode-header .mode-eyebrow[data-mode-eyebrow="operations"],
 body[data-theme="editorial"].ui-screen-research .mode-header .mode-eyebrow[data-mode-eyebrow="research"],
+body[data-theme="editorial"].ui-screen-intel .mode-header .mode-eyebrow[data-mode-eyebrow="intel"],
 body[data-theme="editorial"].ui-screen-diagnostics .mode-header .mode-eyebrow[data-mode-eyebrow="diagnostics"],
+body[data-theme="editorial"].ui-screen-backtest .mode-header .mode-eyebrow[data-mode-eyebrow="backtest"],
 body[data-theme="editorial"].ui-screen-settings .mode-header .mode-eyebrow[data-mode-eyebrow="settings"] {
   display: block;
 }
 
 /* Default to operations eyebrow when no body class is set yet. */
-body[data-theme="editorial"]:not(.ui-screen-operations):not(.ui-screen-research):not(.ui-screen-diagnostics):not(.ui-screen-settings) .mode-header .mode-eyebrow[data-mode-eyebrow="operations"] {
+body[data-theme="editorial"]:not(.ui-screen-operations):not(.ui-screen-research):not(.ui-screen-intel):not(.ui-screen-diagnostics):not(.ui-screen-backtest):not(.ui-screen-settings) .mode-header .mode-eyebrow[data-mode-eyebrow="operations"] {
   display: block;
 }
 
@@ -1604,21 +1592,6 @@ body[data-theme="editorial"] #actionCenter {
   border-left: 3px solid var(--gold) !important;
   border-radius: 0 !important;
   position: relative;
-}
-
-body[data-theme="editorial"] #actionCenter::after {
-  content: "Tip";
-  position: absolute;
-  top: -10px;
-  left: 14px;
-  background: var(--ink);
-  padding: 0 8px;
-  font-size: 0.62rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--gold);
-  font-weight: 700;
-  font-family: var(--sans);
 }
 
 body[data-theme="editorial"] #actionCenter .action-center-icon {
@@ -2031,14 +2004,7 @@ body[data-theme="editorial"] .workflow-primary-heading::before {
   font-style: italic;
 }
 
-/* Health badge "unknown" colour, distinct from the bg-red-900 /
-   bg-green-900 tailwind utilities so the ribbon honestly reads
-   "we don't know" instead of "everything is down". */
-.health-badge.bg-slate-900,
-.health-badge[data-state="unknown"] {
-  background: rgba(40, 50, 65, 0.85);
-  color: var(--paper-mute, rgba(231, 217, 181, 0.6));
-}
+/* Health badge colours live in readability.css. */
 
 /* Cross-mode banner: stays visible on Trade/Analyze/Health/Settings.
    Only used for safety-critical info like the kill switch. */
@@ -2339,11 +2305,6 @@ body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
   letter-spacing: 0.02em !important;
 }
 
-body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
-  background: #1f1f1f !important;
-  color: #f8f3e9 !important;
-}
-
 body[data-theme="editorial"] .card,
 body[data-theme="editorial"] .panel-disclosure,
 body[data-theme="editorial"] .details-raw,
@@ -2447,19 +2408,6 @@ body[data-theme="editorial"] .btn {
 body[data-theme="editorial"] .btn:hover {
   background: var(--ui-surface-soft) !important;
   color: #111 !important;
-}
-
-body[data-theme="editorial"] .btn.primary,
-body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
-  background: #1e1e1e !important;
-  border-color: #1e1e1e !important;
-  color: #f7f2e8 !important;
-}
-
-body[data-theme="editorial"] .btn.primary:hover,
-body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary:hover {
-  background: #2b2b2b !important;
-  border-color: #2b2b2b !important;
 }
 
 body[data-theme="editorial"] input,

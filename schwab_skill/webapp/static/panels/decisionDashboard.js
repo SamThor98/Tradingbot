@@ -1,4 +1,6 @@
-import { escapeHtml, safeNum, safeText, timeAgo } from "../modules/format.js";
+import { state } from "../modules/state.js";
+import { renderCanActStrips } from "../modules/canActStrip.js";
+import { escapeHtml, formatSignedRatioPct, safeNum, safeText, timeAgo } from "../modules/format.js";
 import { decorateGlossary } from "../modules/glossary.js";
 import { healthBadgeClass } from "../modules/logger.js";
 import { paintStatusStrip } from "../modules/statusStripCore.js";
@@ -7,6 +9,7 @@ import {
   syncDecisionSignalEdgeState,
 } from "../modules/operationsPanelState.js";
 import {
+  renderDecisionBookWidth,
   renderDecisionGateTiles,
   renderDecisionPfChart,
   renderDecisionSummaryStrip,
@@ -43,10 +46,8 @@ function _setBadge(id, text, ok) {
 }
 
 function _fmtSignedPct(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  const scaled = n * 100;
-  return `${scaled >= 0 ? "+" : ""}${scaled.toFixed(1)}%`;
+  // ratio from score_ablation_report.relative_lift_vs_baseline ((v-b)/|b|)
+  return formatSignedRatioPct(value, 1);
 }
 
 function _dataQualityState(value) {
@@ -124,7 +125,7 @@ function _decisionState(payload = {}) {
   const sloPassed = reliability.slo_gate_passed === true;
   const releaseReady = readiness.release_gate_ready === true;
   const stackPass = stack.passes_promotion_gates === true;
-  const pfMean = safeNum(stack.pf_mean ?? signalEdge.hold_21_40d_pf, NaN);
+  const pfMean = safeNum(stack.pf_mean, NaN);
   const worstEra = safeNum(stack.worst_era_pf, NaN);
   if (dataState === "error") {
     return {
@@ -164,6 +165,7 @@ export function renderDecisionDashboardLoading() {
   renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, loadingOpts);
   renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, loadingOpts);
   renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, loadingOpts);
+  renderDecisionBookWidth(document.getElementById("decisionBookWidth"), {}, loadingOpts);
   _renderSignalEdgeSummary({}, {}, loadingOpts);
   _setBadge("decisionReliabilityState", "Loading", false);
   _setBadge("decisionPromotionState", "Loading", false);
@@ -178,6 +180,7 @@ export function renderDecisionDashboardUnavailable(message, onRetry) {
   renderDecisionSummaryStrip(document.getElementById("decisionDashboardSummaryStrip"), null, errorOpts);
   renderDecisionGateTiles(document.getElementById("decisionGateTiles"), {}, {}, errorOpts);
   renderDecisionPfChart(document.getElementById("decisionEraPfChart"), {}, errorOpts);
+  renderDecisionBookWidth(document.getElementById("decisionBookWidth"), {}, errorOpts);
   _renderSignalEdgeSummary({}, {}, errorOpts);
   // Retry affordance for the idempotent dashboard GET.
   if (typeof onRetry === "function") {
@@ -220,6 +223,8 @@ function _renderAblationTop(topRows = []) {
 }
 
 export function renderDecisionDashboard(payload = {}) {
+  state.lastDecisionDashboard = payload || null;
+  renderCanActStrips();
   const reliability = payload.reliability || {};
   const strategy = payload.strategy_quality || {};
   const readiness = payload.promotion_readiness || {};
@@ -242,6 +247,7 @@ export function renderDecisionDashboard(payload = {}) {
   const edgeOpts = decisionState.state === "empty" ? { state: "empty" } : {};
   renderDecisionGateTiles(document.getElementById("decisionGateTiles"), signalEdge, readiness, edgeOpts);
   renderDecisionPfChart(document.getElementById("decisionEraPfChart"), signalEdge, edgeOpts);
+  renderDecisionBookWidth(document.getElementById("decisionBookWidth"), signalEdge.book_width || {});
   _renderSignalEdgeSummary(signalEdge, readiness, decisionState);
 
   const runStatus = safeText(reliability.validation_run_status || "unknown");

@@ -118,11 +118,9 @@ def rank_v2_from_signal_row(signal_row: dict[str, Any], skill_dir: Path | None =
         flags = []
     sec_tag = signal_row.get("sec_risk_tag")
     if not sec_tag and signal_row.get("sec_risk_score") is not None:
-        try:
-            risk = float(signal_row.get("sec_risk_score"))
-            sec_tag = "high" if risk >= 0.67 else ("medium" if risk >= 0.33 else "low")
-        except (TypeError, ValueError):
-            sec_tag = "unknown"
+        from core.sec_risk_score import sec_risk_tag_from_score
+
+        sec_tag = sec_risk_tag_from_score(signal_row.get("sec_risk_score"))
 
     rel = signal_row.get("reliability_score")
     exe = signal_row.get("execution_score")

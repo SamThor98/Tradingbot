@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/core/horizon_strategies.py
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-09-17
 tags: [scanner, strategies, weekly, monthly, research]
 ---
 
@@ -17,18 +17,21 @@ Live execution stays [[stage-2-analysis]] (`trend_breakout`). Plugin promotion r
 
 Weekly and monthly rules use `resample_weekly` (Friday close) and `resample_monthly` (month-end). That is not a separate vendor weekly/monthly feed.
 
-Intraday gap/range sleeves use **session structure on the last completed daily bar**. They are not a minute-bar book. The existing live-quote overlay is still [[scan-catalog]] `breakout_confirm`. Research sleeves drop a same-day bar until the regular session is closed (16:00 America/New_York). Weekly/monthly drop the current period until the Friday / month-end bar exists.
+Intraday gap/range sleeves use **session structure on the last completed daily bar**. They are not a minute-bar book and are **not** a Scan studio horizon tab (operator options are Daily / Weekly / Monthly). The live-quote overlay is still catalog id `breakout_confirm`. Research sleeves drop a same-day bar until the regular session is closed (16:00 America/New_York). Weekly/monthly drop the current period until the Friday / month-end bar exists.
 
 ## Stage A dual-admit
 
-When the scan's `strategy_ids` include a dual-admit sleeve (`donchian_20`, `nr7_breakout`, `gap_and_go`, `range_expansion`, `pullback`, weekly/monthly ids), Stage A admits the name if that evaluator fires, even if daily Stage 2 / VCP fails.
+When the scan's `strategy_ids` include a dual-admit sleeve (`donchian_20`, `nr7_breakout`, `gap_and_go`, `range_expansion`, `pullback`, weekly/monthly ids), Stage A admits the name if that evaluator fires, even if daily Stage 2 / VCP fails. Scan studio posts every checked id; Daily Stage 2 / VCP only runs when `trend_breakout` (or `breakout_confirm`) is itself checked. The integrity banner shows `Stage 2/VCP arm off` when that live book is not selected.
 
 Horizon-only admits:
 
 - `entry_family=horizon`
 - `executable=false` (same non-executable rule as PEAD-only)
-- skip VCP hard gate and breakout-confirm (those are Stage 2 gates)
-- join Stage B on extra slots (`HORIZON_STAGE_B_CAP`, default 40) so they do not steal Stage 2 shortlist capacity
+- skip VCP hard gate, sector hard gate, and breakout-confirm (those are Stage 2 gates)
+- rank Stage A / Stage B on the sleeve's own plugin score, not Stage 2 `stage_a_score`
+- dedicated research scans (no Stage 2 selected) get the same Stage B shortlist budget as the live book (`SIGNAL_TOP_N` / `SCAN_STAGE_A_NOCAP_LIMIT`)
+- mixed Stage 2 + horizon still uses extra slots (`HORIZON_STAGE_B_CAP`, default 40) so they do not steal Stage 2 shortlist capacity
+- dedicated PEAD-only scans join Stage B as research; mixed PEAD beside Stage 2 stays shadow-only
 
 Default empty `strategy_ids` (full book API) does **not** dual-admit. Horizon plugins still evaluate on Stage 2 survivors for diagnostics.
 
@@ -79,4 +82,4 @@ Skipped as not scanner-viable here: SPY overnight-hold (not a name scanner), VWA
 
 ---
 
-*Last compiled: 2026-08-19*
+*Last compiled: 2026-09-08*

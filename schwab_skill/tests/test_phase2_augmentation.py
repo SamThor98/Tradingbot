@@ -322,6 +322,22 @@ def test_augmented_projection_tolerates_none_values() -> None:
     assert r["exit_price"] is None
 
 
+def test_augmented_projection_keeps_debate_grade_fields() -> None:
+    t = _fat_trade(
+        qual_raw=72.5,
+        qual_letter="B",
+        qual_abstain=False,
+        debate_grade_would_skip=False,
+        disagreement_source="unavailable",
+    )
+    row = _project_trades([t], augmented=True)[0]
+    assert row["qual_raw"] == pytest.approx(72.5)
+    assert row["qual_letter"] == "B"
+    assert row["qual_abstain"] is False
+    assert row["debate_grade_would_skip"] is False
+    assert row["disagreement_source"] == "unavailable"
+
+
 def test_augmented_projection_flags_partial_done_as_bool() -> None:
     r_true = _project_trades([_fat_trade(exit_manager_partial_done=True)], augmented=True)[0]
     r_false = _project_trades([_fat_trade(exit_manager_partial_done=False)], augmented=True)[0]

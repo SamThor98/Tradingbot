@@ -746,5 +746,10 @@ def test_quality_mode_should_filter_respects_off_mode(monkeypatch):
 
 def test_quality_mode_should_filter_weak_volume_when_soft(monkeypatch):
     monkeypatch.setenv("QUALITY_GATES_MODE", "soft")
-    assert backtest._quality_mode_should_filter(["weak_breakout_volume"], SKILL_DIR) is True
+    monkeypatch.setenv("QUALITY_SOFT_MIN_REASONS", "1")
+    assert backtest._quality_mode_should_filter(["weak_breakout_volume"], SKILL_DIR) is False
+    assert backtest._quality_mode_should_filter(
+        ["weak_breakout_volume", "low_signal_score"],
+        SKILL_DIR,
+    ) is True
 

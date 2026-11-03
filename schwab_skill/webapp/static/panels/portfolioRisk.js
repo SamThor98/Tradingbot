@@ -69,7 +69,7 @@ function paintRiskSurface(stateName, title, detail, extras = {}) {
     output: extras.output,
     data: extras.data,
     action: extras.action,
-    confidence: extras.confidence,
+    meter: extras.meter,
     lines: extras.lines,
   });
 }
@@ -266,7 +266,7 @@ function renderConfidenceBanner(d) {
 
 function corrBucket(value) {
   const v = Number(value);
-  if (!Number.isFinite(v)) return "0";
+  if (!Number.isFinite(v)) return "missing";
   return String(Math.max(-5, Math.min(5, Math.round(v * 5))));
 }
 
@@ -467,11 +467,11 @@ function renderConcentration(conc) {
       </div>
       <div class="risk-kpi">
         <div class="risk-kpi-value">${metricValue(c.top_5_pct, 1, "%")}</div>
-        <div class="risk-kpi-label">Top 5 of NAV</div>
+        <div class="risk-kpi-label">Top 5 of equity</div>
       </div>
       <div class="risk-kpi">
         <div class="risk-kpi-value">${metricValue(c.top_10_pct, 1, "%")}</div>
-        <div class="risk-kpi-label">Top 10 of NAV</div>
+        <div class="risk-kpi-label">Top 10 of equity</div>
       </div>
     </div>`;
   const breaches = Array.isArray(c.breaches) ? c.breaches : [];
@@ -481,7 +481,8 @@ function renderConcentration(conc) {
         ${breaches.map((b) => `<div class="risk-breach-row">⚠ ${safeText(b.message)}</div>`).join("")}
       </div>`
     : `<div class="muted small">No single-name, sector, or country limit breaches.</div>`;
-  return kpis + breachBox;
+  const note = `<p class="muted small">Weights use account equity. A margined book can total more than 100%.</p>`;
+  return kpis + note + breachBox;
 }
 
 function renderHistoricalStress(rows, equity) {
@@ -631,7 +632,7 @@ function renderSingleNameStress(rows) {
     <div class="table-wrap">
       <table class="risk-metrics-table">
         <thead>
-          <tr><th>Scenario</th><th>Ticker</th><th>Gap</th><th>Weight</th><th>Port Impact</th><th>P&amp;L ($)</th></tr>
+          <tr><th>Scenario</th><th>Ticker</th><th>Gap</th><th title="Share of account equity, not of market value">Equity weight</th><th>Port Impact</th><th>P&amp;L ($)</th></tr>
         </thead>
         <tbody>
           ${rows.map((r) => `
@@ -832,7 +833,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
       output: { value: "None", sub: "manual book" },
       data: { value: "Local", sub: "this browser" },
       action: { value: "Add", sub: "tickers" },
-      confidence: 0,
+      meter: null,
     });
     return;
   }
@@ -846,7 +847,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
       output: { value: "…", sub: "risk dashboard" },
       data: { value: "…", sub: "prices + profiles" },
       action: { value: "Wait", sub: "hold" },
-      confidence: 34,
+      meter: null,
     },
   );
 
@@ -890,7 +891,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
       output: { value: "Partial", sub: "positions only" },
       data: { value: "Limited", sub: "risk feed" },
       action: { value: "Review", sub: "retry risk" },
-      confidence: 50,
+      meter: null,
     });
     return;
   }
@@ -914,13 +915,13 @@ export async function loadPortfolioRiskDashboard(options = {}) {
       output: { value: "None", sub: "risk" },
       data: { value: "—", sub: "weights" },
       action: { value: "Wait", sub: "add positions" },
-      confidence: 0,
+      meter: null,
     });
     return;
   }
 
   const breachCount = (d.concentration?.breaches || []).length + (d.risk_flags || []).length;
-  setRiskPanelState(breachCount ? "stale" : "success");
+  setRiskPanelState(breachCount ? "partial" : "success");
   mount.innerHTML = renderDashboard(d);
   wireToolbar(mount);
   wireStressTabs(mount);
@@ -942,7 +943,7 @@ export async function loadPortfolioRiskDashboard(options = {}) {
         sub: breachCount ? "limit breaches" : "within limits",
         tone: breachCount ? "warn" : "success",
       },
-      confidence: breachCount ? 62 : 88,
+      meter: null,
     },
   );
 }

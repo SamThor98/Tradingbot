@@ -67,6 +67,11 @@ def _install_common_modules(monkeypatch, *, regime_fn):
             is_market_regime_bullish=regime_fn,
             get_winning_sector_etfs=lambda *_a, **_k: {"XLK"},
             get_regime_v2_snapshot=lambda *_a, **_k: {"score": 99.0, "bucket": "high"},
+            regime_v2_is_unavailable=lambda snap: (
+                not isinstance(snap, dict)
+                or snap.get("score") is None
+                or snap.get("bucket") == "unavailable"
+            ),
             get_unresolved_sector_symbols=lambda **_k: [],
         ),
     )
@@ -124,6 +129,49 @@ def test_regime_failure_can_fail_open_with_env_override(monkeypatch) -> None:
     assert diagnostics["regime_fail_closed_mode"] is False
 
 
+def test_executable_history_is_not_raised_by_horizon_sleeves(monkeypatch) -> None:
+    _install_common_modules(monkeypatch, regime_fn=lambda *_a, **_k: (True, {"spy_price": 500.0, "spy_sma_200": 490.0}))
+    calls: list[tuple[Any, ...]] = []
+
+    def _record(ticker, *args, **_kwargs):
+        calls.append(args)
+        return {
+            "ok": False,
+            "reason": "stage2_fail",
+            "provider": "schwab",
+            "used_fallback": False,
+            "fallback_reason": "",
+        }
+
+    monkeypatch.setattr(signal_scanner, "_scan_stage_a_one", _record)
+
+    class _Exec:
+        def __init__(self, max_workers=1):
+            self.max_workers = max_workers
+
+        def submit(self, fn, *args, **kwargs):
+            return _DoneFuture(fn(*args, **kwargs))
+
+    monkeypatch.setattr(signal_scanner.cf, "ThreadPoolExecutor", _Exec)
+    monkeypatch.setattr(signal_scanner.cf, "as_completed", lambda fs, timeout=None: iter(list(fs)))
+
+    _signals, diagnostics = signal_scanner.scan_for_signals_detailed(
+        skill_dir=signal_scanner.SKILL_DIR,
+        watchlist_override=["AAA"],
+        strategy_ids=["trend_breakout", "tsmom_12m"],
+    )
+    assert len(calls) == 2
+    assert calls[0][10] == []
+    assert calls[0][11] == 420
+    assert calls[0][12] is True
+    assert "tsmom_12m" in calls[1][10]
+    assert calls[1][11] >= 560
+    assert calls[1][12] is False
+    assert diagnostics["executable_coverage_complete"] == 1
+    assert diagnostics["horizon_coverage_complete"] == 1
+    assert diagnostics["scan_partial"] == 0
+
+
 def test_stage_a_timeout_accounting(monkeypatch) -> None:
     _install_common_modules(monkeypatch, regime_fn=lambda *_a, **_k: (True, {"spy_price": 500.0, "spy_sma_200": 490.0}))
 
@@ -153,6 +201,10 @@ def test_stage_a_timeout_accounting(monkeypatch) -> None:
     )
     assert diagnostics["stage_a_timeouts"] == 2
     assert diagnostics["exceptions"] >= 2
+    assert diagnostics["stage_a_executable_waves"] == 2
+    assert diagnostics["scan_partial"] == 1
+    assert diagnostics["executable_coverage_complete"] == 0
+    assert "no Stage A decision" in str(diagnostics.get("coverage_note") or "")
 
 
 def test_stage_b_timeout_accounting(monkeypatch) -> None:

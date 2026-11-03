@@ -26,6 +26,10 @@ from config import get_schwab_only_data
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
 SIMULATIONS_DIR = SKILL_DIR / "mirofish_sims"
+# Bump when persona evidence packets change so the conviction cache cannot
+# replay a shared-prompt opinion as a split-prompt opinion.
+MIROFISH_PROMPT_VERSION = "split-v1"
+_PUBLIC_MIROFISH_DROP = frozenset({"seed"})
 
 
 def _load_env() -> dict:
@@ -55,11 +59,27 @@ def _get_seed_from_df(df, ticker: str, skill_dir: Path | None = None) -> str:
     Build seed material from OHLCV DataFrame (Schwab: open,high,low,close,volume; yfinance: Open,Close,...).
     Includes concrete numeric Stage2/VCP-derived features when available.
     """
+    sections = _seed_sections(df, ticker, skill_dir)
+    institutional = sections["institutional_trend"]
+    if institutional.startswith("No sufficient") or "limited features" in institutional:
+        return institutional
+    return (
+        institutional
+        + sections["mean_reversion"]
+        + "Stage2 context: price above key SMAs + VCP consolidation assumed for this scan.\n"
+        + "Key framing: continuation means trend holds next 1-2 weeks; "
+        + "bull trap means failed breakout / reversal next 1-2 weeks."
+    )
+
+
+def _seed_sections(df, ticker: str, skill_dir: Path | None = None) -> dict[str, str]:
+    """Evidence packets. Each persona reads only its own packet."""
     from config import get_vcp_days
 
     df = _normalize_ohlcv_df(df)
     if df.empty or len(df) < 5:
-        return f"No sufficient price data for {ticker}."
+        text = f"No sufficient price data for {ticker}."
+        return {"institutional_trend": text, "mean_reversion": text}
 
     # Keep computations safe even if some columns are missing.
     close_s = df["close"].astype(float) if "close" in df.columns else None
@@ -69,7 +89,11 @@ def _get_seed_from_df(df, ticker: str, skill_dir: Path | None = None) -> str:
     last = df.iloc[-30:] if len(df) >= 30 else df
     if close_s is None or vol_s is None:
         end_px = float(last["close"].iloc[-1]) if "close" in last.columns else 0.0
-        return f"Ticker: {ticker}\nLatest close: ${end_px:.2f}\nStage 2 breakout detected (limited features available)."
+        text = (
+            f"Ticker: {ticker}\nLatest close: ${end_px:.2f}\n"
+            "Stage 2 breakout detected (limited features available)."
+        )
+        return {"institutional_trend": text, "mean_reversion": text}
 
     close_30 = last["close"].astype(float)
     vol_30 = last["volume"].astype(float)
@@ -124,7 +148,7 @@ def _get_seed_from_df(df, ticker: str, skill_dir: Path | None = None) -> str:
     pct_from_high_52w = (end_px / high_52w) * 100.0 if high_52w > 0 else 0.0
     dist_from_high_52w = high_52w - end_px if high_52w > 0 else 0.0
 
-    return (
+    institutional = (
         f"Ticker: {ticker}\n"
         f"Latest close: ${end_px:.2f} | Last 30d return: {ret_pct:+.2f}%\n"
         f"30d close range: ${low_30:.2f} - ${high_30:.2f}\n"
@@ -132,10 +156,14 @@ def _get_seed_from_df(df, ticker: str, skill_dir: Path | None = None) -> str:
         f"SMA alignment: close vs SMA50: {sma50_pct_above:+.2f}% | close vs SMA200: {sma200_pct_above:+.2f}%\n"
         f"VCP dry-up: vcp_days={vcp_days} | count(volume < avg_vol_50)={vcp_count_below_avg}/{vcp_days_eff} | "
         f"avg(volume/avg_vol_50)={vcp_avg_volume_ratio:.3f}\n"
-        f"52-week proximity: close is {pct_from_high_52w:.2f}% of 52w high (${high_52w:.2f}); distance=${dist_from_high_52w:.2f}\n"
-        f"Stage2 context: price above key SMAs + VCP consolidation assumed for this scan.\n"
-        f"Key framing: continuation means trend holds next 1-2 weeks; bull trap means failed breakout / reversal next 1-2 weeks."
     )
+    mean_reversion = (
+        f"Ticker: {ticker}\n"
+        f"Close vs SMA50: {sma50_pct_above:+.2f}%\n"
+        f"52-week proximity: close is {pct_from_high_52w:.2f}% of 52w high (${high_52w:.2f}); "
+        f"distance=${dist_from_high_52w:.2f}\n"
+    )
+    return {"institutional_trend": institutional, "mean_reversion": mean_reversion}
 
 
 def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
@@ -386,6 +414,37 @@ def _parse_agent_response(text: str) -> dict[str, Any]:
     try:
         parsed = json.loads(txt)
         if isinstance(parsed, dict):
+            if "fade_score" in parsed or "exhaustion_probability" in parsed:
+                exhaustion = _clamp_float(parsed.get("exhaustion_probability", 0.5), 0.0, 1.0, default=0.5)
+                fade_raw = parsed.get("fade_score")
+                if fade_raw is None:
+                    conviction_score = _clamp_int((1.0 - 2.0 * exhaustion) * 100.0, -100, 100, default=0)
+                else:
+                    conviction_score = _clamp_int(-float(fade_raw), -100, 100, default=0)
+                extension_alignment = _clamp_float(parsed.get("extension_alignment", 0.0), -1.0, 1.0, default=0.0)
+                key_drivers = parsed.get("key_drivers") or []
+                if isinstance(key_drivers, list):
+                    key_drivers = [str(s).strip() for s in key_drivers if str(s).strip()]
+                else:
+                    key_drivers = []
+                key_drivers = key_drivers[:5]
+                if len(key_drivers) < 2:
+                    key_drivers = (key_drivers + ["extension", "52-week proximity"])[:5]
+                horizon = str(parsed.get("horizon") or horizon_default).strip() or horizon_default
+                reason = str(parsed.get("reason") or "").strip()[:200]
+                if not reason:
+                    reason = " | ".join(key_drivers)[:200]
+                return {
+                    "conviction_score": conviction_score,
+                    "bull_trap_probability": round(exhaustion, 6),
+                    "continuation_probability": round(_clamp_float(1.0 - exhaustion, 0.0, 1.0, default=0.5), 6),
+                    "key_drivers": key_drivers,
+                    "vcp_alignment": 0.0,
+                    "sma_alignment": _clamp_float(-extension_alignment, -1.0, 1.0, default=0.0),
+                    "horizon": horizon,
+                    "reason": reason,
+                }
+
             conviction_score = _clamp_int(parsed.get("conviction_score", 0), -100, 100, default=0)
 
             continuation_probability = parsed.get("continuation_probability", None)
@@ -471,6 +530,43 @@ def _parse_agent_response(text: str) -> dict[str, Any]:
     }
 
 
+def _sections_from_legacy_seed(seed: str) -> dict[str, str]:
+    """Split an older combined seed when the caller did not return packets."""
+    price, _, news = (seed or "").partition("\n\n")
+    lines = price.splitlines()
+    institutional = [line for line in lines if "52-week" not in line.lower() and "52w" not in line.lower()]
+    extension = [line for line in lines if ("SMA" in line or "52-week" in line.lower() or "52w" in line.lower())]
+    return {
+        "institutional_trend": "\n".join(institutional) or price or "No price seed.",
+        "mean_reversion": "\n".join(extension) or price or "No extension seed.",
+        "retail_fomo": news or "No recent news available.",
+    }
+
+
+def _persona_user_prompt(name: str, sections: dict[str, str]) -> str:
+    """User prompt for one persona. The packet is the only evidence."""
+    body = str(sections.get(name) or "").strip() or "No evidence."
+    if name == "mean_reversion":
+        return (
+            "Extension facts only. Score fade risk.\n\n"
+            f"{body}\n\n"
+            "Return EXACTLY one JSON object with fade_score, exhaustion_probability, "
+            "extension_alignment, key_drivers, and horizon. No other text."
+        )
+    if name == "retail_fomo":
+        return (
+            "Headlines only.\n\n"
+            f"{body}\n\n"
+            "Return EXACTLY one JSON object using your continuation schema. No other text."
+        )
+    return (
+        "Trend, volume, and VCP facts only. No headlines and no 52-week extension.\n\n"
+        f"{body}\n\n"
+        "Evaluate Scenario A (continuation next 1-2 weeks) and Scenario B (bull trap next 1-2 weeks). "
+        "Return EXACTLY one JSON object using your schema. No other text."
+    )
+
+
 # Agent system prompts (personas)
 AGENT_SYSTEMS = {
     "institutional_trend": (
@@ -483,13 +579,14 @@ AGENT_SYSTEMS = {
         "Scenario A is continuation next 1-2 weeks; Scenario B is bull trap/reversal next 1-2 weeks."
     ),
     "mean_reversion": (
-        "You are a Mean-Reversion Bot. You look for overextended RSI and fading momentum. "
+        "You are a Mean-Reversion Bot. You look for extension above the 50-day average and proximity to the 52-week high. "
         "You are skeptical of breakouts that may be exhaustion moves. "
         "Return EXACTLY one strict JSON object (no markdown, no extra text). "
         "JSON must match schema: "
-        "{\"conviction_score\": int, \"bull_trap_probability\": number, \"continuation_probability\": number, "
-        "\"key_drivers\": [string, ...], \"vcp_alignment\": number, \"sma_alignment\": number, \"horizon\": \"1-2 weeks\"}. "
-        "Scenario A is continuation next 1-2 weeks; Scenario B is bull trap/reversal next 1-2 weeks."
+        "{\"fade_score\": int, \"exhaustion_probability\": number, \"extension_alignment\": number, "
+        "\"key_drivers\": [string, ...], \"horizon\": \"1-2 weeks\"}. "
+        "fade_score is -100 to 100 where positive means the move is more likely to fade. "
+        "exhaustion_probability is 0 to 1. extension_alignment is -1 to 1 where positive means extended above the average."
     ),
     "retail_fomo": (
         "You are a Retail FOMO Trader. You react to social sentiment and news. "
@@ -524,8 +621,8 @@ class MarketSimulation:
         self.regime_is_bullish = regime_is_bullish
         self._env = _load_env()
 
-    def _fetch_seed_data(self) -> tuple[str, Any]:
-        """Build seed material from client/market_data or provided df. Returns (seed_text, seed_df)."""
+    def _fetch_seed_data(self) -> tuple[str, Any, dict[str, str]]:
+        """Build seed material. Returns (combined seed, dataframe, per-persona packets)."""
         if self.seed_df is not None and not self.seed_df.empty:
             df = _normalize_ohlcv_df(self.seed_df)
         else:
@@ -546,10 +643,13 @@ class MarketSimulation:
                         df = _normalize_ohlcv_df(t.history(period="1mo", auto_adjust=True))
             except Exception as e:
                 LOG.warning("Seed fetch failed for %s: %s", self.ticker, e)
-                return f"Data fetch failed: {e}", None
-        price_seed = _get_seed_from_df(df, self.ticker, self.skill_dir)
+                text = f"Data fetch failed: {e}"
+                return text, None, {"institutional_trend": text, "mean_reversion": text, "retail_fomo": text}
+        sections = _seed_sections(df, self.ticker, self.skill_dir)
         news_seed = _get_news_seed(self.ticker, self.skill_dir)
-        return f"{price_seed}\n\n{news_seed}", df
+        sections["retail_fomo"] = news_seed
+        price_seed = _get_seed_from_df(df, self.ticker, self.skill_dir)
+        return f"{price_seed}\n\n{news_seed}", df, sections
 
     def run(self) -> dict[str, Any]:
         """
@@ -589,7 +689,10 @@ class MarketSimulation:
                 "unavailable_reason": "llm_budget_exhausted",
             }
 
-        seed, seed_df = self._fetch_seed_data()
+        fetched = self._fetch_seed_data()
+        seed = fetched[0]
+        seed_df = fetched[1] if len(fetched) > 1 else None
+        sections = fetched[2] if len(fetched) > 2 and isinstance(fetched[2], dict) else _sections_from_legacy_seed(str(seed or ""))
         seed_fingerprint = compute_seed_fingerprint(seed_df, self.ticker, self.skill_dir) if seed_df is not None else ""
 
         def _unavailable(reason: str, summary: str) -> dict[str, Any]:
@@ -622,16 +725,8 @@ class MarketSimulation:
 
         _mirofish_llm_budget_consume()
 
-        # Heuristic sentiment proxy from the news portion in `seed` (used only for weighting).
-        news_proxy = _estimate_news_sentiment_proxy(seed)
-
-        prompt = (
-            "You are evaluating a Stage 2 breakout + VCP consolidation setup.\n\n"
-            f"{seed}\n\n"
-            "Evaluate Scenario A (continuation next 1-2 weeks) and Scenario B (bull trap/reversal next 1-2 weeks). "
-            "Return Scenario A's probability in `continuation_probability` and Scenario B's probability in `bull_trap_probability`. "
-            "Return EXACTLY one strict JSON object per agent; no other text."
-        )
+        # Retail weight uses headlines only. The trend packet must not move it.
+        news_proxy = _estimate_news_sentiment_proxy(str(sections.get("retail_fomo") or ""))
 
         agent_votes: list[dict[str, Any]] = []
         parsed_agents: list[dict[str, Any]] = []
@@ -646,8 +741,13 @@ class MarketSimulation:
         # callers can render it as "—" / "unavailable" instead.
         llm_response_count = 0
 
+        evidence_for = {
+            "institutional_trend": "trend",
+            "mean_reversion": "extension",
+            "retail_fomo": "headlines",
+        }
         for name, system in AGENT_SYSTEMS.items():
-            text = _call_llm(prompt, system, self._env)
+            text = _call_llm(_persona_user_prompt(name, sections), system, self._env)
             if (text or "").strip():
                 llm_response_count += 1
             parsed = _parse_agent_response(text)
@@ -684,6 +784,7 @@ class MarketSimulation:
 
             agent_votes.append({
                 "name": a.get("name"),
+                "evidence": evidence_for.get(str(a.get("name") or ""), "trend"),
                 # Backward compatible fields (Discord embed / viewer).
                 "score": agent_score_int,
                 "reason": reason[:200] if reason else "",
@@ -823,8 +924,17 @@ class MarketSimulation:
             "continuation_probability": float(overall_cont),
             "bull_trap_probability": float(overall_bull),
             "seed_fingerprint": seed_fingerprint,
+            "persona_prompt_version": MIROFISH_PROMPT_VERSION,
             "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
         }
+        try:
+            from core.llm_endpoint import resolve_llm_endpoint
+
+            endpoint = resolve_llm_endpoint(self._env)
+            result["llm_provider"] = endpoint.provider
+            result["llm_model"] = endpoint.model
+        except Exception as e:
+            LOG.debug("LLM endpoint stamp skipped for %s: %s", self.ticker, e)
         _persist_simulation(sim_id, result, self.skill_dir)
         return result
 
@@ -929,6 +1039,9 @@ def cache_conviction(ticker: str, result: dict, skill_dir: Path | None = None) -
         "bull_trap_probability": result.get("bull_trap_probability"),
         "mirofish_disagreement": result.get("mirofish_disagreement"),
         "agent_weighting": result.get("agent_weighting"),
+        "llm_model": result.get("llm_model"),
+        "llm_provider": result.get("llm_provider"),
+        "persona_prompt_version": result.get("persona_prompt_version"),
         "timestamp": time.time(),
     }
     data["mirofish_scores"] = scores
@@ -954,11 +1067,20 @@ def export_mirofish_json(result: dict[str, Any]) -> str:
     return json.dumps(export, indent=2)
 
 
+def public_mirofish_view(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Simulation payload safe to attach on a signal. Drops nothing secret; seed text stays in seed_preview."""
+    if not isinstance(result, dict):
+        return {}
+    return {key: value for key, value in result.items() if key not in _PUBLIC_MIROFISH_DROP}
+
+
 def get_cached_conviction(
     ticker: str,
     skill_dir: Path | None = None,
     max_age_hours: float = 24,
     seed_fingerprint: str | None = None,
+    llm_model: str | None = None,
+    prompt_version: str | None = None,
 ) -> dict | None:
     """Get cached conviction if fresh. Returns None if missing or stale."""
     import time
@@ -977,6 +1099,10 @@ def get_cached_conviction(
         if seed_fingerprint is not None:
             if entry.get("seed_fingerprint") != seed_fingerprint:
                 return None
+        if llm_model is not None and str(entry.get("llm_model") or "") != str(llm_model):
+            return None
+        if prompt_version is not None and str(entry.get("persona_prompt_version") or "") != str(prompt_version):
+            return None
         return entry
     except Exception:
         return None

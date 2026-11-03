@@ -41,7 +41,7 @@ const STATUS_BADGES = Object.freeze({
   filtered_self_study: {
     label: "Self-study",
     cls: "pill warn",
-    title: "Dropped by self-study learned minimum conviction.",
+    title: "Dropped by self-study learned minimum conviction (live mode).",
   },
   filtered_confluence: {
     label: "Confluence",
@@ -75,6 +75,33 @@ function humanizeReasonCode(code) {
   if (!raw) return "";
   if (REASON_LABELS[raw]) return REASON_LABELS[raw];
   return raw.replace(/[_-]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+const DATA_QUALITY_REASON_HINTS = Object.freeze([
+  [/quote_stale/i, "Market quotes are stale"],
+  [/bars_stale/i, "Price bars are stale"],
+  [/quote_unavailable/i, "Quote unavailable"],
+  [/quote_timestamp_missing/i, "Quote timestamp missing"],
+  [/bars_missing/i, "Price bars missing"],
+  [/bar_date_parse/i, "Bar date could not be parsed"],
+  [/sec_cache_stale/i, "SEC filing cache is stale"],
+  [/sec_cache_empty|sec_cache_missing/i, "SEC filing cache is empty"],
+  [/sec_cache/i, "SEC filing cache needs a refresh"],
+  [/provider_fallback/i, "Using fallback market data"],
+]);
+
+/**
+ * Plain English for data_quality_reasons codes (quote_stale_age_sec_… etc).
+ * @param {string} code
+ * @returns {string}
+ */
+export function formatDataQualityReason(code) {
+  const raw = safeText(code || "").trim();
+  if (!raw) return "";
+  for (const [re, label] of DATA_QUALITY_REASON_HINTS) {
+    if (re.test(raw)) return label;
+  }
+  return humanizeReasonCode(raw);
 }
 
 /**

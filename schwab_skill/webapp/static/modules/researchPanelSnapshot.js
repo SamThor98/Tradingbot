@@ -17,31 +17,31 @@ export const RESEARCH_SNAPSHOT_DEFAULTS = Object.freeze({
     output: { label: "OUTPUT", value: "Ready", sub: "panel status", tone: "success" },
     data: { label: "DATA", value: "Fresh", sub: "provenance", tone: "success" },
     action: { label: "ACTION", value: "Pass", sub: "next step", tone: "success" },
-    confidence: 82,
+    confidence: null,
   },
   partial: {
     output: { label: "OUTPUT", value: "Partial", sub: "panel status", tone: "warn" },
     data: { label: "DATA", value: "Limited", sub: "provenance", tone: "warn" },
     action: { label: "ACTION", value: "Review", sub: "next step", tone: "warn" },
-    confidence: 58,
+    confidence: null,
   },
   empty: {
     output: { label: "OUTPUT", value: "None", sub: "panel status", tone: "neutral" },
     data: { label: "DATA", value: "—", sub: "provenance", tone: "neutral" },
     action: { label: "ACTION", value: "Wait", sub: "next step", tone: "neutral" },
-    confidence: 0,
+    confidence: null,
   },
   loading: {
     output: { label: "OUTPUT", value: "…", sub: "panel status", tone: "loading" },
     data: { label: "DATA", value: "…", sub: "provenance", tone: "loading" },
     action: { label: "ACTION", value: "Wait", sub: "next step", tone: "loading" },
-    confidence: 28,
+    confidence: null,
   },
   error: {
     output: { label: "OUTPUT", value: "—", sub: "panel status", tone: "bad" },
     data: { label: "DATA", value: "—", sub: "provenance", tone: "bad" },
     action: { label: "ACTION", value: "Retry", sub: "next step", tone: "bad" },
-    confidence: 0,
+    confidence: null,
   },
 });
 
@@ -131,17 +131,13 @@ export function paintResearchPanelSnapshot(containerId, sectionId, stateName, co
     mergeTile(defaults.data, config.data, "DATA"),
     mergeTile(defaults.action, config.action, "ACTION"),
   ];
-  const confidence =
-    config.confidence !== undefined && config.confidence !== null
-      ? safeNum(config.confidence, defaults.confidence)
-      : defaults.confidence;
-  const width = meterWidth(confidence, state);
-  const confidenceDisplay =
-    state === "loading"
-      ? "…"
-      : state === "error" || !Number.isFinite(safeNum(confidence, NaN))
-        ? "—"
-        : `${Math.round(safeNum(confidence, 0))}%`;
+  const meter = config.meter && typeof config.meter === "object" ? config.meter : null;
+  const meterValue = meter ? safeNum(meter.value, NaN) : NaN;
+  const meterLabel = meter ? safeText(meter.label || "") : "";
+  const meterUnit = meter ? safeText(meter.unit || "") : "";
+  const showMeter = state !== "loading" && Number.isFinite(meterValue) && meterLabel !== "" && meterUnit !== "";
+  const width = showMeter ? meterWidth(meterValue, state) : 0;
+  const meterDisplay = showMeter ? `${meterLabel} (${meterUnit}) ${Math.round(meterValue)}` : "";
   const lines = (Array.isArray(config.lines) ? config.lines : []).filter(Boolean).slice(0, 3);
   const hint = safeText(config.hint || "");
 
@@ -159,12 +155,16 @@ export function paintResearchPanelSnapshot(containerId, sectionId, stateName, co
         )
         .join("")}
     </div>
-    <div class="research-panel-snapshot__meters" aria-label="Confidence">
+    ${
+      showMeter
+        ? `<div class="research-panel-snapshot__meters" aria-label="${escapeHtml(meterLabel)}">
       <div class="research-panel-snapshot__meter">
-        <span class="research-panel-snapshot__meter-label">Confidence ${escapeHtml(confidenceDisplay)}</span>
+        <span class="research-panel-snapshot__meter-label">${escapeHtml(meterDisplay)}</span>
         <div class="meter info"><span style="width:${width}%"></span></div>
       </div>
-    </div>
+    </div>`
+        : ""
+    }
     ${
       lines.length
         ? `<ul class="research-panel-snapshot__lines">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
@@ -204,7 +204,7 @@ export function paintResearchSurface(opts = {}) {
     output: opts.output,
     data: opts.data,
     action: opts.action,
-    confidence: opts.confidence,
+    meter: opts.meter,
     lines: opts.lines || [title, detail].filter(Boolean),
     hidden: opts.hidden === true,
   });

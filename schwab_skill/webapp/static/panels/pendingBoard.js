@@ -1,7 +1,8 @@
 /**
- * Pending-trade board rendering — fetches /api/pending-trades, groups rows
- * by sector, renders the task cards with score/reliability/conviction
- * meters, and wires the quick-view/approve/reject/delete actions.
+ * Pending-trade blotter — fetches /api/pending-trades and renders one
+ * dense row per trade: side, quantity, limit, stop, R, book heat, sector,
+ * whether the book holds that sector, and status. The note sits under the row.
+ * Approve stays disabled unless status is "clear to stage".
  *
  * Extracted from app.js per the module decomposition policy in
  * docs/FRONTEND_DESIGN_SYSTEM.md ("Next Planned Splits"). DOM ids consumed:
@@ -17,16 +18,13 @@ import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
 import {
   safeText,
-  safeNum,
   escapeHtml,
-  clampPct,
-  pct,
   formatCount,
   formatMoney,
 } from "../modules/format.js";
 import { setAsyncState, busyButton, ASYNC_ERROR } from "../modules/asyncState.js";
-import { applyFreshness, markUnavailable, clearUnavailable } from "../modules/freshness.js";
-import { logEvent, updateActionCenter, statusClass } from "../modules/logger.js";
+import { applyFreshness, markUnavailable, clearUnavailable, pendingAsOfFrom } from "../modules/freshness.js";
+import { logEvent, updateActionCenter } from "../modules/logger.js";
 import {
   isPriorityFeedActive,
   pushPriorityItem,
@@ -45,48 +43,59 @@ import {
   isScanSignalStageable,
 } from "../modules/signalProvenance.js";
 import {
-  getCompositeScore,
   getReliabilityScore,
-  getConvictionScore,
-  getEdgeScore,
   getExecutionScore,
-  getCalibratedPUp,
-  formatConfidenceLabel,
 } from "../modules/signalScores.js";
+import {
+  buildTicketModel,
+  rowStageBlockers,
+  systemStageBlockers,
+} from "../modules/ticketFacts.js";
 
-function getSectorKeyFromTrade(row) {
-  const sector = row?.signal?.sector_etf || "Unknown";
-  return String(sector || "Unknown").toUpperCase();
+function pendingNote(row) {
+  const raw = row?.note ?? row?.notes;
+  const note = raw === null || raw === undefined ? "" : String(raw).trim();
+  return note;
 }
 
-function meterFromScore(score) {
-  return clampPct(safeNum(score, 0));
+function bookEquity() {
+  const portfolio = state.lastPortfolioData;
+  const risk = state.lastPortfolioRiskData;
+  const candidates = [portfolio?.total_market_value, portfolio?.total_value, risk?.total_value];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
 }
 
-function meterFromConviction(conviction) {
-  return clampPct((safeNum(conviction, 0) + 100) / 2);
+function bookPositions() {
+  const risk = state.lastPortfolioRiskData;
+  if (Array.isArray(risk?.positions_weighted) && risk.positions_weighted.length) {
+    return risk.positions_weighted;
+  }
+  const dash = state.lastPortfolioRiskDashboard;
+  if (Array.isArray(dash?.positions_weighted) && dash.positions_weighted.length) {
+    return dash.positions_weighted;
+  }
+  const portfolio = state.lastPortfolioData;
+  if (Array.isArray(portfolio?.positions)) return portfolio.positions;
+  return [];
 }
 
-function meterFromReliability(reliability) {
-  return clampPct(safeNum(reliability, 0));
+function stageSnapshot() {
+  return {
+    killSwitch: Boolean(state.publicConfig?.platform_live_trading_kill_switch),
+    tradingHalted: Boolean(state.accountMe?.trading_halted),
+    liveOff: Boolean(
+      state.publicConfig?.saas_mode &&
+        (!state.accountMe || !state.accountMe.live_execution_enabled),
+    ),
+  };
 }
 
-function renderPendingContext(row) {
-  const sig = row.signal || {};
-  const score = getCompositeScore(sig);
-  const reliability = getReliabilityScore(sig);
-  const edge = getEdgeScore(sig);
-  const execution = getExecutionScore(sig);
-  const sector = sig.sector_etf;
-  const conviction = getConvictionScore(sig);
-  const advisory = sig.advisory || {};
-  const pUp = getCalibratedPUp(sig);
-  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
-  return `score: ${score !== null ? safeNum(score).toFixed(0) : "—"} (edge ${edge !== null ? safeNum(edge).toFixed(0) : "—"})<br/>
-    reliability: ${reliability !== null ? safeNum(reliability).toFixed(0) : "—"} · execution: ${execution !== null ? safeNum(execution).toFixed(0) : "—"}<br/>
-    sector: ${safeText(sector || "—")}<br/>
-    confidence: ${safeText(confidence || "—")} · P(up 10d): ${pUp === null ? "—" : pct(pUp, 1)}<br/>
-    conviction: ${conviction !== null ? safeText(conviction) : "—"}`;
+function moneyOrDash(value) {
+  return value === null || value === undefined ? "—" : formatMoney(value);
 }
 
 function summarizePendingQueueHealth(rows = []) {
@@ -152,76 +161,12 @@ function paintPendingSnapshot(statusState, opts = {}) {
   });
 }
 
-function getPendingRiskProfile(row) {
-  const sig = row?.signal || {};
-  const score = safeNum(getCompositeScore(sig), 0);
-  const reliability = safeNum(getReliabilityScore(sig), 0);
-  const advisory = sig.advisory || {};
-  const confidence = formatConfidenceLabel(advisory.confidence_bucket ?? sig.confidence_bucket ?? sig.advisory_confidence);
-  const hasSector = Boolean(safeText(sig.sector_etf || "").trim());
-  const lowConfidence = ["low", "unknown", "—"].includes(String(confidence || "—").toLowerCase());
-  if (!hasSector || score < 60 || lowConfidence || reliability < 45) return { label: "Requires extra review", severity: "high" };
-  if (score < 72) return { label: "Moderate confidence", severity: "medium" };
-  return { label: "Ready to review", severity: "low" };
-}
-
-const PRESET_NOTIONAL_CAP = Object.freeze({
-  conservative: 300,
-  balanced: 500,
-  aggressive: 900,
-});
-
-function renderPendingThesis(row) {
-  const note = safeText(row?.note || row?.notes || "").trim();
-  if (note) return escapeHtml(note.length > 140 ? `${note.slice(0, 137)}…` : note);
-  const sig = row?.signal || {};
-  const summary = safeText(sig.mirofish_summary || sig.summary || "").trim();
-  if (summary) return escapeHtml(summary.length > 140 ? `${summary.slice(0, 137)}…` : summary);
-  const strategy = safeText(sig?.strategy_attribution?.top_live || "").trim();
-  const score = getCompositeScore(sig);
-  const parts = [];
-  if (strategy) parts.push(strategy.replace(/_/g, " "));
-  if (score !== null) parts.push(`score ${safeNum(score, 0).toFixed(0)}`);
-  return parts.length
-    ? escapeHtml(parts.join(" · "))
-    : `<span class="muted">Review chart context before approving.</span>`;
-}
-
-function renderPositionCapMeter(row, getDisplayMode) {
-  const sig = row?.signal || {};
-  const price = safeNum(sig.price ?? sig.current_price, NaN);
-  const qty = safeNum(row?.qty, NaN);
-  if (!Number.isFinite(price) || !Number.isFinite(qty) || qty <= 0) return "";
-  const mode = typeof getDisplayMode === "function" ? getDisplayMode() : "balanced";
-  const cap = PRESET_NOTIONAL_CAP[mode] || PRESET_NOTIONAL_CAP.balanced;
-  const notional = price * qty;
-  const pct = clampPct((notional / cap) * 100);
-  const cls = pct >= 95 ? "bad" : pct >= 80 ? "warn" : "good";
-  return `
-    <div class="pending-cap-meter">
-      <span class="meter-label">Notional vs preset cap ($${cap})</span>
-      <div class="meter meter--${cls}"><span style="width:${pct}%"></span></div>
-      <span class="muted mono-nums">${formatMoney(notional)} (${pct.toFixed(0)}%)</span>
-    </div>
-  `;
-}
-
-function renderTimeline(row) {
-  const status = (row.status || "").toLowerCase();
-  if (status === "pending") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> waiting action</span>`;
-  if (status === "executed") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> approved -> executed</span>`;
-  if (status === "rejected") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> rejected</span>`;
-  if (status === "failed") return `<span class="timeline-badge"><span class="timeline-dot"></span>queued -> approve attempted -> failed</span>`;
-  return `<span class="timeline-badge"><span class="timeline-dot"></span>${safeText(status)}</span>`;
-}
-
 export async function refreshPendingBoard(deps = {}) {
   const {
     openApproveDialog,
     updateHeroInfographic,
     trackFunnelMilestoneOnce,
     FUNNEL_EVENTS,
-    getDisplayMode,
   } = deps;
   const filter = document.getElementById("pendingFilter")?.value || state.pendingFilter;
   const sort = document.getElementById("pendingSort")?.value || state.pendingSort;
@@ -269,6 +214,7 @@ export async function refreshPendingBoard(deps = {}) {
     const pcEl = document.getElementById("pendingCount");
     if (pcEl) markUnavailable(pcEl, msg || "fetch failed");
     state.lastPendingCount = null;
+    state.lastPendingError = safeText(msg || "Pending trades did not load.");
     setOperationsStatusStrip(
       "pendingStatusStrip",
       "error",
@@ -296,11 +242,13 @@ export async function refreshPendingBoard(deps = {}) {
     pcEl.textContent = formatCount(pendingN);
   }
   state.lastPendingCount = pendingN;
-  state.lastPendingAt = new Date().toISOString();
+  state.lastPendingError = "";
+  state.lastPendingAt = pendingAsOfFrom(rows);
   applyFreshness(document.getElementById("pendingFresh"), {
     asOf: state.lastPendingAt,
     source: "/api/pending-trades",
     surface: "pending_queue",
+    unavailable: pendingN > 0 ? "pending time missing" : "no pending trades",
   });
   if (pendingN > 0 && typeof trackFunnelMilestoneOnce === "function" && FUNNEL_EVENTS) {
     void trackFunnelMilestoneOnce(FUNNEL_EVENTS.FIRST_PENDING_TRADE, {
@@ -310,12 +258,22 @@ export async function refreshPendingBoard(deps = {}) {
   }
   const clearBtn = document.getElementById("clearPendingBtn");
   if (clearBtn) clearBtn.disabled = pendingN === 0;
+  const deleteBtn = document.getElementById("deleteAllTradesBtn");
+  if (deleteBtn) {
+    const nothingHere = pendingN === 0 && rows.length === 0;
+    deleteBtn.disabled = nothingHere;
+    deleteBtn.title = nothingHere
+      ? "No trades in this view to delete."
+      : "Permanently delete every trade row. This cannot be undone.";
+  }
   if (typeof updateHeroInfographic === "function") updateHeroInfographic();
 
   board.innerHTML = "";
   if (!rows.length) {
     board.dataset.state = "empty";
-    board.innerHTML = `<div class="task-empty muted">No trades match current filter.</div>`;
+    board.innerHTML = pendingN === 0
+      ? `<div class="task-empty muted">Nothing staged. Queue a clear tradeable name from the scan table.</div>`
+      : `<div class="task-empty muted">No trades match this filter.</div>`;
     setOperationsStatusStrip(
       "pendingStatusStrip",
       "empty",
@@ -339,22 +297,33 @@ export async function refreshPendingBoard(deps = {}) {
     return;
   }
 
-  const riskCounts = rows.reduce(
-    (acc, row) => {
-      const risk = getPendingRiskProfile(row);
-      acc[risk.severity] = (acc[risk.severity] || 0) + 1;
-      return acc;
-    },
-    { high: 0, medium: 0, low: 0 },
-  );
-  const highRisk = safeNum(riskCounts.high, 0);
-  const mediumRisk = safeNum(riskCounts.medium, 0);
+  const equity = bookEquity();
+  const positions = bookPositions();
+  const snapshot = stageSnapshot();
+  const rendered = rows.map((row) => {
+    const model = buildTicketModel({
+      row,
+      equity,
+      positions,
+      blockers: rowStageBlockers(row),
+      systemBlockers: systemStageBlockers(snapshot),
+    });
+    const pending = String(row.status || "").toLowerCase() === "pending";
+    return {
+      row,
+      model,
+      clear: pending && model.clear,
+      status: pending ? model.status : String(row.status || ""),
+    };
+  });
+  const blockedN = rendered.filter((item) => {
+    return String(item.row.status || "").toLowerCase() === "pending" && !item.clear;
+  }).length;
   const { filteredStaged, degradedStaged } = summarizePendingQueueHealth(rows);
-  const needsReview = highRisk > 0 || filteredStaged > 0 || degradedStaged > 0;
+  const needsReview = blockedN > 0 || filteredStaged > 0 || degradedStaged > 0;
   const statusState = needsReview ? "partial" : "success";
   const detailParts = [];
-  if (highRisk > 0) detailParts.push(`${highRisk} require extra review`);
-  if (mediumRisk > 0) detailParts.push(`${mediumRisk} moderate-confidence setup(s)`);
+  if (blockedN > 0) detailParts.push(`${blockedN} blocked`);
   if (filteredStaged > 0) {
     detailParts.push(
       `${filteredStaged} filtered at scan time (approve blocked until re-staged)`,
@@ -365,100 +334,73 @@ export async function refreshPendingBoard(deps = {}) {
     "pendingStatusStrip",
     statusState,
     `${pendingN} pending approval${pendingN === 1 ? "" : "s"}.`,
-    detailParts.length ? detailParts.join("; ") + "." : "Provenance and data quality visible on each card.",
+    detailParts.length ? detailParts.join("; ") + "." : "R, book heat, and data quality are on each row.",
   );
-  const blockerCount = filteredStaged + highRisk;
   const dataLabel =
     degradedStaged > 0 ? `${degradedStaged} degraded` : rows.length ? "ok" : "Clear";
   paintPendingSnapshot(statusState, {
     pendingN,
-    blockers: blockerCount,
+    blockers: blockedN,
     degradedStaged,
     dataLabel,
     rows: rows.map((row) => row.signal || {}),
     title: `${pendingN} pending approval${pendingN === 1 ? "" : "s"}.`,
     detail: detailParts.length
       ? detailParts.join("; ") + "."
-      : "Provenance and data quality visible on each card.",
+      : "R, book heat, and data quality are on each row.",
   });
   board.dataset.state = statusState;
 
-  const groups = rows.reduce((acc, row) => {
-    const key = getSectorKeyFromTrade(row);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
-
-  Object.keys(groups).sort().forEach((sector) => {
-    const section = document.createElement("section");
-    section.className = "task-group";
-    section.innerHTML = `<h3>${sector}</h3>`;
-    groups[sector].forEach((row) => {
-      const composite = getCompositeScore(row?.signal || {});
-      const reliabilityValue = getReliabilityScore(row?.signal || {});
-      const convictionValue = getConvictionScore(row?.signal || {});
-      const score = meterFromScore(composite);
-      const reliabilityMeter = meterFromReliability(reliabilityValue);
-      const conviction = meterFromConviction(convictionValue);
-      const sig = row?.signal || {};
-      const liveBlocked =
-        state.publicConfig.saas_mode &&
-        (!state.accountMe || !state.accountMe.live_execution_enabled);
-      const stageable = !Object.keys(sig).length || isScanSignalStageable(sig);
-      const approveTitle = liveBlocked
-        ? "Live trading is off — enable in Strategy Presets after reviewing risk."
-        : !stageable
-          ? "Filtered at scan time — re-stage from a tradeable scan row before approving."
-          : "";
-      const card = document.createElement("article");
-      const risk = getPendingRiskProfile(row);
-      const sector = safeText(row?.signal?.sector_etf || "").trim();
-      const sectorChip = sector
-        ? `<span class="sector-chip pill info">${escapeHtml(sector)}</span>`
-        : `<span class="sector-chip pill neutral">No sector</span>`;
-      card.className = `task-card task-card--risk-${risk.severity}`;
-      card.innerHTML = `
-        <div class="task-card-head">
-          <div>
-            <strong>${safeText(row.ticker)}</strong>
-            <span class="muted">#${safeText(row.id)} • Qty ${safeText(row.qty)}</span>
-            ${sectorChip}
-          </div>
-          <div class="task-card-badges">
-            <span class="risk-chip ${risk.severity}">${safeText(risk.label)}</span>
-            <span class="${statusClass(row.status)}">${safeText(row.status)}</span>
-          </div>
-        </div>
-        <p class="pending-thesis-line">${renderPendingThesis(row)}</p>
-        ${renderSignalTrustRow(sig)}
-        <div class="task-meters">
-          <div>
-            <span class="meter-label">Score ${safeNum(composite, 0).toFixed(0)}</span>
-            <div class="meter"><span style="width:${score}%"></span></div>
-          </div>
-          <div>
-            <span class="meter-label">Reliability ${safeNum(reliabilityValue, 0).toFixed(0)}</span>
-            <div class="meter info"><span style="width:${reliabilityMeter}%"></span></div>
-          </div>
-          <div>
-            <span class="meter-label">Conviction ${safeNum(convictionValue, 0).toFixed(0)}</span>
-            <div class="meter conviction"><span style="width:${conviction}%"></span></div>
-          </div>
-        </div>
-        ${renderPositionCapMeter(row, getDisplayMode)}
-        <div class="context-mini">${renderTimeline(row)}<br/>${renderPendingContext(row)}</div>
-        <div class="task-actions">
-          <button class="btn small secondary" data-quick="${row.id}">Quick View</button>
-          <button class="btn small approve-btn" data-approve="${row.id}" title="${escapeHtml(approveTitle)}" ${row.status !== "pending" || liveBlocked || !stageable ? "disabled" : ""}>Approve</button>
-          <button class="btn small reject-btn" data-reject="${row.id}" ${row.status !== "pending" ? "disabled" : ""}>Reject</button>
-          <button class="btn small bad" data-delete="${row.id}" title="Permanently delete this trade">Delete</button>
-        </div>
-      `;
-      section.appendChild(card);
-    });
-    board.appendChild(section);
-  });
+  const body = rendered.map(({ row, model, clear, status }) => {
+    const sig = row.signal || {};
+    const note = pendingNote(row);
+    const id = escapeHtml(row.id);
+    const pending = String(row.status || "").toLowerCase() === "pending";
+    return `
+      <tr class="pending-blotter-row" data-tone="${clear ? "ok" : "bad"}" data-stage="${clear ? "clear" : "blocked"}" data-quality="${escapeHtml(model.dataQuality || "")}" data-trade="${id}">
+        <td class="pending-blotter-ticker">${escapeHtml(safeText(row.ticker))}</td>
+        <td>${escapeHtml(model.side)}</td>
+        <td class="mono-nums">${model.qty === null ? "—" : escapeHtml(String(model.qty))}</td>
+        <td class="mono-nums">${escapeHtml(moneyOrDash(model.limit))}</td>
+        <td class="mono-nums">${escapeHtml(moneyOrDash(model.stop))}</td>
+        <td class="mono-nums">${escapeHtml(moneyOrDash(model.r))}</td>
+        <td class="mono-nums pending-blotter-heat">${escapeHtml(model.heat)}</td>
+        <td>${escapeHtml(model.sector || "—")}</td>
+        <td>${escapeHtml(model.book || "—")}</td>
+        <td class="pending-blotter-status">${escapeHtml(status)}</td>
+        <td class="pending-blotter-actions">
+          <button class="btn small secondary" type="button" data-quick="${id}">Quick View</button>
+          <button class="btn small approve-btn" type="button" data-approve="${id}" data-stage="${clear ? "clear" : "blocked"}" title="${escapeHtml(status)}" ${clear ? "" : "disabled"}>Approve</button>
+          <button class="btn small reject-btn" type="button" data-reject="${id}" ${pending ? "" : "disabled"}>Reject</button>
+          <button class="btn small bad" type="button" data-delete="${id}" title="Permanently delete this trade">Delete</button>
+        </td>
+      </tr>
+      <tr class="pending-blotter-note">
+        <td colspan="11">
+          <div class="pending-blotter-note-line">${note ? escapeHtml(note) : '<span class="muted">—</span>'}</div>
+          ${renderSignalTrustRow(sig)}
+        </td>
+      </tr>`;
+  }).join("");
+  board.innerHTML = `
+    <table class="pending-blotter">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Side</th>
+          <th>Qty</th>
+          <th>Limit</th>
+          <th>Stop</th>
+          <th>R</th>
+          <th>Heat</th>
+          <th>Sector</th>
+          <th>Book</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>`;
 
   board.querySelectorAll("button[data-quick]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {

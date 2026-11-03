@@ -16,7 +16,8 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, safeNum, prettyJson, formatMoney } from "../modules/format.js";
+import { safeText, safeNum, formatMoney, escapeHtml } from "../modules/format.js";
+import { passFailTableHtml } from "../modules/typedView.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { isScanSignalStageable } from "../modules/signalProvenance.js";
 import { getCompositeScore, getReliabilityScore } from "../modules/signalScores.js";
@@ -33,25 +34,40 @@ export function configureApproveDialog(injected = {}) {
 function formatPreflightChecklistHtml(c) {
   if (!c || typeof c !== "object") return "";
   const lines = Array.isArray(c.checklist_lines) ? c.checklist_lines : [];
-  const plainItems = lines
-    .map((line) => {
-      if (!line || typeof line !== "object") return "";
-      const lb = safeText(line.label);
-      const vl = safeText(line.value_plain);
-      return `<li><strong>${lb}:</strong> ${vl}</li>`;
-    })
-    .filter(Boolean)
-    .join("");
-  let blockSection = "";
+  const rows = lines
+    .filter((line) => line && typeof line === "object")
+    .map((line) => ({
+      label: safeText(line.label) || "Check",
+      status: "pass",
+      detail: safeText(line.value_plain),
+    }));
   if (c.blocked) {
     const br = Array.isArray(c.block_reasons_plain) ? c.block_reasons_plain : [];
-    const brHtml = br.length ? br.map((t) => `<li>${safeText(t)}</li>`).join("") : "";
-    const fallback = brHtml || "<li>Policy blocked this order.</li>";
-    blockSection = `<p class="approve-blocked"><strong>Cannot send yet</strong></p><ul>${fallback}</ul>`;
+    if (br.length) {
+      for (const t of br) {
+        rows.push({ label: "Policy hold", status: "fail", detail: safeText(t) });
+      }
+    } else {
+      rows.push({ label: "Policy hold", status: "fail", detail: "Policy blocked this order." });
+    }
+  } else if (!rows.length) {
+    rows.push({ label: "Pre-trade checks", status: "na", detail: "No extra checklist rows." });
+  } else {
+    rows.push({ label: "Send policy", status: "pass", detail: "No hard block on this order." });
   }
-  const techJson = safeText(prettyJson(c));
-  const tech = `<details class="approve-checklist-details"><summary>Technical checklist</summary><pre class="code-block code-block--tight">${techJson}</pre></details>`;
-  return `<div class="approve-preflight"><strong>Pre-trade summary</strong><ul>${plainItems || "<li>No extra checklist rows.</li>"}</ul>${blockSection}${tech}</div>`;
+  const blockNote = c.blocked ? `<p class="approve-blocked"><strong>Cannot send yet</strong></p>` : "";
+  return `<div class="approve-preflight"><strong>Pre-trade summary</strong>${blockNote}${passFailTableHtml(rows)}</div>`;
+}
+
+/** Facts the operator must see before a live submit. Pending rows omit side and
+ * order type; the approve route sends BUY MARKET unless the row carries them. */
+function approveOrderFactsHtml(row) {
+  const ticker = escapeHtml(safeText(row.ticker).toUpperCase());
+  const qty = escapeHtml(safeText(row.qty));
+  const side = escapeHtml(safeText(row.side || "BUY").toUpperCase());
+  const orderType = escapeHtml(safeText(row.order_type || row.orderType || "MARKET").toUpperCase());
+  const px = row.price ? ` @ ${escapeHtml(formatMoney(row.price))}` : "";
+  return `Approve <strong>${side}</strong> ${qty} <strong>${ticker}</strong> as a <strong>${orderType}</strong> order${px}.`;
 }
 
 export async function openApproveDialog(row) {
@@ -79,7 +95,7 @@ export async function openApproveDialog(row) {
   // Show the dialog immediately with a loading line so the preflight GET has
   // an explicit loading state instead of a frozen click.
   summary.innerHTML = `
-    Approve BUY ${row.qty} ${row.ticker} @ ${row.price ? formatMoney(row.price) : "market"}?<br/>
+    ${approveOrderFactsHtml(row)}<br/>
     Est. value: <strong>${formatMoney(est)}</strong><br/>
     <span class="muted">Running pre-trade checklist…</span>
   `;
@@ -102,7 +118,7 @@ export async function openApproveDialog(row) {
     checklistText += `<p class="approve-preflight warn-text"><strong>Scan filter:</strong> This staged signal was marked filtered at scan time. Re-run scan or adjust gates before approving.</p>`;
   }
   summary.innerHTML = `
-    Approve BUY ${row.qty} ${row.ticker} @ ${row.price ? formatMoney(row.price) : "market"}?<br/>
+    ${approveOrderFactsHtml(row)}<br/>
     Est. value: <strong>${formatMoney(est)}</strong><br/>
     <span class="muted">${riskHint}</span>
     ${checklistText}

@@ -19,7 +19,7 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, prettyJson, formatPercentPoints, formatDecimal } from "../modules/format.js";
+import { safeText, formatPercentPoints, formatDecimal } from "../modules/format.js";
 import { humanizeEnvParam, humanizeVerdict } from "../modules/humanize.js";
 import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 
@@ -158,14 +158,7 @@ function renderAttributionAccountability(data) {
 }
 
 export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = () => "balanced" } = {}) {
-  const rawDetails = document.getElementById("performanceRawDetails");
-  const rawPre = document.getElementById("performanceRaw");
   if (!rootEl) return;
-  if (rawPre && !error && data) rawPre.textContent = prettyJson(data);
-  if (rawDetails) {
-    if (error || !data) rawDetails.classList.add("hidden");
-    else rawDetails.classList.remove("hidden");
-  }
   if (error) {
     rootEl.innerHTML = buildOperatorAlertHtml({
       tone: "bad",
@@ -273,9 +266,9 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
         <div class="perf-source">Data source: ${safeText(prettifySourceName(bt.source))}</div>
         <div class="perf-metric"><span class="label">Run at</span><span class="value">${safeText(bt.run_at)}</span></div>
         <div class="perf-metric"><span class="label">Trades</span><span class="value">${safeText(bt.total_trades)}</span></div>
-        <div class="perf-metric"><span class="label">Win rate</span><span class="value">${formatPercentPoints(bt.win_rate)}</span></div>
-        <div class="perf-metric"><span class="label">Avg return</span><span class="value">${formatPercentPoints(bt.avg_return_pct)}</span></div>
-        <div class="perf-metric"><span class="label">Max drawdown</span><span class="value">${formatPercentPoints(bt.max_drawdown_pct)}</span></div>
+        <div class="perf-metric"><span class="label">Win rate</span><span class="value">${formatPercentPoints(bt.win_rate)}</span></div> <!-- points: learning.py aliases win_rate_net -->
+        <div class="perf-metric"><span class="label">Avg return</span><span class="value">${formatPercentPoints(bt.avg_return_pct)}</span></div> <!-- points: avg_return_net_pct -->
+        <div class="perf-metric"><span class="label">Max drawdown</span><span class="value">${formatPercentPoints(bt.max_drawdown_pct)}</span></div> <!-- signed points: max_drawdown_net_pct -->
       </div>
       <div class="perf-bucket">
         <h3>Shadow / paper</h3>
@@ -299,8 +292,6 @@ export function renderPerformancePanel(rootEl, data, { error, getDisplayMode = (
     ${outcomesTable || `<p class="muted perf-outcomes-empty">No recent outcome rows yet.</p>`}
     ${renderAttributionAccountability(data)}
   `;
-  if (rawDetails && data && !error && getDisplayMode() === "pro") rawDetails.open = true;
-
   const ch = data && data.challenger && typeof data.challenger === "object" ? data.challenger : null;
   if (ch && ch.available && ch.latest) {
     const challengerPanel = document.getElementById("challengerPanel");
@@ -360,12 +351,7 @@ export function renderChallengerPanel(rootEl, ch) {
 }
 
 export function renderEvolvePanel(rootEl, data) {
-  const rawDetails = document.getElementById("learningRawDetails");
-  const rawPre = document.getElementById("learningRaw");
   if (!rootEl) return;
-  if (rawPre && data) rawPre.textContent = prettyJson(data);
-  if (rawDetails && data) rawDetails.classList.remove("hidden");
-
   if (!data || typeof data !== "object") {
     rootEl.innerHTML = `<div class="report-empty">No learning engine results yet.</div>`;
     return;

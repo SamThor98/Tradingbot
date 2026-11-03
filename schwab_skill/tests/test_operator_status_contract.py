@@ -38,7 +38,9 @@ def test_research_panel_snapshot_module() -> None:
     src = (STATIC / "researchPanelSnapshot.js").read_text(encoding="utf-8")
     assert "paintResearchPanelSnapshot" in src
     assert "research-panel-snapshot__kpis" in src
-    assert "Confidence" in src
+    assert "meter.label" in src
+    assert "meter.unit" in src
+    assert "Confidence ${" not in src
     assert "OUTPUT" in src
     assert "RESEARCH_SNAPSHOT_DEFAULTS" in src
 
@@ -123,6 +125,7 @@ def test_command_palette_system_jumps() -> None:
     src = (STATIC / "commandPalette.js").read_text(encoding="utf-8")
     assert "healthRibbon" in src
     assert "shadowScoreboardSection" in src
+    assert "decisionBookWidth" in src
     assert "reviewLoopSection" in src
     assert "workflowPrimary" in src
 

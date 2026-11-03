@@ -23,6 +23,11 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def is_backtest_skip_mirofish() -> bool:
+    """True when BACKTEST_SKIP_MIROFISH is enabled (typical multi-era books)."""
+    return os.environ.get("BACKTEST_SKIP_MIROFISH", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def backtest_reliability_context(*, context: str | None = None, skill_dir: Path | None = None) -> bool:
     """True when reliability should use backtest-tolerant rules (no uniform cap stack)."""
     _ = skill_dir
@@ -30,7 +35,7 @@ def backtest_reliability_context(*, context: str | None = None, skill_dir: Path 
         return True
     if context == "live":
         return False
-    return os.environ.get("BACKTEST_SKIP_MIROFISH", "").strip().lower() in ("1", "true", "yes", "on")
+    return is_backtest_skip_mirofish()
 
 
 def _resolve_confidence_bucket(signal_row: dict[str, Any], skill_dir: Path | None = None) -> str:

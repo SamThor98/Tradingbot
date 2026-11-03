@@ -65,6 +65,9 @@ def main() -> None:
         json.dumps(_demo_self_study(), indent=2),
         encoding="utf-8",
     )
+    print(
+        "Note: the scanner refuses this demo fingerprint as a live conviction floor."
+    )
     (skill_dir / ".hypothesis_ledger.json").write_text(
         json.dumps(_demo_ledger(), indent=2),
         encoding="utf-8",

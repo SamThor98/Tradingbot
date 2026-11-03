@@ -143,14 +143,15 @@ def exchange_code_for_tokens(
         "code": code,
         "redirect_uri": redirect_uri,
     }
-    if not schwab_circuit.connection_stable:
-        raise RuntimeError("Schwab connection unstable (circuit breaker)")
+    # OAuth is the recovery path: do not block code exchange while the
+    # market-data breaker is open.
     try:
         resp = requests.post(TOKEN_URL, headers=headers, data=data, timeout=60)
     except Exception as e:
         maybe_trip_breaker(e, schwab_circuit)
         raise
     resp.raise_for_status()
+    schwab_circuit.record_success()
     return resp.json()
 
 
@@ -169,14 +170,13 @@ def refresh_access_token(
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
     }
-    if not schwab_circuit.connection_stable:
-        raise RuntimeError("Schwab connection unstable (circuit breaker)")
     try:
         resp = requests.post(TOKEN_URL, headers=headers, data=data, timeout=60)
     except Exception as e:
         maybe_trip_breaker(e, schwab_circuit)
         raise
     resp.raise_for_status()
+    schwab_circuit.record_success()
     return resp.json()
 
 

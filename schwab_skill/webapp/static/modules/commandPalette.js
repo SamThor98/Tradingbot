@@ -13,6 +13,7 @@
 
 import { safeText } from "./format.js";
 import { activateResearchTabForSection } from "./researchTabs.js";
+import { applySystemLane, systemLaneForPanelId } from "./systemLanes.js";
 
 let _actions = [];
 
@@ -21,6 +22,8 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     if (typeof applyScreenMode === "function" && screenMode) {
       applyScreenMode(screenMode, { updateUrl: true });
     }
+    const lane = systemLaneForPanelId(sectionId);
+    if (lane) applySystemLane(lane, { updateUrl: true });
     if (typeof runLazyApi === "function") runLazyApi(key);
     activateResearchTabForSection(sectionId);
     document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
@@ -42,30 +45,36 @@ function buildActions({ runLazyApi, applyDisplayMode, applyScreenMode, openTrade
     { id: "refresh", label: "Refresh All", shortcut: "R", icon: "refresh", action: () => document.getElementById("refreshBtn")?.click() },
     { id: "ticker", label: "Quick Ticker Check", shortcut: "T", icon: "chart", action: () => { document.getElementById("tickerInput")?.focus(); document.getElementById("quickCheckSection")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "pending", label: "Go to Pending Trades", icon: "list", action: () => document.getElementById("pendingSection")?.scrollIntoView({ behavior: "smooth" }) },
-    { id: "workflow", label: "Go to Workflow Kanban", icon: "list", action: () => { setScreenMode("operations")(); document.getElementById("workflowPrimary")?.scrollIntoView({ behavior: "smooth" }); } },
-    { id: "health", label: "Go to Health Ribbon", icon: "pulse", action: () => { setScreenMode("diagnostics")(); document.getElementById("healthRibbon")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "workflow", label: "Go to Today workflow", icon: "list", action: () => { setScreenMode("operations")(); document.getElementById("workflowPrimary")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "health", label: "Go to Health Ribbon", icon: "pulse", action: () => { setScreenMode("diagnostics")(); applySystemLane("ready", { updateUrl: true }); document.getElementById("healthRibbon")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "shadow", label: "Go to Shadow Scoreboard", icon: "pulse", action: lazyJump("shadowScoreboard", "shadowScoreboardSection", "diagnostics") },
+    { id: "book-width", label: "Go to Book width", icon: "chart", action: () => { setScreenMode("diagnostics")(); applySystemLane("decide", { updateUrl: true }); document.getElementById("decisionBookWidth")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "review", label: "Go to Review Loop", icon: "pulse", action: lazyJump("reviewLoop", "reviewLoopSection", "diagnostics") },
-    { id: "status-details", label: "Go to Status Details", icon: "pulse", action: () => { setScreenMode("diagnostics")(); document.getElementById("statusDetailsPanel")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "status-details", label: "Go to Status Details", icon: "pulse", action: () => { setScreenMode("diagnostics")(); applySystemLane("advanced", { updateUrl: true }); document.getElementById("statusDetailsPanel")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "portfolio", label: "Go to Portfolio", icon: "wallet", action: lazyJump("portfolio", "portfolioSection", "research") },
     { id: "sectors", label: "Go to Sectors", icon: "grid", action: lazyJump("sectors", "sectorsSection", "research") },
-    { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSection", "research") },
+    { id: "backtest", label: "Go to Backtests", icon: "clock", action: lazyJump("backtest", "backtestSummaryLanding", "backtest") },
     { id: "performance", label: "Go to Performance", icon: "trending", action: lazyJump("performance", "performanceSection", "research") },
-    { id: "onboarding", label: "Go to Connections & Settings", icon: "settings", action: lazyJump("onboarding", "onboardingSection") },
-    { id: "calibration", label: "Go to Calibration", icon: "tune", action: lazyJump("calibration", "calibrationSection") },
+    { id: "onboarding", label: "Go to Connections & Settings", icon: "settings", action: lazyJump("onboarding", "onboardingSection", "diagnostics") },
+    { id: "calibration", label: "Go to Calibration", icon: "tune", action: lazyJump("calibration", "calibrationSection", "diagnostics") },
+    { id: "settled-lessons", label: "Go to Settled lessons", icon: "tune", action: () => { setScreenMode("operations")(); const fold = document.getElementById("settledLessonsFold"); if (fold) fold.open = true; document.getElementById("settledLessonsSection")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "operator-desk", label: "Go to Operator desk", icon: "pulse", action: () => { setScreenMode("operations")(); const fold = document.getElementById("operatorAgentsFold"); if (fold) fold.open = true; document.getElementById("operatorAgentsSection")?.scrollIntoView({ behavior: "smooth" }); } },
+    { id: "grok-review", label: "Go to Grok review", icon: "pulse", action: () => { setScreenMode("operations")(); const fold = document.getElementById("grokReviewFold"); if (fold) fold.open = true; document.getElementById("grokReviewSection")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "sec", label: "SEC Filing Compare", icon: "file", action: sectionJump("secCompareSection") },
+    { id: "sharadar-compare", label: "Sharadar Bundle Compare", icon: "file", action: sectionJump("sharadarCompareSection") },
     { id: "report", label: "Full Report", icon: "doc", action: sectionJump("reportSectionCard") },
     { id: "decision", label: "Decision Card (drawer)", icon: "card", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "decision" }) : document.getElementById("decisionSection")?.scrollIntoView({ behavior: "smooth" })) },
     { id: "recovery", label: "Failure Recovery (drawer)", icon: "first-aid", action: () => (typeof openTradeDrawer === "function" ? openTradeDrawer({ tab: "recovery" }) : document.getElementById("recoverySection")?.scrollIntoView({ behavior: "smooth" })) },
-    { id: "profiles", label: "Strategy Presets", icon: "sliders", action: lazyJump("profiles", "settingsSection") },
+    { id: "profiles", label: "Strategy Presets", icon: "sliders", action: lazyJump("profiles", "settingsSection", "diagnostics") },
     { id: "screen-operations", label: "Switch Screen: Today", shortcut: "Ctrl+1", icon: "home", action: setScreenMode("operations") },
     { id: "screen-research", label: "Switch Screen: Research", shortcut: "Ctrl+2", icon: "flask", action: setScreenMode("research") },
-    { id: "screen-diagnostics", label: "Switch Screen: System", shortcut: "Ctrl+3", icon: "pulse", action: setScreenMode("diagnostics") },
-    { id: "screen-settings", label: "Switch Screen: Settings", shortcut: "Ctrl+4", icon: "settings", action: setScreenMode("settings") },
+    { id: "screen-intel", label: "Switch Screen: Intel", shortcut: "Ctrl+3", icon: "chart", action: setScreenMode("intel") },
+    { id: "screen-diagnostics", label: "Switch Screen: System", shortcut: "Ctrl+4", icon: "pulse", action: setScreenMode("diagnostics") },
+    { id: "screen-backtest", label: "Switch Screen: Backtest", shortcut: "Ctrl+5", icon: "clock", action: setScreenMode("backtest") },
     { id: "simple-view", label: "Switch to Simple view", icon: "eye", action: setDisplayMode("simple") },
     { id: "standard-view", label: "Switch to Standard view", icon: "eye", action: setDisplayMode("standard") },
     { id: "pro-view", label: "Switch to Pro view", icon: "eye", action: setDisplayMode("pro") },
-    { id: "connect", label: "Open Connect Schwab", icon: "key", action: () => { window.location.href = "/?section=connect"; } },
+    { id: "connect", label: "Open Connect Schwab", icon: "key", action: () => { setScreenMode("diagnostics")(); applySystemLane("connect", { updateUrl: true }); document.getElementById("onboardingSection")?.scrollIntoView({ behavior: "smooth" }); } },
     { id: "top", label: "Scroll to Top", icon: "arrow-up", action: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
   ];
 }

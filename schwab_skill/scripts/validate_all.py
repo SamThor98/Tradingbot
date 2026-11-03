@@ -119,6 +119,7 @@ def _steps_for_profile(
         ("validate_experiment_registry", [py, str(SCRIPTS_DIR / "validate_experiment_registry.py")], None),
         ("validate_data_integrity", data_integrity_cmd, None),
         ("validate_hypothesis_chain", [py, str(SCRIPTS_DIR / "validate_hypothesis_chain.py")], None),
+        ("validate_hypothesis_cards", [py, str(SCRIPTS_DIR / "validate_hypothesis_cards.py")], None),
         ("validate_plugin_modes", [py, str(SCRIPTS_DIR / "validate_plugin_modes.py")], None),
         ("validate_execution_quality", [py, str(SCRIPTS_DIR / "validate_execution_quality.py")], None),
         ("validate_exit_manager", [py, str(SCRIPTS_DIR / "validate_exit_manager.py")], None),

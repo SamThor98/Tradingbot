@@ -2,15 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Old Logan Capital workspace — operations-first scanning, research, diagnostics, and settings." />
-    <meta name="theme-color" content="#f5f1e8" />
+    <meta name="theme-color" content="#e9ebef" />
     <title>Old Logan Capital Dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23f5f1e8'/><text x='50' y='70' text-anchor='middle' font-family='Georgia,serif' font-weight='700' font-size='64' fill='%231a3a2e'>O</text></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2314352c'/><text x='50' y='68' text-anchor='middle' font-family='Arial,sans-serif' font-weight='700' font-size='58' fill='%23f4f6f5'>O</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,400&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css?v=__APP_VERSION__" />
@@ -34,7 +34,18 @@
         <span class="brand-text">Old Logan Capital</span>
       </a>
 
-      <nav class="app-topbar-tabs" role="tablist" aria-label="Workspace areas">
+      <button
+        type="button"
+        id="workspaceMenuBtn"
+        class="workspace-menu-btn"
+        aria-expanded="false"
+        aria-controls="workspaceTabs"
+        aria-haspopup="true"
+      >
+        <span class="visually-hidden">Workspace,</span>
+        <span id="workspaceMenuLabel">Today</span>
+      </button>
+      <nav id="workspaceTabs" class="app-topbar-tabs" role="tablist" aria-label="Workspace areas">
         <button
           type="button"
           class="screen-switch-btn"
@@ -46,7 +57,7 @@
           <span class="tab-num" aria-hidden="true">1</span>
           <span class="tab-copy">
             <span class="tab-label">Today</span>
-            <span class="tab-subtitle">Scan → review → approve</span>
+            <span class="tab-subtitle" aria-hidden="true">Scan → review → approve</span>
           </span>
         </button>
         <button
@@ -60,7 +71,7 @@
           <span class="tab-num" aria-hidden="true">2</span>
           <span class="tab-copy">
             <span class="tab-label">Research</span>
-            <span class="tab-subtitle">Portfolio, diligence, backtests</span>
+            <span class="tab-subtitle" aria-hidden="true">Portfolio and diligence</span>
           </span>
         </button>
         <button
@@ -74,7 +85,7 @@
           <span class="tab-num" aria-hidden="true">3</span>
           <span class="tab-copy">
             <span class="tab-label">Intel</span>
-            <span class="tab-subtitle">Conviction, volatility, options</span>
+            <span class="tab-subtitle" aria-hidden="true">Conviction, volatility, options</span>
           </span>
         </button>
         <button
@@ -88,7 +99,21 @@
           <span class="tab-num" aria-hidden="true">4</span>
           <span class="tab-copy">
             <span class="tab-label">System</span>
-            <span class="tab-subtitle">Health, calibration, settings</span>
+            <span class="tab-subtitle" aria-hidden="true">Health, calibration, settings</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="screen-switch-btn"
+          data-screen-mode="backtest"
+          role="tab"
+          aria-selected="false"
+          aria-controls="backtestSummaryLanding"
+        >
+          <span class="tab-num" aria-hidden="true">5</span>
+          <span class="tab-copy">
+            <span class="tab-label">Backtest</span>
+            <span class="tab-subtitle" aria-hidden="true">Results, queue, next steps</span>
           </span>
         </button>
       </nav>
@@ -115,7 +140,7 @@
           <button id="notifClearBtn" class="btn small secondary" type="button">Clear all</button>
         </div>
         <ul id="notifList" class="notif-list">
-          <li class="muted">No notifications yet.</li>
+          <li class="muted">No saved alerts. Live warnings are on Today’s feed and System health.</li>
         </ul>
       </div>
     </header>
@@ -148,42 +173,49 @@
           <div class="tab-landing-identity">
             <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="operations">Today</p>
             <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="research">Research</p>
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="intel">Intel</p>
             <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="diagnostics">System</p>
+            <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="backtest">Backtest</p>
             <p class="workspace-eyebrow mode-eyebrow" data-mode-eyebrow="settings">Settings</p>
-            <h1 id="screenContextTitle" class="mode-header-title">Today</h1>
+            <h1 id="screenContextTitle" class="mode-header-title visually-hidden">Today</h1>
             <p id="screenContextSubtitle" class="tab-landing-subtitle">Scan → review → approve</p>
             <p id="screenContextText" class="visually-hidden">
               Run a scan, review candidates, and push only high-conviction setups into approvals.
             </p>
           </div>
           <div class="tab-landing-actions mode-header-actions">
-            <a id="screenContextCta" class="btn primary" href="#scanStudioPanel">Run scan</a>
+            <a id="screenContextCta" class="btn primary hidden" href="#pendingSection" hidden>Review pending</a>
             <span class="tab-landing-secondary">
               <a id="screenContextAltCta" class="tab-landing-link" href="#scanSection">Open scan table</a>
-              <a id="screenContextAltCta2" class="tab-landing-link hidden" href="#backtestSection" hidden>Backtest</a>
+              <a id="screenContextAltCta2" class="tab-landing-link hidden" href="#backtestSummaryLanding" hidden>Backtest</a>
             </span>
-            <small id="screenContextHint" class="muted mode-header-hint">Press Ctrl/Cmd + 1..4 to switch tabs.</small>
+            <small id="screenContextHint" class="muted mode-header-hint">Press Ctrl/Cmd + 1..5 to switch tabs.</small>
           </div>
         </div>
         <div id="screenContextChips" class="tab-landing-chips" aria-label="Live status">
-          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Pending …</span>
-          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>No scan yet</span>
-          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Auth check</span>
+          <span class="tab-landing-chip tab-landing-chip--neutral"><span class="tab-landing-chip-dot" aria-hidden="true"></span>Checking connection</span>
+          <p class="tab-landing-freshness">Loading queue · No scan yet</p>
         </div>
         <nav class="mode-header-anchors section-nav tab-landing-anchors" aria-label="In-mode navigation">
-              <a href="#scanStudioPanel" data-nav-screens="operations">Run scan</a>
+              <a href="#scanStudioPanel" data-nav-screens="operations">Scan studio</a>
+              <a href="#operatorAgentsSection" data-nav-screens="operations">Operator desk</a>
+              <a href="#grokReviewSection" data-nav-screens="operations">Grok review</a>
           <a href="#scanDetailPanel" data-nav-screens="operations">Review setup</a>
           <a href="#pendingSection" data-nav-screens="operations">Approve trades</a>
           <a href="#portfolioSection" data-nav-screens="research">Portfolio</a>
           <a href="#quickCheckSection" data-nav-screens="research">Quick check</a>
-          <a href="#backtestSection" data-nav-screens="research">Backtest</a>
-          <a href="#reportSectionCard" data-nav-screens="research" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
-          <a href="#healthRibbon" data-nav-screens="diagnostics">Health</a>
-          <a href="#statusDetailsPanel" data-nav-screens="diagnostics">Status</a>
-          <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics">Quality</a>
-          <a href="#settingsSummaryLanding" data-nav-screens="settings">Overview</a>
-          <a href="#onboardingSection" data-nav-screens="settings">Connect</a>
-          <a href="#settingsSection" data-nav-screens="settings" class="settings-presets-nav">Risk presets</a>
+          <a href="#backtestSummaryLanding" data-nav-screens="backtest">Home</a>
+          <a href="#backtestLiveMonitor" data-nav-screens="backtest">Live</a>
+          <a href="#backtestQueuePanel" data-nav-screens="backtest">Queue</a>
+          <a href="#backtestSection" data-nav-screens="backtest">Settings</a>
+          <a href="#positionIntelSection" data-nav-screens="intel">Tables</a>
+          <a href="#intelTickerInput" data-nav-screens="intel">Look up</a>
+          <a href="#healthRibbon" data-nav-screens="diagnostics" data-system-lane-jump="ready">Health</a>
+          <a href="#statusDetailsPanel" data-nav-screens="diagnostics" data-system-lane-jump="advanced">Status</a>
+          <a href="#systemQualityDiagnostics" data-nav-screens="diagnostics" data-system-lane-jump="calibrate">Calibrate</a>
+          <a href="#settingsSummaryLanding" data-nav-screens="diagnostics,settings" data-system-lane-jump="connect">Settings</a>
+          <a href="#onboardingSection" data-nav-screens="diagnostics,settings" data-system-lane-jump="connect">Connect</a>
+          <a href="#settingsSection" data-nav-screens="diagnostics,settings" class="settings-presets-nav" data-system-lane-jump="connect">Risk presets</a>
         </nav>
         <!-- Hidden KPI nodes kept for existing freshness / summary sync. -->
         <aside class="mode-header-kpis visually-hidden" aria-hidden="true">
@@ -195,12 +227,12 @@
           <div class="hero-kpi" data-kpi="pending">
             <span class="hero-kpi-label">Pending</span>
             <strong id="heroKpiPending" class="hero-kpi-value mono-nums" data-unavailable="true">—</strong>
-            <small id="heroKpiPendingFresh" class="hero-kpi-hint" data-freshness="unknown">awaiting status</small>
+            <small id="heroKpiPendingFresh" class="hero-kpi-hint" data-freshness="unknown">loading queue</small>
           </div>
           <div class="hero-kpi" data-kpi="watchlist">
             <span class="hero-kpi-label">Universe</span>
-            <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums">1500</strong>
-            <small id="heroKpiWatchlistFresh" class="hero-kpi-hint" data-freshness="unknown">S&amp;P 1500 (default)</small>
+            <strong id="heroKpiWatchlist" class="hero-kpi-value mono-nums" data-unavailable="true">—</strong>
+            <small id="heroKpiWatchlistFresh" class="hero-kpi-hint" data-freshness="unknown">Universe size not reported yet</small>
           </div>
         </aside>
       </header>
@@ -219,7 +251,7 @@
           Your Schwab account is not linked yet. You can browse the app, but scans and order flow need a connection first.
         </p>
         <div class="inline-form compact" style="margin-top: 0.5rem">
-          <a class="btn small primary" href="/?screen=settings#onboardingSection">Go to Connect Schwab</a>
+          <a class="btn small primary" href="/?screen=diagnostics#onboardingSection" data-system-lane-jump="connect">Go to Connect Schwab</a>
         </div>
       </section>
 
@@ -237,17 +269,22 @@
       </section>
 
       <div id="dashboardToday" class="dashboard-today-stack">
-      <section id="todaySummaryLanding" class="card today-summary-landing operations-surface" aria-label="Today at a glance">
+      <section id="morningNote" class="morning-note" aria-label="Morning note" aria-live="polite">
+        <p id="morningNoteAllow">Scans are allowed.</p>
+        <p id="morningNoteName">No name to open yet.</p>
+        <p id="morningNoteRisk">Run a scan.</p>
+      </section>
+      <section id="todaySummaryLanding" class="card today-summary-landing operations-surface today-stack-retired" aria-label="Today at a glance" hidden>
         <div class="today-summary-grid">
           <div class="today-summary-kpi">
-            <span class="today-summary-label">Open signals</span>
+            <span class="today-summary-label">Tradeable</span>
             <strong id="todaySummarySignals" class="today-summary-value mono-nums" data-unavailable="true">—</strong>
             <small id="todaySummarySignalsHint" class="muted">no scan yet</small>
           </div>
-          <div class="today-summary-kpi">
+          <div class="today-summary-kpi" id="todayPendingKpi" role="button" tabindex="0" aria-controls="pendingSection">
             <span class="today-summary-label">Pending</span>
             <strong id="todaySummaryPending" class="today-summary-value mono-nums" data-unavailable="true">—</strong>
-            <small id="todaySummaryPendingHint" class="muted">awaiting status</small>
+            <small id="todaySummaryPendingHint" class="muted">loading queue</small>
           </div>
           <div class="today-summary-kpi">
             <span class="today-summary-label">Last scan</span>
@@ -261,33 +298,21 @@
         </div>
       </section>
 
-      <section id="scanStudioPanel" class="scan-studio card operations-surface" aria-label="Scan studio">
-        <div class="scan-studio-head">
-          <p class="scan-studio-kicker workspace-eyebrow">Scan lens</p>
-          <h3 class="scan-studio-title">Scan studio</h3>
-          <p class="muted small scan-studio-lede">Loading sleeves…</p>
-        </div>
-      </section>
-      <script type="module">
-        import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
-        bindScanStudio();
-        void loadScanCatalog();
-      </script>
-
-      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface" aria-live="polite">
+      <div id="pendingSummaryStrip" class="card pending-summary-strip hidden operations-surface today-stack-retired" aria-live="polite" hidden>
         <div class="pending-summary-inner">
           <span id="pendingSummaryText" class="pending-summary-text"></span>
           <a class="btn small secondary pending-summary-link" href="#pendingSection">Review pending</a>
         </div>
       </div>
 
-      <section id="actionCenter" class="card action-center operations-surface" aria-live="polite">
+      <section id="actionCenter" class="card action-center operations-surface today-stack-retired" aria-live="polite" hidden>
         <div class="action-center-icon" aria-hidden="true"></div>
         <div class="action-center-body">
           <strong id="actionCenterTitle">Next Action</strong>
           <p id="actionCenterText" class="muted">Ready. Run Scan to load candidates.</p>
         </div>
       </section>
+
       </div>
 
       <section id="operationsWorkspaceIntro" class="card workspace-intro operations-workspace-intro workspace-intro--deprecated hidden" aria-hidden="true">
@@ -303,14 +328,14 @@
       </section>
 
       <section id="workflowPrimary" class="workflow-primary" data-state="empty" aria-labelledby="workflowPrimaryHeading">
-        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading">Operations workflow</h2>
-        <div id="workflowStatusStrip" class="operations-status-strip operations-status-strip--workflow" data-state="empty" aria-live="polite">
+        <h2 id="workflowPrimaryHeading" class="workflow-primary-heading today-stack-retired" hidden>Operations workflow</h2>
+        <div id="workflowStatusStrip" class="operations-status-strip operations-status-strip--workflow today-stack-retired" data-state="empty" aria-live="polite" hidden>
           <span class="operations-status-pill">Clear</span>
           <strong>No scan this session.</strong>
           <span class="muted">Run scan, review a setup, then approve staged trades.</span>
         </div>
-        <div id="workflowSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
-        <nav id="workflowProgress" class="workflow-progress" aria-label="Scan to approve steps">
+        <div id="workflowSnapshot" class="operations-panel-snapshot today-stack-retired" data-state="empty" aria-live="polite" hidden></div>
+        <nav id="workflowProgress" class="workflow-progress today-stack-retired" aria-label="Scan to approve steps" hidden>
           <ol class="workflow-progress-list">
             <li id="workflowStepScan" class="workflow-progress-step" data-step="scan" data-state="active">
               <span class="workflow-progress-index" aria-hidden="true">1</span>
@@ -329,7 +354,7 @@
         <p class="muted workflow-strapline operations-surface hidden workspace-intro--deprecated">Scan -> evaluate -> stage -> approve.</p>
         <div class="operate-kanban">
         <article id="scanSection" class="card card--primary-task kanban-lane" data-state="empty">
-          <div class="kanban-lane-head">
+          <div class="kanban-lane-head visually-hidden">
             <span class="kanban-lane-step">Lane 1</span>
             <strong>Scan + shortlist</strong>
             <p id="scanLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 1 — run scan to load the shortlist.</p>
@@ -376,50 +401,14 @@
             <strong>No scan yet.</strong>
             <span class="muted">Run scan to populate candidates, blockers, and data quality.</span>
           </div>
-          <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
+          <div id="scanFunnelMark" class="scan-funnel-mark" hidden></div>
+          <div id="todayCanActStrip" class="can-act-strip" aria-label="Can I act on this scan"></div>
           <div id="scanIntegrityBanner" class="scan-integrity-banner hidden" role="status" aria-live="polite"></div>
-          <div id="shadowWorkbenchTeaser" class="shadow-workbench-teaser hidden" aria-live="polite"></div>
-          <section id="peadCanarySection" class="pead-canary-card operations-surface" aria-label="PEAD canary sleeve" data-state="empty">
-            <div class="pead-canary-head">
-              <div>
-                <h3 class="pead-canary-title">PEAD canary sleeve</h3>
-                <small class="muted">Paper top-5 by edge score — not executable. Stage2 still owns live entries.</small>
-              </div>
-              <span id="peadCanaryMeta" class="muted small mono-nums" aria-live="polite"></span>
-            </div>
-            <div id="peadCanaryBody">
-              <p class="muted small">Waiting for last scan diagnostics — run a scan (or refresh status) to load the paper top-5.</p>
-            </div>
-          </section>
-          <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
           <div id="scanFunnelFilterBanner" class="scan-funnel-filter-host hidden" aria-live="polite"></div>
           <div id="scanJobProgressWrap" class="job-progress-wrap hidden" aria-label="Scan job progress">
             <progress id="scanJobProgress" max="100" value="0"></progress>
             <span id="scanJobProgressLabel" class="muted"></span>
           </div>
-          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced scan-funnel-disclosure">
-            <summary class="panel-disclosure-summary">
-              <span class="ops-disclosure-title">Scan funnel</span>
-              <span id="scanFunnelSummaryStrip" class="decision-summary-strip scan-funnel-summary-strip" aria-live="polite"></span>
-              <span class="disclosure-hint muted">where symbols drop out of the pipeline</span>
-            </summary>
-            <div class="scan-insights scan-insights--funnel">
-              <div class="scan-block scan-block--funnel">
-                <h3 class="scan-funnel-board-title">Pass funnel</h3>
-                <p class="muted scan-block-hint">Each row is how many symbols still pass at that step. Click a row to filter near-misses.</p>
-                <div id="scanFunnel" class="scan-funnel-rows" role="list"></div>
-              </div>
-              <div class="scan-block scan-block--blockers">
-                <h3 class="scan-funnel-board-title">Top drop-offs</h3>
-                <p class="muted scan-block-hint">Largest filter removals from this scan</p>
-                <ul id="scanBlockers" class="blocker-chips"></ul>
-              </div>
-              <div class="scan-diagnostics-meta">
-                <div class="scan-funnel-board-title">Scan health</div>
-                <div id="scanDiagnostics" class="calibration-ledger-sources scan-health-pills" aria-label="Scan health"></div>
-              </div>
-            </div>
-          </details>
           <div class="scan-results-layout">
             <div class="scan-list-pane">
               <div class="scan-list-header">
@@ -427,16 +416,29 @@
                   <h3 class="scan-list-title">Qualified breakouts</h3>
                   <small id="scanQualifiedMeta" class="muted">No scan yet.</small>
                 </div>
+                <div class="scan-list-filters">
                 <div
                   id="scanStatusFilter"
                   class="scan-status-filter"
                   role="radiogroup"
                   aria-label="Filter candidates by gate severity"
                 >
-                  <button type="button" class="scan-status-filter__btn is-active" data-scan-status-filter="pass" aria-pressed="true">Pass</button>
-                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="review" aria-pressed="false">Review</button>
+                  <button type="button" class="scan-status-filter__btn is-active" data-scan-status-filter="pass" aria-pressed="true">Tradeable</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="review" aria-pressed="false">Research</button>
                   <button type="button" class="scan-status-filter__btn" data-scan-status-filter="blocked" aria-pressed="false">Blocked</button>
-                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="info" aria-pressed="false">Info</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-status-filter="info" aria-pressed="false">Other</button>
+                </div>
+                <div
+                  id="scanFamilyFilter"
+                  class="scan-status-filter"
+                  role="radiogroup"
+                  aria-label="Filter candidates by entry family"
+                >
+                  <button type="button" class="scan-status-filter__btn is-active" data-scan-family-filter="all" aria-pressed="true">All</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-family-filter="stage2" aria-pressed="false">Stage 2</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-family-filter="pead" aria-pressed="false">PEAD</button>
+                  <button type="button" class="scan-status-filter__btn" data-scan-family-filter="pullback" aria-pressed="false">Pullback</button>
+                </div>
                 </div>
               </div>
               <div class="table-wrap qualified-table-wrap">
@@ -449,6 +451,7 @@
                     <col class="scan-triage-col-vol" />
                     <col class="scan-triage-col-price" />
                     <col class="scan-triage-col-rank" />
+                    <col class="scan-triage-col-analog" />
                     <col class="scan-triage-col-stop" />
                     <col class="scan-triage-col-actions" />
                   </colgroup>
@@ -459,13 +462,14 @@
                       <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="volume_ratio" aria-sort="none" tabindex="0" role="button" title="Sort by relative volume">Vol<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
-                      <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score (primary sort key)">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Place in this list by the live score. 1 is the top. The line under the number is 52-week extension (lower means less stretched) and can match on other rows. Click to put 1 at the top.">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                      <th class="sortable-th" data-sort-key="analog_neighborhood_pf" aria-sort="none" tabindex="0" role="button" title="Shadow analog neighborhood PF (operator sort only; not live rank)">Analog<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th" data-sort-key="stop" aria-sort="none" tabindex="0" role="button" title="Advisory stop (matches Brief)">Stop<span class="sort-indicator" aria-hidden="true"></span></th>
                       <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                     </tr>
                   </thead>
                   <tbody id="scanTableBody">
-                    <tr class="scan-row--empty"><td colspan="8" class="muted">Run a scan to load candidates.</td></tr>
+                    <tr class="scan-row--empty"><td colspan="9" class="muted">Run a scan to load candidates.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -490,6 +494,7 @@
                       <col class="scan-triage-col-vol" />
                       <col class="scan-triage-col-price" />
                       <col class="scan-triage-col-rank" />
+                      <col class="scan-triage-col-analog" />
                       <col class="scan-triage-col-stop" />
                       <col class="scan-triage-col-actions" />
                     </colgroup>
@@ -500,54 +505,107 @@
                         <th class="sortable-th" data-sort-key="strategy" aria-sort="none" tabindex="0" role="button" title="Sort by strategy">Strategy<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="volume_ratio" aria-sort="none" tabindex="0" role="button" title="Sort by relative volume">Vol<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="price" aria-sort="none" tabindex="0" role="button" title="Sort by price">Price<span class="sort-indicator" aria-hidden="true"></span></th>
-                        <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Sort by rank score">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="score" aria-sort="none" tabindex="0" role="button" title="Place in this list by the live score. 1 is the top. The line under the number is 52-week extension (lower means less stretched) and can match on other rows. Click to put 1 at the top.">Rank<span class="sort-indicator" aria-hidden="true"></span></th>
+                        <th class="sortable-th" data-sort-key="analog_neighborhood_pf" aria-sort="none" tabindex="0" role="button" title="Shadow analog neighborhood PF (operator sort only; not live rank)">Analog<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th" data-sort-key="stop" aria-sort="none" tabindex="0" role="button" title="Advisory stop (matches Brief)">Stop<span class="sort-indicator" aria-hidden="true"></span></th>
                         <th class="sortable-th scan-th-actions" data-sort-key="actions" aria-sort="none" tabindex="0" role="button" title="Sort by actionable rows">Actions<span class="sort-indicator" aria-hidden="true"></span></th>
                       </tr>
                     </thead>
                     <tbody id="nearMissTableBody">
-                      <tr class="scan-row--empty"><td colspan="8" class="muted">Near-miss candidates will appear after scan.</td></tr>
+                      <tr class="scan-row--empty"><td colspan="9" class="muted">Near-miss candidates will appear after scan.</td></tr>
                     </tbody>
                   </table>
                 </div>
               </details>
             </div>
           </div>
+          <details id="scanContextFold" class="today-fold today-fold--scan">
+            <summary class="today-fold-summary">
+              <span>Scan context</span>
+              <span class="muted today-fold-hint">Snapshot, sleeves, previous scan</span>
+            </summary>
+            <div id="scanSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
+            <div id="shadowWorkbenchTeaser" class="shadow-workbench-teaser hidden" aria-live="polite"></div>
+            <section id="peadCanarySection" class="pead-canary-card operations-surface" aria-label="PEAD canary sleeve" data-state="empty">
+              <div class="pead-canary-head">
+                <div>
+                  <h3 class="pead-canary-title">PEAD canary sleeve</h3>
+                  <small class="muted">Paper top-5 by edge score — not executable. Stage2 still owns live entries.</small>
+                </div>
+                <span id="peadCanaryMeta" class="muted small mono-nums" aria-live="polite"></span>
+              </div>
+              <div id="peadCanaryBody">
+                <p class="muted small">Waiting for last scan diagnostics — run a scan (or refresh status) to load the paper top-5.</p>
+                <div id="peadCanaryForward"></div>
+              </div>
+            </section>
+            <div id="scanDeltaStrip" class="scan-delta-strip hidden" aria-live="polite"></div>
+          </details>
+          <details id="scanDiagnosticsPanel" class="panel-disclosure panel-disclosure--advanced scan-funnel-disclosure">
+            <summary class="panel-disclosure-summary">
+              <span class="ops-disclosure-title">Scan funnel</span>
+              <span id="scanFunnelSummaryStrip" class="decision-summary-strip scan-funnel-summary-strip" aria-live="polite"></span>
+              <span class="disclosure-hint muted">where symbols drop out of the pipeline</span>
+            </summary>
+            <div class="scan-insights scan-insights--funnel">
+              <div class="scan-block scan-block--funnel">
+                <h3 class="scan-funnel-board-title">Pass funnel</h3>
+                <p class="muted scan-block-hint">Each row is how many symbols still pass at that step. Click a row to filter near-misses.</p>
+                <div id="scanFunnel" class="scan-funnel-rows" role="list"></div>
+              </div>
+              <div class="scan-block scan-block--blockers">
+                <h3 class="scan-funnel-board-title">Top drop-offs</h3>
+                <p class="muted scan-block-hint">Largest filter removals from this scan</p>
+                <ul id="scanBlockers" class="blocker-chips"></ul>
+              </div>
+              <div class="scan-diagnostics-meta">
+                <div class="scan-funnel-board-title">Scan health</div>
+                <div id="scanDiagnostics" class="calibration-ledger-sources scan-health-pills" aria-label="Scan health"></div>
+              </div>
+            </div>
+          </details>
         </article>
 
         <aside id="scanDetailPanel" class="scan-detail-panel card kanban-lane" data-state="empty" aria-live="polite">
-          <div class="kanban-lane-head">
+          <div class="kanban-lane-head visually-hidden">
             <span class="kanban-lane-step">Lane 2</span>
             <strong>Evaluate setup</strong>
             <p id="scanDetailLaneSummary" class="kanban-lane-summary" data-state="empty" aria-live="polite">Step 2 — select a row for chart + decision brief.</p>
           </div>
           <div class="scan-detail-header">
-            <h3 id="scanDetailTicker">Select a ticker</h3>
-            <p id="scanDetailStrategy" class="muted">Click <strong>Chart</strong> on any candidate row to load price action and scoring detail.</p>
-            <div id="scanDetailTrust" class="scan-detail-trust"></div>
+            <h3 id="scanDetailTicker" hidden></h3>
+            <section id="scanDetailTrade" class="scan-detail-trade" aria-label="Trade">
+              <p id="scanDetailTradeEntry">Select a name from the list.</p>
+              <p id="scanDetailTradeStop" hidden></p>
+              <p id="scanDetailTradeSize" hidden></p>
+            </section>
+            <p id="scanDetailStrategy" class="muted today-stack-retired" hidden>Select a candidate row — or click Chart / Brief — to load price action and scoring detail.</p>
+            <div id="scanDetailTrust" class="scan-detail-trust today-stack-retired" hidden></div>
           </div>
-          <div id="scanDetailStatusStrip" class="operations-status-strip" data-state="empty" aria-live="polite">
+          <div id="scanDetailChartContainer" class="scan-detail-chart"></div>
+          <div class="scan-detail-actions" hidden>
+            <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Add to approval queue</button>
+            <button id="scanDetailGrokBtn" class="btn secondary" type="button" disabled>Ask Grok</button>
+            <button id="scanDetailResearchBtn" class="btn secondary" type="button" disabled>Open in Research</button>
+            <button id="scanDetailIntelBtn" class="btn secondary" type="button" disabled>Open in Intel</button>
+          </div>
+          <div id="scanDetailStatusStrip" class="operations-status-strip today-stack-retired" data-state="empty" aria-live="polite" hidden>
             <span class="operations-status-pill">Clear</span>
             <strong>No ticker selected.</strong>
             <span class="muted">Pick a candidate row to review evidence before staging.</span>
           </div>
-          <div id="scanDetailSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
-          <section id="scanDetailBriefCard" class="scan-brief-card" data-state="empty" aria-live="polite">
+          <div id="scanDetailSnapshot" class="operations-panel-snapshot today-stack-retired" data-state="empty" aria-live="polite" hidden></div>
+          <section id="scanDetailBriefCard" class="scan-brief-card" data-state="empty" aria-live="polite" hidden>
             <h4>Decision brief</h4>
-            <div id="scanDetailBrief" class="scan-brief-content">
-              <p class="muted">Select a candidate to load the bullet decision card.</p>
-            </div>
+            <div id="scanDetailBrief" class="scan-brief-content"></div>
           </section>
-          <div id="scanDetailChartContainer" class="scan-detail-chart">
-            <p class="muted">Chart loads on demand — pick a row and click Chart.</p>
-          </div>
-          <details id="scanDetailAdvancedStats" class="panel-disclosure scan-detail-advanced">
-            <summary class="panel-disclosure-summary">Advanced scores <span class="disclosure-hint muted">edge, reliability, execution, EV</span></summary>
+          <details id="scanDetailAdvancedStats" class="panel-disclosure scan-detail-advanced" hidden>
+            <summary class="panel-disclosure-summary">Advanced scores <span class="disclosure-hint muted">edge, reliability, execution</span></summary>
           <div class="scan-detail-grid">
             <div class="scan-detail-stat">
               <span class="muted">Rank</span>
               <strong id="scanDetailRank">--</strong>
-              <small class="muted">Primary sort key for candidates.</small>
+              <small id="scanDetailRankNote" class="muted">Place in this list. 1 is the top live score.</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">Price</span>
@@ -556,7 +614,7 @@
             <div class="scan-detail-stat">
               <span class="muted">Composite</span>
               <strong id="scanDetailScore">--</strong>
-              <small class="muted">Blended edge + reliability + execution.</small>
+              <small class="muted">Composite points, not a probability of profit. Not the live sort.</small>
             </div>
             <div class="scan-detail-stat">
               <span class="muted">10-day up chance</span>
@@ -592,22 +650,12 @@
               <strong id="scanDetailExecution">--</strong>
               <small class="muted">Tradeability given risk and liquidity context.</small>
             </div>
-            <div class="scan-detail-stat">
-              <span class="muted">Expected 10-day return</span>
-              <strong id="scanDetailEv10d">--</strong>
-              <small class="muted">Expected value estimate over 10 trading days.</small>
-            </div>
           </div>
           </details>
-          <div class="scan-detail-actions">
-            <button id="scanDetailStageBtn" class="btn primary" type="button" disabled>Add to approval queue</button>
-            <button id="scanDetailResearchBtn" class="btn secondary" type="button" disabled>Open in Research</button>
-            <small class="muted">Pick a candidate and review chart context before staging or deep research.</small>
-          </div>
         </aside>
 
         <article id="pendingSection" class="card card--primary-task kanban-lane" data-state="empty">
-          <div class="kanban-lane-head">
+          <div class="kanban-lane-head" id="pendingLaneToggle" role="button" tabindex="0" aria-expanded="false" aria-controls="pendingBoard">
             <span class="kanban-lane-step">Lane 3</span>
             <strong>Queue + approve</strong>
             <p id="pendingLaneSummary" class="kanban-lane-summary" data-state="loading" aria-live="polite">Step 3 — loading approval queue…</p>
@@ -627,16 +675,6 @@
               aria-label="Clear all pending trades"
             >
               ×
-            </button>
-            <button
-              type="button"
-              id="deleteAllTradesBtn"
-              class="btn-clear-pending"
-              title="Permanently delete all trades from history"
-              aria-label="Delete all trades"
-              style="font-size: 0.7rem; width: auto; padding: 0 8px;"
-            >
-              Delete All
             </button>
           </div>
           <div id="pendingStatusStrip" class="operations-status-strip" data-state="loading" aria-live="polite">
@@ -677,40 +715,166 @@
               <button id="manualPendingBtn" class="btn secondary" type="button">Add to queue</button>
             </div>
           </details>
+          <details id="pendingHistoryFold" class="panel-disclosure pending-history-fold">
+            <summary class="panel-disclosure-summary">
+              Trade history
+              <span class="disclosure-hint muted">permanent delete, separate from rejecting the queue</span>
+            </summary>
+            <button
+              type="button"
+              id="deleteAllTradesBtn"
+              class="btn small secondary"
+              title="Permanently delete all trades from history"
+              aria-label="Delete all trades"
+            >
+              Delete all history
+            </button>
+          </details>
           <div id="pendingBoard" class="task-board">
             <div class="task-empty muted">No trades yet. Stage trades from Scan results.</div>
           </div>
         </article>
         </div>
+        <div id="todayTools" class="today-tools">
+        <details id="scanStudioFold" class="today-fold">
+          <summary class="today-fold-summary">
+            <span>Scan studio</span>
+            <span class="muted today-fold-hint">Universe, horizon, strategies</span>
+          </summary>
+          <section id="scanStudioPanel" class="scan-studio card operations-surface" aria-label="Scan studio">
+            <div class="scan-studio-head">
+              <p class="scan-studio-kicker workspace-eyebrow">Scan setup</p>
+              <h3 class="scan-studio-title">Scan studio</h3>
+              <p class="muted small scan-studio-lede">Loading strategy presets…</p>
+            </div>
+          </section>
+        </details>
+        <script type="module">
+          import { bindScanStudio, loadScanCatalog } from "/static/panels/scanStudio.js?v=__APP_VERSION__";
+          bindScanStudio();
+          void loadScanCatalog();
+        </script>
+        <details id="operatorAgentsFold" class="today-fold">
+          <summary class="today-fold-summary">
+            <span>Operator desk</span>
+            <span class="muted today-fold-hint">Scan, grade, backtest, Discord</span>
+          </summary>
+          <section id="operatorAgentsSection" class="card operations-surface" aria-label="Operator desk">
+            <p class="muted small">
+              Uses the universe selected in Scan studio, then ranks names for research. It does not override a custom ticker list.
+              The account focus of 100 names stays in place for other scans. Advisory only. No orders. A score is not a profit forecast.
+            </p>
+            <div class="scan-title-meta">
+              <label class="muted" for="operatorDeskTicker">Ticker</label>
+              <input id="operatorDeskTicker" type="text" maxlength="12" placeholder="Optional" autocomplete="off" />
+              <label class="muted"><input id="operatorDeskScan" type="checkbox" checked /> Fresh scan</label>
+              <label class="muted"><input id="operatorDeskBacktest" type="checkbox" /> Queue backtest</label>
+              <label class="muted"><input id="operatorDeskDiscord" type="checkbox" checked /> Discord</label>
+              <button id="operatorDeskRunBtn" class="btn primary small" type="button">Run desk</button>
+            </div>
+            <p id="operatorDeskStatus" class="muted small" aria-live="polite">Desk is idle.</p>
+            <pre id="operatorDeskBrief" class="muted small operator-desk-brief"></pre>
+          </section>
+        </details>
+        <script type="module">
+          import { bindOperatorDesk } from "/static/panels/operatorDesk.js?v=__APP_VERSION__";
+          bindOperatorDesk();
+        </script>
+        <details id="grokReviewFold" class="today-fold operations-surface">
+          <summary class="today-fold-summary">
+            <span>Grok review</span>
+            <span class="muted today-fold-hint">Adversarial check. No orders.</span>
+          </summary>
+          <section id="grokReviewSection" class="card operations-surface" aria-label="Grok review">
+            <p id="grokReviewMode" class="muted small">Loading Grok mode…</p>
+            <div class="grok-review-form">
+              <label for="grokReviewRole">Role
+                <select id="grokReviewRole">
+                  <option value="adversarial_review" selected>Adversarial review</option>
+                  <option value="quant_analysis">Quantitative analysis</option>
+                  <option value="research">Research</option>
+                  <option value="reasoning">Reasoning</option>
+                  <option value="code_review">Code review</option>
+                </select>
+              </label>
+              <label for="grokReviewTicker">Ticker
+                <input id="grokReviewTicker" type="text" maxlength="12" placeholder="From the open setup" autocomplete="off" />
+              </label>
+              <label for="grokReviewEffort">Reasoning
+                <select id="grokReviewEffort">
+                  <option value="" selected>API default</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="xhigh">Extra high</option>
+                </select>
+              </label>
+            </div>
+            <div class="grok-review-actions">
+              <label><input id="grokReviewSearch" type="checkbox" /> Live web and X search</label>
+              <button id="grokReviewUseScanBtn" class="btn secondary small" type="button">Use open setup</button>
+              <button id="grokReviewAskBtn" class="btn primary small" type="button">Ask Grok</button>
+            </div>
+            <label class="muted small" for="grokReviewPrompt">Question</label>
+            <textarea id="grokReviewPrompt" rows="3" maxlength="4000" placeholder="What would falsify this setup using only the numbers in context?"></textarea>
+            <p id="grokReviewStatus" class="muted small" aria-live="polite">Grok has not been asked.</p>
+            <h3 class="grok-review-output-title">Output</h3>
+            <div id="grokReviewResult" class="grok-review-result" aria-live="polite">
+              <p class="muted">Ask Grok. The verdict, findings, citations, and handoff show up here.</p>
+            </div>
+          </section>
+        </details>
+        <script type="module">
+          import { bindGrokReview } from "/static/panels/grokReview.js?v=__APP_VERSION__";
+          bindGrokReview();
+        </script>
+        </div>
+      <section id="settledLessonsSection" class="card settled-lessons-card operations-surface" aria-label="Settled lessons" data-state="loading">
+        <details id="settledLessonsFold" class="today-fold">
+          <summary class="today-fold-summary">
+            <span class="settled-lessons-title">Settled lessons</span>
+            <span id="settledLessonsMeta" class="muted small mono-nums" aria-live="polite">Loading…</span>
+          </summary>
+          <p class="muted small settled-lessons-lede">What the book has proved. Keep, Sharpen, and Revert are recorded here. They do not change settings or place orders.</p>
+          <div id="settledLessonsBody">
+            <p class="muted small">Loading settled evidence…</p>
+          </div>
+          <div class="inline-form compact" id="settledLessonsActions">
+            <button type="button" class="btn small secondary" id="settledLessonKeep" data-action="keep" disabled>Keep</button>
+            <button type="button" class="btn small secondary" id="settledLessonSharpen" data-action="sharpen" disabled>Sharpen</button>
+            <button type="button" class="btn small secondary" id="settledLessonRevert" data-action="revert" disabled>Revert</button>
+          </div>
+          <p id="settledLessonsDecision" class="muted small" aria-live="polite"></p>
+        </details>
+      </section>
       </section>
 
       <div class="research-chrome-row research-surface">
         <nav id="researchTabNav" class="research-tab-nav research-mode-chips" role="tablist" aria-label="Research sections">
           <button type="button" class="research-tab-btn active" role="tab" data-research-tab-btn="portfolio" aria-selected="true">
             <span class="research-tab-label">Portfolio</span>
-            <span class="research-tab-hint">Book, risk, and positions</span>
+            <span class="research-tab-hint" aria-hidden="true">Book, risk, and positions</span>
           </button>
           <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="check" aria-selected="false" tabindex="-1">
             <span class="research-tab-label">Quick check</span>
-            <span class="research-tab-hint">Brief or deep diligence on a ticker</span>
+            <span class="research-tab-hint" aria-hidden="true">Brief or deep diligence on a ticker</span>
           </button>
-          <button type="button" class="research-tab-btn" role="tab" data-research-tab-btn="backtest" aria-selected="false" tabindex="-1">
-            <span class="research-tab-label">Backtest</span>
-            <span class="research-tab-hint">Replay signal edge and exits</span>
-          </button>
+          <a class="research-tab-btn research-tab-link research-tab-link--quiet" href="#backtestSummaryLanding">
+            <span class="research-tab-label">Open Backtest</span>
+            <span class="research-tab-hint" aria-hidden="true">Results and queue live on their own tab</span>
+          </a>
         </nav>
-        <div id="researchDensityControl" class="research-density-control" role="group" aria-label="Research density">
+        <div id="researchDensityControl" class="research-density-control visually-hidden" hidden role="group" aria-hidden="true" aria-label="Research density">
           <button type="button" class="research-density-btn active" data-research-density-btn="comfortable" aria-pressed="true">Comfortable</button>
           <button type="button" class="research-density-btn" data-research-density-btn="dense" aria-pressed="false">Dense</button>
         </div>
       </div>
-      <p class="research-shell-note muted">Diligence lives under Quick check → Deep (dossier &amp; SEC compare).</p>
 
       <div id="researchCheckModeBar" class="research-check-mode-bar research-surface" hidden aria-hidden="true">
-        <span class="research-check-mode-label muted">Altitude</span>
+        <span class="research-check-mode-label muted">Mode</span>
         <div class="research-check-mode-control" role="group" aria-label="Quick check mode">
           <button type="button" class="research-check-mode-btn active" data-research-check-mode-btn="brief" aria-pressed="true">Brief</button>
-          <button type="button" class="research-check-mode-btn" data-research-check-mode-btn="deep" aria-pressed="false">Deep</button>
+          <button type="button" class="research-check-mode-btn" data-research-check-mode-btn="deep" aria-pressed="false">Deep — full report &amp; filings</button>
         </div>
       </div>
 
@@ -722,7 +886,7 @@
         </div>
         <div class="research-summary-grid research-summary-grid--triage">
           <div class="research-summary-kpi">
-            <span class="research-summary-label">Open risk</span>
+            <span class="research-summary-label">Positions</span>
             <strong id="researchSummaryPositions" class="research-summary-value mono-nums" data-unavailable="true">—</strong>
             <small id="researchSummaryPositionsHint" class="muted">positions</small>
           </div>
@@ -742,13 +906,10 @@
             <small id="researchSummaryNextHint" class="muted">drill into Positions · Risk · Book</small>
           </div>
         </div>
-        <nav class="research-summary-actions inline-form compact" aria-label="Research shortcuts">
+        <nav class="research-summary-actions inline-form compact" aria-label="Portfolio shortcuts">
           <a class="btn small secondary" href="#portfolioSection" data-research-tab-link="portfolio">Positions</a>
           <a class="btn small secondary" href="#portfolioPanelRisk" data-research-tab-link="portfolio">Risk</a>
           <a class="btn small secondary" href="#portfolioPanelBook" data-research-tab-link="portfolio">Book</a>
-          <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Quick check</a>
-          <a class="btn small secondary" href="#reportSectionCard" data-research-tab-link="check" data-research-check-mode="deep">Dossier</a>
-          <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Backtest</a>
         </nav>
       </section>
 
@@ -761,7 +922,7 @@
         <div class="inline-form compact">
           <a class="btn small secondary" href="#portfolioSection" data-research-tab-link="portfolio">Portfolio</a>
           <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Quick check</a>
-          <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Backtest</a>
+          <a class="btn small secondary" href="#backtestSummaryLanding">Backtest</a>
         </div>
       </section>
       <section id="researchWorkflowStrip" class="card research-workflow-strip section-advanced workspace-intro--deprecated hidden" aria-hidden="true">
@@ -774,7 +935,7 @@
         </article>
         <article class="research-lane">
           <h3>Quick check</h3>
-          <p class="muted">Brief sniff or Deep dossier / SEC.</p>
+          <p class="muted">Brief sniff or Deep full report / filings.</p>
           <div class="inline-form compact">
             <a class="btn small secondary" href="#quickCheckSection" data-research-tab-link="check">Start quick check</a>
           </div>
@@ -783,11 +944,11 @@
           <h3>Backtest lab</h3>
           <p class="muted">Catalog, form, and compare runs.</p>
           <div class="inline-form compact">
-            <a class="btn small secondary" href="#backtestSection" data-research-tab-link="backtest">Run backtest</a>
+            <a class="btn small secondary" href="#backtestSection">Run backtest</a>
           </div>
         </article>
       </section>
-      <div class="layout-quick-tools research-check-panel">
+      <div class="layout-quick-tools research-check-panel" id="researchCheckPanel">
         <article id="quickCheckSection" class="card card--primary-task section-advanced">
           <div class="section-title">
             <h2>Quick ticker check</h2>
@@ -796,26 +957,71 @@
           <div id="quickCheckStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
             <span class="research-status-pill">Clear</span>
             <strong>No ticker checked.</strong>
-            <span class="muted">Enter a ticker to load chart, score, and raw evidence.</span>
+            <span class="muted">Enter a ticker and press Check or Enter.</span>
           </div>
-          <div id="quickCheckSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite"></div>
+          <div id="quickCheckSnapshot" class="research-panel-snapshot" data-state="empty" aria-live="polite" hidden></div>
           <div class="inline-form">
             <label class="field-label" for="tickerInput">Ticker</label>
-            <input id="tickerInput" placeholder="AAPL" />
-            <button id="checkBtn" class="btn secondary">Check</button>
+            <input id="tickerInput" placeholder="AAPL" autocomplete="off" spellcheck="false" maxlength="10" />
+            <button id="checkBtn" class="btn primary" type="button">Check</button>
           </div>
           <div id="tickerChartContainer" class="ticker-chart-container hidden"></div>
           <div id="checkOutputHost" class="tool-output-host tool-output-padded">
-            <p id="checkPlaceholder" class="muted tool-output-placeholder">Enter a ticker and click Check.</p>
+            <p id="checkPlaceholder" class="muted tool-output-placeholder">Enter a ticker and press Check or Enter.</p>
             <div id="checkSummary" class="tool-summary-card hidden" aria-live="polite"></div>
-            <details id="checkJsonDetails" class="tool-json-details hidden">
-              <summary>Raw data</summary>
-              <pre id="checkOutput" class="code-block"></pre>
-            </details>
+            <div id="debateGradeCard" class="debate-grade-card hidden" aria-live="polite"></div>
           </div>
         </article>
 
-        <details id="sectorsSection" class="card section-advanced panel-disclosure research-market-disclosure" data-lazy-api="sectors">
+        <details id="eventProbabilitySection" class="card section-advanced panel-disclosure research-surface">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Event risk</span>
+            <span class="disclosure-hint muted">Prediction-market event probabilities mapped to this ticker's valuation</span>
+          </summary>
+          <div id="eventProbabilityBody" class="event-risk-body" aria-live="polite">
+            <p class="muted">Run a quick check to load event risk.</p>
+          </div>
+        </details>
+
+        <details id="liquidPositioningSection" class="card section-advanced panel-disclosure research-surface">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Liquid positioning</span>
+            <span class="disclosure-hint muted">Funding &amp; open interest from Liquid's xyz perp markets — shadow research, no rank influence</span>
+          </summary>
+          <div id="liquidPositioningBody" class="event-risk-body" aria-live="polite">
+            <p class="muted">Open to load Liquid positioning (funding, open interest, history).</p>
+          </div>
+        </details>
+
+        <details id="pricingModelSection" class="card section-advanced panel-disclosure research-surface">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Pricing model</span>
+            <span class="disclosure-hint muted">SEC companyfacts DCF — sliders reprice from cache, not live Yahoo</span>
+          </summary>
+          <div class="inline-form compact pricing-model-toolbar">
+            <button id="pricingModelRefreshBtn" class="btn small secondary" type="button">Refresh fundamentals</button>
+            <small class="muted">Fetches one SEC XBRL document per ticker, then caches it.</small>
+          </div>
+          <div id="pricingModelBody" class="pricing-model-body" aria-live="polite">
+            <p class="muted">Run a quick check to load the pricing model.</p>
+          </div>
+        </details>
+
+        <details id="sharadarBundleSection" class="card section-advanced panel-disclosure research-surface">
+          <summary class="panel-disclosure-summary">
+            <span class="ops-disclosure-title">Sharadar Bundle</span>
+            <span class="disclosure-hint muted">PIT fundamentals, daily multiples, 13F, insiders — research only</span>
+          </summary>
+          <div class="inline-form compact sharadar-toolbar">
+            <button id="sharadarBundleRefreshBtn" class="btn small secondary" type="button">Refresh Sharadar</button>
+            <small class="muted">Bypasses the local cache and re-queries the Bundle tables.</small>
+          </div>
+          <div id="sharadarBundleBody" class="sharadar-body" aria-live="polite">
+            <p class="muted">Run a quick check to load Sharadar Bundle data.</p>
+          </div>
+        </details>
+
+        <details id="sectorsSection" class="card section-advanced panel-disclosure research-market-disclosure research-tab-hidden" data-lazy-api="sectors">
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Sector Performance</span>
             <span class="disclosure-hint muted">21-day relative performance vs SPY</span>
@@ -828,7 +1034,7 @@
           </div>
           <div id="sectorGrid" class="sector-grid"></div>
         </details>
-        <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure research-surface" data-lazy-api="movers">
+        <details id="moversSection" class="card section-advanced panel-disclosure research-market-disclosure research-surface research-tab-hidden" data-lazy-api="movers">
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Market Movers</span>
             <span class="disclosure-hint muted">Top gainers, losers, and most active</span>
@@ -841,7 +1047,7 @@
           <div id="moversGrid" data-async-state="idle"></div>
         </details>
 
-        <details id="researchAdvancedTools" class="card section-advanced panel-disclosure research-advanced-disclosure research-surface">
+        <details id="researchAdvancedTools" class="card section-advanced panel-disclosure research-advanced-disclosure research-surface research-tab-hidden">
           <summary class="panel-disclosure-summary">
             <span class="ops-disclosure-title">Advanced tools</span>
             <span class="disclosure-hint muted">Failure recovery and learning engine</span>
@@ -879,10 +1085,6 @@
             </div>
             <div id="challengerPanel" class="performance-panel" aria-live="polite" style="margin-top:1rem;">
             </div>
-            <details id="learningRawDetails" class="details-raw hidden">
-              <summary>Raw JSON</summary>
-              <pre id="learningRaw" class="code-block"></pre>
-            </details>
           </article>
         </details>
       </div>
@@ -890,7 +1092,7 @@
       <section id="positionIntelSection" class="card intel-surface" aria-label="Position intelligence">
         <div class="section-title">
           <h2>Position Intelligence</h2>
-          <small class="muted">Conviction scorecard, GARCH volatility, and options setups for open positions.</small>
+          <small class="muted">Conviction, volatility, and options setups for open positions.</small>
         </div>
         <div class="inline-form compact intel-toolbar">
           <label class="field-label intel-lookup-label" for="intelTickerInput">Look up ticker</label>
@@ -906,6 +1108,7 @@
           />
           <button id="intelLookupBtn" type="button" class="btn small primary">Look up</button>
           <span id="intelMeta" class="muted small mono-nums" aria-live="polite"></span>
+          <small id="intelFresh" class="muted small" data-freshness="unknown">no intel yet</small>
           <button id="intelRefreshBtn" type="button" class="btn small secondary">Refresh</button>
         </div>
         <div id="intelDataQuality" class="intel-data-quality hidden" aria-live="polite"></div>
@@ -1111,10 +1314,6 @@
             <div id="onboardingCards" aria-live="polite">
               <p class="muted">Click Connect Schwab to continue setup.</p>
             </div>
-            <details id="onboardingJsonDetails" class="tool-json-details hidden">
-              <summary>Raw data</summary>
-              <pre id="onboardingOutput" class="code-block"></pre>
-            </details>
           </div>
         </article>
 
@@ -1159,9 +1358,9 @@
               <ul class="onboarding-help-list">
                 <li><strong>Onboarding:</strong> connect account (orders) and market data (quotes), verify tokens, then test with a scan or paper order before going live.</li>
                 <li><strong>Presets:</strong> profile picks a fixed risk template; apply shows a before/after preview, then persists it. Mode toggles plain vs raw values; rank explain sets tooltip vs inline rationale.</li>
-                <li><strong>Guardrails (enforced per preset):</strong> position cap <code>$300/$500/$900</code> and daily trade cap <code>3/5/8</code> for conservative/balanced/aggressive. Conservative runs hard quality gates and blocks event risk; aggressive shadows event and execution checks instead of blocking.</li>
+                <li><strong>Guardrails (enforced per preset):</strong> Conservative caps a position at $300 and three live trades per day; Balanced at $500 and five; Aggressive at $900 and eight. Conservative runs hard quality gates and blocks event risk; aggressive shadows event and execution checks instead of blocking.</li>
                 <li><strong>Screener thesis:</strong> trend-continuation breakouts (uptrend + volatility pattern), fast first-pass filter, deeper follow-up analysis, market regime checks, and visible near-misses with reasons.</li>
-                <li><strong>Live trading:</strong> enabling requires risk acknowledgment plus typing <code>ENABLE</code>; pause blocks new approvals; 2FA protects sensitive actions; automation stays off until you opt in.</li>
+                <li><strong>Live trading:</strong> enabling requires risk acknowledgment plus typing ENABLE in the confirm box; pause blocks new approvals; 2FA protects sensitive actions; automation stays off until you opt in.</li>
               </ul>
               <p class="muted small">
                 Full risk and legal context: <a href="/static/legal.html">legal &amp; risk disclosures</a>.
@@ -1173,10 +1372,6 @@
           <div id="profilePanel" class="preset-panel" aria-live="polite">
             <div class="report-empty">Loading preset…</div>
           </div>
-          <details id="profileRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="profileRaw" class="code-block"></pre>
-          </details>
         </article>
 
         <details id="settingsAccountPanel" class="card panel-disclosure settings-surface settings-account-disclosure">
@@ -1185,7 +1380,7 @@
             <span class="disclosure-hint muted">Two-factor authentication (optional)</span>
           </summary>
             <div id="twoFaPanel" style="margin-top: 0.25rem">
-              <p class="muted small">Loading security options…</p>
+              <p class="muted small">This local desk confirms live orders by typing the ticker. Authenticator codes are a hosted-account control.</p>
             </div>
             <div id="billingSaasBlock" class="hidden" aria-hidden="true" hidden style="display: none !important">
               <h3 class="field-label">Billing</h3>
@@ -1229,6 +1424,7 @@
         <p class="system-zone-label">System · Can I trade?</p>
         <strong id="systemZoneVerdict" class="system-zone-verdict">Checking health…</strong>
         <p id="systemSummaryStatusLine" class="system-summary-status muted" data-unavailable="true">System status: awaiting first health check…</p>
+        <div id="systemCanActStrip" class="can-act-strip" aria-label="Promotion and data gates"></div>
         <ul id="systemZoneBlockers" class="system-blocker-list" aria-label="Actionable blockers"></ul>
         <div class="system-summary-grid system-zone-support">
           <div class="system-summary-kpi">
@@ -1244,7 +1440,7 @@
           <div class="system-summary-kpi">
             <span class="system-summary-label">Validation</span>
             <strong id="systemSummaryValidation" class="system-summary-value" data-unavailable="true">—</strong>
-            <small id="systemSummaryValidationHint" class="muted">promotion gates</small>
+            <small id="systemSummaryValidationHint" class="muted">last validation run</small>
           </div>
         </div>
         <nav class="system-summary-actions inline-form compact" aria-label="System shortcuts">
@@ -1253,9 +1449,11 @@
           <a class="btn small secondary" href="#settingsSummaryLanding" data-system-lane-jump="connect">Connect</a>
         </nav>
         <aside id="systemNextDecision" class="system-next-decision" data-decision="hold" aria-live="polite">
-          <p class="system-next-decision__eyebrow">Next decision</p>
+          <p id="systemNextDecisionEyebrow" class="system-next-decision__eyebrow">Next decision</p>
           <strong id="systemNextDecisionTitle" class="system-next-decision__title">Waiting on health…</strong>
+          <p id="systemNextDecisionStatus" class="system-next-decision__status" hidden></p>
           <p id="systemNextDecisionWhy" class="system-next-decision__why muted">Run or refresh health to unlock the next action.</p>
+          <ol id="systemNextDecisionSteps" class="system-next-decision__steps" hidden></ol>
           <div class="system-next-decision__actions inline-form compact">
             <a id="systemNextDecisionCta" class="btn small secondary" href="#healthRibbon">Refresh path</a>
           </div>
@@ -1269,11 +1467,11 @@
         aria-label="System lanes"
       >
         <button type="button" class="system-lane-nav__btn is-active" data-system-lane="ready" role="tab" aria-pressed="true">Ready</button>
+        <button type="button" class="system-lane-nav__btn" data-system-lane="connect" role="tab" aria-pressed="false">Connect</button>
         <button type="button" class="system-lane-nav__btn" data-system-lane="decide" role="tab" aria-pressed="false">Decide</button>
         <button type="button" class="system-lane-nav__btn" data-system-lane="calibrate" role="tab" aria-pressed="false">Calibrate</button>
         <button type="button" class="system-lane-nav__btn" data-system-lane="shadow" role="tab" aria-pressed="false">Shadow</button>
         <button type="button" class="system-lane-nav__btn" data-system-lane="review" role="tab" aria-pressed="false">Review</button>
-        <button type="button" class="system-lane-nav__btn" data-system-lane="connect" role="tab" aria-pressed="false">Connect</button>
         <button type="button" class="system-lane-nav__btn" data-system-lane="advanced" role="tab" aria-pressed="false">Advanced</button>
       </nav>
 
@@ -1299,7 +1497,7 @@
         >
           System status: running first health check…
         </p>
-        <div class="health-tile" id="healthTileAuth" data-state="unknown" style="--gauge: 0">
+        <div class="health-tile" id="healthTileAuth" data-state="unknown" data-health-jump="statusMarketToken" role="button" tabindex="0" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
             <span class="health-label">Sign-in</span>
@@ -1308,7 +1506,7 @@
             <small id="ribbonAuthFresh" data-freshness="unknown">Checking connection…</small>
           </div>
         </div>
-        <div class="health-tile" id="healthTileQuotes" data-state="unknown" style="--gauge: 0">
+        <div class="health-tile" id="healthTileQuotes" data-state="unknown" data-health-jump="statusQuoteHealth" role="button" tabindex="0" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
             <span class="health-label">Quotes</span>
@@ -1317,7 +1515,7 @@
             <small id="ribbonQuotesFresh" data-freshness="unknown">Checking quote health…</small>
           </div>
         </div>
-        <div class="health-tile" id="healthTileApi" data-state="unknown" style="--gauge: 0">
+        <div class="health-tile" id="healthTileApi" data-state="unknown" data-health-jump="statusApiErrors" role="button" tabindex="0" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
             <span class="health-label">Request errors</span>
@@ -1325,7 +1523,7 @@
             <small id="ribbonApiErrorRateFresh" data-freshness="unknown">Waiting for metrics…</small>
           </div>
         </div>
-        <div class="health-tile" id="healthTileValidation" data-state="unknown" style="--gauge: 0">
+        <div class="health-tile" id="healthTileValidation" data-state="unknown" data-health-jump="statusValidation" role="button" tabindex="0" style="--gauge: 0">
           <div class="health-ring" aria-hidden="true"></div>
           <div class="health-tile-copy">
             <span class="health-label">Validation</span>
@@ -1339,7 +1537,7 @@
         <summary class="panel-disclosure-summary">
           <span class="ops-disclosure-title">Decide · promotion &amp; signal edge</span>
           <span id="decisionDashboardSummaryStrip" class="decision-summary-strip" aria-live="polite"></span>
-          <span class="disclosure-hint muted">PF floors · fidelity · strategy compare</span>
+          <span class="disclosure-hint muted">PF floors · book width · strategy compare</span>
         </summary>
       <section
         id="decisionDashboardCard"
@@ -1372,11 +1570,15 @@
               </div>
             </div>
           </div>
-          <section id="decisionSignalEdgeBoard" class="decision-signal-edge-board" data-state="loading" aria-label="Signal edge promotion gates">
+          <section id="decisionSignalEdgeBoard" class="decision-signal-edge-board" data-state="loading" aria-label="Signal edge vs profit-factor gates">
             <h4 class="decision-board-title">Signal edge evidence</h4>
             <p id="decisionSignalEdgeSummary" class="decision-signal-edge-summary" data-state="loading" aria-live="polite">Loading PF gates and promotion thresholds…</p>
             <div id="decisionGateTiles" class="decision-gate-tiles"></div>
             <div id="decisionEraPfChart" class="decision-era-pf-chart"></div>
+            <section id="decisionBookWidth" class="decision-book-width" aria-label="Book width shadow" data-state="loading">
+              <h4 class="decision-board-title">Book width</h4>
+              <p class="decision-signal-edge-summary" data-state="loading">Loading the live top 5 against the wider p76 books…</p>
+            </section>
           </section>
           <div class="decision-evidence-grid" aria-label="Decision dashboard evidence">
             <p id="decisionValidationStatus" class="decision-evidence-row muted" data-unavailable="true">Validation: —</p>
@@ -1454,7 +1656,7 @@
           </div>
           <div id="statusDetailsSnapshot" class="operations-panel-snapshot" data-state="empty" aria-live="polite"></div>
           <section id="statusSection" class="stats stats-in-disclosure">
-        <article id="statusMarketToken" class="card stat">
+        <article id="statusMarketToken" class="card stat" tabindex="-1">
           <span class="stat-label">Market Token</span>
           <strong id="marketToken" class="pill neutral" data-unavailable="true">—</strong>
         </article>
@@ -1475,15 +1677,15 @@
           <span class="stat-label">Pending Trades</span>
           <strong id="pendingCount" class="pill neutral" data-unavailable="true">—</strong>
         </article>
-        <article id="statusQuoteHealth" class="card stat">
+        <article id="statusQuoteHealth" class="card stat" tabindex="-1">
           <span class="stat-label">Quote Health</span>
           <strong id="quoteHealth" class="pill neutral" data-unavailable="true">—</strong>
         </article>
-        <article id="statusApiErrors" class="card stat">
+        <article id="statusApiErrors" class="card stat" tabindex="-1">
           <span class="stat-label">API Error Rate</span>
           <strong id="apiErrorRate" class="pill neutral" data-unavailable="true">—</strong>
         </article>
-        <article id="statusValidation" class="card stat">
+        <article id="statusValidation" class="card stat" tabindex="-1">
           <span class="stat-label">Validation Health</span>
           <strong id="validationHealth" class="pill neutral" data-unavailable="true">—</strong>
           <small id="validationAge" class="muted" data-freshness="unknown">awaiting validation artifact</small>
@@ -1498,7 +1700,7 @@
         </section>
       </details>
 
-      <section class="layout-2 section-advanced">
+      <section class="layout-2 section-advanced" id="researchPortfolioPrimary">
         <article id="portfolioSection" class="card portfolio-hub card--primary-task" data-lazy-api="portfolio">
           <div class="section-title">
             <h2>Portfolio triage</h2>
@@ -1532,6 +1734,7 @@
 
           <div id="portfolioPanelPositions" role="tabpanel">
             <div id="schwabPositionsWrap" class="table-wrap">
+              <div id="portfolioAmbiguityBanner" class="hidden" role="status"></div>
               <table>
                 <caption class="visually-hidden">Portfolio positions table</caption>
                 <thead>
@@ -1543,11 +1746,12 @@
                     <th>Weight %</th>
                     <th>Day P/L</th>
                     <th>P/L %</th>
+                    <th>Stop</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody id="portfolioBody">
-                  <tr><td colspan="8" class="muted">Open Portfolio screen or click Refresh.</td></tr>
+                  <tr><td colspan="9" class="muted">Open Portfolio screen or click Refresh.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1621,7 +1825,7 @@
 
       </section>
 
-      <section class="layout-2 section-advanced">
+      <section class="layout-2 section-advanced" id="researchPortfolioSecondary">
         <article id="performanceSection" class="card" data-lazy-api="performance">
           <div class="section-title">
             <h2>Performance</h2>
@@ -1633,10 +1837,6 @@
           <div id="performancePanel" class="performance-panel" aria-live="polite">
             <div class="report-empty">No performance snapshot loaded yet. Click Refresh Performance.</div>
           </div>
-          <details id="performanceRawDetails" class="details-raw hidden">
-            <summary>Raw JSON</summary>
-            <pre id="performanceRaw" class="code-block"></pre>
-          </details>
         </article>
 
       <details id="cockpitMergedPanel" class="card section-advanced panel-disclosure research-cockpit-disclosure">
@@ -1655,7 +1855,7 @@
           </p>
         </div>
         <div class="inline-form compact">
-          <button class="btn small secondary" id="cockpitReviewBtn" type="button" title="Weekly learning diagnostics and tuning proposals"><span id="cockpitReview">🧠 Review</span></button>
+          <button class="btn small secondary" id="cockpitReviewBtn" type="button" title="Weekly learning diagnostics and tuning proposals"><span id="cockpitReview">Review</span></button>
           <span class="muted" id="cockpitUpdated">—</span>
           <button class="btn small secondary" id="cockpitRefresh" type="button">Refresh</button>
         </div>
@@ -1678,7 +1878,7 @@
           <div id="cockpitPortfolioBody" data-async-state="idle"></div>
         </section>
 
-        <section class="lane" id="laneOpportunities">
+        <section class="lane research-tab-hidden" id="laneOpportunities" hidden>
           <h2>Ranked Opportunities <span class="lane-prov" data-prov="opportunities"></span></h2>
           <div id="cockpitOppChangeStrip" class="change-strip"></div>
           <div id="cockpitOpportunitiesBody" data-async-state="idle"></div>
@@ -1698,48 +1898,200 @@
         </div>
       </aside>
       </details>
+      </section>
+      <section id="backtestSummaryLanding" class="card backtest-summary-landing backtest-surface" aria-label="Backtest home">
+        <div class="bt-home-head">
+          <div>
+            <p class="system-zone-label">Backtest</p>
+            <strong id="backtestZoneVerdict">Loading backtests…</strong>
+            <p id="backtestZoneDetail" class="muted">Ranked by trust, then robustness, then PF. Not LIVE-ready.</p>
+            <div class="muted bt-home-next">Next: <button type="button" class="btn small secondary" id="backtestLandingNext">Queue last 5 years</button></div>
+            <p id="backtestPromotionChip" class="bt-promo-chip" hidden></p>
+          </div>
+          <nav class="research-summary-actions inline-form compact" aria-label="Backtest shortcuts">
+            <button id="btOpenFormBtn" class="btn small secondary" type="button">Edit settings</button>
+            <a class="btn small secondary" href="#backtestQueuePanel">View queue</a>
+            <button id="backtestHubRefreshBtn" class="btn small secondary" type="button">Refresh</button>
+          </nav>
+        </div>
+        <div class="research-summary-grid research-summary-grid--triage bt-home-kpis">
+          <div class="research-summary-kpi">
+            <span class="research-summary-label">Queue</span>
+            <strong id="backtestLandingQueue" class="research-summary-value">Idle</strong>
+            <small class="muted">one at a time</small>
+          </div>
+        </div>
+        <section id="backtestLeaderboard" class="bt-leaderboard" aria-label="Backtest leaderboard">
+          <div class="bt-leaderboard-head">
+            <div>
+              <p class="bt-live-kicker">Leaderboard</p>
+              <p class="muted small" id="btLeaderboardNote">Ranked by trust, then robustness, then PF. Not LIVE-ready.</p>
+            </div>
+            <div class="bt-board-filter-bar" id="btLeaderboardFilterStack">
+            <div id="btLeaderboardFilters" class="bt-queue-filters" role="group" aria-label="Leaderboard window filter">
+              <button type="button" class="bt-filter-btn is-active" data-bt-board-window="all" aria-pressed="true">All windows</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-window="2" aria-pressed="false">2 years</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-window="5" aria-pressed="false">5 years</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-window="8" aria-pressed="false">8 years</button>
+            </div>
+            <span class="bt-filter-rule" aria-hidden="true"></span>
+            <div id="btLeaderboardUniverse" class="bt-queue-filters" role="group" aria-label="Leaderboard index filter">
+              <button type="button" class="bt-filter-btn is-active" data-bt-board-universe="all" aria-pressed="true">All indexes</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-universe="nasdaq100" aria-pressed="false">Nasdaq-100</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-universe="sp500" aria-pressed="false">S&amp;P 500</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-universe="sp1500" aria-pressed="false">S&amp;P 1500</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-universe="sector_etfs" aria-pressed="false">Sector ETFs</button>
+            </div>
+            <span class="bt-filter-rule" aria-hidden="true"></span>
+            <div id="btLeaderboardSample" class="bt-queue-filters" role="group" aria-label="Leaderboard sample filter">
+              <button type="button" class="bt-filter-btn is-active" data-bt-board-sample="large" aria-pressed="true">Large-n (100+)</button>
+              <button type="button" class="bt-filter-btn" data-bt-board-sample="all" aria-pressed="false">All qualified</button>
+            </div>
+            </div>
+          </div>
+          <div id="btLeaderboardBody">
+            <p class="muted">Loading ranked runs…</p>
+          </div>
+        </section>
+        <div class="bt-queue-now" aria-label="Queue a backtest window">
+          <p id="btQueueNowSummary" class="bt-queue-now-summary">Loading current index and strategy…</p>
+          <p id="btQueueNowWarn" class="bt-queue-now-warn" hidden></p>
+          <button id="btQueueUseIndexBtn" class="btn small secondary hidden" type="button">Use S&amp;P 1500 · Stage 2 daily</button>
+          <div class="preset-row backtest-landing-queue-row">
+            <button id="btQueueNowBtn" class="btn secondary" type="button" data-bt-queue-years="5">Queue last 5 years</button>
+            <button class="btn secondary" type="button" data-bt-queue-years="8">Queue last 8 years</button>
+            <button class="btn small secondary" type="button" data-bt-queue-years="2">Queue last 2 years</button>
+            <button id="btQueueCopyBtn" class="btn small secondary" type="button">Queue copy of this spec</button>
+          </div>
+          <p class="muted form-hint" id="btQueueNowHint">Same index and strategy as Edit settings. One replay at a time.</p>
+          <p id="btQueueNowStatus" class="bt-queue-now-status" aria-live="polite"></p>
+        </div>
+        <details id="backtestLiveMonitorWrap" class="bt-monitor-details">
+          <summary>Live monitor — trades as they close</summary>
+          <p id="btLiveStatus" class="visually-hidden" aria-live="polite"></p>
+          <div id="backtestLiveMonitor" class="bt-live-monitor">
+            <p class="muted">Loading live queue…</p>
+          </div>
+        </details>
+        <section id="backtestStudyPanel" class="bt-study" aria-label="Adaptive study">
+          <div class="bt-leaderboard-head">
+            <div>
+              <p class="bt-live-kicker">Study</p>
+              <p class="muted small" id="btStudyRationale">After each replay, the next test changes one factor.</p>
+            </div>
+          </div>
+          <p id="btStudyHypothesis" class="bt-study-hypothesis">No study yet. The first replay is the anchor.</p>
+          <ul id="btStudyEffects" class="bt-study-effects"></ul>
+          <p id="btStudyStatus" class="muted small"></p>
+          <div class="preset-row">
+            <button id="btStudyNextBtn" class="btn small secondary" type="button">Start study</button>
+            <label class="muted small bt-study-auto"><input id="btStudyAuto" type="checkbox" checked /> Keep testing after each result. One factor at a time, and stop when the rules say stop.</label>
+          </div>
+        </section>
+      </section>
 
-        <article id="backtestSection" class="card backtest-hub" data-lazy-api="backtest">
+      <div id="backtestWorkspace" class="backtest-workspace backtest-surface">
+      <section id="backtestQueuePanel" class="card backtest-surface" aria-label="Backtest queue">
+        <div class="section-title">
+          <h2>Queue</h2>
+          <small id="backtestQueueNote" class="muted">This computer runs one backtest at a time. Extra jobs wait in line.</small>
+        </div>
+        <div id="btQueueFilters" class="bt-queue-filters" role="group" aria-label="Queue filter">
+          <button type="button" class="bt-filter-btn" data-bt-queue-filter="live" aria-pressed="false">Live</button>
+          <button type="button" class="bt-filter-btn" data-bt-queue-filter="campaign" aria-pressed="false">Campaign</button>
+          <button type="button" class="bt-filter-btn" data-bt-queue-filter="all" aria-pressed="false">Recent</button>
+        </div>
+        <ul id="backtestQueueList" class="bt-queue-list"></ul>
+      </section>
+
+      <section id="backtestResultPanel" class="card backtest-surface" aria-label="Selected backtest result">
+        <div class="section-title">
+          <h2>Briefing</h2>
+        </div>
+        <div id="backtestResultPanelBody">
+          <p class="muted">Select a ranked run to see the verdict.</p>
+        </div>
+        <details id="btBriefingDetails" class="bt-briefing-details">
+          <summary>More detail</summary>
+          <div id="btBriefingExtra"></div>
+          <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
+          <div id="btVsPrevious" class="bt-vs-previous" aria-live="polite"></div>
+          <div id="btEquityChartWrap" class="bt-equity-chart-wrap hidden" aria-hidden="true">
+            <div class="section-title"><h3>Equity &amp; drawdown</h3></div>
+            <div id="btEquityChart" class="bt-equity-chart" role="img" aria-label="Backtest equity curve"></div>
+            <div id="btDrawdownChart" class="bt-drawdown-chart" role="img" aria-label="Backtest drawdown curve"></div>
+          </div>
+          <div id="btRunCompare" class="bt-run-compare" aria-live="polite"></div>
+        </details>
+      </section>
+      </div>
+
+      <section id="backtestRelatedPanel" class="card backtest-surface" aria-label="Related backtest evidence">
+        <details class="advanced-details">
+          <summary>Related evidence — promotion and validation files</summary>
           <div class="section-title">
-            <h2>Run a historical backtest</h2>
+            <h2>Related evidence</h2>
+            <small class="muted">Promotion, validation, and performance files. Missing files say “Not generated yet.”</small>
+          </div>
+          <div id="backtestRelatedCards" class="bt-related-grid"></div>
+        </details>
+      </section>
+
+      <section class="research-backtest-wrap backtest-surface" id="researchBacktestWrap">
+        <article id="backtestSection" class="card backtest-hub card--primary-task" data-lazy-api="backtest">
+          <details class="advanced-details bt-composer-details">
+          <summary>Edit settings — form and shortcuts</summary>
+          <div class="section-title">
+            <h2>Queue a backtest</h2>
+            <small class="muted">Same indexes and strategies as Scan studio. This computer runs one at a time — extra jobs wait in line. No live trades.</small>
           </div>
           <div id="backtestStatusStrip" class="research-status-strip" data-state="empty" aria-live="polite">
             <span class="research-status-pill">Clear</span>
             <strong>No backtest run selected.</strong>
-            <span class="muted">Choose a universe and date range before queueing a run.</span>
+            <span class="muted">Pick an index, a strategy, and dates before queueing.</span>
           </div>
           <p class="backtest-intro muted">
-            Replays the <strong>uptrend + volatility pattern</strong> rules on past prices using your saved scanner settings — no live trades.
-            Use the <strong>form</strong> for precise control or <strong>chat</strong> to describe a run in plain language.
+            Replays the sleeves you pick on past prices — the same catalog as Scan studio, not a second invented book.
+            Shadow and paper strategies stay research-only; they do not go LIVE. Tune Stage 2 / VCP variables to try a hypothesis, then label it.
+            Queue from the <strong>5-year / 8-year buttons on Backtest home</strong> — they set dates and start the job. Change index and strategy here first. The Shortcuts tab queues named 5y/8y setups. Chat send only works on the hosted app.
           </p>
           <div class="tab-bar" role="tablist" aria-label="Backtest entry mode">
             <button type="button" id="btHubTabForm" class="tab-btn tab-btn-active" role="tab" aria-selected="true" aria-controls="btHubPanelForm">
               Simple form
             </button>
             <button type="button" id="btHubTabChat" class="tab-btn" role="tab" aria-selected="false" aria-controls="strategyChatPanel">
-              Chat assistant
+              Shortcuts
             </button>
           </div>
 
           <div id="btHubPanelForm" class="tab-panel" role="tabpanel">
             <div class="preset-row" aria-label="Date presets">
-              <span class="field-label">Presets</span>
+              <span class="field-label">Fill dates only</span>
               <button type="button" class="btn small secondary bt-preset" data-years="2">Last 2 years</button>
               <button type="button" class="btn small secondary bt-preset" data-years="5">Last 5 years</button>
               <button type="button" class="btn small secondary bt-preset" data-years="8">Last 8 years</button>
             </div>
-            <div class="backtest-form-grid">
-              <div class="form-row">
-                <label class="field-label" for="btUniverse">Universe</label>
-                <select id="btUniverse" aria-describedby="btUniverseHint">
-                  <option value="watchlist">S&amp;P 1500 (default)</option>
-                  <option value="tickers">Custom tickers</option>
-                </select>
-                <span id="btUniverseHint" class="muted form-hint">Default is the live S&amp;P 1500 list. Custom tickers are capped (default 40).</span>
+            <p class="muted form-hint">These only fill start/end. To start the job, click Queue backtest below or the 5-year / 8-year buttons on Backtest home.</p>
+            <div class="backtest-form-grid" id="btComposerCatalog">
+              <div class="form-row bt-composer-step">
+                <span class="field-label" id="btUniverseStepTitle">Index</span>
+                <input type="hidden" id="btUniverse" value="sp1500" />
+                <div id="btUniverseMount" class="scan-studio-universe-row" role="radiogroup" aria-labelledby="btUniverseStepTitle"></div>
+                <span id="btUniverseHint" class="muted form-hint">Same named lists as Scan studio. Russell 2000 is not wired. Custom tickers are capped (default 40).</span>
               </div>
               <div class="form-row" id="btTickersRow">
                 <label class="field-label" for="btTickers">Tickers</label>
                 <input id="btTickers" placeholder="AAPL, MSFT, GOOGL" autocomplete="off" />
+              </div>
+              <div class="form-row bt-composer-step">
+                <span class="field-label" id="btTimeframeStepTitle">Horizon</span>
+                <input type="hidden" id="btScanTimeframe" value="daily" />
+                <div id="btTimeframeMount" class="scan-studio-tf-row" role="tablist" aria-labelledby="btTimeframeStepTitle"></div>
+              </div>
+              <div class="form-row bt-composer-step">
+                <span class="field-label" id="btStrategyStepTitle">Strategies</span>
+                <p id="btStrategyHint" class="muted form-hint">Check sleeves to replay. Live book is Stage 2 / VCP. Shadow and paper rows use the same evaluators as Scan studio; they do not promote plugins to LIVE.</p>
+                <div id="btStrategyBoard" class="bt-strategy-board"></div>
               </div>
               <div class="form-row form-row-dates">
                 <div>
@@ -1752,8 +2104,48 @@
                 </div>
               </div>
               <div class="form-row">
-                <label class="field-label" for="btTheory">Label (optional)</label>
-                <input id="btTheory" placeholder="e.g. Q1 experiment" />
+                <label class="field-label" for="btTheory">Hypothesis label (optional)</label>
+                <input id="btTheory" placeholder="e.g. tighter 52-week, Nasdaq-100 only" />
+              </div>
+              <div class="bt-tunables-grid" aria-label="Scanner variables">
+                <p class="field-label">Scanner variables</p>
+                <p class="muted form-hint">Leave blank to use account defaults. These are the same env knobs the live scanner reads.</p>
+                <div class="form-row">
+                  <label class="field-label" for="btStage252w">Stage 2 near 52-week high (0.85 = within 15%)</label>
+                  <input id="btStage252w" type="number" min="0.5" max="1" step="0.01" placeholder="0.85" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btStage2SmaDays">Stage 2 — 200 SMA rising days</label>
+                  <input id="btStage2SmaDays" type="number" min="1" max="120" step="1" placeholder="20" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btVcpDays">VCP quiet days</label>
+                  <input id="btVcpDays" type="number" min="1" max="30" step="1" placeholder="4" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btVcpGateMode">VCP gate</label>
+                  <select id="btVcpGateMode">
+                    <option value="">Account default</option>
+                    <option value="shadow">Shadow (score penalty)</option>
+                    <option value="hard">Hard (block)</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btQualityMinScore">Min signal score</label>
+                  <input id="btQualityMinScore" type="number" min="0" max="100" step="1" placeholder="50" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btQualityVolRatio">Breakout volume vs 50-day avg</label>
+                  <input id="btQualityVolRatio" type="number" min="0.5" max="5" step="0.05" placeholder="0.90" />
+                </div>
+                <div class="form-row">
+                  <label class="field-label" for="btQualityRequireVol">Require breakout volume</label>
+                  <select id="btQualityRequireVol">
+                    <option value="">Account default</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </div>
               </div>
             </div>
             <details class="advanced-details">
@@ -1907,33 +2299,22 @@
               <progress id="btJobProgress" max="100" value="0"></progress>
               <span id="btJobProgressLabel" class="muted"></span>
             </div>
-            <div id="btResultSummary" class="bt-result-summary" aria-live="polite"></div>
-            <div id="btEquityChartWrap" class="bt-equity-chart-wrap hidden" aria-hidden="true">
-              <div class="section-title"><h3>Equity &amp; drawdown</h3></div>
-              <div id="btEquityChart" class="bt-equity-chart" role="img" aria-label="Backtest equity curve"></div>
-              <div id="btDrawdownChart" class="bt-drawdown-chart" role="img" aria-label="Backtest drawdown curve"></div>
-            </div>
-            <details id="btResultRawDetails" class="details-raw">
-              <summary>Full result JSON</summary>
-              <pre id="btResult" class="code-block">No run yet.</pre>
-            </details>
-            <div class="section-title"><h3>Recent runs</h3></div>
-            <ul id="btRunList" class="report-bullets bt-run-list"></ul>
+            <ul id="btRunList" class="report-bullets bt-run-list visually-hidden" hidden></ul>
           </div>
 
           <div id="strategyChatPanel" class="tab-panel hidden" role="tabpanel">
-            <p class="muted chat-subhead">The assistant validates your settings and can queue the same backtest job as the form. Tool details stay collapsed unless you expand them.</p>
+            <p class="muted chat-subhead">On this computer these buttons queue the same job as the form. Chat send is hosted-app only.</p>
             <div id="scMessages" class="chat-log-scroll" role="log" aria-live="polite"></div>
-            <div id="scEmptyChips" class="preset-row chat-chips" aria-label="Example prompts">
-              <span class="field-label">Try</span>
-              <button type="button" class="btn small secondary sc-chip" data-text="S&amp;P 1500, last 5 years, skip MiroFish for speed.">
-                5y S&amp;P 1500, skip MiroFish
+            <div id="scEmptyChips" class="preset-row chat-chips" aria-label="Queue shortcuts">
+              <span class="field-label">Queue</span>
+              <button type="button" class="btn small secondary sc-chip" data-bt-queue-years="5" data-bt-queue-universe="nasdaq100" data-bt-queue-strategy="trend_breakout" data-bt-queue-skip-mirofish="1" data-bt-queue-theory="last 5 years nasdaq-100 stage 2" data-text="Nasdaq-100, Stage 2 VCP, last 5 years, skip MiroFish for speed.">
+                Queue 5y Nasdaq-100 Stage 2
               </button>
-              <button type="button" class="btn small secondary sc-chip" data-text="Tickers AAPL MSFT GOOGL, last 3 years, soft quality gates.">
-                Custom tickers · 3y
+              <button type="button" class="btn small secondary sc-chip" data-bt-queue-years="5" data-bt-queue-universe="sp500" data-bt-queue-strategy="donchian_20" data-bt-queue-skip-mirofish="1" data-bt-queue-theory="last 5 years sp500 donchian" data-text="S&amp;P 500, Donchian 20, last 5 years. Shadow only — do not call it live.">
+                Queue 5y S&amp;P 500 Donchian
               </button>
-              <button type="button" class="btn small secondary sc-chip" data-text="S&amp;P 1500, last 8 years, use account defaults for gates.">
-                8y S&amp;P 1500, default gates
+              <button type="button" class="btn small secondary sc-chip" data-bt-queue-years="8" data-bt-queue-universe="sp1500" data-bt-queue-strategy="trend_breakout" data-bt-queue-stage252w="0.90" data-bt-queue-skip-mirofish="1" data-bt-queue-theory="last 8 years tighter 52-week" data-text="S&amp;P 1500, last 8 years, Stage 2 52-week at 0.90, skip MiroFish.">
+                Queue 8y tighter 52-week
               </button>
             </div>
             <div id="scQueueCallout" class="callout callout-info hidden" aria-live="polite"></div>
@@ -1947,6 +2328,7 @@
               <button id="scSendBtn" class="btn secondary" type="button">Send</button>
             </div>
           </div>
+          </details>
         </article>
       </section>
       <details id="systemQualityDiagnostics" class="card section-advanced panel-disclosure diagnostics-surface system-quality-disclosure" open>
@@ -2032,12 +2414,12 @@
           <div class="inline-form">
             <label class="field-label" for="reportTickerInput">Ticker</label>
             <input id="reportTickerInput" placeholder="AAPL" />
-            <button id="dossierBtn" class="btn secondary" type="button">Generate Dossier</button>
-            <button id="dossierDownloadJsonBtn" class="btn small secondary" type="button">Download JSON</button>
-            <button id="dossierDownloadMdBtn" class="btn small secondary" type="button">Download Markdown</button>
-            <button id="dossierDownloadPdfBtn" class="btn small secondary" type="button">Download PDF</button>
-            <button id="dossierDownloadModelWorkbookBtn" class="btn small secondary" type="button">Download Fundamental Model Workbook (.xlsx)</button>
-            <small id="dossierMeta" class="muted">Generate a dossier to enable export preview.</small>
+            <button id="dossierBtn" class="btn primary" type="button">Generate full report</button>
+            <button id="dossierDownloadJsonBtn" class="btn small secondary" type="button" disabled>Download JSON</button>
+            <button id="dossierDownloadMdBtn" class="btn small secondary" type="button" disabled>Download Markdown</button>
+            <button id="dossierDownloadPdfBtn" class="btn small secondary" type="button" disabled>Download PDF</button>
+            <button id="dossierDownloadModelWorkbookBtn" class="btn small secondary" type="button" disabled>Download Fundamental Model Workbook (.xlsx)</button>
+            <small id="dossierMeta" class="muted">Generate a full report to enable export preview.</small>
           </div>
           <div id="reportTemplateButtons" class="compare-presets" aria-label="Report templates">
             <button class="btn small secondary" type="button" data-template="institutional_quick_read" data-section="" data-skip-mirofish="false" data-skip-edgar="false">Institutional Quick Read</button>
@@ -2045,7 +2427,7 @@
             <button class="btn small secondary" type="button" data-template="fundamental_snapshot" data-section="dcf" data-skip-mirofish="true" data-skip-edgar="false">Fundamental Snapshot</button>
             <button class="btn small secondary" type="button" data-template="forensic_focus" data-section="edgar" data-skip-mirofish="true" data-skip-edgar="false">Forensic Focus</button>
           </div>
-          <div id="reportTemplateMeta" class="muted compare-meta">Presets configure <strong>Run Report</strong> (advanced). Use <strong>Generate Dossier</strong> for the full institutional package.</div>
+          <div id="reportTemplateMeta" class="muted compare-meta">Use <strong>Generate full report</strong> for the package. Presets below only affect the advanced <strong>Run Report</strong> debug view.</div>
           <details id="reportAdvancedOptions" class="panel-disclosure panel-disclosure--advanced">
             <summary class="panel-disclosure-summary">
               Advanced report controls
@@ -2065,26 +2447,20 @@
               <label class="muted"><input id="skipMirofish" type="checkbox" /> Skip AI sentiment</label>
               <label class="muted"><input id="skipEdgar" type="checkbox" /> Skip SEC filing analysis</label>
               <button id="reportBtn" class="btn secondary" type="button">Run Report</button>
-              <button id="toggleReportViewBtn" class="btn small primary" type="button">Show Raw JSON</button>
               <small id="reportRunStatus" class="muted">Status: idle</small>
             </div>
           </details>
           <div id="dossierWriteup" class="report-visual hidden">
-            <div class="report-empty">Generate a dossier to view the narrative write-up.</div>
+            <div class="report-empty">Generate a full report to view the narrative write-up.</div>
           </div>
-          <details id="dossierDetails" class="details-raw hidden">
-            <summary>Raw dossier JSON</summary>
-            <pre id="dossierOutput" class="code-block">No dossier run yet.</pre>
-          </details>
           <div id="reportTabs" class="report-tabs"></div>
           <p id="reportVsDossierHint" class="muted compare-meta" style="margin-top:0.75rem">
-            <strong>Generate Dossier</strong> builds the full institutional package (technical, valuation, SEC narrative, Finnhub catalysts, portfolio context) for export.
-            <strong>Run Report</strong> below is the interactive IC view — presets and section overrides apply only there.
+            <strong>Generate full report</strong> is the operator output (narrative, appendix, PDF/Markdown/JSON).
+            <strong>Run Report</strong> in Advanced is a debug IC view — ignore it unless you need a single section.
           </p>
           <div id="reportVisual" class="report-visual">
             <div class="report-empty">No report run yet. Enter a ticker and run report.</div>
           </div>
-          <pre id="reportOutput" class="code-block">No report run yet.</pre>
         </article>
 
         <article id="secCompareSection" class="card section-advanced">
@@ -2227,6 +2603,32 @@
             </details>
           </details>
         </article>
+
+        <article id="sharadarCompareSection" class="card section-advanced">
+          <div class="section-title">
+            <h3>Sharadar Bundle compare</h3>
+            <small class="muted">Ticker vs ticker — daily multiples and latest ART. Research only; does not change scan ranking.</small>
+          </div>
+          <div class="sec-compare-controls">
+            <div class="sec-compare-grid">
+              <label class="field-label" for="sharadarCompareTickerA">Ticker A</label>
+              <input id="sharadarCompareTickerA" placeholder="Ticker A (AAPL)" />
+              <label class="field-label" for="sharadarCompareTickerB">Ticker B</label>
+              <input id="sharadarCompareTickerB" placeholder="Ticker B (MSFT)" />
+            </div>
+            <div class="sec-compare-actions">
+              <button id="sharadarCompareBtn" class="btn secondary" type="button">Compare Bundle</button>
+            </div>
+          </div>
+          <div id="sharadarComparePresetButtons" class="compare-presets" aria-label="Common pairs">
+            <button type="button" class="btn small secondary" data-a="AAPL" data-b="MSFT">AAPL vs MSFT</button>
+            <button type="button" class="btn small secondary" data-a="GOOGL" data-b="META">GOOGL vs META</button>
+          </div>
+          <div id="sharadarCompareBody" class="sharadar-body" aria-live="polite">
+            <p class="muted">Enter two tickers and compare Sharadar daily + latest ART.</p>
+          </div>
+        </article>
+
         <article id="activitySection" class="card hidden" aria-hidden="true"></article>
       </section>
 
@@ -2262,18 +2664,14 @@
           Pick a ticker (or click Quick View on a pending trade) to load a decision card.
         </p>
         <div id="tradeDrawerDecisionSummary" class="tool-summary-card hidden" aria-live="polite"></div>
-        <details id="tradeDrawerDecisionJsonDetails" class="tool-json-details hidden">
-          <summary>Raw data</summary>
-          <pre id="tradeDrawerDecisionOutput" class="code-block"></pre>
-        </details>
       </div>
       <div id="tradeDrawerPanelRecovery" class="trade-drawer-panel hidden" role="tabpanel" aria-labelledby="tradeDrawerTabRecovery">
         <div class="inline-form">
           <label class="field-label" for="tradeDrawerRecoverySource">Source</label>
           <select id="tradeDrawerRecoverySource">
-            <option value="schwab_auth">schwab_auth</option>
-            <option value="market_data">market_data</option>
-            <option value="execution">execution</option>
+            <option value="schwab_auth">Schwab sign-in</option>
+            <option value="market_data">Market data</option>
+            <option value="execution">Order execution</option>
           </select>
           <input id="tradeDrawerRecoveryMessage" placeholder="Paste an error message…" autocomplete="off" />
           <button id="tradeDrawerRecoveryBtn" class="btn primary small" type="button">Map fix</button>
@@ -2282,10 +2680,6 @@
           Paste an auth, data, or execution error to get a guided fix path.
         </p>
         <div id="tradeDrawerRecoverySummary" class="tool-summary-card hidden" aria-live="polite"></div>
-        <details id="tradeDrawerRecoveryJsonDetails" class="tool-json-details hidden">
-          <summary>Raw data</summary>
-          <pre id="tradeDrawerRecoveryOutput" class="code-block"></pre>
-        </details>
       </div>
     </aside>
 
@@ -2298,10 +2692,12 @@
       </div>
     </section>
 
-    <nav class="mobile-primary-dock" aria-label="Primary mobile actions">
-      <button type="button" class="btn secondary" data-forward-click="refreshBtn">Refresh</button>
-      <button type="button" class="btn primary" data-forward-click="scanBtn">Run Scan</button>
-      <a class="btn secondary" href="#pendingSection">Approvals</a>
+    <nav class="mobile-primary-dock" aria-label="Workspace areas">
+      <button type="button" class="mobile-dock-tab" data-mobile-screen="operations" aria-current="page">Today</button>
+      <button type="button" class="mobile-dock-tab" data-mobile-screen="research">Research</button>
+      <button type="button" class="mobile-dock-tab" data-mobile-screen="intel">Intel</button>
+      <button type="button" class="mobile-dock-tab" data-mobile-screen="diagnostics">System</button>
+      <button type="button" class="mobile-dock-tab" data-mobile-screen="backtest">Backtest</button>
     </nav>
 
     <dialog id="intelLookupDialog" class="modal intel-lookup-modal" aria-labelledby="intelLookupTitle">
@@ -2373,17 +2769,19 @@
       <form method="dialog">
         <h3>Website feature guide</h3>
         <p class="muted">
-          Four workspaces: <strong>Today</strong> (scan → stage → approve), <strong>Research</strong> (validate ideas),
-          <strong>System</strong> (health + calibration), and <strong>Settings</strong> (connectivity + guardrails).
+          Five workspaces: <strong>Today</strong> (scan → review → approve), <strong>Research</strong> (portfolio and a name),
+          <strong>Intel</strong> (open positions), <strong>System</strong> (health, calibration, and connection),
+          and <strong>Backtest</strong> (single-window replays). Settings live inside System.
         </p>
         <ul class="muted" style="margin: 0.5rem 0 0.75rem 1rem">
-          <li><strong>Today:</strong> scan with provenance, review rank/score, stage tradeable setups only.</li>
-          <li><strong>Research:</strong> quick check, backtest, dossier, SEC compare.</li>
-          <li><strong>System:</strong> health ribbon, calibration drift, shadow scoreboard.</li>
-          <li><strong>Settings:</strong> Schwab connect, strategy presets, live-trading guardrails.</li>
+          <li><strong>Today:</strong> one tradeable name at a time. Queue only when analog and filings are clear.</li>
+          <li><strong>Research:</strong> equity weight, stops, quick check, dossier, SEC compare.</li>
+          <li><strong>Intel:</strong> conviction and options on names you already hold.</li>
+          <li><strong>System:</strong> health, the labeled profit-factor board, Schwab connect, and risk presets.</li>
+          <li><strong>Backtest:</strong> one window at a time. A single-window profit factor is not the signed book.</li>
         </ul>
         <p class="muted">
-          For full per-setting behavior, open <strong>Settings -> Full settings logic guide</strong>.
+          For per-setting behavior, open <strong>System → Risk presets</strong>.
         </p>
         <div class="modal-actions">
           <button id="featureGuideCloseBtn" class="btn secondary" value="default">Got it</button>
@@ -2402,7 +2800,7 @@
           <svg class="cmd-palette-search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="cmdPaletteInput" type="text" class="cmd-palette-input" role="combobox" aria-expanded="true" aria-controls="cmdPaletteList" aria-autocomplete="list" placeholder="Type a command or section name..." autocomplete="off" spellcheck="false" />
           <span class="cmd-palette-hints" aria-hidden="true">
-            <kbd class="cmd-palette-hint">Ctrl/Cmd+1..4</kbd>
+            <kbd class="cmd-palette-hint">Ctrl/Cmd+1..5</kbd>
             <kbd class="cmd-palette-hint">Ctrl/Cmd+K</kbd>
           </span>
           <kbd class="cmd-palette-esc">Esc</kbd>
@@ -2412,7 +2810,11 @@
     </div>
 
     <script>
-      window.__APP_VERSION__ = "__APP_VERSION__";
+      // Property name must not be the substitution token: render_versioned_html
+      // replaces every literal __APP_VERSION__, which on both sides of the
+      // assignment produced `window.<version> = "<version>"` — an invalid
+      // identifier that threw and killed this block.
+      window.appVersion = "__APP_VERSION__";
     </script>
     <script type="importmap">
       {

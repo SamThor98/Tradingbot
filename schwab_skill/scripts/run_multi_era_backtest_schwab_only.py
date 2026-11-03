@@ -139,7 +139,30 @@ def _auth_preflight_ok() -> bool:
     return False
 
 
-def _load_universe_tickers() -> list[str]:
+_SP1500_PRESETS = frozenset({"sp1500", "watchlist", ""})
+_UNRUNNABLE_PRESETS = frozenset({"custom", "russell2000"})
+
+
+def _normalize_universe_preset(preset: str | None) -> str:
+    key = str(preset or "sp1500").strip().lower() or "sp1500"
+    if key in _UNRUNNABLE_PRESETS:
+        raise ValueError(f"universe preset {key!r} is not runnable (custom needs tickers; russell2000 is not wired)")
+    return key
+
+
+def _select_eras(only_eras: str | None = None) -> list[tuple[str, str | None, str]]:
+    """Return ERAS rows, optionally filtered by comma-separated era names."""
+    if not only_eras or not str(only_eras).strip():
+        return list(ERAS)
+    wanted = [part.strip() for part in str(only_eras).split(",") if part.strip()]
+    known = {name: (start, end, name) for start, end, name in ERAS}
+    missing = [name for name in wanted if name not in known]
+    if missing:
+        raise ValueError(f"unknown era(s) {missing}; known: {sorted(known)}")
+    return [known[name] for name in wanted]
+
+
+def _load_sp1500_tickers() -> list[str]:
     # Avoid network/watchlist refresh stalls by using cached full-universe list first.
     from watchlist_loader import _fallback_watchlist, _load_cached, load_full_watchlist
 
@@ -153,6 +176,28 @@ def _load_universe_tickers() -> list[str]:
     except Exception:
         pass
     return _fallback_watchlist()
+
+
+def _load_universe_tickers(preset: str = "sp1500") -> list[str]:
+    """Load tickers for a scan-catalog universe preset (same sources as Scan studio)."""
+    from watchlist_loader import load_universe, prefilter_watchlist
+
+    key = _normalize_universe_preset(preset)
+    if key in _SP1500_PRESETS:
+        return _load_sp1500_tickers()
+    if key == "focused":
+        try:
+            from config import get_signal_universe_target_size
+
+            target = max(20, int(get_signal_universe_target_size(_runtime_skill_dir())))
+        except Exception:
+            target = 250
+        return prefilter_watchlist(_load_sp1500_tickers(), max_tickers=target, include_etf_hints=True)
+    wl = load_universe(key)
+    cleaned = [str(t).strip().upper() for t in (wl or []) if str(t).strip()]
+    if not cleaned:
+        raise ValueError(f"universe preset {key!r} loaded 0 tickers")
+    return list(dict.fromkeys(cleaned))
 
 
 def _aggregate_era(
@@ -270,7 +315,6 @@ SCORE_EXPORT_KEYS = (
     "rank_score",
     "rank_score_v2",
     "p_up_calibrated",
-    "ev_10d",
     "pts_52w",
     "pts_sma",
     "pts_volume",
@@ -280,12 +324,45 @@ SCORE_EXPORT_KEYS = (
     "entry_price_ref",
 )
 
+# Shadow grade. Numeric columns stay floats. Letters, sources, and flags pass through.
+GRADE_FLOAT_KEYS = (
+    "qual_raw",
+    "qual_raw_equal",
+    "qual_raw_with_business",
+    "qual_raw_with_asymmetry_distance",
+    "qual_score",
+    "qual_trend",
+    "qual_setup",
+    "qual_asymmetry",
+    "qual_asymmetry_distance",
+    "qual_crowding",
+    "qual_business",
+    "debate_score",
+    "qual_coverage_trend",
+    "qual_coverage_setup",
+    "qual_coverage_asymmetry",
+    "qual_coverage_crowding",
+    "qual_disagreement",
+)
+GRADE_PASSTHROUGH_KEYS = (
+    "qual_letter",
+    "disagreement_source",
+    "qual_abstain",
+    "debate_grade_would_skip",
+)
+
 
 def _score_projection_fields(t: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key in SCORE_EXPORT_KEYS:
         if t.get(key) is not None:
             out[key] = _maybe_float(t.get(key))
+    for key in GRADE_FLOAT_KEYS:
+        if t.get(key) is not None:
+            out[key] = _maybe_float(t.get(key))
+    for key in GRADE_PASSTHROUGH_KEYS:
+        if key in t and t.get(key) is not None:
+            out[key] = t.get(key)
     return out
 
 
@@ -641,6 +718,7 @@ def _warm_earnings_cache_if_requested(
     ticker_limit: int | None = None,
     *,
     force: bool = False,
+    universe_preset: str = "sp1500",
 ) -> bool:
     """Optional preflight: warm Finnhub earnings cache before multi-era PEAD use."""
     from earnings_signal import (
@@ -654,16 +732,13 @@ def _warm_earnings_cache_if_requested(
     if _resolve_pead_provider(skill_dir) == "off":
         print("[multi-era] earnings warm skipped: PEAD provider off")
         return True
-    watchlist = _load_universe_tickers()
+    watchlist = _load_universe_tickers(universe_preset)
     if ticker_limit and ticker_limit > 0:
         watchlist = watchlist[:ticker_limit]
     clear_earnings_cache_memo(skill_dir)
     summary_before = earnings_cache_summary(watchlist, skill_dir=skill_dir)
     if not force and summary_before.get("missing") == 0:
-        print(
-            f"[multi-era] earnings cache already warm "
-            f"({summary_before.get('fresh')}/{summary_before.get('total')})"
-        )
+        print(f"[multi-era] earnings cache already warm ({summary_before.get('fresh')}/{summary_before.get('total')})")
         return True
     print(
         f"[multi-era] warming earnings cache for {len(watchlist)} tickers "
@@ -710,13 +785,22 @@ def _orchestrate(
     ticker_limit: int | None = None,
     warm_earnings_cache: bool = False,
     force_warm_earnings_cache: bool = False,
+    universe_preset: str = "sp1500",
+    only_eras: str | None = None,
 ) -> int:
     if not _auth_preflight_ok():
         return RC_AUTH_PREFLIGHT_FAILED
+    preset = _normalize_universe_preset(universe_preset)
+    try:
+        eras = _select_eras(only_eras)
+    except ValueError as exc:
+        print(f"[multi-era] {exc}")
+        return 3
     if warm_earnings_cache or force_warm_earnings_cache:
         if not _warm_earnings_cache_if_requested(
             ticker_limit,
             force=bool(force_warm_earnings_cache),
+            universe_preset=preset,
         ):
             return 4
     if run_tag:
@@ -752,11 +836,11 @@ def _orchestrate(
     era_state: dict[str, Any] = {}
     _write_progress(run_id, completed, None, "running", failed, era_state)
 
-    for start_date, end_date, name in ERAS:
+    for start_date, end_date, name in eras:
         if name in completed_by_era:
             print(f"[multi-era] skipping completed era {name}")
             continue
-        watchlist = _load_universe_tickers()
+        watchlist = _load_universe_tickers(preset)
         if ticker_limit and ticker_limit > 0:
             watchlist = watchlist[:ticker_limit]
         chunks = _chunk(watchlist, chunk_size)
@@ -841,6 +925,8 @@ def _orchestrate(
         "run_id": run_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schwab_only": True,
+        "universe_preset": preset,
+        "eras": [name for _, _, name in eras],
         "results": completed,
         "failed_eras": failed,
     }
@@ -886,6 +972,16 @@ def main() -> int:
         help="Truncate the universe to the first N tickers (0 = use full Schwab watchlist; for smoke tests).",
     )
     parser.add_argument(
+        "--universe-preset",
+        default="sp1500",
+        help="Scan-catalog universe: sp1500, sp500, nasdaq100, sector_etfs, focused.",
+    )
+    parser.add_argument(
+        "--only-eras",
+        default="",
+        help="Comma-separated era names to run (default: all five). Example: recent_current",
+    )
+    parser.add_argument(
         "--warm-earnings-cache",
         action="store_true",
         help="Pre-warm Finnhub earnings cache for the universe before era chunks (PEAD/confluence).",
@@ -929,6 +1025,8 @@ def main() -> int:
         ticker_limit=args.ticker_limit or None,
         warm_earnings_cache=bool(args.warm_earnings_cache or args.force_warm_earnings_cache),
         force_warm_earnings_cache=bool(args.force_warm_earnings_cache),
+        universe_preset=args.universe_preset,
+        only_eras=args.only_eras or None,
     )
 
 

@@ -49,6 +49,7 @@ def hermetic_chain(monkeypatch):
         types.SimpleNamespace(
             apply_meta_policy_to_signal=lambda *, signal, diagnostics, skill_dir: (signal, True),
             log_counterfactual_event=lambda *_a, **_k: False,
+            meta_policy_counterfactual_reason=lambda **_k: None,
         ),
     )
     monkeypatch.setitem(
@@ -76,6 +77,8 @@ def hermetic_chain(monkeypatch):
         # tests exercise ranking only, not the promoted percentile filter.
         "RANK_FILTER_V2_MODE",
         "CONFLUENCE_GATE_MODE",
+        "HISTORICAL_RANK_MODE",
+        "ANALOG_OVERLAY_MODE",
     ):
         monkeypatch.setenv(var, "off")
     clear_env_cache()

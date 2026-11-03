@@ -13,6 +13,9 @@ const API_SOURCE_LABELS = {
   "/api/scan": "last scan",
   "/api/auth/session": "sign-in status",
   "/api/ablation/status": "strategy test status",
+  "/api/portfolio": "portfolio",
+  "/api/position-intel": "position intel",
+  "/api/check": "quick check",
 };
 
 const KEY_LABELS = {
@@ -55,9 +58,15 @@ const KEY_LABELS = {
   champion_better: "Current settings look better",
   stage2_fail: "Did not pass uptrend check",
   stage_a_candidates: "Passed quick filter",
+  df_empty: "No price data",
+  exceptions: "Processing errors",
+  too_few_candles: "Insufficient history",
+  bars_stale: "Stale price bars",
   SIGNAL_UNIVERSE_MODE: "Universe mode",
   TOP_N: "Rank limit",
   SIGNAL_TOP_N: "Rank limit",
+  validation_status_generated_at: "validation run",
+  "validation_status.generated_at": "validation run",
 };
 
 const ENV_PARAM_LABELS = {
@@ -113,9 +122,14 @@ export function humanizeApiSource(source) {
   const raw = safeText(source).trim();
   if (!raw) return "";
   if (API_SOURCE_LABELS[raw]) return API_SOURCE_LABELS[raw];
+  const apiPath = raw.startsWith("/api/") ? raw.split(/\s+/)[0] : "";
+  if (apiPath && API_SOURCE_LABELS[apiPath]) return API_SOURCE_LABELS[apiPath];
   if (raw.startsWith("/api/")) {
-    const tail = raw.replace(/^\/api\//, "").replace(/\//g, " · ");
+    const tail = apiPath.replace(/^\/api\//, "").replace(/\//g, " · ");
     return humanizeKey(tail.replace(/-/g, "_"));
+  }
+  if (/^[A-Za-z][A-Za-z0-9_.]+$/.test(raw) && /[._]/.test(raw)) {
+    return humanizeKey(raw.replace(/\./g, "_"));
   }
   return raw;
 }
@@ -182,4 +196,26 @@ export function humanizeFieldLabel(key) {
 export function humanizeEnvParam(envKey) {
   const k = safeText(envKey).trim();
   return ENV_PARAM_LABELS[k] || humanizeKey(k);
+}
+
+/**
+ * Surface data_quality verbatim in plain English (never `data_quality=`).
+ * @param {string} value
+ * @returns {string}
+ */
+export function humanizeDataQualityLabel(value) {
+  const raw = safeText(value).trim();
+  if (!raw) return "";
+  return raw;
+}
+
+/**
+ * Rewrite producer provenance lines that still use assignment syntax.
+ * @param {string} line
+ * @returns {string}
+ */
+export function humanizeProvenanceLine(line) {
+  const raw = safeText(line).trim();
+  if (!raw) return "";
+  return raw.replace(/data_quality\s*=\s*/gi, "Data quality: ");
 }

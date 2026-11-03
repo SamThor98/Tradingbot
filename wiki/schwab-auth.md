@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/Schwab Auth.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-08-20
 tags: [architecture, auth, schwab]
 ---
 
@@ -33,6 +33,8 @@ tags: [architecture, auth, schwab]
 
 Automatic via `DualSchwabAuth`. Full expiry requires re-auth (local: `run_dual_auth.py`, SaaS: dashboard reconnect).
 
+OAuth code exchange (`auth.exchange_code_for_tokens` / `schwab_auth.exchange_code`) must **not** fast-fail on `schwab_circuit`. A scan timeout can open the breaker; finishing the Schwab login is how the operator recovers. A successful token response resets the breaker. See [[guardrails]].
+
 ## Health Monitoring
 
 - `GET /api/health/deep` reports `market_token_ok`, `account_token_ok`, `last_quote_age_sec`
@@ -44,7 +46,8 @@ Automatic via `DualSchwabAuth`. Full expiry requires re-auth (local: `run_dual_a
 - [[schwab-oauth-setup]] — step-by-step runbook
 - [[system-overview]] — where auth fits in the pipeline
 - [[saas-api]] — SaaS OAuth callback routes
+- [[guardrails]] — circuit breaker must not block OAuth recovery
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-08-20*

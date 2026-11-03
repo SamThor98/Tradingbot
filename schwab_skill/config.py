@@ -4,12 +4,16 @@ Load configurable parameters from .env for Stage 2, VCP, signal scoring, and dat
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
+LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
+_USER_TRADING_HALT_STATE = ".user_trading_halt.json"
 
 # Cache parsed `.env` files keyed by absolute path. Each entry stores the file's
 # mtime_ns alongside the parsed values so we can invalidate when the file
@@ -27,7 +31,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
             continue
         if "=" in line:
             k, _, v = line.partition("=")
-            vals[k.strip()] = v.strip().strip('"\'')
+            vals[k.strip()] = v.strip().strip("\"'")
     return vals
 
 
@@ -169,6 +173,41 @@ def get_pred_market_provider(skill_dir: Path | None = None) -> str:
     if raw in {"stub", "polymarket"}:
         return raw
     return "stub"
+
+
+def get_liquid_overlay_mode(skill_dir: Path | None = None) -> str:
+    """Liquid positioning overlay rollout mode (OFF|SHADOW|LIVE).
+
+    Shadow-first per plugin rollout rules. LIVE here means rank/display
+    influence only — Liquid execution is never integrated; Schwab stays
+    the broker of record.
+    """
+    return _get_mode("LIQUID_OVERLAY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_liquid_collect_enabled(skill_dir: Path | None = None) -> bool:
+    """Enable the Liquid (xyz) snapshot collector. Default off until opted in."""
+    return _get_bool("LIQUID_COLLECT_ENABLED", False, skill_dir)
+
+
+def get_liquid_dex(skill_dir: Path | None = None) -> str:
+    """Hyperliquid HIP-3 dex hosting Liquid's equity perps."""
+    env = _load_env(skill_dir)
+    raw = _env_value("LIQUID_DEX", env).strip().lower()
+    return raw if raw else "xyz"
+
+
+def get_liquid_api_url(skill_dir: Path | None = None) -> str:
+    """Hyperliquid public info API endpoint (no credentials)."""
+    env = _load_env(skill_dir)
+    raw = _env_value("LIQUID_API_URL", env).strip()
+    return raw if raw else "https://api.hyperliquid.xyz/info"
+
+
+def get_liquid_min_oi_usd(skill_dir: Path | None = None) -> float:
+    """OI (USD) below this is no-signal: snapshot kept, flagged thin."""
+    val = _get_float("LIQUID_MIN_OI_USD", 1_000_000.0, skill_dir)
+    return max(0.0, val)
 
 
 def get_pred_market_timeout_ms(skill_dir: Path | None = None) -> int:
@@ -586,14 +625,29 @@ def get_scan_stage_task_timeout_sec(skill_dir: Path | None = None) -> float:
     return _get_float("SCAN_STAGE_TASK_TIMEOUT_SEC", 120.0, skill_dir)
 
 
-def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
-    """Hard wall-clock ceiling for a single scan stage (Stage A or Stage B).
+def get_scan_stage_a_max_stalls(skill_dir: Path | None = None) -> int:
+    """Waves that finish no symbols before Stage A checkpoints the rest.
 
-    The per-stage ``as_completed`` timeout was previously ``task_timeout *
-    num_futures``, which is effectively unbounded on a broad universe (e.g.
-    120s * 1500). This caps the worst-case wait so a stuck stage cannot hang
-    the whole scan; futures still pending at the budget are cancelled and
-    counted as timeouts by the existing handling.
+    A wave that completes at least one symbol resets the stall count, so a slow
+    but healthy scan continues until the watchlist is covered. Two stalled waves
+    means the data source is not making progress; the remainder is checkpointed
+    for the next scan instead of being dropped.
+    """
+    return _get_int("SCAN_STAGE_A_MAX_STALLS", 2, skill_dir)
+
+
+def get_scan_stage_a_checkpoint_enabled(skill_dir: Path | None = None) -> bool:
+    """Persist Stage A decisions so a restarted scan resumes the remainder."""
+    return _get_bool("SCAN_STAGE_A_CHECKPOINT", True, skill_dir)
+
+
+def get_scan_stage_wall_budget_sec(skill_dir: Path | None = None) -> float:
+    """Hard wall-clock ceiling for one Stage A wave, or for Stage B.
+
+    A Stage A wave that finishes at least one symbol is followed by another
+    wave until the watchlist is covered. This cap only bounds a wave whose
+    workers are stuck. Names still pending after the stall limit are
+    checkpointed, not counted as Stage 2 passes.
     """
     return _get_float("SCAN_STAGE_WALL_BUDGET_SEC", 1800.0, skill_dir)
 
@@ -689,6 +743,76 @@ def get_scan_live_sort_key(skill_dir: Path | None = None) -> str:
 def get_rank_score_v2_mode(skill_dir: Path | None = None) -> str:
     """Component-weighted rank-v2 computation mode; sorting is configured separately."""
     return _get_mode("RANK_SCORE_V2_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_historical_rank_mode(skill_dir: Path | None = None) -> str:
+    """Fitted historical blend attach: off | shadow | live. Live is not approved."""
+    return _get_mode("HISTORICAL_RANK_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_historical_rank_artifact(skill_dir: Path | None = None) -> str:
+    """Optional override path for ``research_store/models/historical_rank_blend.json``."""
+    env = _load_env(skill_dir)
+    return _env_value("HISTORICAL_RANK_ARTIFACT", env).strip()
+
+
+def get_analog_overlay_mode(skill_dir: Path | None = None) -> str:
+    """Winner-neighborhood analog overlay: off | shadow | live. Live is not approved."""
+    return _get_mode("ANALOG_OVERLAY_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_analog_overlay_artifact(skill_dir: Path | None = None) -> str:
+    """Optional override path for ``research_store/models/analog_library.json``."""
+    env = _load_env(skill_dir)
+    return _env_value("ANALOG_OVERLAY_ARTIFACT", env).strip()
+
+
+def get_analog_overlay_k(skill_dir: Path | None = None) -> int:
+    """Neighbor count for analog k-NN (Euclidean in normalized space)."""
+    return _get_int("ANALOG_OVERLAY_K", 40, skill_dir)
+
+
+def get_analog_overlay_min_n(skill_dir: Path | None = None) -> int:
+    """Minimum neighbors before analog_p_win / PF shrink toward the era prior."""
+    return _get_int("ANALOG_OVERLAY_MIN_N", 20, skill_dir)
+
+
+def get_confidence_rank_mode(skill_dir: Path | None = None) -> str:
+    """Setup-confidence survival readout: off | shadow | live. Live is not approved."""
+    return _get_mode("CONFIDENCE_RANK_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_extension_sort_mode(skill_dir: Path | None = None) -> str:
+    """Less-extended shadow sort (inverted pts_52w): off | shadow | live.
+
+    Default ``shadow``. Live is refused in ``core.extension_sort`` — it does
+    not change ``SCAN_LIVE_SORT_KEY``.
+    """
+    return _get_mode("EXTENSION_SORT_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_pead_extension_drop_mode(skill_dir: Path | None = None) -> str:
+    """PEAD-only extended-name mark: off | shadow | live.
+
+    Default ``shadow``. Live is refused in ``core.pead_extension_drop``.
+    Stage 2 rows are never stamped.
+    """
+    return _get_mode("PEAD_EXTENSION_DROP_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_pead_extension_drop_min(skill_dir: Path | None = None) -> float:
+    """Drop mark when close is at least this far above the 200-day average.
+
+    Default 0.2028 is the 80th percentile on ``pead_primary_aug_fixed_full_c40``.
+    """
+    val = _get_float("PEAD_EXTENSION_DROP_MIN_SMA200_PCT", 0.2028, skill_dir)
+    return max(0.0, min(2.0, val))
+
+
+def get_confidence_rank_artifact(skill_dir: Path | None = None) -> str:
+    """Optional override path for ``research_store/models/scan_confidence.json``."""
+    env = _load_env(skill_dir)
+    return _env_value("CONFIDENCE_RANK_ARTIFACT", env).strip()
 
 
 def get_rank_v2_signal_weight(skill_dir: Path | None = None) -> float:
@@ -1034,6 +1158,19 @@ def get_alert_ping_score(skill_dir: Path | None = None) -> int:
     return _get_int("ALERT_PING_SCORE", 60, skill_dir)
 
 
+ENTRY_PROTECTION_MODES = {"bracket", "separate"}
+
+
+def get_entry_protection_mode(skill_dir: Path | None = None) -> str:
+    """How a BUY carries its protective stop.
+
+    ``bracket`` sends one TRIGGER order whose child is the stop, so Schwab
+    holds the stop after the entry fills. ``separate`` is the previous
+    two-request path, kept for rollback.
+    """
+    return _get_mode("ENTRY_PROTECTION_MODE", ENTRY_PROTECTION_MODES, "bracket", skill_dir)
+
+
 def get_stop_order_duration(skill_dir: Path | None = None) -> str:
     """
     Stop duration for protective trailing stop orders.
@@ -1091,9 +1228,61 @@ def get_live_trading_kill_switch(skill_dir: Path | None = None) -> bool:
     return _get_bool("LIVE_TRADING_KILL_SWITCH", False, skill_dir)
 
 
-def get_user_trading_halted(skill_dir: Path | None = None) -> bool:
-    """Per-user pause when USER_TRADING_HALTED=1 (SaaS materializes from DB)."""
+def user_trading_halt_state_path(skill_dir: Path | None = None) -> Path:
+    """Local pause file written by the Discord operator desk."""
+    return (skill_dir or SKILL_DIR) / _USER_TRADING_HALT_STATE
+
+
+def env_user_trading_halted(skill_dir: Path | None = None) -> bool:
+    """True when USER_TRADING_HALTED is set. SaaS materializes this from the user row."""
     return _get_bool("USER_TRADING_HALTED", False, skill_dir)
+
+
+def _read_user_trading_halt_file(skill_dir: Path | None = None) -> bool:
+    """True when the local pause file says new buys are paused.
+
+    A missing file means not paused. A file that exists but cannot be read as
+    ``{"halted": true|false}`` fails closed and stays paused.
+    """
+    path = user_trading_halt_state_path(skill_dir)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        LOG.warning("User trading halt file unreadable, failing closed: %s", path)
+        return True
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        LOG.warning("User trading halt file is not valid JSON, failing closed: %s", path)
+        return True
+    if not isinstance(payload, dict):
+        LOG.warning("User trading halt file is not an object, failing closed: %s", path)
+        return True
+    flag = payload.get("halted")
+    if not isinstance(flag, bool):
+        LOG.warning("User trading halt file is missing a boolean halted flag, failing closed: %s", path)
+        return True
+    return flag
+
+
+def set_user_trading_halt_state(halted: bool, skill_dir: Path | None = None) -> None:
+    """Persist the local new-buy pause. Does not change USER_TRADING_HALTED."""
+    path = user_trading_halt_state_path(skill_dir)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"halted": bool(halted)}), encoding="utf-8")
+    tmp.replace(path)
+
+
+def get_user_trading_halted(skill_dir: Path | None = None) -> bool:
+    """Pause new buys when the env flag or the local halt file says so.
+
+    Either source is enough. Clearing the file does not override USER_TRADING_HALTED.
+    """
+    if env_user_trading_halted(skill_dir):
+        return True
+    return _read_user_trading_halt_file(skill_dir)
 
 
 def get_live_trading_kill_switch_blocks_exits(skill_dir: Path | None = None) -> bool:
@@ -1452,7 +1641,9 @@ def get_quality_gates_mode(skill_dir: Path | None = None) -> str:
     - shadow: disabled but tracks would-filter counts
     - soft: filter only when multiple weak reasons exist (default)
     - hard: filter on any weak reason
-    Note: weak_breakout_volume is a hard gate when mode is soft or hard.
+    ``weak_breakout_volume`` does not drop a name by itself in soft mode,
+    even when the soft minimum is 1. It counts once another reason is
+    present. Hard mode still drops it alone.
     """
     env = _load_env(skill_dir)
     raw = _env_value("QUALITY_GATES_MODE", env).strip().lower()
@@ -1468,8 +1659,44 @@ def get_quality_soft_min_reasons(skill_dir: Path | None = None) -> int:
 
 
 def get_quality_min_signal_score(skill_dir: Path | None = None) -> int:
-    """Minimum score required when quality gates are enabled."""
+    """Configured minimum score. Prefer get_quality_min_signal_score_effective() at the gate."""
     return _get_int("QUALITY_MIN_SIGNAL_SCORE", 50, skill_dir)
+
+
+def quality_signal_score_ceiling(skill_dir: Path | None = None) -> float:
+    """Highest signal_score that can also pass the breakout-volume gate, without MiroFish.
+
+    Closeness to the 52-week high is worth at most 40. SMA points use the live
+    multiplier (0 by default). Volume points at the minimum passing ratio are
+    worth at most ``20 - ratio * 20``. MiroFish is left out so a missing model
+    cannot be required to clear the floor.
+    """
+    pts_52w = 40.0
+    sma = float(get_score_pts_sma_cap(skill_dir)) * max(0.0, float(get_score_pts_sma_multiplier(skill_dir)))
+    if get_quality_require_breakout_volume(skill_dir):
+        ratio = max(0.0, float(get_quality_breakout_volume_min_ratio(skill_dir)))
+        pts_volume = max(0.0, 20.0 - ratio * 20.0)
+    else:
+        pts_volume = 20.0
+    return pts_52w + sma + pts_volume
+
+
+def get_quality_min_signal_score_effective(skill_dir: Path | None = None) -> float:
+    """Floor on the score the live formula can actually produce.
+
+    ``QUALITY_MIN_SIGNAL_SCORE`` was set when SMA distance could add up to 25
+    points. ``SCORE_PTS_SMA_MULTIPLIER`` defaults to 0, which removes that
+    budget and leaves a floor of 50 or 52 above the remaining ceiling (~42
+    with the volume gate on and MiroFish absent). The effective floor subtracts
+    the inactive SMA budget, then caps at that ceiling.
+    """
+    configured = float(get_quality_min_signal_score(skill_dir))
+    sma_cap = float(get_score_pts_sma_cap(skill_dir))
+    sma_mult = max(0.0, float(get_score_pts_sma_multiplier(skill_dir)))
+    inactive_sma = sma_cap * max(0.0, 1.0 - sma_mult)
+    shifted = configured - inactive_sma
+    ceiling = quality_signal_score_ceiling(skill_dir)
+    return max(0.0, min(shifted, ceiling))
 
 
 def get_quality_min_continuation_prob(skill_dir: Path | None = None) -> float:
@@ -1766,6 +1993,162 @@ def get_finnhub_api_key(skill_dir: Path | None = None) -> str:
     return _env_value("FINNHUB_API_KEY", env).strip()
 
 
+PIT_UNIVERSE_PROVIDER_VALUES = frozenset({"stub", "sharadar"})
+
+
+def get_sharadar_api_key(skill_dir: Path | None = None) -> str:
+    """Sharadar direct API key (empty string disables Sharadar)."""
+    env = _load_env(skill_dir)
+    return _env_value("SHARADAR_API_KEY", env).strip()
+
+
+def get_sharadar_api_base(skill_dir: Path | None = None) -> str:
+    """Sharadar REST base (not Nasdaq Data Link)."""
+    env = _load_env(skill_dir)
+    raw = _env_value("SHARADAR_API_BASE", env).strip()
+    return raw or "https://api.sharadar.com/v1.0"
+
+
+def get_sharadar_enabled(skill_dir: Path | None = None) -> bool:
+    """Master switch for dashboard Sharadar snapshots. Default on when a key is set."""
+    env = _load_env(skill_dir)
+    raw = _env_value("SHARADAR_ENABLED", env).strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return bool(get_sharadar_api_key(skill_dir))
+
+
+def get_sharadar_cache_enabled(skill_dir: Path | None = None) -> bool:
+    return _get_bool("SHARADAR_CACHE_ENABLED", True, skill_dir)
+
+
+def get_sharadar_cache_hours(skill_dir: Path | None = None) -> float:
+    return max(0.25, min(72.0, _get_float("SHARADAR_CACHE_HOURS", 12.0, skill_dir)))
+
+
+def get_sharadar_timeout_sec(skill_dir: Path | None = None) -> float:
+    return max(5.0, min(60.0, _get_float("SHARADAR_TIMEOUT_SEC", 30.0, skill_dir)))
+
+
+def get_companyfacts_enabled(skill_dir: Path | None = None) -> bool:
+    """Master switch for the Research pricing-model warehouse."""
+    return _get_bool("COMPANYFACTS_ENABLED", True, skill_dir)
+
+
+def get_companyfacts_cache_hours(skill_dir: Path | None = None) -> float:
+    """TTL for successful SEC companyfacts documents."""
+    return max(1.0, min(168.0, _get_float("COMPANYFACTS_CACHE_HOURS", 72.0, skill_dir)))
+
+
+def get_companyfacts_timeout_sec(skill_dir: Path | None = None) -> float:
+    return max(5.0, min(120.0, _get_float("COMPANYFACTS_TIMEOUT_SEC", 30.0, skill_dir)))
+
+
+def get_companyfacts_yahoo_fallback(skill_dir: Path | None = None) -> bool:
+    """Yahoo statement fallback for report DCF only — never mixed into Sharadar."""
+    if get_schwab_only_data(skill_dir):
+        return False
+    return _get_bool("COMPANYFACTS_YAHOO_FALLBACK", False, skill_dir)
+
+
+EVENT_PROB_PROVIDER_VALUES = frozenset({"stub", "polymarket", "historical_file"})
+
+
+def get_event_prob_enabled(skill_dir: Path | None = None) -> bool:
+    """Master switch for the research event-probability layer. Default off."""
+    return _get_bool("EVENT_PROB_ENABLED", False, skill_dir)
+
+
+def get_event_prob_mode(skill_dir: Path | None = None) -> str:
+    """Event-probability rollout: off | shadow | live. Live shows the panel only."""
+    return _get_mode("EVENT_PROB_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_event_prob_provider(skill_dir: Path | None = None) -> str:
+    """Event-market provider. Allowed: stub, polymarket, historical_file."""
+    env = _load_env(skill_dir)
+    raw = _env_value("EVENT_PROB_PROVIDER", env).strip().lower()
+    if raw in EVENT_PROB_PROVIDER_VALUES:
+        return raw
+    return "stub"
+
+
+def get_event_prob_timeout_ms(skill_dir: Path | None = None) -> int:
+    """Per-request timeout in milliseconds for event-probability providers."""
+    val = _get_int("EVENT_PROB_TIMEOUT_MS", 1500, skill_dir)
+    return max(100, min(30000, val))
+
+
+def get_event_prob_cache_ttl_sec(skill_dir: Path | None = None) -> int:
+    """Event-risk payload cache TTL (seconds)."""
+    return max(30, min(3600, _get_int("EVENT_PROB_CACHE_TTL_SEC", 300, skill_dir)))
+
+
+def get_event_prob_max_event_age_hours(skill_dir: Path | None = None) -> float:
+    """Age beyond which event weight shifts fully to the prior."""
+    val = _get_float("EVENT_PROB_MAX_EVENT_AGE_HOURS", 72.0, skill_dir)
+    return max(0.25, min(720.0, val))
+
+
+def get_event_prob_min_liquidity(skill_dir: Path | None = None) -> float:
+    """Liquidity floor used when scoring market trust."""
+    val = _get_float("EVENT_PROB_MIN_LIQUIDITY", 1000.0, skill_dir)
+    return max(0.0, val)
+
+
+def get_event_prob_max_spread(skill_dir: Path | None = None) -> float:
+    """Spread (0..1) at which market-trust decays to zero."""
+    val = _get_float("EVENT_PROB_MAX_SPREAD", 0.08, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_event_prob_max_market_weight(skill_dir: Path | None = None) -> float:
+    """Cap on how much a single market can move a valuation (0..1)."""
+    val = _get_float("EVENT_PROB_MAX_MARKET_WEIGHT", 0.85, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_event_prob_ems_lookback_days(skill_dir: Path | None = None) -> int:
+    """Lookback window (days) for the event mispricing score."""
+    val = _get_int("EVENT_PROB_EMS_LOOKBACK_DAYS", 7, skill_dir)
+    return max(1, min(365, val))
+
+
+def get_event_prob_historical_snapshot_path(skill_dir: Path | None = None) -> str:
+    """Frozen snapshot path required when the provider is historical_file."""
+    env = _load_env(skill_dir)
+    return _env_value("EVENT_PROB_HISTORICAL_SNAPSHOT_PATH", env).strip()
+
+
+def get_pit_universe_provider(skill_dir: Path | None = None) -> str:
+    """Live/research PIT membership provider. Default stub — do not auto-promote Sharadar."""
+    env = _load_env(skill_dir)
+    raw = _env_value("PIT_UNIVERSE_PROVIDER", env).strip().lower()
+    if raw in PIT_UNIVERSE_PROVIDER_VALUES:
+        return raw
+    return "stub"
+
+
+def get_pit_fundamental_coverage_min(skill_dir: Path | None = None) -> float:
+    """Minimum non-null fraction before a deferred PIT field may unlock."""
+    return max(0.0, min(1.0, _get_float("PIT_FUNDAMENTAL_COVERAGE_MIN", 0.70, skill_dir)))
+
+
+def get_fred_api_key(skill_dir: Path | None = None) -> str:
+    env = _load_env(skill_dir)
+    return _env_value("FRED_API_KEY", env).strip()
+
+
+def get_fred_regime_mode(skill_dir: Path | None = None) -> str:
+    """FRED overlay: off | shadow | live. Live is coerced to shadow (never a hard gate)."""
+    raw = _get_mode("FRED_REGIME_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+    if raw == "live":
+        return "shadow"
+    return raw
+
+
 def get_finnhub_timeout_sec(skill_dir: Path | None = None) -> float:
     """Per-request timeout in seconds for Finnhub HTTP calls."""
     value = _get_float("FINNHUB_TIMEOUT_SEC", 8.0, skill_dir)
@@ -1892,6 +2275,7 @@ def get_management_integrity_mode(skill_dir: Path | None = None) -> str:
 def get_management_integrity_filter_min_score(skill_dir: Path | None = None) -> int:
     """Integrity score below this triggers a shadow would-filter counter."""
     return max(0, min(100, _get_int("MANAGEMENT_INTEGRITY_FILTER_MIN_SCORE", 50, skill_dir)))
+
 
 # --- Data quality & degraded execution (default off: no behavior change) ---
 
@@ -2049,6 +2433,15 @@ def get_hypothesis_promotion_min_hit_rate(skill_dir: Path | None = None) -> floa
     return _get_float("HYPOTHESIS_PROMOTION_MIN_HIT_RATE", 0.45, skill_dir)
 
 
+def get_experiment_collector_enabled(skill_dir: Path | None = None) -> bool:
+    """Harvest shadow sessions and hypothesis rows after a scan.
+
+    Unset stays on so a missing flag cannot drop the research loop. Set
+    EXPERIMENT_COLLECTOR_ENABLED=false to stop harvest and the 16:15 brief.
+    """
+    return _get_bool("EXPERIMENT_COLLECTOR_ENABLED", True, skill_dir)
+
+
 # --- Agent intelligence controls (default off / safe) ---
 
 
@@ -2085,6 +2478,49 @@ def get_mirofish_weighting_min_multiplier(skill_dir: Path | None = None) -> floa
     """Lower cap for persona multiplier derived from reliability."""
     val = _get_float("MIROFISH_WEIGHTING_MIN_MULTIPLIER", 0.5, skill_dir)
     return max(0.1, min(1.0, val))
+
+
+def get_mirofish_abstain_mode(skill_dir: Path | None = None) -> str:
+    """High persona disagreement rollout (OFF|SHADOW|LIVE).
+
+    Default ``shadow``: record ``mirofish_abstain_would`` and leave
+    ``signal_score`` unchanged. ``live`` drops the MiroFish points from the
+    score and clears conviction.
+    """
+    return _get_mode("MIROFISH_ABSTAIN_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_mirofish_abstain_disagreement(skill_dir: Path | None = None) -> float:
+    """Disagreement at or above this value can abstain. Matches the debate cap."""
+    val = _get_float("MIROFISH_ABSTAIN_DISAGREEMENT", 0.65, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_debate_grade_mode(skill_dir: Path | None = None) -> str:
+    """Checklist grade rollout (OFF|SHADOW).
+
+    Default ``shadow``: attach the grade and log would-skip counters.
+    ``live`` is accepted in the environment and coerced to ``shadow`` by
+    ``attach_debate_grade``. The grade never changes ``signal_score``.
+    """
+    return _get_mode("DEBATE_GRADE_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_debate_committee_mode(skill_dir: Path | None = None) -> str:
+    """Sampled LLM committee (OFF|SHADOW).
+
+    Default ``shadow`` when an API key exists: at most a few names per scan.
+    ``live`` is coerced to ``shadow``. The committee never runs in the backtest
+    and never changes ``qual_raw`` or ``signal_score``. With no API key the
+    attach path returns without a network call.
+    """
+    return _get_mode("DEBATE_COMMITTEE_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_debate_committee_max_per_scan(skill_dir: Path | None = None) -> int:
+    """Cap on committee calls per scan. The stable hash still skips most names."""
+    val = _get_int("DEBATE_COMMITTEE_MAX_PER_SCAN", 3, skill_dir)
+    return max(1, min(20, val))
 
 
 def get_meta_policy_mode(skill_dir: Path | None = None) -> str:
@@ -2352,3 +2788,146 @@ def get_r3_capacity_shadow(skill_dir: Path | None = None) -> bool:
 def get_r6_vol_damper_enabled(skill_dir: Path | None = None) -> bool:
     """Shrink sleeve caps when book vol spikes (allocator research chip)."""
     return _get_bool("R6_VOL_DAMPER_ENABLED", False, skill_dir)
+
+
+def get_operator_desk_mode(skill_dir: Path | None = None) -> str:
+    """Scheduled operator desk. off skips the clock. shadow and live never place orders."""
+    return _get_mode("OPERATOR_DESK_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_operator_desk_hour(skill_dir: Path | None = None) -> int:
+    """New York hour for the weekday operator desk."""
+    return max(0, min(23, _get_int("OPERATOR_DESK_HOUR", 8, skill_dir)))
+
+
+def get_operator_desk_minute(skill_dir: Path | None = None) -> int:
+    """New York minute for the weekday operator desk."""
+    return max(0, min(59, _get_int("OPERATOR_DESK_MINUTE", 30, skill_dir)))
+
+
+def get_operator_desk_run_scan(skill_dir: Path | None = None) -> bool:
+    """When true, a scheduled desk starts a dashboard scan."""
+    return _get_bool("OPERATOR_DESK_RUN_SCAN", True, skill_dir)
+
+
+def get_operator_desk_notify(skill_dir: Path | None = None) -> bool:
+    """When true, a scheduled desk posts the brief to Discord."""
+    return _get_bool("OPERATOR_DESK_NOTIFY", True, skill_dir)
+
+
+def get_operator_desk_queue_backtest(skill_dir: Path | None = None) -> bool:
+    """Queue a trailing replay when the backtest worker is idle.
+
+    Unset follows the desk mode: live queues, shadow only reads the latest run.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("OPERATOR_DESK_QUEUE_BACKTEST", env).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return get_operator_desk_mode(skill_dir) == "live"
+
+
+def get_operator_desk_base_url(skill_dir: Path | None = None) -> str:
+    """Dashboard origin the desk calls. Local operator default is port 8182."""
+    env = _load_env(skill_dir)
+    raw = _env_value("OPERATOR_DESK_BASE_URL", env).strip()
+    return raw or "https://127.0.0.1:8182"
+
+
+def get_operator_desk_scan_timeout_sec(skill_dir: Path | None = None) -> int:
+    """How long the desk waits for a scan to leave running."""
+    return max(30, min(14400, _get_int("OPERATOR_DESK_SCAN_TIMEOUT_SEC", 5400, skill_dir)))
+
+
+def get_tradeable_brief_enabled(skill_dir: Path | None = None) -> bool:
+    """Weekday Discord list of Tradeable scan rows. Does not place orders."""
+    return _get_bool("TRADEABLE_BRIEF_ENABLED", True, skill_dir)
+
+
+def get_tradeable_brief_hour(skill_dir: Path | None = None) -> int:
+    """Local hour for the tradeable-universe brief. Default 8."""
+    return max(0, min(23, _get_int("TRADEABLE_BRIEF_HOUR", 8, skill_dir)))
+
+
+def get_tradeable_brief_minute(skill_dir: Path | None = None) -> int:
+    """Local minute for the tradeable-universe brief. Default 30."""
+    return max(0, min(59, _get_int("TRADEABLE_BRIEF_MINUTE", 30, skill_dir)))
+
+
+def get_tradeable_brief_timezone(skill_dir: Path | None = None) -> str:
+    """IANA zone for the tradeable-universe brief. Default America/Chicago."""
+    env = _load_env(skill_dir)
+    raw = _env_value("TRADEABLE_BRIEF_TZ", env).strip()
+    return raw or "America/Chicago"
+
+
+# --- Grok agent (default off: no xAI calls) ---
+
+
+def get_grok_agent_mode(skill_dir: Path | None = None) -> str:
+    """Research/review agent rollout (OFF|SHADOW|LIVE).
+
+    Default ``off`` does not call xAI. ``shadow`` and ``live`` may call the
+    API. Neither mode places orders or opens pull requests by itself.
+    """
+    return _get_mode("GROK_AGENT_MODE", PLUGIN_MODE_VALUES, "off", skill_dir)
+
+
+def get_grok_agent_model(skill_dir: Path | None = None) -> str:
+    """xAI model id for the Grok agent. Default is the documented flagship."""
+    env = _load_env(skill_dir)
+    raw = _env_value("GROK_AGENT_MODEL", env).strip()
+    return raw or "grok-4.7"
+
+
+def get_grok_agent_base_url(skill_dir: Path | None = None) -> str:
+    """API origin. Only api.x.ai and us.api.x.ai are accepted by the adapter."""
+    env = _load_env(skill_dir)
+    raw = _env_value("GROK_AGENT_BASE_URL", env).strip()
+    return raw or "https://api.x.ai/v1"
+
+
+def get_grok_agent_api_key(skill_dir: Path | None = None) -> str:
+    """xAI key. Never falls back to OPENAI_API_KEY."""
+    env = _load_env(skill_dir)
+    return _env_value("XAI_API_KEY", env).strip() or _env_value("MIROFISH_API_KEY", env).strip()
+
+
+def get_grok_agent_search(skill_dir: Path | None = None) -> bool:
+    """When true, chat search_parameters.mode=on (web and X). Default off."""
+    return _get_bool("GROK_AGENT_SEARCH", False, skill_dir)
+
+
+def get_grok_agent_reasoning_effort(skill_dir: Path | None = None) -> str:
+    """Optional reasoning_effort. Empty omits the field and keeps the API default."""
+    env = _load_env(skill_dir)
+    return _env_value("GROK_AGENT_REASONING_EFFORT", env).strip().lower()
+
+
+def get_grok_agent_timeout_sec(skill_dir: Path | None = None) -> int:
+    """HTTP timeout for one xAI call."""
+    return max(10, min(180, _get_int("GROK_AGENT_TIMEOUT_SEC", 150, skill_dir)))
+
+
+def get_grok_agent_max_completion_tokens(skill_dir: Path | None = None) -> int:
+    """Cap on visible completion tokens. The API default is much higher."""
+    return max(256, min(16000, _get_int("GROK_AGENT_MAX_COMPLETION_TOKENS", 4000, skill_dir)))
+
+
+def get_grok_agent_max_retries(skill_dir: Path | None = None) -> int:
+    """Extra attempts after HTTP 429. Default 2."""
+    env = _load_env(skill_dir)
+    raw = _env_value("GROK_AGENT_MAX_RETRIES", env).strip()
+    if not raw:
+        return 2
+    try:
+        return max(0, min(5, int(float(raw))))
+    except (TypeError, ValueError):
+        return 2
+
+
+def get_grok_agent_deferred_polls(skill_dir: Path | None = None) -> int:
+    """How many times to GET a deferred chat completion after the first 202."""
+    return max(1, min(20, _get_int("GROK_AGENT_DEFERRED_POLLS", 5, skill_dir)))

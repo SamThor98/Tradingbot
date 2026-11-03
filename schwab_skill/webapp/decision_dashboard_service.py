@@ -233,6 +233,96 @@ def load_validation_artifact(skill_dir: Path, name: str) -> dict[str, Any] | Non
     return payload if isinstance(payload, dict) else None
 
 
+_BOOK_WIDTH_ARMS: tuple[tuple[str, str, str], ...] = (
+    ("current_live_p76_top5", "Live top 5", "live"),
+    ("p76_top10", "p76, top 10", "shadow"),
+    ("p76_all", "p76, every name", "shadow"),
+    ("pts52w_cap37_unsorted", "Cap only, no rank trim", "reference"),
+    ("cap37_p76", "Cap, then p76", "capped"),
+    ("cap37_p76_top10", "Cap, then p76, top 10", "capped"),
+    ("cap37_p76_top5", "Cap, then p76, top 5", "capped"),
+    ("cap37_p76_top3", "Cap, then p76, top 3", "capped"),
+)
+_BOOK_WIDTH_FLOORS = {"pf_mean": 1.2, "worst_era_pf": 1.0}
+
+
+def _book_width_clears(pf_mean: Any, worst_era_pf: Any) -> bool | None:
+    if not isinstance(pf_mean, (int, float)) or not isinstance(worst_era_pf, (int, float)):
+        return None
+    return float(pf_mean) >= _BOOK_WIDTH_FLOORS["pf_mean"] and float(worst_era_pf) >= _BOOK_WIDTH_FLOORS["worst_era_pf"]
+
+
+def summarize_book_width_artifact(artifact: dict[str, Any] | None) -> dict[str, Any]:
+    """Dashboard view of the book-width shadow. Never marks the change as applied."""
+    empty: dict[str, Any] = {
+        "present": False,
+        "apply_live": False,
+        "promote_sort": False,
+        "verdict": None,
+        "sort_verdict": None,
+        "recommended_arm": None,
+        "arms": [],
+        "floors": dict(_BOOK_WIDTH_FLOORS),
+        "note": "",
+        "source": "validation_artifacts/cap37_unsorted_vs_live.json",
+        "generated_at": None,
+        "run_id": None,
+        "capped_rank_verdict": None,
+        "names_removed_by_top5": None,
+        "names_removed_by_top3": None,
+    }
+    if not isinstance(artifact, dict):
+        return empty
+    raw_arms = artifact.get("arms") if isinstance(artifact.get("arms"), dict) else {}
+    arms: list[dict[str, Any]] = []
+    for key, label, role in _BOOK_WIDTH_ARMS:
+        row = raw_arms.get(key)
+        if not isinstance(row, dict):
+            continue
+        ci = row.get("pf_pooled_ci") if isinstance(row.get("pf_pooled_ci"), dict) else {}
+        pf_mean = row.get("pf_mean")
+        worst = row.get("worst_era_pf")
+        arms.append(
+            {
+                "key": key,
+                "label": label,
+                "role": role,
+                "n": row.get("n"),
+                "pf_mean": pf_mean,
+                "worst_era_pf": worst,
+                "pf_lo": ci.get("pf_lo"),
+                "pf_hi": ci.get("pf_hi"),
+                "clears_floors": _book_width_clears(pf_mean, worst),
+                "selection": row.get("selection"),
+            }
+        )
+    capacity = artifact.get("capacity") if isinstance(artifact.get("capacity"), dict) else {}
+    capped_rank = artifact.get("capped_rank") if isinstance(artifact.get("capped_rank"), dict) else {}
+    note = str(capped_rank.get("note") or capacity.get("note") or artifact.get("note") or "")
+    if arms and not capacity:
+        note = (
+            "Re-run scripts/compare_cap37_unsorted_vs_live.py to score the top-10 "
+            "and full p76 books. This file only has the older comparison."
+        )
+    return {
+        "present": bool(arms),
+        "apply_live": False,
+        "promote_sort": False,
+        "verdict": capacity.get("verdict"),
+        "sort_verdict": artifact.get("verdict"),
+        "recommended_arm": capacity.get("recommended_arm"),
+        "arms": arms,
+        "floors": dict(_BOOK_WIDTH_FLOORS),
+        "note": note,
+        "source": "validation_artifacts/cap37_unsorted_vs_live.json",
+        "generated_at": artifact.get("generated_at"),
+        "run_id": artifact.get("run_id"),
+        "capped_rank_verdict": capped_rank.get("verdict"),
+        "names_removed_by_top5": capped_rank.get("names_removed_by_top5"),
+        "names_removed_by_top3": capped_rank.get("names_removed_by_top3"),
+    }
+
+
 def signal_edge_validation_status(skill_dir: Path, run_id: str = "control_legacy_aug") -> dict[str, Any]:
     """Offline P0 signal-edge evidence for leadership dashboard."""
     shadow = load_validation_artifact(skill_dir, f"signal_edge_shadow_counterfactual_{run_id}.json")
@@ -305,7 +395,8 @@ def signal_edge_validation_status(skill_dir: Path, run_id: str = "control_legacy
     stack_summary = None
     if isinstance(stack_art, dict):
         scenarios = stack_art.get("scenarios") if isinstance(stack_art.get("scenarios"), dict) else {}
-        stack_row = scenarios.get("exit_grace_breakout_buffer_0.010") or {}
+        headline_scenario_key = "exit_grace_breakout_buffer_0.010"
+        stack_row = scenarios.get(headline_scenario_key) or {}
         stack_rec = stack_art.get("recommendation") if isinstance(stack_art.get("recommendation"), dict) else {}
         promotion_gates = stack_art.get("promotion_gates")
         if not isinstance(promotion_gates, dict):
@@ -327,6 +418,8 @@ def signal_edge_validation_status(skill_dir: Path, run_id: str = "control_legacy
             )
         stack_summary = {
             "generated_at": stack_art.get("generated_at"),
+            "headline_scenario_key": headline_scenario_key,
+            "artifact": f"validation_artifacts/signal_stack_counterfactual_{run_id}.json",
             "pf_mean": stack_row.get("pf_mean"),
             "worst_era_pf": stack_row.get("worst_era_pf"),
             "retention_pct": stack_row.get("retention_pct"),
@@ -373,7 +466,11 @@ def signal_edge_validation_status(skill_dir: Path, run_id: str = "control_legacy
             "early_stopout_cohorts": f"validation_artifacts/early_stopout_cohorts_{run_id}.json",
             "entry_timing_shadow_counterfactual": f"validation_artifacts/entry_timing_shadow_counterfactual_{run_id}.json",
             "rank_filter_counterfactual": f"validation_artifacts/rank_filter_counterfactual_{run_id}.json",
+            "book_width": "validation_artifacts/cap37_unsorted_vs_live.json",
         },
+        "book_width": summarize_book_width_artifact(
+            load_validation_artifact(skill_dir, "cap37_unsorted_vs_live.json")
+        ),
     }
 
 

@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Plugin Modes Config.md
 created: 2026-04-13
-updated: 2026-06-10
+updated: 2026-10-06
 tags: [config, plugins]
 ---
 
@@ -9,11 +9,9 @@ tags: [config, plugins]
 
 > All environment variables for the plugin mode system.
 
-**Current deployment note (2026-06-10):** `REGIME_V2_MODE`, `EXIT_MANAGER_MODE`,
-and `CORRELATION_GUARD_MODE` are set to `shadow` via the local `.env` override
-(config defaults remain `off`). Live promotion is blocked by the Phase 2 edge
-audit verdict `halt_fix_signal_first` — see [[plugin-modes]] for details and
-ledger references.
+**Current deployment note (2026-10-06):** `REGIME_V2_MODE=live` in `.env`
+(ledger seq 20). `EXIT_MANAGER_MODE` defaults to live. `CORRELATION_GUARD_MODE`
+stays off. See [[plugin-modes]].
 
 ## Execution Quality
 

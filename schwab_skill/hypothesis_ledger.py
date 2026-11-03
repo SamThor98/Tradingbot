@@ -205,6 +205,164 @@ def record_from_report_conclusion(
     }
 
 
+def _record_day(record: dict[str, Any]) -> str:
+    explicit = str(record.get("et_date") or "").strip()
+    if explicit:
+        return explicit[:10]
+    return str(record.get("created_at") or "")[:10]
+
+
+def _already_recorded(
+    skill_dir: Path,
+    *,
+    ticker: str,
+    source: str,
+    et_date: str,
+) -> bool:
+    day = str(et_date or "")[:10]
+    if not ticker or not day:
+        return False
+    data = _load_ledger(skill_dir)
+    for record in data.get("records") or []:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("ticker") or "").upper() != ticker:
+            continue
+        if str(record.get("source") or "") != source:
+            continue
+        if _record_day(record) == day:
+            return True
+    return False
+
+
+def append_hypotheses_from_signals(
+    signals: list[dict[str, Any]] | None,
+    skill_dir: Path | str | None = None,
+    *,
+    et_date: str,
+    scan_at: str | None = None,
+) -> dict[str, int]:
+    """Record one S0 row per ticker per ET date. A second scan the same day skips."""
+    root = Path(skill_dir or SKILL_DIR)
+    appended = 0
+    skipped = 0
+    for signal in signals or []:
+        if not isinstance(signal, dict):
+            skipped += 1
+            continue
+        ticker = str(signal.get("ticker") or "").upper()
+        if not ticker:
+            skipped += 1
+            continue
+        if _already_recorded(root, ticker=ticker, source="signal_scanner", et_date=et_date):
+            skipped += 1
+            continue
+        rec = record_from_signal(signal, root)
+        rec["et_date"] = str(et_date)[:10]
+        if scan_at:
+            rec["created_at"] = scan_at
+        append_hypothesis(rec, root)
+        appended += 1
+    return {"appended": appended, "skipped": skipped, "errors": 0}
+
+
+def append_hypotheses_from_canary_sleeve(
+    diagnostics: dict[str, Any] | None,
+    skill_dir: Path | str | None = None,
+    *,
+    et_date: str,
+    scan_at: str | None = None,
+) -> dict[str, int]:
+    """Record paper S1 names. Refuses a block that sets allow_live."""
+    from core.pead_primary_shadow_compare import build_pead_canary_sleeve_block
+
+    root = Path(skill_dir or SKILL_DIR)
+    block = build_pead_canary_sleeve_block(diagnostics if isinstance(diagnostics, dict) else {})
+    if block.get("allow_live") is True:
+        return {"appended": 0, "skipped": 0, "errors": 1}
+    appended = 0
+    skipped = 0
+    for name in block.get("names") or []:
+        if not isinstance(name, dict):
+            skipped += 1
+            continue
+        ticker = str(name.get("ticker") or "").upper()
+        if not ticker:
+            skipped += 1
+            continue
+        if _already_recorded(root, ticker=ticker, source="pead_canary", et_date=et_date):
+            skipped += 1
+            continue
+        price = name.get("price") or name.get("entry_reference_px")
+        try:
+            entry_px = float(price) if price is not None else None
+        except (TypeError, ValueError):
+            entry_px = None
+        rec = {
+            "ticker": ticker,
+            "source": "pead_canary",
+            "sleeve_id": "S1",
+            "strategy_or_model_id": "pead_canary",
+            "et_date": str(et_date)[:10],
+            "input_fingerprint": fingerprint_from_mapping(
+                {
+                    "ticker": ticker,
+                    "et_date": str(et_date)[:10],
+                    "edge_score": name.get("edge_score"),
+                    "pead_surprise_pct": name.get("pead_surprise_pct"),
+                }
+            ),
+            "prediction": {
+                "direction": "long",
+                "entry_reference_px": entry_px,
+                "horizons_trading_days": [],
+            },
+            "raw_context": {
+                "executable": False,
+                "allow_live": False,
+                "edge_score": name.get("edge_score"),
+                "pead_beat": name.get("pead_beat"),
+                "pead_surprise_pct": name.get("pead_surprise_pct"),
+                "pead_surprise_large": name.get("pead_surprise_large"),
+                "close_vs_sma200_pct": name.get("close_vs_sma200_pct"),
+                "pead_extension_drop_would_drop": name.get("pead_extension_drop_would_drop"),
+                "pead_extension_drop_min": name.get("pead_extension_drop_min"),
+                "capacity_top_n": True,
+            },
+        }
+        if scan_at:
+            rec["created_at"] = scan_at
+        append_hypothesis(rec, root)
+        appended += 1
+    return {"appended": appended, "skipped": skipped, "errors": 0}
+
+
+def backfill_s1_from_scan_artifact(
+    payload: dict[str, Any],
+    skill_dir: Path | str | None = None,
+    *,
+    require_dq_ok: bool = True,
+) -> dict[str, int]:
+    """Replay one saved PEAD scan into the paper S1 ledger."""
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    diag = payload.get("diagnostics_pead") if isinstance(payload.get("diagnostics_pead"), dict) else {}
+    dq = str(diag.get("data_quality") or summary.get("data_quality") or "").strip().lower()
+    if require_dq_ok and dq != "ok":
+        return {"appended": 0, "skipped": 0, "errors": 0}
+    scan_at = str(summary.get("at") or "").strip() or None
+    et_date = ""
+    if scan_at:
+        from core.plugin_shadow_evidence import evidence_session_date
+
+        et_date = evidence_session_date({"scan_at": scan_at}) or scan_at[:10]
+    return append_hypotheses_from_canary_sleeve(
+        diag,
+        skill_dir,
+        et_date=et_date,
+        scan_at=scan_at,
+    )
+
+
 def summarize_scored_hypotheses(skill_dir: Path | str | None = None) -> dict[str, Any]:
     """Aggregate hit rates / mean returns by source (and by sleeve_id) for self-study merge."""
     skill_dir = Path(skill_dir or SKILL_DIR)

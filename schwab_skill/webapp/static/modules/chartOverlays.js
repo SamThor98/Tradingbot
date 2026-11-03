@@ -6,6 +6,7 @@
 import { safeText, safeNum, escapeHtml } from "./format.js";
 import { isScanSignalStageable } from "./signalProvenance.js";
 import { formatFilterReasons } from "./filterReasons.js";
+import { clearToQueue, queueStops, stageHoldReasons } from "./stageEvidence.js";
 
 /** @typedef {{ price: number, color: string, title: string, lineStyle?: number }} OverlayLine */
 
@@ -22,24 +23,19 @@ export function computePriorHigh(candles) {
 /**
  * @param {object} signal
  * @param {Array<{ high?: number }>} candles
- * @returns {{ sma50: number|null, sma200: number|null, breakout: number|null, stop: number|null }}
+ * @returns {{ sma50: number|null, sma200: number|null, breakout: number|null, stop: number|null, stopBand: number|null }}
  */
 export function extractSignalOverlayLevels(signal = {}, candles = []) {
   const sma50 = safeNum(signal.sma_50, NaN);
   const sma200 = safeNum(signal.sma_200, NaN);
-  const price = safeNum(signal.price ?? signal.current_price, NaN);
   const breakout = computePriorHigh(candles);
-  let stop = null;
-  if (Number.isFinite(sma200) && sma200 > 0) {
-    stop = sma200 * 0.97;
-  } else if (Number.isFinite(price) && price > 0) {
-    stop = price * 0.93;
-  }
+  const stops = queueStops(signal);
   return {
     sma50: Number.isFinite(sma50) && sma50 > 0 ? sma50 : null,
     sma200: Number.isFinite(sma200) && sma200 > 0 ? sma200 : null,
     breakout,
-    stop: stop && stop > 0 ? stop : null,
+    stop: stops.far,
+    stopBand: stops.band,
   };
 }
 
@@ -99,7 +95,9 @@ export function applyScanDetailOverlays(chart, candleSeries, signal, candles) {
     lines.push({ price: levels.breakout, color: "rgba(201, 73, 73, 0.8)", title: "Breakout", lineStyle: 0 });
   }
   if (levels.stop != null) {
-    lines.push({ price: levels.stop, color: "rgba(180, 120, 40, 0.75)", title: "Stop ref", lineStyle: 3 });
+    lines.push({ price: levels.stop, color: "rgba(201, 73, 73, 0.85)", title: "3% under the 200-day", lineStyle: 3 });
+  } else if (levels.stopBand != null) {
+    lines.push({ price: levels.stopBand, color: "rgba(180, 120, 40, 0.9)", title: "7% under price", lineStyle: 0 });
   }
   return applyPriceLines(candleSeries, lines);
 }
@@ -112,15 +110,20 @@ export function applyScanDetailOverlays(chart, candleSeries, signal, candles) {
 export function renderChartSetupBadges(signal, opts = {}) {
   if (!signal) return "";
   const stageable = isScanSignalStageable(signal);
+  const clear = clearToQueue(signal);
+  const hold = stageHoldReasons(signal)[0] || "";
   const breakoutOk = signal.breakout_confirmed === true;
   const regimeBlocked = Boolean(opts.scanBlocked);
   const reasons = formatFilterReasons(signal._filter_reasons);
   const primaryReason = reasons[0] || safeText(signal._filter_status || "").replace(/_/g, " ");
   const badges = [
-    `<span class="pill ${stageable ? "good" : "bad"}">${stageable ? "Stageable" : "Blocked"}</span>`,
+    `<span class="pill ${clear ? "good" : "bad"}">${clear ? "Clear to queue" : stageable ? "Do not queue" : "Blocked"}</span>`,
     `<span class="pill ${breakoutOk ? "good" : "warn"}">Breakout ${breakoutOk ? "confirmed" : "unconfirmed"}</span>`,
     `<span class="pill ${regimeBlocked ? "bad" : "good"}">Regime ${regimeBlocked ? "blocked" : "open"}</span>`,
   ];
+  if (stageable && hold) {
+    badges.push(`<span class="pill bad scan-overlay-reason">${escapeHtml(hold)}</span>`);
+  }
   if (!stageable && primaryReason) {
     badges.push(
       `<span class="pill bad scan-overlay-reason" title="${escapeHtml(reasons.join("; "))}">${escapeHtml(primaryReason)}</span>`,

@@ -15,6 +15,9 @@
 import { api } from "../modules/api.js";
 import { safeText } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
+import { state } from "../modules/state.js";
+import { applyFreshness } from "../modules/freshness.js";
+import { syncResearchTickerRail } from "../modules/researchTickerFlow.js";
 import {
   setAsyncState,
   ASYNC_LOADING,
@@ -72,7 +75,11 @@ const DASH = "—";
 const TICKER_RE = /^[A-Za-z][A-Za-z0-9.\-]{0,9}$/;
 
 function fmtPctFrac(v, digits = 0) {
-  return v === null || v === undefined ? DASH : `${(Number(v) * 100).toFixed(digits)}%`;
+  // ratio 0–1 from position_intel hv_annualized / garch / p_win / p_keep
+  if (v === null || v === undefined) return DASH;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DASH;
+  return `${(n * 100).toFixed(digits)}%`;
 }
 
 function fmtSigned(v, digits = 1, suffix = "%") {
@@ -102,7 +109,8 @@ const REGIME_PILL = { LOW: "info", NORMAL: "neutral", HIGH: "warn", EXTREME: "ba
 const LIQ_PILL = { TIGHT: "good", OK: "neutral", WIDE: "warn", "LOW OI": "warn", ILLIQUID: "bad" };
 
 function signalPill(signal) {
-  return signal ? pill(signal, SIGNAL_PILL[signal] || "neutral") : DASH;
+  if (!signal) return DASH;
+  return `<span class="pill pill--nowrap ${SIGNAL_PILL[signal] || "neutral"}">${safeText(signal)}</span>`;
 }
 
 /** Vote dot: +1 → filled good, −1 → filled bad, 0 → hollow, null → dash. */
@@ -138,6 +146,7 @@ function tableShell(title, hint, headHtml, bodyHtml, emptyMsg) {
     </div>
     <div class="table-wrap intel-table-wrap">
       <table>
+        <caption class="visually-hidden">${safeText(title)}</caption>
         <thead><tr>${headHtml}</tr></thead>
         <tbody>${body}</tbody>
       </table>
@@ -254,7 +263,7 @@ function coveredTable(rows) {
         <td class="num mono-nums">${r.delta === null || r.delta === undefined ? DASH : Number(r.delta).toFixed(2)}</td>
         <td class="num mono-nums">${r.yield_pct === null || r.yield_pct === undefined ? DASH : `${Number(r.yield_pct).toFixed(2)}%`}</td>
         <td class="num mono-nums"><strong>${fmtPctFrac(r.p_keep)}</strong></td>
-        <td class="num mono-nums intel-good">${r.annualized_pct === null || r.annualized_pct === undefined ? DASH : `${Number(r.annualized_pct).toFixed(1)}%`}</td>
+        <td class="num mono-nums intel-good" title="Annualized from this expiry, not a one-year forecast">${r.annualized_pct === null || r.annualized_pct === undefined ? DASH : `${Number(r.annualized_pct).toFixed(1)}%`}</td>
         <td class="ctr">${pill(r.liq || DASH, LIQ_PILL[r.liq] || "neutral")}</td>
       </tr>`,
     )
@@ -298,19 +307,59 @@ function footnote(payload) {
   )}</p>`;
 }
 
+function stampIntelState(payload, { error = null } = {}) {
+  if (error && !payload?.meta && !payload?.summary) {
+    state.lastIntelError = error;
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("intel_summary_refresh"));
+    }
+    return;
+  }
+  const meta = payload?.meta || {};
+  const summary = payload?.summary || {};
+  const notes = Array.isArray(payload?.data_quality) ? payload.data_quality.filter(Boolean) : [];
+  state.lastIntelAt = meta.computed_at || null;
+  state.lastIntelNotes = notes;
+  state.lastIntelSummary = {
+    positions: summary.positions ?? meta.positions_total ?? null,
+    bullish: summary.bullish ?? null,
+    bearish: summary.bearish ?? null,
+    avg_composite: summary.avg_composite ?? null,
+  };
+  state.lastIntelError = error;
+  state.lastIntelCacheHit = Boolean(meta.cache_hit);
+  state.lastIntelCacheAgeSec = Number.isFinite(meta.cache_age_sec) ? meta.cache_age_sec : null;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("intel_summary_refresh"));
+  }
+}
+
 function renderMeta(meta) {
   const el = document.getElementById("intelMeta");
-  if (!el) return;
+  const freshEl = document.getElementById("intelFresh");
   const m = meta || {};
-  const parts = [];
-  if (m.cache_hit && Number.isFinite(m.cache_age_sec)) {
-    const mins = Math.floor(m.cache_age_sec / 60);
-    parts.push(mins > 0 ? `cache ${mins}m` : "cache <1m");
-  } else if (m.computed_at) {
-    parts.push("fresh");
+  if (el) {
+    const parts = [];
+    if (m.positions_total !== null && m.positions_total !== undefined) {
+      parts.push(`${m.positions_total} position${Number(m.positions_total) === 1 ? "" : "s"}`);
+    }
+    if (m.mode === "lookup" && m.ticker) parts.push(safeText(m.ticker));
+    el.textContent = parts.join(" · ");
   }
-  if (m.positions_total !== null && m.positions_total !== undefined) parts.push(`${m.positions_total} positions`);
-  el.textContent = parts.join(" · ");
+  if (freshEl) {
+    applyFreshness(freshEl, {
+      asOf: m.computed_at || null,
+      source: "/api/position-intel",
+      surface: "intel",
+      unavailable: "no intel yet",
+      refreshing: false,
+    });
+    if (m.cache_hit && Number.isFinite(m.cache_age_sec)) {
+      const mins = Math.floor(m.cache_age_sec / 60);
+      const cacheBit = mins > 0 ? `cache ${mins}m` : "cache <1m";
+      freshEl.textContent = `${freshEl.textContent} · ${cacheBit}`;
+    }
+  }
 }
 
 function renderDataQuality(notes, elId = "intelDataQuality") {
@@ -357,12 +406,14 @@ function renderPayload(payload) {
     });
     renderMeta(payload?.meta);
     renderDataQuality(payload?.data_quality);
+    stampIntelState(payload);
     return;
   }
   body.setAttribute("data-async-state", ASYNC_SUCCESS);
   body.innerHTML = renderTablesHtml(payload, { includeSummary: true });
   renderMeta(payload?.meta);
   renderDataQuality(payload?.data_quality);
+  stampIntelState(payload);
 }
 
 function normalizeLookupTicker(raw) {
@@ -389,6 +440,19 @@ function renderLookupPayload(payload) {
   const meta = payload?.meta || {};
   const ticker = meta.ticker || payload?.conviction?.[0]?.ticker || "Ticker";
   if (title) title.textContent = `${ticker} intel`;
+  const conviction = payload?.conviction || [];
+  const volatility = payload?.volatility || [];
+  const options = payload?.options_setup || [];
+  const covered = payload?.covered_calls || [];
+  if (!conviction.length && !volatility.length && !options.length && !covered.length) {
+    if (sub) sub.textContent = `${ticker} · no rows returned`;
+    setAsyncState(body, ASYNC_EMPTY, {
+      headline: `No intel for ${ticker}`,
+      message: "This lookup returned no conviction, volatility, or options rows.",
+    });
+    renderDataQuality(payload?.data_quality, "intelLookupQuality");
+    return;
+  }
   if (sub) {
     const bits = [];
     if (meta.held) bits.push(meta.shares ? `held · ${meta.shares} shares` : "held");
@@ -460,6 +524,8 @@ export async function lookupTickerIntel(rawTicker, { refresh = false } = {}) {
       return;
     }
     renderLookupPayload(out.data || {});
+    const lookedUp = normalizeLookupTicker(ticker);
+    if (lookedUp) syncResearchTickerRail(lookedUp, { sourceId: "intelTickerInput" });
   } finally {
     _lookupLoading = false;
     if (btn) btn.disabled = false;
@@ -474,8 +540,8 @@ export async function loadPositionIntel({ refresh = false } = {}) {
   if (btn) btn.disabled = true;
   setAsyncState(body, ASYNC_LOADING, {
     message: refresh
-      ? "Recomputing — indicators, GARCH fits, and option chains (~10s)…"
-      : "Loading position intel — first compute can take ~10s…",
+      ? "Recomputing — indicators, GARCH fits, and option chains. This can take a minute…"
+      : "Loading position intel. The first compute can take a minute…",
   });
   try {
     const out = await api.get(`/api/position-intel${refresh ? "?refresh=1" : ""}`);
@@ -484,6 +550,7 @@ export async function loadPositionIntel({ refresh = false } = {}) {
       logEvent({ kind: "system", severity: "warn", message: `Position intel load failed: ${msg}` });
       if (out.status === 401) {
         setAsyncState(body, ASYNC_SIGNED_OUT, { message: "Sign in to load position intel." });
+        stampIntelState({}, { error: "signed out" });
         return;
       }
       setAsyncState(body, ASYNC_ERROR, {
@@ -491,6 +558,7 @@ export async function loadPositionIntel({ refresh = false } = {}) {
         message: msg,
         onRetry: () => void loadPositionIntel({ refresh }),
       });
+      stampIntelState({}, { error: msg });
       return;
     }
     renderPayload(out.data || {});

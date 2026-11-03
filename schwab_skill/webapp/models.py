@@ -237,6 +237,71 @@ class BacktestRun(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
+class EventProbabilityEvent(Base):
+    """Current normalized state of a prediction-market event.
+
+    Global (not user-scoped): an event probability is a market-wide fact. Only
+    the latest state lives here; every observation is appended to
+    ``event_probability_history`` so historical values are never overwritten.
+    """
+
+    __tablename__ = "event_probability_events"
+    __table_args__ = (
+        Index("ix_event_probability_events_source_market", "source", "source_market_id"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_market_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    event_category: Mapped[str] = mapped_column(String(48), nullable=False, default="other", index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    resolution_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    adjusted_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    previous_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability_change_1d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability_change_7d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability_change_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spread: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    resolution_status: Mapped[str] = mapped_column(String(24), nullable=False, default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class EventProbabilityHistory(Base):
+    """Append-only observation log backing point-in-time reconstruction.
+
+    Rows are never updated or deleted by the ingest path. The unique constraint
+    makes a repeated ingest at the same timestamp a no-op rather than a
+    duplicate observation that would distort probability-change lookbacks.
+    """
+
+    __tablename__ = "event_probability_history"
+    __table_args__ = (
+        UniqueConstraint("event_id", "timestamp", name="uq_event_probability_history_event_ts"),
+        Index("ix_event_probability_history_event_ts", "event_id", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(
+        String(160),
+        ForeignKey("event_probability_events.event_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    raw_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    adjusted_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spread: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class PendingTrade(Base):
     """Compatibility table kept for legacy UI flows."""
 

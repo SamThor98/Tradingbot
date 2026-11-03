@@ -8,3 +8,5 @@ pip-audit
 # once with: python -m playwright install chromium
 pytest-playwright
 playwright
+duckdb>=1.0.0
+pandera>=0.20.0

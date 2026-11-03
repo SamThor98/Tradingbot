@@ -13,7 +13,7 @@
  */
 
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatDecimal } from "../modules/format.js";
+import { safeText, safeNum, formatDecimal, escapeHtml, pct } from "../modules/format.js";
 import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
 import { setResearchPanelStatus } from "../modules/researchStatus.js";
 import {
@@ -23,6 +23,7 @@ import {
   ASYNC_ERROR,
   ASYNC_SUCCESS,
 } from "../modules/asyncState.js";
+import { sharadarBriefStripHtml } from "../modules/sharadarBrief.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -80,12 +81,16 @@ function renderSectorBreadthHeatmap(sectors) {
 }
 
 async function renderCockpitSpyMiniChart(host, data) {
-  if (!host || typeof LightweightCharts === "undefined") return;
+  if (!host) return;
+  if (typeof LightweightCharts === "undefined") {
+    host.innerHTML = `<div class="operator-alert operator-alert--neutral"><div class="operator-alert__body"><strong class="operator-alert__headline">Chart library unavailable.</strong><p class="operator-alert__detail">Reload the dashboard to draw the SPY context chart.</p></div></div>`;
+    return;
+  }
   disposeCockpitSpyChart();
   host.innerHTML = `<p class="muted small">Loading SPY chart…</p>`;
   const out = await api.get("/api/chart/SPY");
   if (!out.ok || !out.data?.candles?.length) {
-    host.innerHTML = `<p class="muted small">SPY chart unavailable.</p>`;
+    host.innerHTML = `<div class="operator-alert operator-alert--neutral"><div class="operator-alert__body"><strong class="operator-alert__headline">SPY chart unavailable.</strong><p class="operator-alert__detail">${safeText(out.user_message || out.error || "No daily bars returned.")}</p></div></div>`;
     return;
   }
   host.innerHTML = "";
@@ -197,6 +202,92 @@ function moversHtml(movers) {
   return `<div class="cockpit-lane-subhead">Market movers</div>${g}${l}${a}`;
 }
 
+function hmmActionPill(action) {
+  const label = safeText(action || "flat").replace(/_/g, " ");
+  const bad = new Set(["flat", "size_zero", "entries_frozen", "stand_aside", "unavailable"]);
+  const warn = new Set(["cut_half"]);
+  const cls = bad.has(safeText(action || "flat")) ? "bad" : warn.has(safeText(action || "flat")) ? "warn" : "good";
+  return `<span class="pill ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function renderHmmRegime(hmm) {
+  if (!hmm || typeof hmm !== "object") {
+    return `<div class="hmm-regime"><div class="cockpit-lane-subhead">HMM regime</div><div class="muted small">Advisory model not loaded. Regime v2 still gates the scan.</div></div>`;
+  }
+  const status = safeText(hmm.status || "unavailable");
+  const states = Array.isArray(hmm.states) ? hmm.states : [];
+  const bars = states
+    .map((row) => {
+      const prob = Math.max(0, Math.min(1, safeNum(row.probability, 0)));
+      const cls = [
+        "hmm-bar",
+        row.is_active ? "is-active" : "",
+        row.is_stress ? "is-stress" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<div class="${cls}"><span>${escapeHtml(safeText(row.label))}</span><span class="hmm-bar-track"><span class="hmm-bar-fill" style="width:${(prob * 100).toFixed(1)}%"></span></span><span>${escapeHtml(pct(prob, 0))}</span></div>`;
+    })
+    .join("");
+  const book = hmm.active_playbook && typeof hmm.active_playbook === "object" ? hmm.active_playbook : null;
+  const bookHtml = book
+    ? `<div class="hmm-playbook">
+        <div class="kv"><span>Playbook</span><span>${escapeHtml(safeText(book.style))}${book.book_allows_entry ? "" : ' <span class="pill muted">not this book</span>'}</span></div>
+        <div class="kv"><span>Entry</span><span>${escapeHtml(safeText(book.entry))}</span></div>
+        <div class="kv"><span>Exit</span><span>${escapeHtml(safeText(book.exit))}</span></div>
+        <div class="kv"><span>Stop</span><span>${escapeHtml(safeText(book.stop))}</span></div>
+        <div class="kv"><span>Invalidation</span><span>${escapeHtml(safeText(book.invalidation))}</span></div>
+      </div>`
+    : "";
+  const labels = Array.isArray(hmm.transition_labels) ? hmm.transition_labels : [];
+  const matrix = Array.isArray(hmm.transition_matrix) ? hmm.transition_matrix : [];
+  const head = labels.map((label) => `<th>${escapeHtml(safeText(label))}</th>`).join("");
+  const bodyRows = matrix
+    .map((row, i) => {
+      const cells = (Array.isArray(row) ? row : [])
+        .map((value) => `<td>${escapeHtml(formatDecimal(value, 2, "—"))}</td>`)
+        .join("");
+      return `<tr><th>${escapeHtml(safeText(labels[i] || ""))}</th>${cells}</tr>`;
+    })
+    .join("");
+  const switches = (Array.isArray(hmm.recent_switches) ? hmm.recent_switches : [])
+    .map((row) => {
+      const from = row.from_label ? `${safeText(row.from_label)} → ` : "";
+      return `<li>${escapeHtml(safeText(row.as_of))} ${escapeHtml(from + safeText(row.to_label))} — ${escapeHtml(safeText(row.reason))}</li>`;
+    })
+    .join("");
+  const latched = hmm.current_label
+    ? `${escapeHtml(safeText(hmm.current_label))} ${escapeHtml(pct(hmm.current_probability, 0))}`
+    : "unlatched";
+  const duration =
+    hmm.expected_duration_bars != null ? `${escapeHtml(formatDecimal(hmm.expected_duration_bars, 0, "—"))} bars` : "—";
+  return `<div class="hmm-regime" data-hmm-status="${escapeHtml(status)}">
+    <div class="cockpit-lane-subhead">HMM regime <span class="pill muted">advisory</span> ${hmmActionPill(hmm.action)}</div>
+    <div class="kv"><span>Latched state</span><span>${latched}</span></div>
+    <div class="kv"><span>Leading filtered</span><span>${escapeHtml(safeText(hmm.leading_label || "—"))} ${hmm.leading_probability != null ? escapeHtml(pct(hmm.leading_probability, 0)) : ""}</span></div>
+    ${bars ? `<div class="hmm-bars">${bars}</div>` : `<div class="muted small">${escapeHtml(safeText(hmm.reason || hmm.action_reason || "No fitted states."))}</div>`}
+    <div class="kv"><span>Expected duration</span><span>${duration}</span></div>
+    <div class="kv"><span>Confirms</span><span>${escapeHtml(String(safeNum(hmm.confirms, 0)))}/${escapeHtml(String(safeNum(hmm.confirms_required, 2)))} · hold ${escapeHtml(String(safeNum(hmm.hold_bars_remaining, 0)))} left</span></div>
+    <div class="kv"><span>Stress next</span><span>${escapeHtml(pct(hmm.stress_next_probability, 0))}${hmm.action === "cut_half" ? ' <span class="pill warn">cut half</span>' : ""}</span></div>
+    <div class="kv"><span>Advisory size</span><span>${escapeHtml(pct(hmm.advisory_size_multiplier, 0))} <span class="muted">(model size ${escapeHtml(pct(hmm.model_size_multiplier, 0))})</span></span></div>
+    <div class="kv"><span>Why</span><span>${escapeHtml(safeText(hmm.action_reason || hmm.reason || "—"))}</span></div>
+    ${hmm.uncertain ? '<div class="kv"><span>Uncertain</span><span class="pill warn">top two within 0.15</span></div>' : ""}
+    ${hmm.entries_frozen ? `<div class="kv"><span>Entries</span><span class="pill bad">frozen</span></div>` : ""}
+    ${hmm.scan_blocked_by_regime_v2 ? '<div class="kv"><span>Regime v2</span><span class="pill bad">scan blocked</span></div>' : ""}
+    ${bookHtml}
+    <details class="hmm-details">
+      <summary>Transition matrix, refit, limits</summary>
+      <div class="kv"><span>As of</span><span>${escapeHtml(safeText(hmm.as_of || "—"))}</span></div>
+      <div class="kv"><span>Fit through</span><span>${escapeHtml(safeText(hmm.refit_as_of || "—"))}${hmm.refit_reused ? " · reused" : " · refit"}</span></div>
+      <div class="kv"><span>States / bars</span><span>${escapeHtml(String(safeNum(hmm.selected_states, 0)))} / ${escapeHtml(String(safeNum(hmm.bars_used, 0)))}</span></div>
+      <div class="kv"><span>Loglik train / live</span><span>${escapeHtml(formatDecimal(hmm.mean_train_loglik, 2, "—"))} / ${escapeHtml(formatDecimal(hmm.mean_live_loglik, 2, "—"))}</span></div>
+      ${head ? `<table class="hmm-matrix"><thead><tr><th></th>${head}</tr></thead><tbody>${bodyRows}</tbody></table>` : ""}
+      ${switches ? `<ul class="hmm-switches">${switches}</ul>` : '<div class="muted small">No switch in this window.</div>'}
+      <p class="muted small">Forward-filtered probabilities only. Takeover 0.70 for 2 bars, then hold 3. Stress-next 0.25 cuts the model size in half. A 0.15 gap sizes to zero. This card places no orders. Regime v2 remains the live gate.</p>
+    </details>
+  </div>`;
+}
+
 function renderMarket(body, data, movers) {
   setProv("market", data.provenance);
   const cls =
@@ -208,6 +299,7 @@ function renderMarket(body, data, movers) {
     <div class="kv"><span>SPY vs 200SMA</span><span>${formatDecimal(data.spy_price, 2, "—")} / ${formatDecimal(data.spy_sma_200, 2, "—")}</span></div>
     <div class="kv"><span>Volatility</span><span>${safeText(data.volatility_state || "—")}${data.vix_level != null ? ` (VIX ${formatDecimal(data.vix_level, 1, "—")})` : ""}</span></div>
     <div class="kv"><span>Scan blocked by regime</span><span>${data.scan_blocked_by_regime ? '<span class="pill bad">YES</span>' : '<span class="pill good">no</span>'}</span></div>
+    ${renderHmmRegime(data.hmm_regime)}
     <div class="kv"><span>Winning sectors</span><span>${(data.sector_breadth || []).map((s) => safeText(s.etf)).join(", ") || "—"}</span></div>
     <div id="cockpitSectorHeatmap">${renderSectorBreadthHeatmap(data.sector_breadth)}</div>
     <div id="cockpitSpyChart" class="cockpit-spy-chart-wrap">
@@ -273,7 +365,7 @@ function renderOpportunities(body, data) {
       return `<div class="opp-row" data-ticker="${safeText(c.ticker)}">
         <span class="tk">${safeText(c.ticker)}</span>
         <span class="muted small">${safeText(c.setup?.strategy_top_live || "")} ${c.setup?.breakout_confirmed ? "· breakout" : ""}</span>
-        <span class="rank">${formatDecimal(c.rank?.composite_score ?? c.rank?.rank_score_v2 ?? c.rank?.rank_score, 1, "—")}</span>
+        <span class="rank" title="Rank score (historical blend / rank v2)">${formatDecimal(c.rank?.historical_rank ?? c.rank?.rank_score_v2 ?? c.rank?.composite_score ?? c.rank?.rank_score, 1, "—")}</span>
         ${badge}
       </div>`;
     })
@@ -339,12 +431,14 @@ async function openDrawer(ticker) {
   bodyEl.innerHTML = `
     <h3>${safeText(ticker)} <span class="muted small">decision card</span></h3>
     ${cardOut.ok ? "" : `<div class="pill bad">${safeText(cardOut.user_message || cardOut.error)}</div>`}
-    <div class="kv"><span>Signal / Composite</span><span>${formatDecimal(conf.signal_score, 1, "—")} / ${formatDecimal(conf.composite_score ?? conf.rank_score, 1, "—")}</span></div>
-    ${conf.rank_score_v2 != null ? `<div class="kv muted small"><span>Rank v2 (diag)</span><span>${formatDecimal(conf.rank_score_v2, 1, "—")}</span></div>` : ""}
+    <div class="kv"><span>Composite / Rank</span><span>${formatDecimal(conf.composite_score ?? conf.signal_score, 1, "—")} / ${formatDecimal(conf.historical_rank ?? conf.rank_score_v2 ?? conf.rank_score, 1, "—")}</span></div>
+    ${conf.rank_percentile != null ? `<div class="kv muted small"><span>Cohort percentile</span><span>p${formatDecimal(conf.rank_percentile, 0, "—")}</span></div>` : ""}
+    ${conf.historical_rank != null && conf.rank_score_v2 != null ? `<div class="kv muted small"><span>Rank v2</span><span>${formatDecimal(conf.rank_score_v2, 1, "—")}</span></div>` : ""}
     <div class="kv"><span>Confidence</span><span>${safeText(conf.bucket || "—")}</span></div>
     <div class="kv"><span>Entry zone</span><span>${safeText(card.entry_zone?.low ?? "—")} – ${safeText(card.entry_zone?.high ?? "—")}</span></div>
     <div class="kv"><span>Stop / invalidation</span><span>${formatDecimal(card.stop_invalidation, 2, "—")}</span></div>
     <div class="kv"><span>Size</span><span>${safeText(card.size?.qty ?? "—")} sh (~$${formatDecimal(card.size?.usd, 0, "—")})</span></div>
+    ${sharadarBriefStripHtml(card.sharadar)}
     <div class="cockpit-drawer-subhead">Key reasons</div>
     <ul class="cockpit-drawer-reasons">${(card.key_reasons || []).map((r) => `<li>${safeText(r)}</li>`).join("") || "<li class='muted'>—</li>"}</ul>
 
@@ -433,7 +527,7 @@ async function loadReview() {
   }
   const r = out.data || {};
   const props = (r.tuning_proposals || {}).count || 0;
-  el.textContent = `🧠 ${r.total_packets || 0} pkts · ${safeNum(r.coverage_pct, 0)}% · ${props} prop`;
+  el.textContent = `Review ${r.total_packets || 0} pkts · ${safeNum(r.coverage_pct, 0)}% · ${props} prop`; // coverage_pct points from packet_feature_analysis
   el.title = `${r.total_packets || 0} decision packets · ${safeNum(r.coverage_pct, 0)}% resolved · ${props} tuning proposal(s) — click for details`;
 }
 
@@ -452,16 +546,16 @@ async function openReviewDrawer() {
   if (!drawer || !bodyEl) return;
   drawer.classList.add("open");
   drawer.setAttribute("aria-hidden", "false");
-  bodyEl.innerHTML = `<h3>🧠 Learning Review</h3><div class="muted">Loading diagnostics…</div>`;
+  bodyEl.innerHTML = `<h3>Learning Review</h3><div class="muted">Loading diagnostics…</div>`;
   const out = await api.get("/api/cockpit/review");
   if (!out.ok) {
-    bodyEl.innerHTML = `<h3>🧠 Learning Review</h3><div class="pill bad">${safeText(out.user_message || out.error)}</div>`;
+    bodyEl.innerHTML = `<h3>Learning Review</h3><div class="pill bad">${safeText(out.user_message || out.error)}</div>`;
     return;
   }
   const r = out.data || {};
   const props = (r.tuning_proposals || {}).proposals || [];
   bodyEl.innerHTML = `
-    <h3>🧠 Learning Review <span class="muted small">weekly</span></h3>
+    <h3>Learning Review <span class="muted small">weekly</span></h3>
     <div class="kv"><span>Decision packets</span><span>${r.total_packets || 0}</span></div>
     <div class="kv"><span>Resolved (outcomes)</span><span>${r.resolved_packets || 0} (${safeNum(r.coverage_pct, 0)}%)</span></div>
     ${r.resolved_packets ? "" : '<div class="muted small">Outcomes backfill after trades mature (~10 trading days). Diagnostics populate then.</div>'}
@@ -500,7 +594,6 @@ async function refreshAll() {
   await Promise.all([
     loadMarket(),
     loadLane("cockpitPortfolioBody", () => api.get("/api/cockpit/portfolio"), renderPortfolio, "portfolio"),
-    loadLane("cockpitOpportunitiesBody", () => api.get("/api/cockpit/opportunities"), renderOpportunities, "opportunities"),
     loadLane("cockpitBlotterBody", () => api.get("/api/cockpit/blotter"), renderBlotter, "blotter"),
     loadChangeStrip(),
     loadExecQuality(),
@@ -525,7 +618,7 @@ function paintCockpitSurface(stateName, title, detail, extras = {}) {
     stateName,
     title,
     detail,
-    hint: extras.hint || "regime · risk · opportunities · blotter",
+    hint: extras.hint || "regime · risk · blotter",
     output: extras.output,
     data: extras.data,
     action: extras.action,
@@ -539,12 +632,11 @@ async function guardedRefreshAll() {
   paintCockpitSurface(
     "loading",
     "Loading market context.",
-    "Refreshing regime, portfolio risk, opportunities, and blotter provenance.",
+    "Refreshing regime, portfolio risk, and blotter provenance.",
     {
       output: { value: "…", sub: "lanes" },
       data: { value: "…", sub: "cockpit APIs" },
       action: { value: "Wait", sub: "hold" },
-      confidence: 28,
     },
   );
   try {
@@ -552,12 +644,11 @@ async function guardedRefreshAll() {
     paintCockpitSurface(
       "success",
       "Market context refreshed.",
-      "Regime, risk, opportunities, and blotter lanes are visible with provenance.",
+      "Regime, risk, and blotter lanes are visible with provenance.",
       {
-        output: { value: "Ready", sub: "4 lanes" },
+        output: { value: "Ready", sub: "3 lanes" },
         data: { value: "Fresh", sub: "provenance" },
         action: { value: "Pass", sub: "review ok" },
-        confidence: 84,
       },
     );
   } catch (err) {
@@ -569,7 +660,6 @@ async function guardedRefreshAll() {
         output: { value: "—", sub: "lanes" },
         data: { value: "—", sub: "cockpit APIs" },
         action: { value: "Retry", sub: "reload", tone: "bad" },
-        confidence: 0,
       },
     );
   } finally {

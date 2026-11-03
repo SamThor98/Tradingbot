@@ -62,7 +62,6 @@ def _signal_fixture() -> dict:
         "reliability_score": 88.0,
         "execution_score": 90.0,
         "p_up_calibrated": 0.61,
-        "ev_10d": 0.0123,
         "rank_basis": "high_level_v1",
         "sector_etf": "XLK",
         "breakout_confirmed": True,
@@ -97,6 +96,54 @@ def test_symbol_normalize_signal_maps_core_fields() -> None:
     assert card.gate_status.disposition == "kept"
     assert card.provenance.confidence == "high"
     assert "schwab_primary" in card.key_reasons
+
+
+def test_symbol_normalize_signal_maps_rank_selection_fields() -> None:
+    """The scores selection runs on must reach the cockpit, not just rank_score."""
+    sig = _signal_fixture()
+    sig.update(
+        {
+            "rank_score_v2": 64.3,
+            "sort_score": 72.0,
+            "historical_rank": 79.4,
+            "rank_percentile": 91.0,
+            "prob_rank": {"expected_return_40d": 0.041},
+        }
+    )
+    card = SymbolIntelProvider.normalize_signal(sig)
+    assert card.rank.rank_score_v2 == 64.3
+    assert card.rank.sort_score == 72.0
+    assert card.rank.historical_rank == 79.4
+    assert card.rank.rank_percentile == 91.0
+    assert card.rank.expected_return_40d == 0.041
+
+
+def test_symbol_normalize_signal_tolerates_non_dict_prob_rank() -> None:
+    sig = _signal_fixture()
+    sig["prob_rank"] = "unavailable"
+    card = SymbolIntelProvider.normalize_signal(sig)
+    assert card.rank.expected_return_40d is None
+
+
+def test_cockpit_opportunities_sort_on_displayed_rank() -> None:
+    """Lane order must follow the score the lane renders (historical > v2)."""
+    from core.cockpit_service import build_opportunities
+
+    def _row(ticker: str, **scores: float) -> dict:
+        sig = _signal_fixture()
+        sig["ticker"] = ticker
+        sig.pop("rank_score", None)
+        sig.update(scores)
+        return sig
+
+    cards = build_opportunities(
+        [
+            _row("LOW", rank_score_v2=40.0),
+            _row("TOP", historical_rank=95.0, rank_score_v2=41.0),
+            _row("MID", rank_score_v2=70.0),
+        ]
+    )
+    assert [c["ticker"] for c in cards] == ["TOP", "MID", "LOW"]
 
 
 def test_symbol_unknown_disposition_falls_back() -> None:

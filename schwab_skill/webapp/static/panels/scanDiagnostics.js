@@ -4,14 +4,14 @@
  *
  * Extracted from app.js per the module decomposition policy in
  * docs/FRONTEND_DESIGN_SYSTEM.md ("Next Planned Splits"). DOM ids consumed:
- * #scanDiagnostics, #scanBlockers, #scanFunnel, #scanBlockersChip,
+ * #scanDiagnostics, #scanBlockers, #scanFunnel, #scanFunnelMark, #scanBlockersChip,
  * #scanBlockersChipCount, #scanDiagnosticsPanel.
  */
 
 import { state } from "../modules/state.js";
 import { safeText, safeNum, escapeHtml } from "../modules/format.js";
 import { DIAG_LABELS } from "../modules/logger.js";
-import { formatGateModeLabel } from "../modules/filterReasons.js";
+import { formatGateModeLabel, formatDataQualityReason } from "../modules/filterReasons.js";
 import { setOperationsStatusStrip } from "../modules/operationsStatus.js";
 import { syncScanSectionState } from "../modules/operationsPanelState.js";
 import {
@@ -20,7 +20,11 @@ import {
 } from "../modules/operationsPanelSnapshot.js";
 import { getExecutionScore, getReliabilityScore } from "../modules/signalScores.js";
 import { applyFreshness } from "../modules/freshness.js";
+import { flattenDiagnosticValue } from "../modules/typedView.js";
 import { renderPeadCanarySleeve } from "./peadCanary.js";
+import { renderCanActStrips } from "../modules/canActStrip.js";
+import { humanizeKey } from "../modules/humanize.js";
+import { stageAFunnelCounts } from "../modules/stageAFunnel.js";
 
 export function buildScanMeta(signals = [], count = null) {
   const total = count ?? signals.length;
@@ -40,18 +44,15 @@ export function buildScanIntegrityLine(diag = {}, signals = [], shortlist = []) 
   const screened =
     safeNum(diag.watchlist_size, 0) ||
     (Array.isArray(shortlist) && shortlist.length ? shortlist.length : kept);
-  const scanId = safeText(diag.scan_id || "").trim();
-  const idPart = scanId ? `Scan ${scanId.slice(0, 8)} · ` : "";
   const dq = safeText(diag.data_quality || "ok").toLowerCase();
   const regimeBlocked = safeNum(diag.scan_blocked, 0) > 0;
-  const regimePart = regimeBlocked ? "Regime: blocked · " : "Regime: open · ";
-  const vcp = formatGateModeLabel(diag.scan_vcp_gate_mode);
-  const sector = formatGateModeLabel(diag.scan_sector_gate_mode);
   const quality = formatGateModeLabel(diag.quality_gates_mode);
-  const gatesPart = `Filters: quality ${quality}, pattern ${vcp}, sector ${sector}`;
+  const count = screened > 0 ? `${kept} kept of ${screened}` : `${kept} kept`;
+  const regime = regimeBlocked ? "Regime is blocked." : "Regime is open.";
+  const qualityPart = quality ? ` Quality gates are ${quality}.` : "";
   const fallback = safeNum(diag.provider_fallback_count, 0) + safeNum(diag.used_fallback_data_count, 0);
-  const fallbackPart = fallback > 0 ? ` · ${fallback} fallback ticker(s)` : "";
-  return `${idPart}${kept} kept / ${screened} screened · Data: ${dq} · ${regimePart}${gatesPart}${fallbackPart}`;
+  const fallbackPart = fallback > 0 ? ` ${fallback} names used a fallback quote.` : "";
+  return `${count}. Data is ${dq}. ${regime}${qualityPart}${fallbackPart}`;
 }
 
 export function renderScanIntegrityBanner(diag = {}, signals = [], shortlist = []) {
@@ -132,12 +133,14 @@ export function diagnosticsHeadline(diagOrSummary = null) {
   if (!diagOrSummary || typeof diagOrSummary !== "object") return "";
   const headline = safeText(diagOrSummary.headline || "").trim();
   if (headline && headline !== "—") return headline;
+  const coverage = safeText(diagOrSummary.coverage_note || "").trim();
+  if (coverage) return coverage;
   const dq = safeText(diagOrSummary.data_quality || "").trim().toLowerCase();
   if (dq && dq !== "ok") {
     const rs = Array.isArray(diagOrSummary.data_quality_reasons)
       ? diagOrSummary.data_quality_reasons
       : [];
-    const rtxt = rs.slice(0, 2).map((x) => safeText(x)).filter(Boolean).join("; ");
+    const rtxt = rs.slice(0, 2).map((x) => formatDataQualityReason(x)).filter(Boolean).join("; ");
     return rtxt ? `Data quality: ${dq} — ${rtxt}.` : `Data quality: ${dq}.`;
   }
   if (safeNum(diagOrSummary.scan_blocked, 0) > 0) {
@@ -198,23 +201,25 @@ export function buildDiagnosticsSummary(diag = {}) {
       key: k,
       label: DIAG_LABELS[k] || k.replaceAll("_", " "),
       value: safeNum(v, 0),
-      severity: ["exceptions", "df_empty", "stage_b_exceptions"].includes(k) ? "error" : "warn",
+      severity: ["exceptions", "df_empty", "stage_b_exceptions", "stage_a_timeouts"].includes(k)
+        ? "error"
+        : "warn",
     }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
 
-  // Watchlist sourcing: trust the actual watchlist_size from diagnostics.
-  // Honoured sources from the backend include:
-  //   - explicit_tickers_override : custom ticker list (e.g. /api/scan body)
-  //   - sp1500_focused            : SIGNAL_UNIVERSE_MODE=focused (used by
-  //                                 backtests / API callers; no UI trigger)
-  //   - sp1500_default            : full SP1500 broad universe (Run Scan)
-  // Fall back to the SP1500 default size only when diagnostics carry no
-  // watchlist_size at all (e.g. before the first scan completes).
+  // Watchlist size comes only from diagnostics. A missing or zero size is
+  // unreported — do not substitute 1500.
   const watchRaw = safeNum(diag.watchlist_size, 0);
-  const watch = watchRaw > 0 ? watchRaw : 1500;
+  const watchReported = watchRaw > 0;
+  const watch = watchReported ? watchRaw : 0;
   const finalSignals = state.latestSignals.length;
   const funnel = buildFunnelStages(diag, watch, finalSignals);
+  funnel.watchlistReported = watchReported;
+  if (!watchReported && Array.isArray(funnel.stages) && funnel.stages[0]) {
+    funnel.stages[0].unreported = true;
+    funnel.stages[0].tooltip = "Universe size was not reported.";
+  }
 
   return { blockers, funnel };
 }
@@ -282,17 +287,7 @@ function setScanStatusStrip(stateName, title, detail) {
 }
 
 function formatDiagnosticValue(value) {
-  if (value === null) return "null";
-  if (value === undefined) return "—";
-  if (Array.isArray(value)) return value.map((item) => safeText(item)).join("; ") || "—";
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return safeText(value);
-    }
-  }
-  return safeText(value);
+  return flattenDiagnosticValue(value);
 }
 
 function diagnosticChipClass(key, value) {
@@ -396,7 +391,6 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
   const noSectorEtf = safeNum(diag.no_sector_etf, 0);
   const sectorNotWinning = safeNum(diag.sector_not_winning, 0);
   const breakoutNotConfirmed = safeNum(diag.breakout_not_confirmed, 0);
-  const exceptions = safeNum(diag.exceptions, 0);
 
   const stageACandidatesRaw = safeNum(diag.stage_a_candidates, 0);
   const stageAShortlistedRaw = safeNum(diag.stage_a_shortlisted, 0);
@@ -406,6 +400,8 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
   const stageBExceptions = safeNum(diag.stage_b_exceptions, 0);
   const stageBTimeouts = safeNum(diag.stage_b_timeouts, 0);
   const selfStudyFiltered = safeNum(diag.self_study_filtered, 0);
+  const selfStudyWouldFilter = safeNum(diag.self_study_would_filter, 0);
+  const selfStudyWouldFilterCached = safeNum(diag.self_study_would_filter_cached, 0);
   const qualityGatesFiltered = safeNum(diag.quality_gates_filtered, 0);
 
   const vcpWouldFilter = safeNum(diag.stage_a_vcp_would_filter, 0);
@@ -421,13 +417,20 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
   const primaryProviderMode =
     safeText(diag.scan_primary_provider_mode || "").toLowerCase() || null;
   const qualityGatesMode = safeText(diag.quality_gates_mode || "").toLowerCase() || null;
+  const selfStudyMode = safeText(diag.self_study_mode || "").toLowerCase() || null;
 
   const nWatchlist = watchlistOverride;
-  const nStage2 = Math.max(0, nWatchlist - stage2Fail);
+  const coverageCounts = stageAFunnelCounts({ ...diag, watchlist_size: nWatchlist });
+  const nEvaluated = coverageCounts.evaluated;
+  const nUnresolved = coverageCounts.unresolved;
+  const nStage2 = coverageCounts.stage2Pass;
   const nVcp = Math.max(0, nStage2 - vcpFail);
   const sectorFiltered = noSectorEtf + sectorNotWinning;
   const nSector = Math.max(0, nVcp - sectorFiltered);
-  const nBreakout = Math.max(0, nSector - breakoutNotConfirmed - exceptions);
+  const nBreakout = Math.max(
+    0,
+    nSector - breakoutNotConfirmed - safeNum(diag.stage_a_task_exceptions, 0),
+  );
   // ``stage_a_candidates`` is the authoritative pass count when present.
   const nStageA = stageACandidatesRaw > 0 ? stageACandidatesRaw : nBreakout;
   const nAfterProvider = Math.max(0, nStageA - primaryProviderFiltered);
@@ -470,6 +473,14 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       tooltip: watchlistTooltip,
     },
     {
+      key: "evaluated",
+      label: "Evaluated",
+      value: nEvaluated,
+      filtered: nUnresolved,
+      tooltip:
+        "Names that received a Stage A decision. Timeouts are not counted as uptrend passes.",
+    },
+    {
       key: "stage2",
       label: "Uptrend check",
       value: nStage2,
@@ -477,7 +488,7 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       shadow_filtered: signalEdgeShadowMode === "shadow" ? stage2ShadowWouldFilter : 0,
       mode: stage2ShadowWouldFilter > 0 ? signalEdgeShadowMode : null,
       tooltip:
-        "Symbols in a confirmed uptrend (above the long-term average with healthy trend structure). Failures did not pass the uptrend check. Shadow mode shows how many would fail tighter Stage 2 thresholds.",
+        "Symbols in a confirmed uptrend (above the long-term average with healthy trend structure). Counted only among names Stage A actually finished. Shadow mode shows how many would fail tighter Stage 2 thresholds.",
     },
     {
       key: "vcp",
@@ -504,6 +515,8 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       label: "Quick filter",
       value: nStageA,
       filtered: Math.max(0, nSector - nStageA),
+      shadow_filtered: selfStudyMode === "shadow" ? selfStudyWouldFilterCached : 0,
+      mode: selfStudyWouldFilterCached > 0 ? selfStudyMode : null,
       tooltip:
         "Final count after breakout confirmation and timing gates — candidates ready for deeper analysis.",
     },
@@ -522,8 +535,9 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
       value: nQuality,
       filtered: qualityFilteredTotal,
       mode: qualityGatesMode,
+      shadow_filtered: selfStudyMode === "shadow" ? selfStudyWouldFilter : 0,
       tooltip:
-        "Survivors after deep-analysis exceptions, timeouts, minimum conviction, and quality filters (financial red flags, weak breakout volume, etc.).",
+        "Survivors after deep-analysis exceptions, timeouts, minimum conviction, and quality filters (financial red flags, weak breakout volume, etc.). Self-study shadow counts would-filter only.",
     },
     {
       key: "final",
@@ -566,19 +580,39 @@ export function buildFunnelStages(diag, watchlistOverride, finalCount) {
  * `deps`: { updateHeroInfographic, getDisplayMode } injected by app.js
  * (same DI pattern as the other panels/*.js modules).
  */
-function humanizeDataQualityReason(code) {
-  const raw = safeText(code).trim();
-  const upper = raw.toUpperCase();
-  if (upper.includes("QUOTE_STALE")) return "Market quotes are stale";
-  if (upper.includes("PROVIDER_FALLBACK")) return "Using fallback market data";
-  return raw.replace(/_/g, " ").toLowerCase();
-}
-
 function formatDataQualityChipValue(dq, reasons) {
   const rs = Array.isArray(reasons) ? reasons : [];
   if (!rs.length) return dq;
-  const hint = humanizeDataQualityReason(rs[0]);
+  const hint = formatDataQualityReason(rs[0]);
   return hint && hint !== dq.toLowerCase() ? `${dq} · ${hint}` : dq;
+}
+
+function renderScanFunnelMark(summary) {
+  const el = document.getElementById("scanFunnelMark");
+  if (!el) return;
+  const watch = safeNum(summary?.funnel?.watchlist, 0);
+  const watchReported = summary?.funnel?.watchlistReported !== false && watch > 0;
+  const finalCount = Array.isArray(state.latestSignals) ? state.latestSignals.length : 0;
+  const top = Array.isArray(summary?.blockers) && summary.blockers.length ? summary.blockers[0] : null;
+  if (!watchReported && finalCount <= 0) {
+    el.hidden = false;
+    el.setAttribute("role", "img");
+    el.setAttribute("aria-label", "Universe size was not reported.");
+    el.innerHTML = `<p class="scan-funnel-mark-caption">— Universe size was not reported.</p>`;
+    return;
+  }
+  const keptPct = watchReported ? Math.max(3, Math.min(100, Math.round((finalCount / watch) * 100))) : 0;
+  const dropLabel = top
+    ? `${humanizeKey(top.key)} (${top.value})`
+    : "no major drop-off";
+  const caption = watchReported
+    ? `${finalCount} kept of ${watch} · ${dropLabel}`
+    : `${finalCount} signals. Universe size was not reported.`;
+  el.hidden = false;
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", caption);
+  const keyTitle = top?.key ? ` title="${escapeHtml(top.key)}"` : "";
+  el.innerHTML = `<div class="scan-funnel-mark-track" aria-hidden="true"><span class="scan-funnel-mark-kept" style="width:${keptPct}%"></span></div><p class="scan-funnel-mark-caption"${keyTitle}>${escapeHtml(caption)}</p>`;
 }
 
 export function renderDiagnostics(diag = {}, deps = {}) {
@@ -599,6 +633,15 @@ export function renderDiagnostics(diag = {}, deps = {}) {
       "Data quality",
       formatDataQualityChipValue(dq, rs),
       dataQualityChipClass(dq),
+    );
+  }
+  if (safeNum(diag.scan_partial, 0) > 0) {
+    const unresolved = safeNum(diag.stage_a_timeouts, 0) + safeNum(diag.stage_a_task_exceptions, 0);
+    appendDiagnosticChip(
+      chipWrap,
+      "Coverage",
+      unresolved > 0 ? `partial (${unresolved} unfinished)` : "research partial",
+      "warn",
     );
   }
   if (diag.spy_price != null && diag.spy_sma_200 != null) {
@@ -786,6 +829,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     });
   }
   renderScanFunnelSummaryStrip(diag, summary);
+  renderScanFunnelMark(summary);
 
   if (!summary.blockers.length) {
     const empty = document.createElement("li");
@@ -810,8 +854,9 @@ export function renderDiagnostics(diag = {}, deps = {}) {
   const funnelMax = Math.max(1, ...funnelVals);
 
   stages.forEach((stage, i) => {
+    const unreported = stage.unreported === true;
     const n = safeNum(stage.value, 0);
-    const pct = Math.round((n / funnelMax) * 100);
+    const pct = unreported ? 0 : Math.round((n / funnelMax) * 100);
     const filtered = safeNum(stage.filtered, 0);
     const shadowFiltered = safeNum(stage.shadow_filtered, 0);
     const mode = safeText(stage.mode || "").toLowerCase();
@@ -849,7 +894,7 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     node.innerHTML = `
       <div class="scan-funnel-row-head">
         <span class="label">${escapeHtml(stage.label || stage.key || "")}</span>
-        <span class="value mono-nums">${n} pass · ${pct}%</span>
+        <span class="value mono-nums">${unreported ? "— · universe size was not reported" : `${n} pass · ${pct}%`}</span>
       </div>
       <div class="scan-funnel-bar-track funnel-bar-track" aria-hidden="true">
         <div class="scan-funnel-bar-fill funnel-bar-fill" style="width:${pct}%"></div>
@@ -864,14 +909,17 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     funnelEl.appendChild(node);
   });
 
-  state.lastWatchlistSize = summary.funnel.watchlist;
-  state.lastScanAt = new Date().toISOString();
+  state.lastWatchlistSize = summary.funnel.watchlistReported === false ? null : summary.funnel.watchlist;
+  // lastScanAt comes from the scan payload (finished_at / last_scan.at).
+  // Do not stamp page-fetch time when that field is missing.
   applyFreshness(document.getElementById("scanFresh"), {
-    asOf: state.lastScanAt,
+    asOf: state.lastScanAt || null,
     source: "/api/scan",
     surface: "scan_results",
+    unavailable: "scan time missing",
   });
   renderScanIntegrityBanner(diag, state.latestSignals, state.latestShortlistSignals);
+  renderCanActStrips();
   renderPeadCanarySleeve(diag);
   renderScanGateModesToolbar(diag);
   assertScanDeltasReconcile(diag, summary.funnel, state.latestSignals);
@@ -880,8 +928,6 @@ export function renderDiagnostics(diag = {}, deps = {}) {
     deps.updateKanbanLaneSummaries();
   }
   const diagPanel = document.getElementById("scanDiagnosticsPanel");
-  const displayMode = typeof getDisplayMode === "function" ? getDisplayMode() : "";
-  if (diagPanel && displayMode === "pro") diagPanel.open = true;
   if (headerChip && diagPanel && !headerChip.dataset.boundExpand) {
     headerChip.addEventListener("click", () => {
       diagPanel.open = true;

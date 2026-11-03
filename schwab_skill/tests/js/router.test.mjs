@@ -25,6 +25,10 @@ test("alias keys are lowercase and values are non-empty element ids", () => {
 
 test("core deep-link aliases resolve to their contract targets", () => {
   assert.equal(SECTION_ALIASES.backtest, "backtestSection");
+  assert.equal(SECTION_ALIASES.lab, "backtestSummaryLanding");
+  assert.equal(SECTION_ALIASES.leaderboard, "backtestLeaderboard");
+  assert.equal(SECTION_ALIASES.btmonitor, "backtestLiveMonitor");
+  assert.equal(SECTION_ALIASES["backtest-monitor"], "backtestLiveMonitor");
   assert.equal(SECTION_ALIASES.pending, "pendingSection");
   assert.equal(SECTION_ALIASES.scan, "scanSection");
   assert.equal(SECTION_ALIASES.connect, "onboardingSection");

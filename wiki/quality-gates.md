@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Quality Gates.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-10-16
 tags: [strategy, quality]
 ---
 
@@ -28,14 +28,15 @@ tags: [strategy, quality]
 | `QUALITY_MIN_CONTINUATION_PROB` | 0.55 | Min continuation probability |
 | `QUALITY_MAX_BULL_TRAP_PROB` | 0.45 | Max bull-trap probability |
 
-Note: `weak_breakout_volume` is always a hard gate regardless of mode.
+`weak_breakout_volume` is one soft reason. Soft mode drops it only together with another reason. Hard mode drops it alone. `expansion_volume_ratio` is the entry bar divided by the prior 50-day average. It is stored on the signal and the backtest trade. It is not a gate. The live floor remains `QUALITY_BREAKOUT_VOLUME_MIN_RATIO` 0.90, applied to entry volume over the average that includes the entry bar.
 
 ## Related Pages
 
 - [[signal-scanner]] — quality gates applied after Stage B
 - [[signal-quality-rollout]] — rollout plan
 - [[scanner-tunables]] — env var reference
+- [[self-study]] — sibling conviction floor (shadow/live ladder)
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-08-26*

@@ -40,6 +40,8 @@ trading_bot.log*
 .earnings_cache_warm_progress.json
 .finnhub_cache.json
 .positions_tracker.json
+.user_trading_halt.json
+.user_trading_halt.json.tmp
 .sector_map_cache.json
 .sec_cache.json
 .sec_filing_cache.json
@@ -53,6 +55,7 @@ trading_bot.log*
 .hypothesis_ledger*.json
 .counterfactual_*.json
 .scan_outcomes.json
+.stage_a_checkpoint.json
 guardrail_trades.json
 execution_safety_metrics.json
 cockpit_observability_metrics.json
@@ -70,6 +73,7 @@ tokens_*.enc
 tokens_*.enc.bak
 tokens_*.json
 .token_cache.json
+.hmm_regime_spy.json
 
 # Generated/model artifacts
 artifacts/

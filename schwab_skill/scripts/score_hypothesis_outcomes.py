@@ -86,6 +86,7 @@ def run_score(skill_dir: Path, dry_run: bool) -> int:
 
     auth = DualSchwabAuth(skill_dir=skill_dir)
     changed = False
+    history_cache: dict[str, Any] = {}
     for rec in records:
         if not isinstance(rec, dict):
             continue
@@ -107,7 +108,9 @@ def run_score(skill_dir: Path, dry_run: bool) -> int:
         except Exception:
             continue
 
-        df = get_daily_history(tkr, days=450, auth=auth, skill_dir=skill_dir)
+        if tkr not in history_cache:
+            history_cache[tkr] = get_daily_history(tkr, days=450, auth=auth, skill_dir=skill_dir)
+        df = history_cache[tkr]
         ep = _entry_price_and_start_idx(df, created, entry_hint_f)
         if ep is None:
             continue

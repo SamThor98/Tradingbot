@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "card_id": "liquid-funding-z90",
+  "status": "proposed",
+  "theory_name": "liquid funding z90 shadow separation on covered mega-caps",
+  "question": "Do point-in-time Liquid funding features separate Stage 2 trades on the covered mega-cap sub-universe, and would dropping crowded-long extremes (z90 >= 1.5) have helped? Single recent window, no eras; buckets under 30 trades are insufficient_sample.",
+  "single_change": {
+    "field": "liquid_funding_filter",
+    "baseline": "shadow_attach_only_no_filter",
+    "candidate": "would_filter funding_z90 >= 1.5 (shadow measurement, no live filter)"
+  },
+  "floors": {
+    "pf_mean": 1.2,
+    "worst_era_pf": 1.0,
+    "min_trades": 30
+  },
+  "decision": "quote_only",
+  "kind": "artifact",
+  "command": [
+    "python",
+    "scripts/liquid_funding_shadow_study.py"
+  ],
+  "artifact": "validation_artifacts/liquid_funding_study.json",
+  "metrics": {
+    "pf_mean": "buckets.shadow_kept.pf_net",
+    "worst_era_pf": "worst_era_pf",
+    "n_trades": "buckets.shadow_kept.n",
+    "verdict": "verdict"
+  },
+  "also_quote": {
+    "covered_all_pf": "buckets.covered_all.pf_net",
+    "covered_all_n": "buckets.covered_all.n",
+    "crowded_long_pf": "buckets.crowded_long.pf_net",
+    "crowded_long_n": "buckets.crowded_long.n",
+    "total_trades": "total_trades",
+    "coverage_pct": "coverage_pct"
+  }
+}

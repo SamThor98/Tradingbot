@@ -72,6 +72,7 @@ use cold storage for multi-year panels if disk pressure appears.
 ## Related Pages
 
 - [[probabilistic-ranking-research-architecture]] — Full research architecture
+- [[pit-research-platform]] — PIT providers, barrier labels, DuckDB warehouse
 - [[agent-intelligence]] — Persona reliability (separate index files)
 - [[mirofish-engine]] — Persona votes that may land in `raw_features_json`
 - [[advisory-model]] — Baseline logistic features / labels

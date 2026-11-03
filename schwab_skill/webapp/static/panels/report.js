@@ -8,13 +8,15 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatMoney, pct, verdictFromScore, escapeHtml } from "../modules/format.js";
+import { safeText, safeNum, formatMoney, formatPercentPoints, pct, verdictFromScore, escapeHtml } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { normalizeReportPayload, runReportNormalizationSmokeChecks } from "../modules/reportNormalization.js";
 import { setResearchStatusStrip } from "../modules/researchStatus.js";
 import { buildOperatorAlertHtml } from "../modules/asyncState.js";
+import { payloadTicker } from "../modules/researchTickerFlow.js";
 
 let smokeChecked = false;
+let _reportGen = 0;
 
 function inferredBadge(enabled) {
   return enabled ? `<span class="report-badge inferred">inferred</span>` : "";
@@ -34,13 +36,13 @@ function fmtNumberOrDash(value, digits = 2) {
 }
 
 function fmtPctValue(value, digits = 1) {
+  // Finnhub-style points from research.py _pct_finnhub ("already expressed in percent")
   if (value === null || value === undefined || value === "") {
     return `<span class='muted'>n/a</span>`;
   }
   const n = Number(value);
   if (!Number.isFinite(n)) return `<span class='muted'>n/a</span>`;
-  const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
-  return `${pctVal.toFixed(digits)}%`;
+  return formatPercentPoints(n, digits);
 }
 
 function fmtMoneyOrDash(value, digits = 2) {
@@ -214,7 +216,7 @@ function buildAppendixBlocks(normalized) {
           <li>Intrinsic Value: ${formatMoney(dcf.intrinsic_value)}</li>
           <li>Current Price: ${formatMoney(dcf.current_price)}</li>
           <li>Margin of Safety: ${safeNum(dcf.margin_of_safety).toFixed(1)}%</li>
-          <li>Growth / WACC / Terminal: ${pct(dcf.growth_rate)} / ${pct(dcf.wacc)} / ${pct(dcf.terminal_growth)}</li>
+          <li>Growth / WACC / Terminal: ${pct(dcf.growth_rate)} / ${pct(dcf.wacc)} / ${pct(dcf.terminal_growth)}</li> <!-- ratios from full_report / companyfacts -->
           <li>Takeaway: ${safeNum(dcf.margin_of_safety) >= 0 ? "Valuation supports upside." : "Valuation implies premium pricing."}</li>
         </ul>
       </div>` : "",
@@ -235,7 +237,7 @@ function buildAppendixBlocks(normalized) {
           <li>Current Ratio: ${safeText(health.current_ratio)}</li>
           <li>Debt/Equity: ${safeText(health.debt_to_equity)}</li>
           <li>Interest Coverage: ${safeText(health.interest_coverage)}x</li>
-          <li>ROE: ${pct(health.roe)} | Op Margin: ${pct(health.operating_margin)}</li>
+          <li>ROE: ${pct(health.roe)} | Op Margin: ${pct(health.operating_margin)}</li> <!-- ratios from full_report.health -->
           <li>Flags: ${(health.flags || []).length ? health.flags.slice(0, 3).join("; ") : "None"}</li>
         </ul>
       </div>` : "",
@@ -254,7 +256,7 @@ function buildAppendixBlocks(normalized) {
         <h4>Appendix: MiroFish <span class="verdict ${sectionVerdicts.mirofish}">${sectionVerdicts.mirofish}</span></h4>
         <ul class="report-bullets">
           <li>Conviction: ${safeText(miro.conviction_score)}</li>
-          <li>Continuation: ${pct(miro.continuation_probability, 0)}</li>
+          <li>Continuation: ${pct(miro.continuation_probability, 0)}</li> <!-- ratio 0–1 from mirofish -->
           <li>Bull Trap: ${pct(miro.bull_trap_probability, 0)}</li>
           <li>Takeaway: ${safeText(miro.summary || "No summary provided.")}</li>
         </ul>
@@ -529,7 +531,7 @@ function buildValuationTechnicalSection(rawData) {
       ["SMA 50 / 150 / 200", { html: `${fmtMoneyOrDash(technical?.sma_50)} / ${fmtMoneyOrDash(technical?.sma_150)} / ${fmtMoneyOrDash(technical?.sma_200)}` }],
       ["Stage 2", { html: technical?.stage_2 ? "<strong>YES</strong>" : "NO" }],
       ["VCP Volume Pattern", { html: technical?.vcp ? "<strong>YES</strong>" : "NO" }],
-      ["Signal Score", { html: fmtNumberOrDash(technical?.signal_score, 1) + " / 100" }],
+      ["Signal points", { html: `${fmtNumberOrDash(technical?.signal_score, 1)} / 100 <span class="muted">composite, not a probability</span>` }],
       ["Sector ETF", { html: escapeHtml(technical?.sector_etf || "Unknown") }],
     ],
     emptyMessage: "Technical structure unavailable.",
@@ -640,7 +642,7 @@ function buildPortfolioFitSection(normalized) {
     id: "portfolio_fit",
     eyebrow: "Part V",
     title: "Portfolio Fit and Risk Budget",
-    subtitle: "Sector overlap, concentration, and sizing context.",
+    subtitle: "Operator book context: sector overlap, concentration, and sizing — not the symbol's fundamentals.",
     body,
   });
 }
@@ -762,10 +764,10 @@ function buildTrustHeaderSection(rawData) {
   const statusClassName = trusted ? "good" : "warn";
   const statusText = trusted ? "Trusted" : "Needs Review";
   const confidence = Number.isFinite(Number(trust?.data_confidence))
-    ? `${(Number(trust.data_confidence) * 100).toFixed(1)}%`
+    ? pct(trust.data_confidence, 1) // ratio 0–1 from report_trust.py
     : "n/a";
   const citation = Number.isFinite(Number(trust?.citation_completeness))
-    ? `${(Number(trust.citation_completeness) * 100).toFixed(1)}%`
+    ? pct(trust.citation_completeness, 1)
     : "n/a";
   const conflicts = Number.isFinite(Number(trust?.unresolved_conflict_count))
     ? String(trust.unresolved_conflict_count)
@@ -821,10 +823,16 @@ function buildEvidenceTraceSection(rawData) {
   const dcf = rawData?.dcf || {};
   const technical = rawData?.technical || {};
   const pctText = (value, digits = 2) => {
+    // DCF growth/wacc/terminal are ratios 0–1 from full_report / companyfacts
     const n = Number(value);
     if (!Number.isFinite(n)) return "n/a";
-    const pctVal = Math.abs(n) <= 1 ? n * 100 : n;
-    return `${pctVal.toFixed(digits)}%`;
+    return pct(n, digits);
+  };
+  const mosText = (value, digits = 1) => {
+    // points from full_report (iv-price)/price*100
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "n/a";
+    return formatPercentPoints(n, digits);
   };
   const numText = (value, digits = 1) => {
     const n = Number(value);
@@ -835,8 +843,8 @@ function buildEvidenceTraceSection(rawData) {
     `DCF growth rate: ${pctText(dcf?.growth_rate, 2)}`,
     `DCF WACC: ${pctText(dcf?.wacc, 2)}`,
     `Terminal growth: ${pctText(dcf?.terminal_growth, 2)}`,
-    `Margin of safety: ${pctText(dcf?.margin_of_safety, 1)}`,
-    `Technical signal score: ${numText(technical?.signal_score, 1)}/100`,
+    `Margin of safety: ${mosText(dcf?.margin_of_safety, 1)}`,
+    `Signal points: ${numText(technical?.signal_score, 1)}/100 (composite, not a probability)`,
   ];
   const freshnessLine = generatedAt
     ? `Generated at ${escapeHtml(generatedAt)} · age ${freshness.ageDays ?? "n/a"} day(s)`
@@ -846,7 +854,7 @@ function buildEvidenceTraceSection(rawData) {
     <div class="report-scenario-kpis">
       <div><span class="subtle">Timestamp Freshness</span><div class="pill ${freshness.css}">${escapeHtml(freshness.label)}</div></div>
       <div><span class="subtle">Generated At</span><div class="mono-nums">${escapeHtml(generatedAt || "n/a")}</div></div>
-      <div><span class="subtle">Source Confidence</span><div class="mono-nums">${Number.isFinite(Number(trust?.data_confidence)) ? `${(Number(trust.data_confidence) * 100).toFixed(1)}%` : "n/a"}</div></div>
+      <div><span class="subtle">Source Confidence</span><div class="mono-nums">${Number.isFinite(Number(trust?.data_confidence)) ? pct(trust.data_confidence, 1) : "n/a"}</div></div>
     </div>
     <div class="subtle">${freshnessLine}</div>
     <div class="ir-subhead">Filing Excerpts</div>
@@ -1013,19 +1021,9 @@ export function renderReportVisual(data) {
 }
 
 export function applyReportViewMode() {
-  const raw = document.getElementById("reportOutput");
   const visual = document.getElementById("reportVisual");
-  const btn = document.getElementById("toggleReportViewBtn");
-  if (!raw || !visual || !btn) return;
-  if (state.reportRawView) {
-    raw.style.display = "block";
-    visual.style.display = "none";
-    btn.textContent = "Show Visual";
-  } else {
-    raw.style.display = "none";
-    visual.style.display = "grid";
-    btn.textContent = "Show Raw JSON";
-  }
+  if (visual) visual.style.display = "grid";
+  state.reportRawView = false;
 }
 
 function setReportRunStatus(message, severity = "muted") {
@@ -1036,6 +1034,13 @@ function setReportRunStatus(message, severity = "muted") {
   if (severity === "warn") el.classList.add("warn");
   else if (severity === "good") el.classList.add("good");
   else el.classList.add("muted");
+}
+
+export function applyReportTickerStale(inputTicker) {
+  const shown = payloadTicker(state.lastReportData, "");
+  const input = String(inputTicker || "").trim().toUpperCase();
+  if (!shown || shown === input) return;
+  setReportRunStatus(`Status: stale — showing ${shown}, input is ${input || "empty"}`, "warn");
 }
 
 export async function runReport() {
@@ -1057,11 +1062,11 @@ export async function runReport() {
     );
     return;
   }
+  const gen = ++_reportGen;
   const section = document.getElementById("reportSection").value.trim();
   const skipMirofish = document.getElementById("skipMirofish").checked;
   const skipEdgar = document.getElementById("skipEdgar").checked;
   const btn = document.getElementById("reportBtn");
-  const output = document.getElementById("reportOutput");
   const visual = document.getElementById("reportVisual");
 
   btn.disabled = true;
@@ -1073,7 +1078,6 @@ export async function runReport() {
     "Fetching technical, valuation, filing, sentiment, and portfolio evidence.",
   );
   setReportRunStatus("Status: queued", "muted");
-  output.textContent = "Generating report...";
   visual.setAttribute("data-async-state", "loading");
   visual.innerHTML = `<div class="async-state async-state--loading" role="status">
     <span class="async-spinner" aria-hidden="true"></span>
@@ -1088,8 +1092,8 @@ export async function runReport() {
     qs.set("skip_edgar", String(skipEdgar));
     setReportRunStatus("Status: fetching data", "muted");
     const out = await api.get(`/api/report/${ticker}?${qs.toString()}`, { timeoutMs: 300000 });
+    if (gen !== _reportGen) return;
     if (!out.ok) {
-      output.textContent = out.error || "Report failed.";
       visual.setAttribute("data-async-state", "error");
       visual.innerHTML = buildOperatorAlertHtml({
         detail: out.user_message || out.error || "Report failed.",
@@ -1108,6 +1112,8 @@ export async function runReport() {
       return;
     }
 
+    const shown = payloadTicker(out.data, ticker);
+    if (shown && shown !== ticker) return;
     state.lastReportData = out.data;
     state.reportRawView = false;
     applyReportViewMode();
@@ -1121,10 +1127,10 @@ export async function runReport() {
       state.lastPortfolioRiskData = null;
       portfolioRiskFailed = true;
     }
+    if (gen !== _reportGen) return;
 
     state.activeReportTab = "summary";
     setReportRunStatus("Status: drafting", "muted");
-    output.textContent = JSON.stringify(out.data, null, 2);
     renderReportTabs(out.data);
     renderReportVisual(out.data);
     visual.setAttribute("data-async-state", "success");
@@ -1132,7 +1138,7 @@ export async function runReport() {
       setResearchStatusStrip(
         "reportStatusStrip",
         "partial",
-        `Report ready for ${ticker}.`,
+        `Report ready for ${shown}.`,
         "Portfolio risk was unavailable; review remaining evidence before exporting.",
       );
       setReportRunStatus("Status: complete with partial failure (portfolio risk unavailable)", "warn");
@@ -1140,16 +1146,18 @@ export async function runReport() {
       setResearchStatusStrip(
         "reportStatusStrip",
         "success",
-        `Report ready for ${ticker}.`,
-        "Narrative, appendix tabs, and raw JSON are available.",
+        `Report ready for ${shown}.`,
+        "Narrative and appendix tabs are available.",
       );
       setReportRunStatus("Status: complete", "good");
     }
-    logEvent({ kind: "report", severity: "info", message: `Report complete for ${ticker}${section ? ` (${section})` : ""}.` });
-    updateActionCenter({ title: "Report Complete", message: `Full report ready for ${ticker}.`, severity: "success" });
+    logEvent({ kind: "report", severity: "info", message: `Report complete for ${shown}${section ? ` (${section})` : ""}.` });
+    updateActionCenter({ title: "Report Complete", message: `Full report ready for ${shown}.`, severity: "success" });
   } finally {
-    btn.disabled = false;
-    btn.textContent = "Run Report";
+    if (gen === _reportGen) {
+      btn.disabled = false;
+      btn.textContent = "Run Report";
+    }
   }
 }
 
@@ -1417,8 +1425,8 @@ function buildDossierProvenanceBanner(data) {
     <div class="dossier-provenance-banner">
       <div class="dossier-provenance-title">Evidence trail</div>
       <div class="subtle">Trust status: <span class="pill ${trustClass}">${trustStatus}</span>
-        · Data confidence ${safeNum((Number(trust.data_confidence) || 0) * 100, 0)}%
-        · Citations ${safeNum((Number(trust.citation_completeness) || 0) * 100, 0)}%</div>
+        · Data confidence ${Number.isFinite(Number(trust.data_confidence)) ? pct(trust.data_confidence, 0) : "—"}
+        · Citations ${Number.isFinite(Number(trust.citation_completeness)) ? pct(trust.citation_completeness, 0) : "—"}</div>
       <ul class="report-bullets dossier-source-list">${sourceRows || "<li>No source metadata returned.</li>"}</ul>
       ${fallbackBlock}
     </div>
@@ -1446,9 +1454,6 @@ function buildDossierQualityBadge(data) {
 
 function setDossierPreview(data, markdownText = "") {
   const writeup = document.getElementById("dossierWriteup");
-  const details = document.getElementById("dossierDetails");
-  const out = document.getElementById("dossierOutput");
-  if (!details || !out) return;
   if (writeup) {
     writeup.classList.remove("hidden");
     const html = markdownText
@@ -1458,8 +1463,6 @@ function setDossierPreview(data, markdownText = "") {
     const qualityBadgeHtml = buildDossierQualityBadge(data);
     writeup.innerHTML = `<article class="ir-document ir-dossier-preview">${provenanceHtml}${qualityBadgeHtml}${html}</article>`;
   }
-  details.classList.remove("hidden");
-  out.textContent = JSON.stringify(data, null, 2);
 }
 
 function triggerBlobDownload(blob, filename) {
@@ -1579,7 +1582,7 @@ export async function runResearchDossier() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Generate Dossier";
+      btn.textContent = "Generate full report";
     }
   }
 }

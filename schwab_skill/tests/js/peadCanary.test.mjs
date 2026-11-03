@@ -27,6 +27,29 @@ describe("buildPeadCanarySleeve", () => {
     assert.deepEqual(sleeve.tickers, ["AAA", "BBB", "CCC", "DDD", "EEE"]);
     assert.equal(sleeve.rank_arm, "top5_by_edge_score");
     assert.equal(sleeve.evaluated, 40);
+    assert.equal(sleeve.names[0].pead_surprise_large, false);
+    assert.equal(sleeve.names[0].extended, null);
+  });
+
+  it("keeps an extended name in the top five and flags it", () => {
+    const sleeve = buildPeadCanarySleeve({
+      pead_primary_capacity_rank_top_n: 5,
+      pead_primary_shadow_names: [
+        {
+          ticker: "EXT",
+          edge_score: 90,
+          capacity_top_n: true,
+          pead_surprise_pct: 0.2,
+          pead_extension_drop_would_drop: true,
+          pead_surprise_large: true,
+        },
+        { ticker: "IN", edge_score: 80, capacity_top_n: true, pead_extension_drop_would_drop: false },
+      ],
+    });
+    assert.deepEqual(sleeve.tickers, ["EXT", "IN"]);
+    assert.equal(sleeve.names[0].extended, true);
+    assert.equal(sleeve.names[0].pead_surprise_large, true);
+    assert.equal(sleeve.names[1].extended, false);
   });
 
   it("falls back to first N when capacity_top_n flags are missing", () => {

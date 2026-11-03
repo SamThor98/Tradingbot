@@ -184,29 +184,57 @@ def equity_curve(
     *,
     starting_equity: float = 100_000.0,
     position_pct: float = 0.10,
+    max_gross_pct: float | None = 1.0,
 ) -> list[dict[str, Any]]:
     """
-    Replay trades sequentially in (entry_date, exit_date) order. Each trade
-    is sized at ``position_pct`` of *current* equity. Returns one row per
-    trade containing equity and running drawdown.
+    Replay trades on a shared clock. Each taken trade is sized at
+    ``position_pct`` of equity at entry. Open notional may not exceed
+    ``max_gross_pct`` of equity (default 100%). Trades that would breach
+    the cap are left out of the curve.
+
+    ``max_gross_pct=None`` restores the old sequential stack, which can
+    deploy more than 100% when holds overlap. Do not quote that path as
+    an account return.
     """
-    sorted_t = sorted(trades, key=lambda t: (t.entry_date, t.exit_date))
-    eq = starting_equity
-    peak = eq
+    events: list[tuple[pd.Timestamp, int, int]] = []
+    for i, trade in enumerate(trades):
+        events.append((pd.Timestamp(trade.entry_date), 0, i))
+        events.append((pd.Timestamp(trade.exit_date), 1, i))
+    events.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    equity = float(starting_equity)
+    peak = equity
+    open_notional = 0.0
+    taken: dict[int, float] = {}
     curve: list[dict[str, Any]] = []
-    for t in sorted_t:
-        size = eq * position_pct
-        eq += size * t.net_ret
-        if eq > peak:
-            peak = eq
-        dd = (peak - eq) / peak if peak > 0 else 0.0
-        curve.append(
-            {
-                "exit_date": t.exit_date.isoformat()[:10],
-                "equity": round(eq, 2),
-                "drawdown_pct": round(dd * 100, 4),
-            }
-        )
+    for _ts, kind, i in events:
+        trade = trades[i]
+        if kind == 1:
+            size = taken.pop(i, None)
+            if size is None:
+                continue
+            equity += size * float(trade.net_ret)
+            open_notional = max(0.0, open_notional - size)
+            if equity > peak:
+                peak = equity
+            dd = (peak - equity) / peak if peak > 0 else 0.0
+            curve.append(
+                {
+                    "exit_date": pd.Timestamp(trade.exit_date).isoformat()[:10],
+                    "equity": round(equity, 2),
+                    "drawdown_pct": round(dd * 100, 4),
+                }
+            )
+            continue
+        if i in taken or equity <= 0 or position_pct <= 0:
+            continue
+        desired = equity * float(position_pct)
+        if max_gross_pct is not None:
+            cap = equity * float(max_gross_pct)
+            if open_notional + desired > cap + max(1e-6, abs(cap) * 1e-9):
+                continue
+        taken[i] = desired
+        open_notional += desired
     return curve
 
 

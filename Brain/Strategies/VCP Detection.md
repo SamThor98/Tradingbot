@@ -35,8 +35,9 @@ Optional additional check for intraday confirmation:
 
 ## Quality Gate: Breakout Volume
 - `QUALITY_REQUIRE_BREAKOUT_VOLUME` (default false) — require latest volume above 50-day average
-- `QUALITY_BREAKOUT_VOLUME_MIN_RATIO` (default 0.90) — minimum volume ratio threshold
-- This is always a **hard gate** regardless of `QUALITY_GATES_MODE`
+- `QUALITY_BREAKOUT_VOLUME_MIN_RATIO` (default 0.90) — minimum of entry volume over the 50-day average that includes the entry bar
+- In soft mode that miss is one reason and drops a name only with a second reason. Hard mode drops it alone
+- `expansion_volume_ratio` is entry volume over the 50-day average of the bars before the entry. It is stored on the signal and is not a gate
 
 ## Tuning
 - Increase `VCP_DAYS` to 6-8 for stricter contraction (fewer but higher-quality signals)

@@ -7,6 +7,7 @@
  */
 
 import { isScanSignalStageable } from "../modules/signalProvenance.js";
+import { bindSettledLessons, refreshSettledLessons } from "../panels/settledLessons.js";
 
 export function createOperationsController(ctx) {
   const {
@@ -32,6 +33,7 @@ export function createOperationsController(ctx) {
     approveTradeById,
     syncApproveDialogGuardrails,
     openResearchForTicker,
+    openIntelForTicker,
   } = ctx;
 
   function init() {
@@ -53,11 +55,19 @@ export function createOperationsController(ctx) {
       if (!ticker) return;
       openResearchForTicker(ticker);
     });
+    document.getElementById("scanDetailIntelBtn")?.addEventListener("click", () => {
+      const sig = getScanDetailSignal();
+      const ticker = safeText(sig?.ticker || sig?.symbol || "");
+      if (!ticker) return;
+      openIntelForTicker?.(ticker);
+    });
     document.getElementById("queueScanDialog")?.addEventListener("click", (e) => {
       if (e.target?.id === "queueScanDialog") closeQueueScanDialog();
     });
     bindEvent("scanBtn", "click", runScan);
     document.getElementById("todaySummaryScanBtn")?.addEventListener("click", runScan);
+    bindTodayDecisionDesk();
+    bindSettledLessons();
     document.getElementById("scanModeSelect")?.addEventListener("change", () => {
       state.scanRowsExpanded = false;
       updateScanModeHelperText();
@@ -151,9 +161,103 @@ export function createOperationsController(ctx) {
     document.getElementById("approveRiskAck")?.addEventListener("change", syncApproveDialogGuardrails);
   }
 
+  function pendingSection() {
+    return document.getElementById("pendingSection");
+  }
+
+  function pendingQueueIsOpen() {
+    const pending = pendingSection();
+    if (!pending) return false;
+    if (pending.classList.contains("is-open")) return true;
+    if (pending.classList.contains("is-collapsed")) return false;
+    if (window.location.hash === "#pendingSection") return true;
+    return pending.dataset.workflowFocus === "true";
+  }
+
+  function setPendingQueueOpen(open) {
+    const pending = pendingSection();
+    const toggle = document.getElementById("pendingLaneToggle");
+    if (!pending) return;
+    pending.classList.toggle("is-open", open);
+    pending.classList.toggle("is-collapsed", !open);
+    toggle?.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      pending.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  function syncPendingQueueAria() {
+    document.getElementById("pendingLaneToggle")?.setAttribute(
+      "aria-expanded",
+      pendingQueueIsOpen() ? "true" : "false",
+    );
+  }
+
+  function togglePendingQueue() {
+    const open = !pendingQueueIsOpen();
+    if (!open && window.location.hash === "#pendingSection") {
+      const next = `${window.location.pathname}${window.location.search}`;
+      window.history.replaceState(null, "", next);
+    }
+    setPendingQueueOpen(open);
+  }
+
+  function bindActivate(el, fn) {
+    if (!el) return;
+    el.addEventListener("click", fn);
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      fn();
+    });
+  }
+
+  function bindTodayDecisionDesk() {
+    if (document.body.dataset.todayDeskBound === "true") return;
+    document.body.dataset.todayDeskBound = "true";
+    ["workflowStepScan", "workflowStepEvaluate", "workflowStepApprove"].forEach((id) => {
+      const step = document.getElementById(id);
+      if (!step) return;
+      step.tabIndex = 0;
+      step.setAttribute("role", "button");
+    });
+    bindActivate(document.getElementById("pendingLaneToggle"), togglePendingQueue);
+    bindActivate(document.getElementById("todayPendingKpi"), () => setPendingQueueOpen(true));
+    bindActivate(document.getElementById("workflowStepApprove"), () => setPendingQueueOpen(true));
+    bindActivate(document.getElementById("workflowStepScan"), () => {
+      document.getElementById("scanSection")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    bindActivate(document.getElementById("workflowStepEvaluate"), () => {
+      const detail = document.getElementById("scanDetailPanel");
+      const target = detail && detail.dataset.state !== "empty"
+        ? detail
+        : document.getElementById("scanSection");
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    document.addEventListener("click", (event) => {
+      const link = event.target?.closest?.('a[href="#pendingSection"]');
+      if (!link) return;
+      setPendingQueueOpen(true);
+    });
+    window.addEventListener("hashchange", () => {
+      if (window.location.hash === "#pendingSection") setPendingQueueOpen(true);
+      else syncPendingQueueAria();
+    });
+    const pending = pendingSection();
+    if (pending) {
+      new MutationObserver(syncPendingQueueAria).observe(pending, {
+        attributes: true,
+        attributeFilter: ["class", "data-workflow-focus"],
+      });
+    }
+    if (window.location.hash === "#pendingSection") setPendingQueueOpen(true);
+    else syncPendingQueueAria();
+  }
+
   function prime() {
     void ctx.refreshScanDeltas?.();
     void ctx.refreshShadowWorkbenchTeaser?.();
+    void refreshSettledLessons();
   }
 
   return { id: "operations", init, prime };

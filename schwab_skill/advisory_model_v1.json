@@ -45,8 +45,9 @@
     "ret_10d_fwd",
     "drawdown_10d"
   ],
-  "feature_mu": [60.0, 80.0, 0.8, 4.0, 10.0, 0.03, 0.01, 0.03, 1.1, 0.0, 0.0, 0.55, 0.45],
-  "feature_sigma": [15.0, 10.0, 0.35, 8.0, 15.0, 0.02, 0.05, 0.12, 0.8, 0.08, 1.0, 0.15, 0.15],
+  "feature_mu": [60.0, 0.8, 0.8, 0.04, 0.1, 0.03, 0.01, 0.03, 1.1, 0.0, 0.0, 0.55, 0.45],
+  "feature_sigma": [15.0, 0.1, 0.35, 0.08, 0.15, 0.02, 0.05, 0.12, 0.8, 0.08, 1.0, 0.15, 0.15],
+  "feature_unit_note": "pct_from_52w_high, close_vs_sma*_pct, atr_pct, and ret_*_prev are fractions. signal_score is 0-100. Bootstrap centers use those units.",
   "coef": [0.34, 0.12, 0.09, 0.16, 0.1, -0.08, 0.07, 0.06, 0.08, 0.1, 0.05, 0.24, -0.24],
   "intercept": 0.0,
   "calibration_bins": [],

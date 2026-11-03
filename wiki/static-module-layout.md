@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/webapp/static/app.js
 created: 2026-04-17
-updated: 2026-06-10
+updated: 2026-09-21
 tags: [frontend, refactor, modules, dashboard]
 ---
 
@@ -44,6 +44,7 @@ webapp/static/
 ├─ modules/
 │  ├─ state.js                    central `state` singleton + storage-key constants
 │  ├─ format.js                   pure formatters (safeText, pct, timeAgo, …)
+│  ├─ sharadarBrief.js            compact decision-card chips + 13F/Form 4 strip
 │  ├─ auth.js                     JWT storage, cookie session, supabase client lifecycle
 │  ├─ api.js                      authenticated `api.get/post/patch` wrapper around fetch
 │  ├─ notifications.js            toasts + persistent notification center
@@ -57,7 +58,7 @@ webapp/static/
 │  └─ validationView.js           validation recent-steps renderer
 ├─ screens/                       per-screen controllers (init() wiring + prime() loading)
 │  ├─ operations.js               scan workflow, pending queue, approve dialog
-│  ├─ research.js                 quick check, backtest hub, dossiers, SEC compare, learning
+│  ├─ research.js                 quick check, dossiers, SEC compare, Sharadar Bundle, learning
 │  ├─ diagnostics.js              calibration, shadow scoreboard, review loop, decision card
 │  └─ settings.js                 profiles, feature guide, live trading, billing
 └─ panels/
@@ -74,6 +75,9 @@ webapp/static/
    ├─ performance.js              backtest/shadow/live + challenger + evolve cards
    ├─ strategyChat.js             chat bubble renderer + queue callout + send loop
    ├─ scanStudio.js               timeframe tabs, strategy descriptions, universe picker
+   ├─ pricingModel.js             SEC companyfacts DCF + labeled Sharadar EV/FCF column
+   ├─ sharadarFundamentals.js     Sharadar Bundle PIT snapshot (ART sparkline on datekey)
+   ├─ sharadarCompare.js          Ticker vs ticker Bundle compare (Deep)
    ├─ decisionDashboard.js        executive reliability/quality/readiness render card
    └─ backtest.js                 form persistence, queue, polling, results, hub tabs
 ```
@@ -285,7 +289,8 @@ is a separate effort.
 - [[saas-api]] — Multi-tenant variant that shares the same static bundle.
 - [[plugin-modes]] — Many of the toggles surfaced in the dashboard.
 - [[scan-catalog]] — `panels/scanStudio.js` timeframe + universe picker
+- [[sharadar-bundle]] — `sharadarFundamentals.js` / `sharadarCompare.js` / `sharadarBrief.js`
 
 ---
 
-*Last compiled: 2026-04-17*
+*Last compiled: 2026-09-21*

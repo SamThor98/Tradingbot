@@ -1,4 +1,4 @@
-const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error"]);
+const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error", "hold"]);
 
 /** Mirror operations status strips onto panel containers for CSS theming. */
 export function setPanelState(elementId, stateName) {

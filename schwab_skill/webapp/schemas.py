@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
@@ -94,6 +94,12 @@ class QueueUserBacktestRequest(BaseModel):
     spec: dict[str, Any]
 
 
+class BacktestStudyNextRequest(BaseModel):
+    spec: dict[str, Any] | None = None
+    auto: bool = False
+    restart: bool = False
+
+
 class StrategyChatRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=50)
 
@@ -108,6 +114,19 @@ class StrategyChatRequest(BaseModel):
             if m.get("content") is None:
                 raise ValueError(f"message {i}: content is required")
         return v
+
+
+class SettledLessonDecisionRequest(BaseModel):
+    action: Literal["keep", "sharpen", "revert"]
+
+
+class OperatorDeskRunRequest(BaseModel):
+    """On-demand operator desk. Never places an order."""
+
+    run_scan: bool = True
+    queue_backtest: bool = False
+    notify_discord: bool = True
+    ticker: str | None = Field(default=None, max_length=16)
 
 
 class AnalyticsEventPayload(BaseModel):

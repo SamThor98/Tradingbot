@@ -66,6 +66,10 @@ def _parse_alias_map(source: str) -> dict[str, str]:
 EXPECTED_ALIASES = {
     "backtest": "backtestSection",
     "backtests": "backtestSection",
+    "lab": "backtestSummaryLanding",
+    "leaderboard": "backtestLeaderboard",
+    "btmonitor": "backtestLiveMonitor",
+    "backtest-monitor": "backtestLiveMonitor",
     "pending": "pendingSection",
     "queue": "pendingSection",
     "approvals": "pendingSection",
@@ -74,9 +78,15 @@ EXPECTED_ALIASES = {
     "candidates": "scanSection",
     "scanstudio": "scanStudioPanel",
     "scan-studio": "scanStudioPanel",
+    "desk": "operatorAgentsSection",
+    "operator-desk": "operatorAgentsSection",
+    "grok": "grokReviewSection",
+    "grok-review": "grokReviewSection",
     "peadcanary": "peadCanarySection",
     "canary": "peadCanarySection",
     "pead-canary": "peadCanarySection",
+    "lessons": "settledLessonsSection",
+    "settled-lessons": "settledLessonsSection",
     "workflow": "workflowPrimary",
     "connect": "onboardingSection",
     "onboarding": "onboardingSection",
@@ -93,6 +103,20 @@ EXPECTED_ALIASES = {
     "movers": "moversSection",
     "sec": "secCompareSection",
     "seccompare": "secCompareSection",
+    "event-risk": "eventProbabilitySection",
+    "eventrisk": "eventProbabilitySection",
+    "event-probability": "eventProbabilitySection",
+    "liquid": "liquidPositioningSection",
+    "liquid-positioning": "liquidPositioningSection",
+    "positioning": "liquidPositioningSection",
+    "pricing": "pricingModelSection",
+    "pricing-model": "pricingModelSection",
+    "companyfacts": "pricingModelSection",
+    "sharadar": "sharadarBundleSection",
+    "sharadar-bundle": "sharadarBundleSection",
+    "pit": "sharadarBundleSection",
+    "sharadar-compare": "sharadarCompareSection",
+    "bundle-compare": "sharadarCompareSection",
     "calibration": "calibrationSection",
     "shadow": "shadowScoreboardSection",
     "shadowscoreboard": "shadowScoreboardSection",
@@ -101,6 +125,8 @@ EXPECTED_ALIASES = {
     "decide": "systemDecisionPanel",
     "promote": "systemDecisionPanel",
     "decision": "systemDecisionPanel",
+    "bookwidth": "decisionBookWidth",
+    "book-width": "decisionBookWidth",
     "ready": "systemSummaryLanding",
     "review": "reviewLoopSection",
     "reviewloop": "reviewLoopSection",
@@ -116,8 +142,35 @@ EXPECTED_ALIASES = {
 }
 
 
+def _parse_screen_sections(source: str) -> dict[str, list[str]]:
+    match = re.search(r"const SCREEN_SECTIONS = Object\.freeze\(\{(.*?)\n\}\);", source, re.DOTALL)
+    assert match, "SCREEN_SECTIONS literal block not found in app.js"
+    out: dict[str, list[str]] = {}
+    for screen, body in re.findall(r"(\w+):\s*\[(.*?)\]", match.group(1), re.DOTALL):
+        out[screen] = re.findall(r'"([\w-]+)"', body)
+    assert out, "SCREEN_SECTIONS body parsed to zero entries"
+    return out
+
+
 def test_router_alias_map_matches_contract(router_source: str) -> None:
     assert _parse_alias_map(router_source) == EXPECTED_ALIASES
+
+
+def test_alias_targets_resolve_to_a_screen(app_source: str, router_source: str) -> None:
+    """Every alias target must be reachable from a cold deep link.
+
+    ``inferScreenFromHash`` reads ``SECTION_TO_SCREEN``, derived from
+    ``SCREEN_SECTIONS``. A section missing there loads on the default
+    Today screen, where the research/system CSS hides it — the deep link
+    silently lands on a blank page. Sub-tab anchors (``book-calendar``)
+    and the deprecated ``*WorkspaceIntro`` shims are exempt: they are
+    nested inside a section that is itself mapped.
+    """
+    mapped = {section for ids in _parse_screen_sections(app_source).values() for section in ids}
+    targets = set(_parse_alias_map(router_source).values())
+    exempt = {t for t in targets if t.endswith("WorkspaceIntro") or t.startswith("book-")}
+    missing = sorted(targets - mapped - exempt)
+    assert not missing, f"alias targets absent from SCREEN_SECTIONS in app.js: {missing}"
 
 
 def test_router_exposes_public_surface(router_source: str) -> None:
@@ -184,15 +237,28 @@ def test_app_js_no_longer_inlines_oauth_query_cleanup(app_source: str) -> None:
     )
 
 
-def test_scan_studio_sits_on_today_landing_not_behind_run_scan_tab() -> None:
+def test_scan_studio_sits_on_today_after_the_shortlist() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     today = html.find('id="dashboardToday"')
     studio = html.find('id="scanStudioPanel"')
     workflow = html.find('id="workflowPrimary"')
-    assert today != -1 and studio != -1 and workflow != -1
-    assert today < studio < workflow, "Scan studio must paint on the Today landing, above the kanban"
+    progress = html.find('id="workflowProgress"')
+    kanban_scan = html.find('id="scanSection"')
+    tools = html.find('id="todayTools"')
+    assert today != -1 and studio != -1 and workflow != -1 and tools != -1
+    assert workflow < progress < kanban_scan < tools < studio, (
+        "Scan studio stays on Today, after the shortlist, not above the kanban"
+    )
     assert html.count('id="scanStudioPanel"') == 1
-    assert "scan-studio-title" in html[studio:workflow]
+    assert "scan-studio-title" in html[studio:studio + 600]
+    pending = html.find('id="pendingSection"')
+    history = html.find('id="pendingHistoryFold"')
+    assert pending != -1 and history != -1
+    assert "deleteAllTradesBtn" not in html[pending:history]
+    assert 'id="deleteAllTradesBtn"' in html[history:history + 800]
+    assert 'id="pendingLaneToggle"' in html
+    editorial = (STATIC / "readability.css").read_text(encoding="utf-8")
+    assert "today-decision-desk" in editorial
     app = (STATIC / "app.js").read_text(encoding="utf-8")
     assert re.search(
         r"operations:\s*\[\s*[^\]]*[\"']scanStudioPanel[\"']",

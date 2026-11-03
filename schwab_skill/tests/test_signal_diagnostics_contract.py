@@ -25,3 +25,4 @@ def test_scan_diagnostics_contract_on_auth_failure(monkeypatch) -> None:
     assert "prediction_market" in diagnostics and isinstance(diagnostics["prediction_market"], dict)
     assert "meta_policy" in diagnostics and isinstance(diagnostics["meta_policy"], dict)
     assert "uncertainty" in diagnostics and isinstance(diagnostics["uncertainty"], dict)
+    assert "mirofish_llm" in diagnostics and isinstance(diagnostics["mirofish_llm"], dict)
