@@ -521,6 +521,7 @@ class GrokAgent:
             )
         review, error = _parse_review(last_text)
         status = "completed" if review is not None else "incomplete"
+        _record_grok_prompt_use(self.skill_dir, role, context)
         return self._finish(settings, role, status, last_text, review, citations, records, usage, response_id, error)
 
     def consult_deferred(self, **kwargs: Any) -> GrokConsultation:
@@ -588,6 +589,7 @@ class GrokAgent:
             "max_tokens": get_grok_agent_max_completion_tokens(self.skill_dir),
             "retries": get_grok_agent_max_retries(self.skill_dir),
             "polls": get_grok_agent_deferred_polls(self.skill_dir),
+            "skill_dir": self.skill_dir,
         }
 
     def _complete(
@@ -701,7 +703,10 @@ def _responses_body(
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": settings["model"],
-        "instructions": _system_message(str(settings.get("role") or "research"))["content"],
+        "instructions": _system_message(
+            str(settings.get("role") or "research"),
+            settings.get("skill_dir"),
+        )["content"],
         "input": input_items,
         "max_output_tokens": settings["max_tokens"],
         "store": False,
@@ -759,8 +764,36 @@ def _parse_response_call(call: Mapping[str, Any]) -> tuple[str, dict[str, Any], 
     return str(call.get("name") or ""), args, str(call.get("call_id") or call.get("id") or "")
 
 
-def _system_message(role: str) -> dict[str, str]:
-    return {"role": "system", "content": _ROLE_PROMPTS[role] + _SHARED_RULES}
+def _system_message(role: str, skill_dir: Path | None = None) -> dict[str, str]:
+    text = _ROLE_PROMPTS[role]
+    try:
+        from core.today_tab_agent import live_grok_role_text
+
+        override = live_grok_role_text(skill_dir, role)
+        if override:
+            text = override
+    except Exception as exc:
+        LOG.debug("Today agent Grok prompt unavailable: %s", exc)
+    return {"role": "system", "content": text + _SHARED_RULES}
+
+
+def _record_grok_prompt_use(skill_dir: Path | None, role: str, context: dict[str, Any] | None) -> None:
+    """Attribute a Grok review to the live prompt version. No-op when the agent is off."""
+    if skill_dir is None:
+        return
+    ticker = str((context or {}).get("ticker") or "").upper().strip()
+    if not ticker:
+        return
+    try:
+        from core.tab_agent import record_scan_prompt_use
+        from core.today_tab_agent import grok_role_binding
+
+        binding = grok_role_binding(skill_dir, role)
+        if not binding:
+            return
+        record_scan_prompt_use(skill_dir, tab_id="today", ticker=ticker, bindings=[binding])
+    except Exception as exc:
+        LOG.debug("Grok prompt attribution skipped: %s", exc)
 
 
 def _user_message(

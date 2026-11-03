@@ -74,6 +74,8 @@ export const SECTION_ALIASES = Object.freeze({
   "operator-desk": "operatorAgentsSection",
   grok: "grokReviewSection",
   "grok-review": "grokReviewSection",
+  todayagent: "todayTabAgent",
+  "today-agent": "todayTabAgent",
   peadcanary: "peadCanarySection",
   canary: "peadCanarySection",
   "pead-canary": "peadCanarySection",

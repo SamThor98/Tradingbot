@@ -567,6 +567,32 @@ def _persona_user_prompt(name: str, sections: dict[str, str]) -> str:
     )
 
 
+def _persona_systems(skill_dir: Path) -> tuple[dict[str, str], dict[str, str], list[dict[str, str]]]:
+    """Built-in personas unless the Today tab agent is explicitly enabled."""
+    try:
+        from core.today_tab_agent import resolve_for_scan
+
+        return resolve_for_scan(skill_dir)
+    except Exception as exc:
+        LOG.debug("Today tab agent unavailable, using built-in personas: %s", exc)
+        return dict(AGENT_SYSTEMS), {}, []
+
+
+def _shadow_persona_votes(sections: dict[str, str], systems: dict[str, str], env: dict) -> list[dict[str, Any]]:
+    """Shadow prompts are scored for the registry and are not live votes."""
+    if not systems:
+        return []
+    votes: list[dict[str, Any]] = []
+    for name, system in systems.items():
+        try:
+            parsed = _parse_agent_response(_call_llm(_persona_user_prompt(name, sections), system, env))
+        except Exception as exc:
+            LOG.debug("Shadow persona %s failed: %s", name, exc)
+            continue
+        votes.append({"name": name, "role": "shadow", "continuation_probability": parsed.get("continuation_probability")})
+    return votes
+
+
 # Agent system prompts (personas)
 AGENT_SYSTEMS = {
     "institutional_trend": (
@@ -746,7 +772,8 @@ class MarketSimulation:
             "mean_reversion": "extension",
             "retail_fomo": "headlines",
         }
-        for name, system in AGENT_SYSTEMS.items():
+        live_systems, shadow_systems, prompt_bindings = _persona_systems(self.skill_dir)
+        for name, system in live_systems.items():
             text = _call_llm(_persona_user_prompt(name, sections), system, self._env)
             if (text or "").strip():
                 llm_response_count += 1
@@ -926,7 +953,21 @@ class MarketSimulation:
             "seed_fingerprint": seed_fingerprint,
             "persona_prompt_version": MIROFISH_PROMPT_VERSION,
             "seed_preview": seed[:500] + "..." if len(seed) > 500 else seed,
+            "shadow_agent_votes": _shadow_persona_votes(sections, shadow_systems, self._env),
+            "prompt_versions": prompt_bindings,
         }
+        if prompt_bindings:
+            try:
+                from core.tab_agent import record_scan_prompt_use
+
+                record_scan_prompt_use(
+                    self.skill_dir,
+                    tab_id="today",
+                    ticker=self.ticker,
+                    bindings=prompt_bindings,
+                )
+            except Exception as exc:
+                LOG.debug("Prompt attribution skipped for %s: %s", self.ticker, exc)
         try:
             from core.llm_endpoint import resolve_llm_endpoint
 

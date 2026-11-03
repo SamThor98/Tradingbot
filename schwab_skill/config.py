@@ -2662,6 +2662,104 @@ def get_decision_packet_scan_recording_enabled(skill_dir: Path | None = None) ->
     return _get_bool("DECISION_PACKET_SCAN_RECORDING_ENABLED", True, skill_dir)
 
 
+def get_tab_agent_objective_metric(skill_dir: Path | None = None) -> str:
+    """Primary score for every tab agent: sortino (default) or sharpe."""
+    raw = _env_value("TAB_AGENT_OBJECTIVE", _load_env(skill_dir)).strip().lower()
+    if raw in ("sortino", "sharpe"):
+        return raw
+    return "sortino"
+
+
+def get_tab_agent_min_samples(skill_dir: Path | None = None) -> int:
+    """Minimum labeled primary outcomes before a prompt comparison is readable."""
+    val = _get_int("TAB_AGENT_MIN_SAMPLES", 30, skill_dir)
+    return max(5, min(5000, val))
+
+
+def get_tab_agent_drawdown_tolerance(skill_dir: Path | None = None) -> float:
+    """Absolute max-drawdown guardrail. Default 20%. Values below 20% are raised.
+
+    A candidate is blocked only when its equity drawdown is deeper than this.
+    Ordinary drawdowns inside the guardrail do not veto a better Sortino or Sharpe.
+    """
+    val = _get_float("TAB_AGENT_DRAWDOWN_TOLERANCE", 0.20, skill_dir)
+    return max(0.20, min(0.80, val))
+
+
+def get_tab_agent_drawdown_duration_tolerance_days(skill_dir: Path | None = None) -> int:
+    """Reported underwater length. It does not veto promotion or rollback."""
+    val = _get_int("TAB_AGENT_DRAWDOWN_DURATION_TOLERANCE_DAYS", 10, skill_dir)
+    return max(0, min(252, val))
+
+
+def get_tab_agent_min_avg_dollar_volume(skill_dir: Path | None = None) -> float:
+    """Default liquidity floor in average dollar volume. Market cap is not used."""
+    val = _get_float("TAB_AGENT_MIN_AVG_DOLLAR_VOLUME", 20_000_000.0, skill_dir)
+    return max(0.0, val)
+
+
+def get_tab_agent_max_spread_pct(skill_dir: Path | None = None) -> float:
+    """Default maximum bid/ask spread as a fraction of price. 0.01 is 1%."""
+    val = _get_float("TAB_AGENT_MAX_SPREAD_PCT", 0.01, skill_dir)
+    return max(0.0, val)
+
+
+def get_tab_agent_adv_bounds(skill_dir: Path | None = None) -> tuple[float, float]:
+    """Inclusive bounds an agent may use when it retunes the dollar-volume floor."""
+    low = _get_float("TAB_AGENT_MIN_AVG_DOLLAR_VOLUME_MIN", 5_000_000.0, skill_dir)
+    high = _get_float("TAB_AGENT_MIN_AVG_DOLLAR_VOLUME_MAX", 100_000_000.0, skill_dir)
+    if high < low:
+        low, high = high, low
+    return max(0.0, low), max(low, high)
+
+
+def get_tab_agent_spread_bounds(skill_dir: Path | None = None) -> tuple[float, float]:
+    """Inclusive bounds for the spread cap an agent may propose."""
+    low = _get_float("TAB_AGENT_MAX_SPREAD_PCT_MIN", 0.002, skill_dir)
+    high = _get_float("TAB_AGENT_MAX_SPREAD_PCT_MAX", 0.03, skill_dir)
+    if high < low:
+        low, high = high, low
+    return max(0.0, low), max(low, high)
+
+
+def get_tab_agent_quality_threshold(skill_dir: Path | None = None) -> float:
+    """Score a name must clear. There is no default top-N."""
+    val = _get_float("TAB_AGENT_QUALITY_THRESHOLD", 60.0, skill_dir)
+    low, high = get_tab_agent_quality_bounds(skill_dir)
+    return max(low, min(high, val))
+
+
+def get_tab_agent_quality_bounds(skill_dir: Path | None = None) -> tuple[float, float]:
+    """Inclusive bounds for the quality threshold an agent may propose."""
+    low = _get_float("TAB_AGENT_QUALITY_THRESHOLD_MIN", 40.0, skill_dir)
+    high = _get_float("TAB_AGENT_QUALITY_THRESHOLD_MAX", 90.0, skill_dir)
+    if high < low:
+        low, high = high, low
+    return low, high
+
+
+def get_tab_agent_debate_max_names(skill_dir: Path | None = None) -> int:
+    """Name cap for the debate tab. 0 means no cap: every name that clears quality."""
+    val = _get_int("TAB_AGENT_DEBATE_MAX_NAMES", 0, skill_dir)
+    return max(0, min(5000, val))
+
+
+def get_tab_agent_review_wait_hours(skill_dir: Path | None = None) -> int:
+    """Hours a reviewer verdict may be absent before metrics alone can promote."""
+    val = _get_int("TAB_AGENT_REVIEW_WAIT_HOURS", 48, skill_dir)
+    return max(1, min(24 * 14, val))
+
+
+def get_tab_agent_today_enabled(skill_dir: Path | None = None) -> bool:
+    """Serve Today prompts from the registry. Default on. Set false to freeze the built-ins."""
+    return _get_bool("TAB_AGENT_TODAY_ENABLED", True, skill_dir)
+
+
+def get_tab_agent_shadow_enabled(skill_dir: Path | None = None) -> bool:
+    """Run shadow candidates beside live. They do not change conviction until promoted."""
+    return _get_bool("TAB_AGENT_SHADOW_ENABLED", True, skill_dir)
+
+
 def get_counterfactual_min_labeled_samples(skill_dir: Path | None = None) -> int:
     """Minimum labeled samples before counterfactual stats are trusted."""
     val = _get_int("COUNTERFACTUAL_MIN_LABELED_SAMPLES", 100, skill_dir)

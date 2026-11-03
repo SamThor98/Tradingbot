@@ -594,6 +594,23 @@ def run_scheduler() -> None:
             except Exception as e:
                 log.warning("Decision-packet backfill failed: %s", e)
             try:
+                from config import get_tab_agent_today_enabled
+                from core.today_tab_agent import TodayTabAgent
+
+                if get_tab_agent_today_enabled(SKILL_DIR):
+                    governed = TodayTabAgent().govern(SKILL_DIR)
+                    log.info("Today tab agent govern: actions=%s", len(governed.get("actions") or []))
+            except Exception as e:
+                log.warning("Today tab agent govern failed: %s", e)
+            if now.weekday() < 5:
+                try:
+                    from core.tab_agent_digest import write_daily_digest
+
+                    digest = write_daily_digest(SKILL_DIR, now.date())
+                    log.info("Tab agent digest: %s errors=%s", digest.get("day"), len(digest.get("errors") or []))
+                except Exception as e:
+                    log.warning("Tab agent digest failed: %s", e)
+            try:
                 from core.research_close import run_research_close
 
                 result = run_research_close(SKILL_DIR)
@@ -875,7 +892,31 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_evolve_if_scheduled)
     schedule.every().minute.do(_run_challenger_if_scheduled)
     schedule.every().minute.do(_run_book_eod_snapshot_if_scheduled)
+    _last_tab_agent_minute: int | None = None
+
+    def _run_tab_agent_propose_if_scheduled() -> None:
+        """Sunday 18:20 ET: propose Today prompt revisions. Never approves them."""
+        nonlocal _last_tab_agent_minute
+        now = datetime.now(TZ_NY)
+        key = now.day * 10000 + now.hour * 60 + now.minute
+        if not (now.weekday() == 6 and now.hour == 18 and now.minute == 20 and key != _last_tab_agent_minute):
+            return
+        _last_tab_agent_minute = key
+        try:
+            from config import get_tab_agent_today_enabled
+
+            if not get_tab_agent_today_enabled(SKILL_DIR):
+                log.info("Today tab agent proposal skipped: TAB_AGENT_TODAY_ENABLED is off")
+                return
+            from core.today_tab_agent import TodayTabAgent
+
+            result = TodayTabAgent().propose(SKILL_DIR)
+            log.info("Today tab agent proposals: created=%s", len(result.get("created") or []))
+        except Exception as e:
+            log.warning("Today tab agent proposal failed: %s", e)
+
     schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
+    schedule.every().minute.do(_run_tab_agent_propose_if_scheduled)
     build_morning_brief()
 
     try:

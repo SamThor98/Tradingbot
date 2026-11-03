@@ -3643,6 +3643,120 @@ def cockpit_review_backfill(
         return _err("cockpit_review_backfill", e)
 
 
+def _tab_agent_call(tab_id: str, action: str, version_id: str) -> ApiResponse:
+    from core.tab_agent import TabAgentError, get_tab_agent
+
+    try:
+        row = getattr(get_tab_agent(tab_id), action)(SKILL_DIR, version_id)
+        return _ok({"version": row, "auto_promote": False})
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err(f"tab_agent_{action}", e)
+
+
+@app.get("/api/tab-agent/digest", response_model=ApiResponse)
+def tab_agent_digest(day: str | None = None) -> ApiResponse:
+    """Daily tab-agent digest. Writes the file if today's copy is missing."""
+    try:
+        from datetime import date as date_cls
+
+        from core.tab_agent_digest import read_digest, write_daily_digest
+
+        stamp = (day or "")[:10]
+        if stamp:
+            date_cls.fromisoformat(stamp)
+        payload = read_digest(SKILL_DIR, stamp or None)
+        if payload is None and not stamp:
+            payload = write_daily_digest(SKILL_DIR)
+        if payload is None:
+            return _ok({"day": stamp, "tabs": [], "errors": [], "missing": True})
+        return _ok(payload)
+    except Exception as e:
+        return _err("tab_agent_digest", e)
+
+
+@app.get("/api/tab-agent/changes", response_model=ApiResponse)
+def tab_agent_changes(limit: int = 20) -> ApiResponse:
+    """Human-readable promotion and rollback reports for Sam."""
+    try:
+        from core.tab_agent_governor import load_change_reports
+
+        rows = load_change_reports(SKILL_DIR, limit=max(1, min(100, int(limit))))
+        return _ok({"changes": rows, "count": len(rows)})
+    except Exception as e:
+        return _err("tab_agent_changes", e)
+
+
+@app.post("/api/tab-agent/{tab_id}/govern", response_model=ApiResponse)
+def tab_agent_govern(
+    tab_id: str,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Run the autonomous promote/rollback pass. Does not place orders."""
+    try:
+        from core.tab_agent import TabAgentError, get_tab_agent
+
+        return _ok(get_tab_agent(tab_id).govern(SKILL_DIR))
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err("tab_agent_govern", e)
+
+
+@app.get("/api/tab-agent/{tab_id}", response_model=ApiResponse)
+def tab_agent_status(tab_id: str) -> ApiResponse:
+    """Prompt versions and the shared risk-adjusted score for one tab agent."""
+    try:
+        from config import get_tab_agent_shadow_enabled, get_tab_agent_today_enabled
+        from core.tab_agent import TabAgentError, get_tab_agent
+
+        agent = get_tab_agent(tab_id)
+        payload = agent.status(SKILL_DIR)
+        payload["score"] = agent.score(SKILL_DIR)
+        enabled = bool(get_tab_agent_today_enabled(SKILL_DIR)) if tab_id == "today" else False
+        payload["enabled"] = enabled
+        payload["applied_to_scans"] = enabled
+        payload["shadow_enabled"] = bool(get_tab_agent_shadow_enabled(SKILL_DIR)) if tab_id == "today" else False
+        payload["auto_promote"] = False
+        return _ok(payload)
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err("tab_agent_status", e)
+
+
+@app.post("/api/tab-agent/{tab_id}/propose", response_model=ApiResponse)
+def tab_agent_propose(
+    tab_id: str,
+    prompt_key: str | None = None,
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    try:
+        from core.tab_agent import TabAgentError, get_tab_agent
+
+        return _ok(get_tab_agent(tab_id).propose(SKILL_DIR, prompt_key=prompt_key))
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err("tab_agent_propose", e)
+
+
+@app.post("/api/tab-agent/{tab_id}/{action}", response_model=ApiResponse)
+def tab_agent_action(
+    tab_id: str,
+    action: str,
+    body: dict[str, Any] = Body(...),
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    if action not in {"approve", "reject", "rollback", "shadow"}:
+        return ApiResponse(ok=False, error="Unknown tab-agent action.")
+    version_id = str((body or {}).get("version_id") or "").strip()
+    if not version_id:
+        return ApiResponse(ok=False, error="version_id is required.")
+    return _tab_agent_call(tab_id, action, version_id)
+
+
 @app.get("/api/cockpit/execution/quality", response_model=ApiResponse)
 def cockpit_execution_quality(db: Session = Depends(get_db)) -> ApiResponse:
     """Execution-quality attribution: lifecycle counts, slippage, policy events."""
