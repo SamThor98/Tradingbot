@@ -858,6 +858,23 @@
             <div id="debateTabAgentPanel" aria-live="polite"><p class="muted small">Loading debate prompts…</p></div>
           </section>
         </details>
+        <details id="tabAgentsSection" class="today-fold operations-surface" open>
+          <summary class="today-fold-summary">
+            <span>Tab agents</span>
+            <span class="muted today-fold-hint">Manual approve, reject, and rollback. Analysis prompts only.</span>
+          </summary>
+          <section class="card operations-surface" aria-label="Tab agents">
+            <p class="muted small">Live and shadow prompts, scores, pending reviews, and the latest digest. These buttons do not place orders.</p>
+            <div class="inline-form compact">
+              <button id="tabAgentsRefreshBtn" type="button" class="btn small secondary">Refresh</button>
+            </div>
+            <div id="tabAgentsPanel" aria-live="polite"><p class="muted small">Loading tab agents…</p></div>
+          </section>
+        </details>
+        <script type="module">
+          import { bindTabAgents } from "/static/panels/tabAgents.js?v=__APP_VERSION__";
+          bindTabAgents();
+        </script>
         </div>
       <section id="settledLessonsSection" class="card settled-lessons-card operations-surface" aria-label="Settled lessons" data-state="loading">
         <details id="settledLessonsFold" class="today-fold">

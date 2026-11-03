@@ -104,6 +104,33 @@ def write_review_request(
     return payload
 
 
+def write_verdict(
+    skill_dir: Path | str,
+    tab_id: str,
+    version_id: str,
+    verdict: str,
+    *,
+    reviewer: str,
+    notes: str = "",
+) -> dict[str, Any]:
+    """Write the reviewer verdict file. ``reviewer`` is ``sam`` for the manual override."""
+    label = str(verdict or "").strip().lower()
+    if label not in {"approve", "reject"}:
+        raise ValueError("verdict must be approve or reject")
+    payload = {
+        "verdict": label,
+        "notes": str(notes or ""),
+        "reviewer": str(reviewer or "").strip() or "sam",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "tab_id": tab_id,
+        "version_id": version_id,
+    }
+    path = verdict_path(skill_dir, tab_id, version_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
 def read_verdict(skill_dir: Path | str, tab_id: str, version_id: str) -> dict[str, Any] | None:
     path = verdict_path(skill_dir, tab_id, version_id)
     if not path.exists():

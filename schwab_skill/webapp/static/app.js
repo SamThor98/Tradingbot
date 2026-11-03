@@ -506,6 +506,7 @@ const SCREEN_SECTIONS = Object.freeze({
     "grokReviewSection",
     "todayTabAgent",
     "debateTabAgent",
+    "tabAgentsSection",
     "workflowPrimary",
     "scanSection",
     "scanDetailPanel",

@@ -3655,6 +3655,70 @@ def _tab_agent_call(tab_id: str, action: str, version_id: str) -> ApiResponse:
         return _err(f"tab_agent_{action}", e)
 
 
+@app.get("/api/tab-agents", response_model=ApiResponse)
+def tab_agents_board() -> ApiResponse:
+    """Live and shadow prompts, scores, pending reviews, and the latest digest."""
+    try:
+        from core.tab_agent_override import board
+
+        return _ok(board(SKILL_DIR))
+    except Exception as e:
+        return _err("tab_agents_board", e)
+
+
+@app.post("/api/tab-agents/{tab_id}/approve", response_model=ApiResponse)
+def tab_agents_approve(
+    tab_id: str,
+    body: dict[str, Any] = Body(...),
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Write an approve verdict as reviewer sam. Does not place an order."""
+    return _tab_agent_verdict(tab_id, "approve", body)
+
+
+@app.post("/api/tab-agents/{tab_id}/reject", response_model=ApiResponse)
+def tab_agents_reject(
+    tab_id: str,
+    body: dict[str, Any] = Body(...),
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Write a reject verdict as reviewer sam and retire the shadow prompt."""
+    return _tab_agent_verdict(tab_id, "reject", body)
+
+
+@app.post("/api/tab-agents/{tab_id}/rollback", response_model=ApiResponse)
+def tab_agents_rollback(
+    tab_id: str,
+    body: dict[str, Any] = Body(...),
+    _auth: dict[str, str] = Depends(require_api_key_if_set),
+) -> ApiResponse:
+    """Restore a retired analysis prompt. Does not place an order."""
+    version_id = str((body or {}).get("version_id") or "").strip()
+    try:
+        from core.tab_agent import TabAgentError
+        from core.tab_agent_override import rollback_version
+
+        return _ok(rollback_version(SKILL_DIR, tab_id, version_id))
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err("tab_agents_rollback", e)
+
+
+def _tab_agent_verdict(tab_id: str, verdict: str, body: dict[str, Any]) -> ApiResponse:
+    version_id = str((body or {}).get("version_id") or "").strip()
+    notes = str((body or {}).get("notes") or "")
+    try:
+        from core.tab_agent import TabAgentError
+        from core.tab_agent_override import record_verdict
+
+        return _ok(record_verdict(SKILL_DIR, tab_id, version_id, verdict, notes=notes))
+    except TabAgentError as exc:
+        return ApiResponse(ok=False, error=str(exc))
+    except Exception as e:
+        return _err(f"tab_agents_{verdict}", e)
+
+
 @app.get("/api/tab-agent/digest", response_model=ApiResponse)
 def tab_agent_digest(day: str | None = None) -> ApiResponse:
     """Daily tab-agent digest. Writes the file if today's copy is missing."""
