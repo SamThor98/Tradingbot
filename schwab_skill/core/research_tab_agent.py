@@ -83,16 +83,23 @@ class ResearchTabAgent(TabAgent):
                 }
             )
         objective = config.as_dict()
-        return {
-            "tab_id": self.tab_id,
-            "objective": objective,
-            "objective_id": OBJECTIVE_ID,
-            "auto_promote": False,
-            "winner_rule": objective["statement"],
-            "versions": stats,
-            "comparisons": comparisons,
-            "join_note": "Quick-check packets join on prompt version. HOLD OFF scores as cash.",
-        }
+        from core.tab_agent_replay import annotate_tab_score
+
+        return annotate_tab_score(
+            {
+                "tab_id": self.tab_id,
+                "objective": objective,
+                "objective_id": OBJECTIVE_ID,
+                "auto_promote": False,
+                "winner_rule": objective["statement"],
+                "versions": stats,
+                "comparisons": comparisons,
+                "join_note": "Quick-check packets join on prompt version. HOLD OFF scores as cash. Rationale is not scored.",
+            },
+            skill_dir,
+            self.tab_id,
+            config,
+        )
 
     def propose(
         self,
@@ -210,8 +217,13 @@ def _version_book(
 ) -> dict[str, Any]:
     vid = str(version.get("id") or "")
     key = str(version.get("prompt_key") or "")
+    from core.tab_agent_replay import non_decision_book
+
+    if key == "rationale":
+        return non_decision_book(version)
     returns: list[float] = []
     dates: list[str] = []
+    decisions: list[str] = []
     for packet in packets:
         refs = packet.get("refs") if isinstance(packet.get("refs"), dict) else {}
         if key == "rationale":
@@ -230,7 +242,8 @@ def _version_book(
             continue
         dates.append(parsed[0])
         returns.append(parsed[1])
-    from core.tab_agent_replay import attach_replay
+        decisions.append("cash" if str(verdict or "").upper() in CASH_VERDICTS else "long")
+    from core.tab_agent_replay import attach_replay, decision_flags
 
     merged = attach_replay(
         returns,
@@ -240,8 +253,10 @@ def _version_book(
         version_id=vid,
         weight=config.replay_weight,
         since_ts=since_ts,
+        live_decisions=decisions,
     )
     book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
+    book.update(decision_flags(merged.decisions))
     book.update(
         {
             "version_id": vid,

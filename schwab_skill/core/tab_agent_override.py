@@ -93,6 +93,9 @@ def _brief_version(
         "win_rate": row.get("win_rate"),
         "avg_realized_return_pct": row.get("avg_realized_return_pct"),
         "edge_vs_live": edges.get(version_id),
+        "edge_vs_baseline": row.get("edge_vs_baseline"),
+        "degenerate": row.get("degenerate"),
+        "decision_prompt": row.get("decision_prompt", True),
         "review": None
         if verdict is None
         else {"verdict": verdict.get("verdict"), "reviewer": verdict.get("reviewer"), "notes": verdict.get("notes")},
@@ -153,6 +156,8 @@ def tab_status(skill_dir: Path | str, tab_id: str) -> dict[str, Any]:
         "tab_id": tab,
         "orders_touched": False,
         "objective": score.get("objective") or status.get("objective"),
+        "baseline": score.get("baseline"),
+        "exit_fallback": score.get("exit_fallback"),
         "prompts": prompts,
         "pending_reviews": pending_reviews,
     }

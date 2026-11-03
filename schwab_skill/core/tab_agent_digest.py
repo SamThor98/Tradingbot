@@ -85,6 +85,9 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "primary_metric": row.get("primary_metric"),
                 "primary_score": row.get("primary_score"),
                 "max_drawdown": row.get("max_drawdown"),
+                "edge_vs_baseline": row.get("edge_vs_baseline"),
+                "degenerate": row.get("degenerate"),
+                "decision_prompt": row.get("decision_prompt", True),
             }
             for row in versions
             if row.get("status") == "live"
@@ -109,6 +112,8 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                     for row in events
                 ],
                 "errors": [],
+                "baseline": score.get("baseline"),
+                "exit_fallback": score.get("exit_fallback"),
                 "calibration": score.get("calibration") if isinstance(score.get("calibration"), dict) else None,
             }
         )
@@ -138,13 +143,31 @@ def _markdown(payload: dict[str, Any]) -> str:
         if objective.get("statement"):
             lines.append(str(objective.get("statement")))
             lines.append("")
+        baseline = tab.get("baseline") if isinstance(tab.get("baseline"), dict) else {}
+        if baseline.get("name"):
+            lines.append(
+                f"Buy-every-scan baseline: n={baseline.get('n')} "
+                f"{baseline.get('primary_metric')}={baseline.get('primary_score')}"
+            )
+        fallback = tab.get("exit_fallback") if isinstance(tab.get("exit_fallback"), dict) else {}
+        if fallback.get("n"):
+            lines.append(
+                f"Exit fallback rate={fallback.get('exit_fallback_rate')} "
+                f"derived_stop_rate={fallback.get('derived_stop_rate')}"
+            )
         lines.append("Live versions:")
         for row in tab.get("live") or []:
+            marker = ""
+            if row.get("decision_prompt") is False:
+                marker = " non-decision"
+            elif row.get("degenerate"):
+                marker = " no-variance"
             lines.append(
                 f"- {row.get('prompt_key')} {row.get('version_id')} "
                 f"n={row.get('n')} live={row.get('n_live')} replay={row.get('n_replay')} "
                 f"{row.get('primary_metric')}={row.get('primary_score')} "
-                f"maxDD={row.get('max_drawdown')}"
+                f"edge_vs_baseline={row.get('edge_vs_baseline')} "
+                f"maxDD={row.get('max_drawdown')}{marker}"
             )
         if not tab.get("live"):
             lines.append("- none")

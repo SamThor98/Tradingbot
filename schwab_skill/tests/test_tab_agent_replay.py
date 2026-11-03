@@ -405,7 +405,8 @@ def test_missing_stop_does_not_flatten_the_label(monkeypatch) -> None:
         now=now,
     )
     assert missing is not None
-    assert missing["exit_model"] == "fixed_horizon_no_stop"
+    assert missing["exit_model"] == "scale_out"
+    assert missing["stop_source"] in {"atr", "base_pct"}
     assert missing["realized_return_pct"] > 0
     priced = scale_out_return(
         {"ticker": "AAPL", "created_at": created, "entry_price": 100.0, "stop_price": 92.0},
@@ -446,15 +447,19 @@ def test_research_replay_scores_a_winner_and_a_loser(tmp_path, monkeypatch) -> N
         versions=versions,
         progress_every=0,
     )
-    assert report["stored"] == 4
+    assert report["stored"] == 2
+    assert report["skipped_non_decision"] == 2
     by_ticker: dict[str, float] = {}
     for row in load_samples(tmp_path):
         by_ticker[str(row["ticker"])] = float(row["realized_return_pct"])
     assert by_ticker["WIN"] > 0
     assert by_ticker["LOSE"] < 0
     score = agent.score(tmp_path, registry=registry)
+    rationale = next(row for row in score["versions"] if row.get("prompt_key") == "rationale")
+    assert rationale["decision_prompt"] is False
+    assert rationale["primary_score"] is None
     for row in score["versions"]:
-        if row.get("status") != "live":
+        if row.get("prompt_key") != "verdict_rules":
             continue
         assert row["n_replay"] == 2
         assert row["n_live"] == 0
@@ -488,7 +493,7 @@ def test_parse_failure_retries_once_and_logs_the_raw_reply(tmp_path, caplog) -> 
         db_path=tmp_path / "missing.db",
         complete=_complete,
         history_provider=lambda _ticker: _rising_frame(),
-        versions=[{"id": "rationale-1", "prompt_key": "rationale", "text": "template", "status": "live"}],
+        versions=[{"id": "rules-1", "prompt_key": "verdict_rules", "text": "template", "status": "live"}],
         progress_every=0,
     )
     assert report["parse_retries"] == 1
@@ -604,3 +609,159 @@ def test_progress_printer_and_resume_skips_stored_cases(tmp_path, capsys) -> Non
     assert second["skipped_duplicate"] == 1
     assert second["estimated_llm_calls"] == 0
     assert calls == [1]
+
+
+def _seat_card(score: int) -> str:
+    names = ("trend", "setup", "risk", "skeptic", "business")
+    return json.dumps({"seats": [{"name": name, "score": score, "claim": "ok"} for name in names], "chair": "desk"})
+
+
+def test_all_zero_debate_card_is_not_a_cash_decision() -> None:
+    assert parse_decision(_seat_card(0), tab="debate", quality_threshold=60) is None
+    assert parse_decision(_seat_card(75), tab="debate", quality_threshold=60) == "long"
+
+
+def test_debate_zero_template_retries_into_a_long(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    versions = [
+        {"id": "sys", "prompt_key": "system", "text": "Score the checklist.", "status": "live"},
+        {"id": "r1", "prompt_key": "round1", "text": "First round.", "status": "live"},
+        {"id": "r2", "prompt_key": "round2", "text": "Second round.", "status": "live"},
+    ]
+
+    def _complete(_system: str, user: str) -> str:
+        if "did not parse" in user:
+            return _seat_card(80)
+        return _seat_card(0)
+
+    report = run_replay(
+        tmp_path,
+        tab="debate",
+        since="2026-01-01",
+        max_llm_calls=8,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=_complete,
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=versions,
+        progress_every=0,
+    )
+    assert report["stored"] == 3
+    rows = load_samples(tmp_path)
+    assert {row["decision"] for row in rows} == {"long"}
+    assert {row["debate_score"] for row in rows} == {80.0}
+    assert all(float(row["realized_return_pct"]) > 0 for row in rows)
+
+
+def test_mean_reversion_fade_sign_is_the_decision() -> None:
+    cash = '{"fade_score": 40, "exhaustion_probability": 0.7, "decision": "long"}'
+    held = '{"fade_score": -30, "exhaustion_probability": 0.2}'
+    assert parse_decision(cash, tab="today", quality_threshold=60, prompt_key="mean_reversion") == "cash"
+    assert parse_decision(held, tab="today", quality_threshold=60, prompt_key="mean_reversion") == "long"
+
+
+def test_constant_long_is_flagged_and_non_decision_is_not_scored(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_MIN_SAMPLES", "5")
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "20")
+    agent = ResearchTabAgent()
+    registry = agent.registry(tmp_path)
+    live = registry.live_version("research", "verdict_rules")
+    for index in range(8):
+        append_sample(
+            tmp_path,
+            {
+                "source": "replay",
+                "tab_id": "research",
+                "prompt_key": "verdict_rules",
+                "version_id": live["id"],
+                "ticker": f"T{index}",
+                "as_of": f"2026-03-{index + 1:02d}",
+                "decision": "long",
+                "realized_return_pct": 4.0 if index % 2 == 0 else -2.0,
+                "counterfactual_return_pct": 4.0 if index % 2 == 0 else -2.0,
+                "horizon_days": 20,
+                "exit_model": "scale_out",
+                "stop_source": "stored",
+                "scored": True,
+            },
+        )
+    score = agent.score(tmp_path, registry=registry)
+    rules = next(row for row in score["versions"] if row["version_id"] == live["id"])
+    assert rules["degenerate"] is True
+    assert rules["degenerate_reason"] == "all_long"
+    assert score["baseline"]["name"] == "buy_every_scan"
+    assert score["baseline"]["n"] == 8
+    assert rules["edge_vs_baseline"] == 0.0
+    assert rules["decision_variance"] == 0
+    rationale = next(row for row in score["versions"] if row["prompt_key"] == "rationale")
+    assert rationale["scored"] is False
+
+
+def test_rescore_drops_zero_debate_and_derives_a_stop(tmp_path) -> None:
+    from core.tab_agent_replay import rescore_replay
+
+    rows = [
+        {
+            "source": "replay",
+            "tab_id": "debate",
+            "prompt_key": "round2",
+            "version_id": "r2",
+            "ticker": "AAA",
+            "as_of": "2026-06-01",
+            "decision": "cash",
+            "debate_score": 0,
+            "realized_return_pct": 0.0,
+            "exit_model": "fixed_horizon_no_stop",
+            "scored": True,
+        },
+        {
+            "source": "replay",
+            "tab_id": "today",
+            "prompt_key": "grok_code_review",
+            "version_id": "g",
+            "ticker": "AAA",
+            "as_of": "2026-06-01",
+            "decision": "long",
+            "realized_return_pct": 5.0,
+            "exit_model": "scale_out",
+            "scored": True,
+        },
+        {
+            "source": "replay",
+            "tab_id": "today",
+            "prompt_key": "institutional_trend",
+            "version_id": "t",
+            "ticker": "AAA",
+            "as_of": "2026-06-01",
+            "decision": "long",
+            "realized_return_pct": 1.0,
+            "exit_model": "fixed_horizon_no_stop",
+            "stop_source": "none",
+            "scored": True,
+        },
+    ]
+    path = tmp_path / ".tab_agent_replay.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    summary = rescore_replay(
+        tmp_path,
+        history_provider=lambda _ticker: _rising_frame(),
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+    )
+    assert summary["llm_calls"] == 0
+    assert summary["zero_debate_unscored"] == 1
+    assert summary["non_decision"] == 1
+    assert "debate" in summary["needs_llm"]
+    assert summary["relabeled"] == 1
+    stored = load_samples(tmp_path)
+    debate = next(row for row in stored if row["prompt_key"] == "round2")
+    trend = next(row for row in stored if row["prompt_key"] == "institutional_trend")
+    review = next(row for row in stored if row["prompt_key"] == "grok_code_review")
+    assert debate["scored"] is False
+    assert review["scored"] is False
+    assert trend["exit_model"] == "scale_out"
+    assert trend["stop_source"] in {"atr", "base_pct"}
+    assert trend["realized_return_pct"] > 0

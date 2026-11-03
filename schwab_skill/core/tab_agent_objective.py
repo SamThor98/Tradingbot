@@ -423,6 +423,8 @@ def compare_books(
         return "insufficient_sample"
     if _replay_without_live_floor(candidate, config) or _replay_without_live_floor(baseline, config):
         return "insufficient_live_sample"
+    if candidate.get("degenerate") or candidate.get("decision_prompt") is False:
+        return "no_decision_variance"
     if _primary_rank(candidate) <= _primary_rank(baseline):
         if _primary_rank(candidate) < _primary_rank(baseline):
             return "worse_than_live"
