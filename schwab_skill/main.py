@@ -519,7 +519,11 @@ def run_scheduler() -> None:
         if now.hour == 9 and now.minute == 25 and key != _last_brief_minute:
             _last_brief_minute = key
             try:
-                build_morning_brief()
+                from core.operator_notify_state import send_morning_brief_if_due
+
+                outcome = send_morning_brief_if_due(SKILL_DIR, now, build_morning_brief)
+                if outcome != "sent":
+                    log.info("Morning brief skipped: %s", outcome)
             except Exception as e:
                 log.warning("Morning brief failed: %s", e)
                 daily_heartbeat()
@@ -668,22 +672,30 @@ def run_scheduler() -> None:
         key = now.day * 10000 + now.hour * 60 + now.minute
         if now.weekday() == 6 and now.hour == 18 and now.minute == 0 and key != _last_weekly_minute:
             _last_weekly_minute = key
-            # Resolve matured decision packets (cockpit learning loop) before the
-            # digest so weekly diagnostics reflect newly-closed outcomes.
-            try:
-                from core.outcome_backfill import run_local_backfill
 
-                bf = run_local_backfill(SKILL_DIR)
-                log.info(
-                    "Decision-packet backfill: resolved=%s/%s skipped=%s",
-                    bf.get("resolved"),
-                    bf.get("total"),
-                    bf.get("skipped"),
-                )
-            except Exception as e:
-                log.warning("Decision-packet backfill failed: %s", e)
-            try:
+            def _digest_after_backfill() -> None:
+                # Resolve matured decision packets before the digest so the
+                # Sunday note includes newly closed outcomes.
+                try:
+                    from core.outcome_backfill import run_local_backfill
+
+                    bf = run_local_backfill(SKILL_DIR)
+                    log.info(
+                        "Decision-packet backfill: resolved=%s/%s skipped=%s",
+                        bf.get("resolved"),
+                        bf.get("total"),
+                        bf.get("skipped"),
+                    )
+                except Exception as e:
+                    log.warning("Decision-packet backfill failed: %s", e)
                 build_weekly_digest()
+
+            try:
+                from core.operator_notify_state import send_weekly_digest_if_due
+
+                outcome = send_weekly_digest_if_due(SKILL_DIR, now, _digest_after_backfill)
+                if outcome != "sent":
+                    log.info("Weekly digest skipped: %s", outcome)
             except Exception as e:
                 log.warning("Weekly digest failed: %s", e)
 
@@ -946,7 +958,14 @@ def run_scheduler() -> None:
     schedule.every().minute.do(_run_book_ytd_export_if_scheduled)
     schedule.every().minute.do(_run_tab_agent_propose_if_scheduled)
     schedule.every().minute.do(_run_debate_agent_propose_if_scheduled)
-    build_morning_brief()
+    try:
+        from core.operator_notify_state import send_morning_brief_if_due
+
+        outcome = send_morning_brief_if_due(SKILL_DIR, datetime.now(TZ_NY), build_morning_brief)
+        if outcome != "sent":
+            log.info("Morning brief catch-up skipped: %s", outcome)
+    except Exception as e:
+        log.warning("Morning brief catch-up failed: %s", e)
 
     try:
         while True:
