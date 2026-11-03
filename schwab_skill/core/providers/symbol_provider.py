@@ -47,6 +47,7 @@ class SymbolIntelProvider:
         components = sig.get("score_components") or {}
         advisory = sig.get("advisory") or {}
         attribution = sig.get("strategy_attribution") or {}
+        prob_rank = sig.get("prob_rank") if isinstance(sig.get("prob_rank"), dict) else {}
 
         rank = RankScores(
             rank_score=_f(sig.get("rank_score")),
@@ -56,8 +57,15 @@ class SymbolIntelProvider:
             reliability_score=_f(sig.get("reliability_score")),
             execution_score=_f(sig.get("execution_score")),
             p_up_calibrated=_f(sig.get("p_up_calibrated")),
-            ev_10d=_f(sig.get("ev_10d")),
             rank_basis=sig.get("rank_basis"),
+            rank_score_v2=_f(sig.get("rank_score_v2")),
+            sort_score=_f(sig.get("sort_score")),
+            historical_rank=_f(sig.get("historical_rank")),
+            rank_percentile=_f(sig.get("rank_percentile")),
+            expected_return_40d=_f(
+                sig.get("expected_return_40d") if sig.get("expected_return_40d") is not None
+                else prob_rank.get("expected_return_40d")
+            ),
         )
 
         setup = SetupInfo(

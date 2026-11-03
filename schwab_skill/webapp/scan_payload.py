@@ -24,7 +24,7 @@ from .backtest_spec import StrategyOverrides
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,16}$")
 
 UniversePreset = Literal["sp1500", "sp500", "nasdaq100", "sector_etfs", "focused", "custom"]
-ScanTimeframe = Literal["intraday", "daily", "weekly", "monthly"]
+ScanTimeframe = Literal["daily", "weekly", "monthly"]
 
 
 def scan_max_custom_tickers() -> int:

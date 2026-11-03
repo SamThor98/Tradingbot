@@ -12,7 +12,8 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { safeText, prettyJson } from "../modules/format.js";
+import { safeText } from "../modules/format.js";
+import { toolResultsSummaryHtml } from "../modules/typedView.js";
 import { logEvent } from "../modules/logger.js";
 
 export function strategyChatPayloadMessages() {
@@ -26,6 +27,26 @@ export function scrollStrategyChatToEnd() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
+export function adaptLocalBacktestChatUi() {
+  const local = !state.publicConfig?.saas_mode;
+  const tab = document.getElementById("btHubTabChat");
+  if (tab) tab.textContent = local ? "Shortcuts" : "Chat assistant";
+  const summary = document.querySelector("#backtestSection .bt-composer-details > summary");
+  if (summary) {
+    summary.textContent = local ? "Edit settings — form and shortcuts" : "Edit settings — form and chat";
+  }
+  const sub = document.querySelector("#strategyChatPanel .backtest-chat-subhead, #strategyChatPanel .chat-subhead");
+  if (sub) {
+    sub.textContent = local
+      ? "Chat is not on this computer. These buttons queue a 5-year or 8-year replay the same way the form does."
+      : "The assistant validates your settings and can queue the same backtest job as the form. Tool details stay collapsed unless you expand them.";
+  }
+  const inputRow = document.querySelector("#strategyChatPanel .chat-input-row");
+  if (inputRow) inputRow.classList.toggle("hidden", local);
+  const chips = document.getElementById("scEmptyChips");
+  if (chips) chips.classList.remove("hidden");
+}
+
 export function renderStrategyChatMessages() {
   const el = document.getElementById("scMessages");
   const chips = document.getElementById("scEmptyChips");
@@ -33,6 +54,8 @@ export function renderStrategyChatMessages() {
   if (!el) return;
   const msgs = Array.isArray(state.strategyChatMessages) ? state.strategyChatMessages : [];
   el.innerHTML = "";
+
+  adaptLocalBacktestChatUi();
 
   // Local install: degraded banner per Wave 5 (SaaS-only surface).
   if (panel && !state.publicConfig?.saas_mode) {
@@ -43,8 +66,8 @@ export function renderStrategyChatMessages() {
       banner.className = "async-state operator-alert operator-alert--warn";
       banner.setAttribute("role", "status");
       banner.innerHTML = `<div class="operator-alert__body">
-        <strong class="operator-alert__headline">Some data degraded</strong>
-        <p class="operator-alert__detail">Strategy chat is SaaS-only on this local install. Use the Form tab or run <code>python backtest.py</code>.</p>
+        <strong class="operator-alert__headline">Chat is not available here</strong>
+        <p class="operator-alert__detail">Use the buttons below (or Queue last 5 / 8 years on Backtest home). They queue the same job as the form.</p>
       </div>`;
       panel.insertBefore(banner, el);
     }
@@ -55,12 +78,12 @@ export function renderStrategyChatMessages() {
     hint.className = "chat-empty-hint";
     hint.textContent = state.publicConfig?.saas_mode
       ? "Describe the universe, date range, and any rule tweaks. Examples below."
-      : "No messages yet. Starter chips still work as Form-tab ideas.";
+      : "Use a Queue button below. Typing here cannot start a backtest on this computer.";
     el.appendChild(hint);
     if (chips) chips.classList.remove("hidden");
     return;
   }
-  if (chips) chips.classList.add("hidden");
+  if (chips) chips.classList.toggle("hidden", Boolean(state.publicConfig?.saas_mode));
   msgs.forEach((m) => {
     const wrap = document.createElement("div");
     const role = m.role === "user" ? "user" : "assistant";
@@ -86,16 +109,10 @@ export function renderStrategyChatMessages() {
       wrap.appendChild(resend);
     }
     if (role === "assistant" && Array.isArray(m.toolResults) && m.toolResults.length) {
-      const det = document.createElement("details");
-      det.className = "chat-tool-details";
-      const sum = document.createElement("summary");
-      sum.textContent = "Tool calls & raw results";
-      det.appendChild(sum);
-      const pre = document.createElement("pre");
-      pre.className = "code-block";
-      pre.textContent = prettyJson(m.toolResults);
-      det.appendChild(pre);
-      wrap.appendChild(det);
+      const box = document.createElement("div");
+      box.className = "chat-tool-summary";
+      box.innerHTML = toolResultsSummaryHtml(m.toolResults);
+      wrap.appendChild(box);
     }
     el.appendChild(wrap);
   });
@@ -119,11 +136,9 @@ export function showScQueueCallout(taskId, runId, { switchBacktestHubTab = () =>
   c.innerHTML = `
     <strong>Backtest queued.</strong> It runs in the background (often a few minutes). Results appear in <strong>Recent runs</strong> below when finished.
     <div class="callout-actions">
-      <code id="scTaskIdCopy">${tid}</code>
-      <button type="button" class="btn small secondary" id="scCopyTaskBtn">Copy task id</button>
+      <button type="button" class="btn small secondary" id="scCopyTaskBtn">Copy support id</button>
       <button type="button" class="btn small secondary" id="scSwitchFormTabBtn">Open form tab</button>
     </div>
-    ${rid ? `<div class="muted" style="margin-top:8px;font-size:0.82rem">Run id: ${rid.slice(0, 12)}…</div>` : ""}
   `;
   document.getElementById("scCopyTaskBtn")?.addEventListener("click", async () => {
     try {
@@ -152,7 +167,7 @@ export async function sendStrategyChat({ refreshBacktestRuns = async () => {}, s
       role: "assistant",
       content:
         "Strategy chat requires the hosted (SaaS) backend and is not available on this local install. " +
-        "Use the Form tab to configure a backtest, or run `python backtest.py` from the command line.",
+        "Use Queue last 5 years / Queue last 8 years on Backtest home, or the Shortcuts buttons in Edit settings.",
     });
     input.value = "";
     renderStrategyChatMessages();

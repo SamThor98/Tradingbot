@@ -23,6 +23,21 @@ from execution import get_account_status
 
 from ._shared import manual_jwt_entry_enabled as _shared_manual_jwt
 from .audit import log_audit
+from .backtest_hub import (
+    annotate_run_list_item,
+    artifact_detail,
+    build_hub,
+    list_artifact_catalog,
+    previous_summary_map,
+    public_trade_progress,
+    queue_position_map,
+    resolve_artifact_path,
+    result_metrics_summary,
+    serialize_run,
+    stored_result_parts,
+)
+from .backtest_labels import attach_run_labels
+from .backtest_leaderboard import SCAN_CAP, leaderboard_item_from_parts
 from .backtest_queue import create_and_queue_backtest
 from .billing_stripe import (
     billing_enforcement_enabled,
@@ -51,6 +66,11 @@ from .route_helpers import (
     simple_err as _shared_simple_err,
 )
 from .routes.tenant_book import router as tenant_book_router
+from .routes.tenant_event_probability import router as tenant_event_probability_router
+from .routes.tenant_manual_portfolio import router as tenant_manual_portfolio_router
+from .routes.tenant_position_intel import router as tenant_position_intel_router
+from .routes.tenant_pricing import router as tenant_pricing_router
+from .routes.tenant_sharadar import router as tenant_sharadar_router
 from .saas_redis import acquire_scan_cooldown, fixed_window_rate_limit, redis_ping, worker_busy_hint
 from .scan_payload import parse_scan_run_body
 from .schemas import (
@@ -113,6 +133,7 @@ LOG = logging.getLogger("webapp.saas")
 _CELERY_INSPECT_CACHE_TTL_SEC = max(0.0, float(os.getenv("SAAS_CELERY_INSPECT_CACHE_SEC", "6")))
 _CELERY_QUEUE_ESTIMATE_CACHE: tuple[float, dict[str, Any]] | None = None
 _CELERY_WORKER_HEALTH_CACHE: tuple[float, dict[str, Any]] | None = None
+
 
 def _alembic_config() -> Any:
     """Alembic Config pointing at this repo's migrations regardless of cwd.
@@ -205,6 +226,11 @@ app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 app.include_router(tenant_dashboard_router)
 app.include_router(tenant_book_router)
+app.include_router(tenant_position_intel_router)
+app.include_router(tenant_manual_portfolio_router)
+app.include_router(tenant_event_probability_router)
+app.include_router(tenant_pricing_router)
+app.include_router(tenant_sharadar_router)
 
 
 @app.exception_handler(HTTPException)
@@ -732,6 +758,7 @@ def public_config() -> ApiResponse:
         "platform_live_trading_kill_switch": plat_kill,
         "api_key_required": bool(configured_api_key),
         "plugin_mode_writes_enabled": False,
+        "ablation_writes_enabled": False,
         "scan_studio": _scan_studio_public_config(),
         # Helps hosted dashboards explain “works locally, not on Render” without exposing secrets.
         "auth_setup": {
@@ -749,6 +776,16 @@ def public_config() -> ApiResponse:
         # Built-in end-user steps when the host does not set WEB_IMPLEMENTATION_GUIDE_URL
         data["implementation_guide_url"] = "/static/connect-schwab-guide.html"
     return _ok(data)
+
+
+@app.get("/api/config", response_model=ApiResponse)
+def config() -> ApiResponse:
+    return _ok(
+        {
+            "trade_api_key_required": bool(os.getenv("WEB_API_KEY", "").strip()),
+            "allowed_origins": allowed_origins,
+        }
+    )
 
 
 @app.get("/api/scan-catalog", response_model=ApiResponse)
@@ -1311,6 +1348,7 @@ def run_scan(
     env_overrides.setdefault("SIGNAL_TOP_N", "0")
     for key in (
         "MIROFISH_API_KEY",
+        "XAI_API_KEY",
         "OPENAI_API_KEY",
         "OPENAI_KEY",
         "LLM_BASE_URL",
@@ -1757,12 +1795,9 @@ def list_backtest_runs(
             "spec": parse_json(row.spec_json, {}),
             "error_message": row.error_message,
             "created_at": row.created_at.isoformat() if row.created_at else None,
-            "has_result": bool(row.result_json),
         }
-        summary = _backtest_result_summary(parsed_result)
-        if summary is not None:
-            item["result_summary"] = summary
-        payload.append(item)
+        annotate_run_list_item(item, parsed_result)
+        payload.append(attach_run_labels(item))
     return _ok(payload)
 
 
@@ -1781,12 +1816,212 @@ def backtest_run_task_status(
         payload["run_id"] = row.id
         payload["db_status"] = row.status
         payload["error_message"] = row.error_message
-        if row.result_json:
-            payload["result"] = parse_json(row.result_json, {})
+        parsed = parse_json(row.result_json, {}) if row.result_json else {}
+        final, _progress = stored_result_parts(parsed)
+        if final is not None:
+            payload["result"] = final
     if task.ready():
         tr = task.result
         payload["task_result"] = tr if isinstance(tr, dict) else {"raw_result": str(tr)}
     return _ok(payload)
+
+
+def _serialize_saas_run(
+    row: BacktestRun,
+    *,
+    include_result: bool = False,
+    queue_position: int | None = None,
+    previous_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    raw = parse_json(row.result_json, {}) if row.result_json else {}
+    final, progress = stored_result_parts(raw if isinstance(raw, dict) else {})
+    spec = parse_json(row.spec_json, {})
+    item = serialize_run(
+        row,
+        result=final,
+        spec=spec if isinstance(spec, dict) else {},
+        include_result=include_result,
+        queue_busy=row.status in {"queued", "running"},
+        queue_position=queue_position,
+        previous_summary=previous_summary,
+    )
+    if row.status == "running":
+        tape = public_trade_progress(progress)
+        if tape is not None:
+            item["progress"] = tape
+    return item
+
+
+def _saas_parse_result(raw: Any) -> dict[str, Any]:
+    parsed = parse_json(raw, {}) if raw else {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _saas_queue_positions(db: Session, user_id: str) -> dict[str, int]:
+    active = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == user_id, BacktestRun.status.in_(("queued", "running")))
+        .order_by(BacktestRun.created_at.asc())
+        .all()
+    )
+    return queue_position_map(active)
+
+
+@app.get("/api/backtest-hub", response_model=ApiResponse)
+def saas_backtest_hub(
+    limit: int = Query(default=15, ge=1, le=50),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    rows = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.user_id == user.id)
+        .order_by(BacktestRun.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    positions = _saas_queue_positions(db, user.id)
+    prev_map = previous_summary_map(rows, parse_result=_saas_parse_result)
+    runs = [
+        _serialize_saas_run(
+            row,
+            queue_position=positions.get(str(row.id)),
+            previous_summary=prev_map.get(str(row.id)),
+        )
+        for row in rows
+    ]
+    last_scan: dict[str, Any] = {}
+    board_rows = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == user.id,
+            BacktestRun.status == "success",
+            BacktestRun.result_json.isnot(None),
+        )
+        .order_by(BacktestRun.created_at.desc())
+        .limit(SCAN_CAP)
+        .all()
+    )
+    leaderboard_runs = [
+        leaderboard_item_from_parts(
+            run_id=row.id,
+            status=row.status,
+            spec=parse_json(row.spec_json, {}) if row.spec_json else {},
+            summary=_backtest_result_summary(_saas_parse_result(row.result_json)),
+            created_at=row.created_at.isoformat() if row.created_at else None,
+        )
+        for row in board_rows
+    ]
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            payload = build_hub(
+                skill_dir=skill_dir,
+                runs=runs,
+                queue_busy=any(r.get("status") == "running" for r in runs),
+                concurrency_note="Hosted backtests share a worker queue (about 6 per hour).",
+                last_scan=last_scan,
+                leaderboard_runs=leaderboard_runs,
+            )
+            return _ok(payload)
+    except Exception:
+        return _ok(
+            build_hub(
+                skill_dir=Path("."),
+                runs=runs,
+                queue_busy=any(r.get("status") == "running" for r in runs),
+                concurrency_note="Hosted backtests share a worker queue (about 6 per hour).",
+                last_scan=last_scan,
+                leaderboard_runs=leaderboard_runs,
+            )
+        )
+
+
+@app.get("/api/backtest-runs/{run_id}", response_model=ApiResponse)
+def saas_backtest_run_detail(
+    run_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    row = db.query(BacktestRun).filter(BacktestRun.user_id == user.id, BacktestRun.id == run_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Backtest run not found.")
+    older = (
+        db.query(BacktestRun)
+        .filter(
+            BacktestRun.user_id == user.id,
+            BacktestRun.status == "success",
+            BacktestRun.created_at < row.created_at,
+        )
+        .order_by(BacktestRun.created_at.desc())
+        .first()
+    )
+    prev = result_metrics_summary(_saas_parse_result(older.result_json)) if older is not None else None
+    positions = _saas_queue_positions(db, user.id)
+    return _ok(
+        _serialize_saas_run(
+            row,
+            include_result=True,
+            queue_position=positions.get(str(row.id)),
+            previous_summary=prev,
+        )
+    )
+
+
+@app.post("/api/backtest-runs/{run_id}/cancel", response_model=ApiResponse)
+def saas_cancel_backtest_run(
+    run_id: str,
+    user: User = Depends(require_paid_entitlement),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    row = db.query(BacktestRun).filter(BacktestRun.user_id == user.id, BacktestRun.id == run_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Backtest run not found.")
+    if row.status != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail="Only waiting jobs can be cancelled. A running replay cannot be stopped mid-flight.",
+        )
+    if row.celery_task_id:
+        try:
+            celery_app.control.revoke(row.celery_task_id, terminate=False)
+        except Exception:
+            LOG.warning("Could not revoke celery task %s", row.celery_task_id)
+    row.status = "cancelled"
+    row.error_message = "Cancelled before start."
+    db.commit()
+    return _ok({"id": row.id, "status": row.status})
+
+
+@app.get("/api/backtest-artifacts", response_model=ApiResponse)
+def saas_backtest_artifacts(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            return _ok({"items": list_artifact_catalog(skill_dir)})
+    except Exception:
+        return _ok({"items": list_artifact_catalog(Path("."))})
+
+
+@app.get("/api/backtest-artifacts/{name}", response_model=ApiResponse)
+def saas_backtest_artifact_detail(
+    name: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(_db),
+) -> ApiResponse:
+    try:
+        with tenant_skill_dir(db, user.id) as skill_dir:
+            if resolve_artifact_path(skill_dir, name) is None:
+                raise HTTPException(status_code=404, detail="Artifact is not on the allowlist.")
+            detail = artifact_detail(skill_dir, name)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=404, detail="Artifact is not on the allowlist.") from None
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Artifact is not on the allowlist.")
+    return _ok(detail)
 
 
 @app.post("/api/phase2/stage1-runs", response_model=ApiResponse)
@@ -1840,10 +2075,15 @@ def strategy_chat_endpoint(
     user: User = Depends(require_paid_entitlement),
     db: Session = Depends(_db),
 ) -> ApiResponse:
-    if not (os.getenv("OPENAI_API_KEY") or os.getenv("MIROFISH_API_KEY") or "").strip():
+    if not (
+        os.getenv("XAI_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("MIROFISH_API_KEY")
+        or ""
+    ).strip():
         raise HTTPException(
             status_code=503,
-            detail="Strategy chat requires OPENAI_API_KEY or MIROFISH_API_KEY.",
+            detail="Strategy chat requires XAI_API_KEY, MIROFISH_API_KEY, or OPENAI_API_KEY.",
         )
     if not _is_schwab_linked(db, user.id):
         raise HTTPException(status_code=409, detail="Link Schwab account before using strategy chat.")

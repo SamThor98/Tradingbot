@@ -805,8 +805,19 @@ def backtest_for_user(run_id: str, user_id: str) -> dict[str, Any]:
             db.commit()
             return {"ok": False, "error": row.error_message, "run_id": run_id}
         try:
+            def _on_progress(snapshot: dict[str, Any]) -> None:
+                try:
+                    db.refresh(row)
+                    if row.status != "running":
+                        return
+                    row.result_json = json.dumps(snapshot, default=_json_default)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    LOG.warning("Could not save live backtest tape for %s", run_id)
+
             with tenant_skill_dir(db, user_id) as skill_dir:
-                result = run_strategy_backtest(skill_dir, spec)
+                result = run_strategy_backtest(skill_dir, spec, on_progress=_on_progress)
             row.status = "success"
             row.result_json = json.dumps(result, default=_json_default)
             row.error_message = None

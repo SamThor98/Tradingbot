@@ -34,6 +34,8 @@ def test_system_next_decision_card_in_index() -> None:
     html = INDEX.read_text(encoding="utf-8")
     assert 'id="systemNextDecision"' in html
     assert 'id="systemNextDecisionTitle"' in html
+    assert 'id="systemNextDecisionSteps"' in html
+    assert 'id="systemNextDecisionStatus"' in html
     assert 'id="systemLaneNav"' in html
 
 

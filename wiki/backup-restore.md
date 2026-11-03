@@ -1,7 +1,7 @@
 ---
 source: Brain/Runbooks/Backup Restore.md
 created: 2026-04-14
-updated: 2026-04-14
+updated: 2026-09-11
 tags: [runbook, backup, restore, dr]
 ---
 
@@ -37,6 +37,7 @@ tags: [runbook, backup, restore, dr]
 
 ## Related Pages
 
+- [[local-ops-box]] — keep `.env`, tokens, and SQLite on internal NVMe, not USB/OneDrive
 - [[deployment]] — deployment flow and environment setup
 - [[troubleshooting]] — incident diagnostics
 - [[saas-infrastructure]] — runtime secret/config inventory

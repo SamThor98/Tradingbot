@@ -4,6 +4,7 @@ JSON profiles for `scripts/run_multi_era_backtest_schwab_only.py --env-overrides
 
 | File | Entry family | Notes |
 |---|---|---|
+| `control_legacy_aug.json` | Stage 2 (legacy control) | Plugins + later stack pins off; used by `run_legacy_universe_sweep.py` |
 | `pullback_only_aug.json` | `pullback` | Bare peer book; Stage 2 not required |
 | `pead_primary_aug.json` | `pead_primary` | Earnings-beat primary; needs PEAD provider |
 

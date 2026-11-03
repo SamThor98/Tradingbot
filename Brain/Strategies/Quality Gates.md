@@ -28,7 +28,7 @@ Signal quality filtering that removes weak setups before they reach the final si
 | `QUALITY_WATCHLIST_PREFILTER_ENABLED` | false | Pre-scan universe filtering |
 | `QUALITY_WATCHLIST_PREFILTER_MAX` | 800 | Max symbols after prefiltering |
 
-Note: `weak_breakout_volume` is always a hard gate regardless of mode.
+`weak_breakout_volume` is one soft reason. Soft mode drops it only together with another reason. Hard mode drops it alone. `expansion_volume_ratio` (entry bar / prior 50-day average) is recorded and is not a gate.
 
 ## Related
 - [[Signal Scanner]] — quality gates applied after Stage B enrichment

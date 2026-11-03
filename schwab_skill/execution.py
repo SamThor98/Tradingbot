@@ -2,8 +2,10 @@
 Risk guardrails and order execution using ONLY the Account Session.
 
 All orders pass through the Guardrail Wrapper and regime gate. On block: return
-error string and send warning via notifier. On BUY: attach ATR-based trailing
-stop (2.5x ATR, clamped 5-12%). On fill: success alert.
+error string and send warning via notifier. On BUY: send one TRIGGER bracket
+whose child is the protective stop, so the stop is in the same Schwab order as
+the entry. Later stop changes replace that working order. A timeout or HTTP 5xx
+locks the symbol until the operator resolves it. On fill: success alert.
 Includes sector filter and regime gate (SPY > 200 SMA).
 """
 
@@ -20,6 +22,24 @@ from typing import Any
 import requests
 
 from circuit_breaker import maybe_trip_breaker, schwab_circuit
+from core.order_ambiguity import (
+    AMBIGUOUS_ORDER_ID,
+    AmbiguityLocked,
+    AmbiguityStoreError,
+    begin_intent,
+    finish_known,
+    get_lock,
+    mark_unknown,
+    take_lock,
+    unknown_outcome_message,
+)
+from core.protective_orders import (
+    build_entry_bracket,
+    child_stop_order_id,
+    round_price,
+    shift_trigger_limit,
+    trailing_stop_order,
+)
 from execution_persistence import (
     _load_exit_manager_state,
     _record_execution_metric,
@@ -430,9 +450,11 @@ def _initial_stop_payload_for_entry(
     qty: int,
     exec_price: float | None,
     skill_dir: Path | str | None = None,
+    stop_pct: float | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Return initial protective stop payload and kind (``hard_grace`` | ``trailing``)."""
-    stop_pct = _compute_adaptive_stop_pct(ticker, exec_price, skill_dir=skill_dir)
+    if stop_pct is None:
+        stop_pct = _compute_adaptive_stop_pct(ticker, exec_price, skill_dir=skill_dir)
     min_grace = 0
     try:
         from config import get_exit_min_hold_days_before_trail
@@ -450,7 +472,9 @@ def _initial_stop_payload_for_entry(
             ),
             "hard_grace",
         )
-    return _trailing_stop_payload(ticker, qty, exec_price, skill_dir=skill_dir), "trailing"
+    return _trailing_stop_payload(
+        ticker, qty, exec_price, skill_dir=skill_dir, stop_pct=stop_pct
+    ), "trailing"
 
 
 def _trailing_stop_payload(
@@ -458,31 +482,27 @@ def _trailing_stop_payload(
     qty: int,
     exec_price: float | None,
     skill_dir: Path | str | None = None,
+    stop_pct: float | None = None,
 ) -> dict[str, Any]:
-    stop_pct = _compute_adaptive_stop_pct(ticker, exec_price, skill_dir=skill_dir)
+    if stop_pct is None:
+        stop_pct = _compute_adaptive_stop_pct(ticker, exec_price, skill_dir=skill_dir)
     try:
         from config import get_stop_order_duration
         duration = get_stop_order_duration(Path(skill_dir or SKILL_DIR))
     except Exception:
         duration = "GOOD_TILL_CANCEL"
     if exec_price is not None and exec_price > 0:
-        stop_type, offset = "VALUE", float(exec_price) * float(stop_pct)
+        link_type, offset = "VALUE", round_price(float(exec_price) * float(stop_pct))
     else:
-        stop_type, offset = "PERCENT", float(stop_pct) * 100.0
-    return {
-        "orderStrategyType": "SINGLE",
-        "session": "NORMAL",
-        "duration": duration,
-        "orderType": "TRAILING_STOP",
-        "orderLegCollection": [{
-            "instruction": "SELL",
-            "quantity": qty,
-            "instrument": {"symbol": ticker.upper(), "assetType": "EQUITY"},
-        }],
-        "stopPriceBasis": "LAST",
-        "stopPriceType": stop_type,
-        "stopPriceOffset": float(offset),
-    }
+        link_type, offset = "PERCENT", round(float(stop_pct) * 100.0, 2)
+    return trailing_stop_order(
+        ticker,
+        qty,
+        offset=float(offset),
+        link_type=link_type,
+        basis="LAST",
+        duration=duration,
+    )
 
 
 def _hard_stop_payload(
@@ -502,7 +522,7 @@ def _hard_stop_payload(
         "session": "NORMAL",
         "duration": duration,
         "orderType": "STOP",
-        "stopPrice": round(float(stop_price), 2),
+        "stopPrice": round_price(float(stop_price)),
         "orderLegCollection": [
             {
                 "instruction": "SELL",
@@ -589,6 +609,12 @@ def register_exit_manager_entry(
             "updated_at": now,
             "status": existing.get("status") or "active",
             "stop_order_id": stop_order_id or staged_stop_order_id or existing.get("stop_order_id"),
+            "stop_attached": bool(
+                existing.get("stop_attached")
+                or pending_meta.get("stop_attached")
+                or stop_order_id
+                or staged_stop_order_id
+            ),
             "stop_pct": (
                 float(stop_pct)
                 if stop_pct and stop_pct > 0
@@ -625,6 +651,7 @@ def stage_exit_manager_entry_meta(
     stop_order_id: str | None,
     stop_pct: float | None,
     stop_grace_active: bool | None = None,
+    stop_attached: bool | None = None,
 ) -> None:
     skill_dir_p = Path(skill_dir or SKILL_DIR)
     settings = _get_exit_manager_settings(skill_dir_p)
@@ -642,6 +669,11 @@ def stage_exit_manager_entry_meta(
                 bool(stop_grace_active)
                 if stop_grace_active is not None
                 else existing.get("stop_grace_active")
+            ),
+            "stop_attached": (
+                bool(stop_attached)
+                if stop_attached is not None
+                else bool(existing.get("stop_attached") or stop_order_id or existing.get("stop_order_id"))
             ),
         }
         state["pending_entry_meta"] = pending
@@ -687,9 +719,293 @@ def on_exit_manager_sell_fill(
         if remaining <= 0:
             pos["status"] = "closed"
             pos["closed_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                from core.debate_committee import attach_committee_sample_to_position
+
+                attach_committee_sample_to_position(pos, skill_dir_p)
+            except Exception as exc:
+                LOG.debug("Committee sample join skipped for %s: %s", pos.get("ticker"), exc)
         positions[position_key] = pos
         _save_exit_manager_state(skill_dir_p, state)
     _record_execution_metric(skill_dir_p, "exit_manager_sell_fill_processed", reason=action or "sell_fill")
+
+
+class _BrokerSubmit:
+    """Result of one order request that was not retried."""
+
+    def __init__(
+        self,
+        response: requests.Response | None,
+        error: str | None,
+        unknown: bool,
+        order_id: str | None,
+    ):
+        self.response = response
+        self.error = error
+        self.unknown = unknown
+        self.order_id = order_id
+
+
+def _order_id_from_response(resp: requests.Response | None) -> str | None:
+    if resp is None:
+        return None
+    headers = getattr(resp, "headers", {}) or {}
+    location = headers.get("Location") or headers.get("location") or ""
+    part = str(location).rstrip("/").split("/")[-1]
+    return part or None
+
+
+def _force_unknown_lock(
+    skill_dir: Path,
+    ticker: str,
+    action: str,
+    reason: str,
+    *,
+    position_key: str | None = None,
+) -> None:
+    try:
+        if get_lock(skill_dir, ticker):
+            return
+        intent_id = begin_intent(skill_dir, ticker, action, position_key=position_key)
+        mark_unknown(skill_dir, ticker, intent_id, reason)
+    except (AmbiguityLocked, AmbiguityStoreError) as exc:
+        LOG.warning("Could not lock %s after an unclear order result: %s", ticker, exc)
+
+
+def _lock_message(skill_dir: Path, ticker: str) -> str | None:
+    try:
+        record = get_lock(skill_dir, ticker)
+    except AmbiguityStoreError as exc:
+        return str(exc)
+    if not record:
+        return None
+    return unknown_outcome_message(ticker, str(record.get("reason") or "unresolved order"))
+
+
+def _submit_broker_order(
+    *,
+    method: str,
+    url: str,
+    payload: dict[str, Any],
+    auth: "DualSchwabAuth",
+    skill_dir: Path,
+    ticker: str,
+    action: str,
+    position_key: str | None = None,
+) -> _BrokerSubmit:
+    """Send one POST or PUT. Timeouts and HTTP 5xx stay locked. 4xx clears the lock.
+
+    The intent row is written before the request. The request is not retried.
+    """
+    try:
+        existing = get_lock(skill_dir, ticker)
+    except AmbiguityStoreError as exc:
+        return _BrokerSubmit(None, str(exc), True, None)
+    if existing:
+        return _BrokerSubmit(
+            None,
+            unknown_outcome_message(ticker, str(existing.get("reason") or "unresolved order")),
+            True,
+            None,
+        )
+    try:
+        intent_id = begin_intent(skill_dir, ticker, action, position_key=position_key)
+    except AmbiguityLocked as exc:
+        return _BrokerSubmit(None, str(exc), True, None)
+    except AmbiguityStoreError as exc:
+        return _BrokerSubmit(None, str(exc), True, None)
+
+    try:
+        if method == "put":
+            resp = _replace_order_with_refresh(url, payload, auth)
+        else:
+            resp = _post_order_with_refresh(url, payload, auth)
+    except requests.RequestException as exc:
+        reason = f"{action}: {exc}"
+        try:
+            mark_unknown(skill_dir, ticker, intent_id, reason)
+        except AmbiguityStoreError:
+            LOG.warning("Could not persist unknown order outcome for %s", ticker)
+        return _BrokerSubmit(None, unknown_outcome_message(ticker, reason), True, None)
+
+    status = int(getattr(resp, "status_code", 0) or 0)
+    if status >= 500 or status == 408:
+        body = ""
+        try:
+            body = (resp.text or "")[:180]
+        except Exception:
+            body = ""
+        reason = f"{action}: HTTP {status} {body}".strip()
+        try:
+            mark_unknown(skill_dir, ticker, intent_id, reason)
+        except AmbiguityStoreError:
+            LOG.warning("Could not persist unknown order outcome for %s", ticker)
+        return _BrokerSubmit(resp, unknown_outcome_message(ticker, reason), True, None)
+    if not getattr(resp, "ok", False):
+        try:
+            finish_known(skill_dir, ticker, intent_id)
+        except AmbiguityStoreError:
+            LOG.warning("Could not clear order intent for %s after a refusal", ticker)
+        body = ""
+        try:
+            body = (resp.text or "")[:300]
+        except Exception:
+            body = ""
+        return _BrokerSubmit(resp, f"API Error: {status} - {body}", False, None)
+    try:
+        finish_known(skill_dir, ticker, intent_id)
+    except AmbiguityStoreError:
+        LOG.warning("Order for %s was accepted and the intent ledger could not be cleared", ticker)
+        try:
+            mark_unknown(skill_dir, ticker, intent_id, f"{action}: accepted, intent ledger unreadable")
+        except AmbiguityStoreError:
+            pass
+        return _BrokerSubmit(
+            resp,
+            unknown_outcome_message(ticker, f"{action}: accepted, intent ledger unreadable"),
+            True,
+            _order_id_from_response(resp),
+        )
+    return _BrokerSubmit(resp, None, False, _order_id_from_response(resp))
+
+
+def _read_child_stop_id(orders_url: str, order_id: str, auth: "DualSchwabAuth") -> str | None:
+    try:
+        resp = _get_order_with_refresh(f"{orders_url.rstrip('/')}/{order_id}", auth)
+    except Exception as exc:
+        LOG.debug("Bracket child read failed: %s", exc)
+        return None
+    if not getattr(resp, "ok", False):
+        return None
+    try:
+        body = resp.json() if resp.text else {}
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    return child_stop_order_id(body)
+
+
+def _resolve_stop_order_id(
+    pos: dict[str, Any],
+    orders_url: str,
+    auth: "DualSchwabAuth",
+) -> str | None:
+    existing = str(pos.get("stop_order_id") or "")
+    if existing and existing != AMBIGUOUS_ORDER_ID:
+        return existing
+    if not pos.get("stop_attached"):
+        return None
+    entry_id = str(pos.get("entry_order_id") or "")
+    if not entry_id or not orders_url:
+        return None
+    return _read_child_stop_id(orders_url, entry_id, auth)
+
+
+def _install_protective_stop(
+    *,
+    orders_url: str,
+    auth: "DualSchwabAuth",
+    skill_dir: Path,
+    ticker: str,
+    pos: dict[str, Any],
+    payload: dict[str, Any],
+    action: str,
+    position_key: str,
+) -> _BrokerSubmit:
+    """Replace the working stop, or post one when the position has none.
+
+    Never cancels the current stop first. A rejected replace leaves it working.
+    """
+    existing = str(pos.get("stop_order_id") or "")
+    if existing == AMBIGUOUS_ORDER_ID:
+        return _BrokerSubmit(
+            None,
+            "protective stop id was not captured; not sending a second stop",
+            False,
+            None,
+        )
+    target_id = existing or (_resolve_stop_order_id(pos, orders_url, auth) or "")
+    if target_id:
+        return _submit_broker_order(
+            method="put",
+            url=f"{orders_url.rstrip('/')}/{target_id}",
+            payload=payload,
+            auth=auth,
+            skill_dir=skill_dir,
+            ticker=ticker,
+            action=action,
+            position_key=position_key,
+        )
+    if pos.get("stop_attached"):
+        return _BrokerSubmit(
+            None,
+            "entry bracket holds the stop but its order id is not known yet",
+            False,
+            None,
+        )
+    return _submit_broker_order(
+        method="post",
+        url=orders_url,
+        payload=payload,
+        auth=auth,
+        skill_dir=skill_dir,
+        ticker=ticker,
+        action=action,
+        position_key=position_key,
+    )
+
+
+def _remember_exit_order(
+    state: dict[str, Any],
+    *,
+    order_id: str | None,
+    position_key: str,
+    action: str,
+) -> None:
+    if not order_id or order_id == AMBIGUOUS_ORDER_ID:
+        return
+    state.setdefault("order_links", {})[order_id] = {
+        "position_key": position_key,
+        "action": action,
+    }
+
+
+def _start_exit_sell_watch(
+    *,
+    account_hash: str | None,
+    order_id: str | None,
+    auth: "DualSchwabAuth",
+    ticker: str,
+    qty: int,
+    price: float | None,
+    skill_dir: Path,
+) -> None:
+    if not order_id or order_id == AMBIGUOUS_ORDER_ID:
+        return
+    try:
+        from self_study import register_pending_order
+
+        register_pending_order(order_id, ticker, "SELL", int(qty), price, skill_dir=skill_dir)
+    except Exception as exc:
+        LOG.debug("Exit manager pending register failed: %s", exc)
+    if not account_hash:
+        return
+    try:
+        from order_monitor import start_fill_monitor
+
+        start_fill_monitor(
+            account_hash,
+            order_id,
+            auth.get_account_token(),
+            ticker,
+            "SELL",
+            int(qty),
+            skill_dir,
+            auth=auth,
+        )
+    except Exception as exc:
+        LOG.debug("Exit manager monitor start failed: %s", exc)
 
 
 def run_exit_manager_sweep(
@@ -727,9 +1043,18 @@ def run_exit_manager_sweep(
             continue
         if ticker_filter and ticker != ticker_filter.upper():
             continue
+        if _lock_message(skill_dir_p, ticker):
+            _record_execution_metric(skill_dir_p, "order_ambiguity_blocked", reason=ticker)
+            continue
         remaining_qty = max(0, int(pos.get("remaining_qty") or 0))
         if remaining_qty <= 0:
             pos["status"] = "closed"
+            try:
+                from core.debate_committee import attach_committee_sample_to_position
+
+                attach_committee_sample_to_position(pos, skill_dir_p)
+            except Exception as exc:
+                LOG.debug("Committee sample join skipped for %s: %s", pos.get("ticker"), exc)
             changed = True
             continue
 
@@ -762,44 +1087,44 @@ def run_exit_manager_sweep(
                     pos["trailing_stop_armed"] = True
                     changed = True
             elif orders_url and entry_px and entry_px > 0:
-                try:
-                    existing_stop_id = pos.get("stop_order_id")
-                    if existing_stop_id:
-                        stop_url = f"{orders_url}/{existing_stop_id}"
-                        cancel_resp = _cancel_order_with_refresh(stop_url, auth)
-                        if not (cancel_resp.ok or cancel_resp.status_code in (200, 202, 204)):
-                            _record_execution_metric(
-                                skill_dir_p,
-                                "exit_manager_live_error",
-                                reason=f"trailing_arm_cancel_failed:{cancel_resp.status_code}",
-                            )
-                            continue
+                if _lock_message(skill_dir_p, ticker):
+                    _record_execution_metric(skill_dir_p, "order_ambiguity_blocked", reason=ticker)
+                else:
                     trail = _trailing_stop_payload(
                         ticker,
                         remaining_qty,
                         entry_px,
                         skill_dir=skill_dir_p,
                     )
-                    trail_resp = _post_order_with_refresh(orders_url, trail, auth)
-                    trail_resp.raise_for_status()
-                    trail_loc = trail_resp.headers.get("Location", "")
-                    trail_order_id = trail_loc.split("/")[-1] if trail_loc else None
-                    if trail_order_id:
-                        pos["stop_order_id"] = trail_order_id
-                        state.setdefault("order_links", {})[trail_order_id] = {
-                            "position_key": key,
-                            "action": "trailing_stop",
-                        }
-                    pos["trailing_stop_armed"] = True
-                    pos["stop_grace_active"] = False
-                    _record_execution_metric(skill_dir_p, "exit_manager_trailing_armed")
-                    changed = True
-                except Exception as e:
-                    _record_execution_metric(
-                        skill_dir_p,
-                        "exit_manager_live_error",
-                        reason=f"trailing_arm:{e}",
+                    submit = _install_protective_stop(
+                        orders_url=orders_url,
+                        auth=auth,
+                        skill_dir=skill_dir_p,
+                        ticker=ticker,
+                        pos=pos,
+                        payload=trail,
+                        action="trailing_stop",
+                        position_key=key,
                     )
+                    if submit.error:
+                        _record_execution_metric(
+                            skill_dir_p,
+                            "exit_manager_live_error",
+                            reason=f"trailing_arm:{submit.error}"[:120],
+                        )
+                    else:
+                        if submit.order_id:
+                            pos["stop_order_id"] = submit.order_id
+                            _remember_exit_order(
+                                state, order_id=str(submit.order_id), position_key=key, action="trailing_stop"
+                            )
+                        else:
+                            pos["stop_order_id"] = AMBIGUOUS_ORDER_ID
+                        pos["trailing_stop_armed"] = True
+                        pos["stop_grace_active"] = False
+                        pos["stop_attached"] = True
+                        _record_execution_metric(skill_dir_p, "exit_manager_trailing_armed")
+                        changed = True
 
         if (
             not exit_grace_active
@@ -819,51 +1144,42 @@ def run_exit_manager_sweep(
             else:
                 if not orders_url:
                     _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason="missing_account_hash")
+                elif _lock_message(skill_dir_p, ticker):
+                    _record_execution_metric(skill_dir_p, "order_ambiguity_blocked", reason=ticker)
                 else:
                     payload = _equity_order_payload(ticker, partial_qty, "SELL", "MARKET")
-                    try:
-                        resp = _post_order_with_refresh(orders_url, payload, auth)
-                        resp.raise_for_status()
-                        order_loc = resp.headers.get("Location", "")
-                        order_id = order_loc.split("/")[-1] if order_loc else None
-                        if order_id:
-                            pos["partial_tp_order_id"] = order_id
-                            state.setdefault("order_links", {})[order_id] = {
-                                "position_key": key,
-                                "action": "partial_tp",
-                            }
-                            try:
-                                from self_study import register_pending_order
-
-                                register_pending_order(
-                                    order_id,
-                                    ticker,
-                                    "SELL",
-                                    partial_qty,
-                                    last,
-                                    skill_dir=skill_dir_p,
-                                )
-                            except Exception as e:
-                                logging.getLogger(__name__).debug("Exit manager pending register failed: %s", e)
-                            try:
-                                from order_monitor import start_fill_monitor
-
-                                start_fill_monitor(
-                                    resolved_hash,
-                                    order_id,
-                                    auth.get_account_token(),
-                                    ticker,
-                                    "SELL",
-                                    partial_qty,
-                                    skill_dir_p,
-                                    auth=auth,
-                                )
-                            except Exception as e:
-                                logging.getLogger(__name__).debug("Exit manager monitor start failed: %s", e)
-                            _record_execution_metric(skill_dir_p, "exit_manager_partial_tp_placed")
-                            changed = True
-                    except Exception as e:
-                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=str(e))
+                    submit = _submit_broker_order(
+                        method="post",
+                        url=orders_url,
+                        payload=payload,
+                        auth=auth,
+                        skill_dir=skill_dir_p,
+                        ticker=ticker,
+                        action="partial_tp",
+                        position_key=key,
+                    )
+                    if submit.unknown:
+                        pos["partial_tp_order_id"] = AMBIGUOUS_ORDER_ID
+                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=submit.error)
+                        changed = True
+                    elif submit.error:
+                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=submit.error)
+                    else:
+                        order_id = submit.order_id or AMBIGUOUS_ORDER_ID
+                        pos["partial_tp_order_id"] = order_id
+                        if submit.order_id:
+                            _remember_exit_order(state, order_id=submit.order_id, position_key=key, action="partial_tp")
+                            _start_exit_sell_watch(
+                                account_hash=resolved_hash,
+                                order_id=order_id,
+                                auth=auth,
+                                ticker=ticker,
+                                qty=partial_qty,
+                                price=last,
+                                skill_dir=skill_dir_p,
+                            )
+                        _record_execution_metric(skill_dir_p, "exit_manager_partial_tp_placed")
+                        changed = True
 
         if pos.get("pending_breakeven_move") and not pos.get("breakeven_done") and remaining_qty > 0:
             if mode == "shadow":
@@ -874,41 +1190,43 @@ def run_exit_manager_sweep(
             else:
                 if not orders_url:
                     _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason="missing_account_hash")
+                elif _lock_message(skill_dir_p, ticker):
+                    _record_execution_metric(skill_dir_p, "order_ambiguity_blocked", reason=ticker)
+                elif not entry_px or entry_px <= 0:
+                    _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason="breakeven_missing_entry_price")
                 else:
-                    try:
-                        existing_stop_id = pos.get("stop_order_id") or pos.get("breakeven_stop_order_id")
-                        if existing_stop_id:
-                            stop_url = f"{orders_url}/{existing_stop_id}"
-                            cancel_resp = _cancel_order_with_refresh(stop_url, auth)
-                            if not (cancel_resp.ok or cancel_resp.status_code in (200, 202, 204)):
-                                _record_execution_metric(
-                                    skill_dir_p,
-                                    "exit_manager_live_error",
-                                    reason=f"breakeven_cancel_failed:{cancel_resp.status_code}",
-                                )
-                        be_stop = _hard_stop_payload(
-                            ticker,
-                            remaining_qty,
-                            stop_price=float(entry_px or 0.0),
-                            skill_dir=skill_dir_p,
-                        )
-                        be_resp = _post_order_with_refresh(orders_url, be_stop, auth)
-                        be_resp.raise_for_status()
-                        be_loc = be_resp.headers.get("Location", "")
-                        be_order_id = be_loc.split("/")[-1] if be_loc else None
+                    be_stop = _hard_stop_payload(
+                        ticker,
+                        remaining_qty,
+                        stop_price=float(entry_px),
+                        skill_dir=skill_dir_p,
+                    )
+                    submit = _install_protective_stop(
+                        orders_url=orders_url,
+                        auth=auth,
+                        skill_dir=skill_dir_p,
+                        ticker=ticker,
+                        pos=pos,
+                        payload=be_stop,
+                        action="breakeven_stop",
+                        position_key=key,
+                    )
+                    if submit.error:
+                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=submit.error)
+                    else:
+                        if submit.order_id:
+                            pos["breakeven_stop_order_id"] = submit.order_id
+                            pos["stop_order_id"] = submit.order_id
+                            _remember_exit_order(
+                                state, order_id=str(submit.order_id), position_key=key, action="breakeven_stop"
+                            )
+                        else:
+                            pos["stop_order_id"] = AMBIGUOUS_ORDER_ID
                         pos["breakeven_done"] = True
                         pos["pending_breakeven_move"] = False
-                        if be_order_id:
-                            pos["breakeven_stop_order_id"] = be_order_id
-                            pos["stop_order_id"] = be_order_id
-                            state.setdefault("order_links", {})[be_order_id] = {
-                                "position_key": key,
-                                "action": "breakeven_stop",
-                            }
+                        pos["stop_attached"] = True
                         _record_execution_metric(skill_dir_p, "exit_manager_breakeven_stop_moved")
                         changed = True
-                    except Exception as e:
-                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=str(e))
 
         if (
             not exit_grace_active
@@ -924,52 +1242,45 @@ def run_exit_manager_sweep(
             else:
                 if not orders_url:
                     _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason="missing_account_hash")
+                elif _lock_message(skill_dir_p, ticker):
+                    _record_execution_metric(skill_dir_p, "order_ambiguity_blocked", reason=ticker)
                 else:
                     payload = _equity_order_payload(ticker, remaining_qty, "SELL", "MARKET")
-                    try:
-                        resp = _post_order_with_refresh(orders_url, payload, auth)
-                        resp.raise_for_status()
-                        order_loc = resp.headers.get("Location", "")
-                        order_id = order_loc.split("/")[-1] if order_loc else None
+                    submit = _submit_broker_order(
+                        method="post",
+                        url=orders_url,
+                        payload=payload,
+                        auth=auth,
+                        skill_dir=skill_dir_p,
+                        ticker=ticker,
+                        action="time_stop",
+                        position_key=key,
+                    )
+                    if submit.unknown:
+                        pos["time_stop_order_id"] = AMBIGUOUS_ORDER_ID
+                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=submit.error)
+                        changed = True
+                    elif submit.error:
+                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=submit.error)
+                    else:
+                        order_id = submit.order_id
                         pos["time_stop_done"] = True
                         if order_id:
                             pos["time_stop_order_id"] = order_id
-                            state.setdefault("order_links", {})[order_id] = {
-                                "position_key": key,
-                                "action": "time_stop",
-                            }
-                            try:
-                                from self_study import register_pending_order
-
-                                register_pending_order(
-                                    order_id,
-                                    ticker,
-                                    "SELL",
-                                    remaining_qty,
-                                    last,
-                                    skill_dir=skill_dir_p,
-                                )
-                            except Exception as e:
-                                logging.getLogger(__name__).debug("Exit manager time-stop pending register failed: %s", e)
-                            try:
-                                from order_monitor import start_fill_monitor
-
-                                start_fill_monitor(
-                                    resolved_hash,
-                                    order_id,
-                                    auth.get_account_token(),
-                                    ticker,
-                                    "SELL",
-                                    remaining_qty,
-                                    skill_dir_p,
-                                    auth=auth,
-                                )
-                            except Exception as e:
-                                logging.getLogger(__name__).debug("Exit manager time-stop monitor start failed: %s", e)
+                            _remember_exit_order(state, order_id=order_id, position_key=key, action="time_stop")
+                            _start_exit_sell_watch(
+                                account_hash=resolved_hash,
+                                order_id=order_id,
+                                auth=auth,
+                                ticker=ticker,
+                                qty=remaining_qty,
+                                price=last,
+                                skill_dir=skill_dir_p,
+                            )
+                        else:
+                            pos["time_stop_order_id"] = AMBIGUOUS_ORDER_ID
                         _record_execution_metric(skill_dir_p, "exit_manager_time_stop_placed")
                         changed = True
-                    except Exception as e:
-                        _record_execution_metric(skill_dir_p, "exit_manager_live_error", reason=str(e))
 
         pos["updated_at"] = datetime.now(timezone.utc).isoformat()
         positions[key] = pos
@@ -1286,8 +1597,18 @@ def _run_limit_reprice_loop(
                 history.append({"attempt": idx + 1, "status": "skipped_no_change", "order_id": active_order_id})
                 continue
 
-            new_payload = dict(active_payload)
-            new_payload["price"] = new_limit
+            new_payload = shift_trigger_limit(active_payload, new_limit)
+            if new_payload is None:
+                _record_execution_metric(skill_dir, "exec_quality_reprice_kept_protection")
+                history.append(
+                    {
+                        "attempt": idx + 1,
+                        "status": "kept_protection",
+                        "order_id": active_order_id,
+                        "reason": "shifted stop would cross the new limit",
+                    }
+                )
+                continue
 
             replaced = False
             try:
@@ -1305,11 +1626,35 @@ def _run_limit_reprice_loop(
                             "order_id": active_order_id,
                         }
                     )
+                elif int(getattr(replace_resp, "status_code", 0) or 0) >= 500 or int(
+                    getattr(replace_resp, "status_code", 0) or 0
+                ) == 408:
+                    _force_unknown_lock(
+                        skill_dir,
+                        ticker,
+                        "entry_reprice",
+                        f"replace HTTP {getattr(replace_resp, 'status_code', '')}",
+                    )
+            except requests.RequestException as replace_err:
+                logging.getLogger(__name__).debug("Limit replace failed: %s", replace_err)
+                if active_payload.get("childOrderStrategies"):
+                    _force_unknown_lock(skill_dir, ticker, "entry_reprice", f"replace: {replace_err}")
             except Exception as replace_err:
                 logging.getLogger(__name__).debug("Limit replace failed: %s", replace_err)
 
             if replaced:
                 continue
+
+            if active_payload.get("childOrderStrategies") or active_payload.get("orderStrategyType") == "TRIGGER":
+                _record_execution_metric(skill_dir, "exec_quality_reprice_kept_protection")
+                history.append(
+                    {
+                        "attempt": idx + 1,
+                        "status": "kept_protection",
+                        "order_id": active_order_id,
+                    }
+                )
+                break
 
             cancel_resp = _cancel_order_with_refresh(order_url, auth)
             if not (cancel_resp.ok or cancel_resp.status_code in (200, 202, 204)):
@@ -1434,6 +1779,71 @@ def get_account_status(
         return f"Error: {e}"
 
 
+def _prepare_entry_protection(
+    primary: dict[str, Any],
+    *,
+    ticker: str,
+    qty: int,
+    order_type: str,
+    limit_price: float | None,
+    price_hint: float | None,
+    auth: "DualSchwabAuth",
+    skill_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]] | str:
+    """Attach a TRIGGER child stop, or leave the single order on the rollback path."""
+    from config import get_entry_protection_mode
+
+    mode = get_entry_protection_mode(skill_dir)
+    snap: dict[str, Any] = {}
+    try:
+        snap = _get_quote_quality_snapshot(ticker, auth, skill_dir)
+    except Exception as exc:
+        LOG.debug("Entry protection quote failed for %s: %s", ticker, exc)
+    ref: float | None = None
+    if order_type == "LIMIT" and limit_price is not None and float(limit_price) > 0:
+        ref = float(limit_price)
+    else:
+        for key in ("ask", "last", "mid"):
+            val = _safe_float(snap.get(key))
+            if val is not None and val > 0:
+                ref = float(val)
+                break
+        if ref is None and price_hint is not None and float(price_hint) > 0:
+            ref = float(price_hint)
+    if mode == "bracket" and (ref is None or ref <= 0):
+        return (
+            f"GUARDRAIL: Refusing BUY {qty} {ticker}. "
+            "No price to attach a protective stop (ENTRY_PROTECTION_MODE=bracket)."
+        )
+    stop_pct = _compute_adaptive_stop_pct(ticker, ref, skill_dir=skill_dir)
+    stop_order, stop_kind = _initial_stop_payload_for_entry(
+        ticker, qty, ref, skill_dir=skill_dir, stop_pct=stop_pct
+    )
+    info: dict[str, Any] = {
+        "mode": mode,
+        "enabled": True,
+        "stop_kind": stop_kind,
+        "stop_pct": stop_pct,
+        "duration": stop_order.get("duration"),
+        "reference_price": ref,
+        "stop_grace_active": stop_kind == "hard_grace",
+    }
+    if mode != "bracket":
+        return primary, info
+    if stop_order.get("orderType") == "STOP":
+        stop_px = _safe_float(stop_order.get("stopPrice"))
+        if stop_px is None or stop_px <= 0 or stop_px >= float(ref):
+            return (
+                f"GUARDRAIL: Refusing BUY {qty} {ticker}. "
+                f"Protective stop {stop_px} is not below the entry reference {ref}."
+            )
+    try:
+        bracket = build_entry_bracket(primary, stop_order)
+    except ValueError as exc:
+        return f"GUARDRAIL: Refusing BUY {qty} {ticker}. Protective bracket rejected: {exc}"
+    return bracket, info
+
+
 def place_order(
     ticker: str,
     qty: int,
@@ -1453,7 +1863,8 @@ def place_order(
     """
     Place equity order using ONLY Account Session. Passes through Guardrail Wrapper.
     On block: returns error string and sends warning via notifier.
-    On BUY: attaches ATR-based trailing stop (2.5x ATR). On fill: sends success alert.
+    On BUY in bracket mode: one TRIGGER order whose child is the protective stop.
+    On an unclear send: locks the symbol until the operator resolves it.
     """
     auth = auth or DualSchwabAuth(skill_dir=skill_dir or SKILL_DIR)
     wrapper = GuardrailWrapper(auth, skill_dir)
@@ -1882,25 +2293,38 @@ def place_order(
     regime_v2_diag: dict[str, Any] = {"mode": regime_v2_mode}
     if side_n == "BUY" and regime_v2_mode in {"shadow", "live"}:
         try:
-            from sector_strength import get_regime_v2_snapshot
+            from sector_strength import get_regime_v2_snapshot, regime_v2_is_unavailable
 
             snap = get_regime_v2_snapshot(auth, skill_dir)
-            score = float(snap.get("score", 0) or 0)
-            bucket = str(snap.get("bucket") or "low").lower()
-            mult = float(regime_v2_size_mult.get(bucket, regime_v2_size_mult.get("low", 0.4)))
-            regime_v2_diag.update(
-                {
-                    "score": round(score, 2),
-                    "bucket": bucket,
-                    "entry_min_score": int(regime_v2_entry_min_score),
-                    "size_multiplier": mult,
-                    "components": snap.get("components"),
-                }
-            )
+            if regime_v2_is_unavailable(snap):
+                regime_v2_diag["unavailable"] = True
+                regime_v2_diag["bucket"] = "unavailable"
+                regime_v2_diag["score"] = None
+                _record_execution_metric(skill_dir, "regime_v2_unavailable")
+                if regime_v2_mode == "live":
+                    msg = "REGIME V2 BLOCK: regime snapshot unavailable. Entry skipped."
+                    send_alert(msg, kind="regime_block", env_path=skill_dir / ".env")
+                    return msg
+                regime_v2_diag["shadow_action"] = "would_block_unavailable"
+                snap = None
+            if snap is not None:
+                score = float(snap.get("score", 0) or 0)
+                bucket = str(snap.get("bucket") or "low").lower()
+                mult = float(regime_v2_size_mult.get(bucket, regime_v2_size_mult.get("low", 0.4)))
+                regime_v2_diag.update(
+                    {
+                        "score": round(score, 2),
+                        "bucket": bucket,
+                        "entry_min_score": int(regime_v2_entry_min_score),
+                        "size_multiplier": mult,
+                        "components": snap.get("components"),
+                    }
+                )
             _record_execution_metric(skill_dir, "regime_v2_evaluated")
             if regime_v2_mode == "shadow":
-                regime_v2_diag["shadow_action"] = "would_gate_or_resize"
-            else:
+                if snap is not None:
+                    regime_v2_diag["shadow_action"] = "would_gate_or_resize"
+            elif snap is not None:
                 if score < float(regime_v2_entry_min_score):
                     _record_execution_metric(
                         skill_dir,
@@ -1935,6 +2359,29 @@ def place_order(
         except Exception as e:
             _record_execution_metric(skill_dir, "regime_v2_eval_error", reason=str(e))
 
+    entry_protection: dict[str, Any] = {"mode": "separate", "enabled": False}
+    if side_n == "BUY":
+        prepared = _prepare_entry_protection(
+            primary,
+            ticker=ticker_n,
+            qty=int(qty),
+            order_type=order_type_n,
+            limit_price=limit_price,
+            price_hint=price_hint,
+            auth=auth,
+            skill_dir=skill_dir,
+        )
+        if isinstance(prepared, str):
+            _record_execution_metric(skill_dir, "stop_protection_refused", reason=prepared[:120])
+            send_alert(prepared, kind="guardrail", env_path=skill_dir / ".env")
+            return prepared
+        primary, entry_protection = prepared
+
+    lock_msg = _lock_message(skill_dir, ticker_n)
+    if lock_msg:
+        _record_execution_metric(skill_dir, "order_ambiguity_blocked", reason=ticker_n)
+        return lock_msg
+
     url = f"{SCHWAB_BASE}/trader/v1/accounts/{account_hash}/orders"
 
     if shadow_mode:
@@ -1958,13 +2405,13 @@ def place_order(
             "data_quality_reasons": (data_quality_payload or {}).get("data_quality_reasons"),
         }
         if side_n == "BUY":
-            exec_price = wrapper._get_quote_price(ticker_n)
             shadow_result["_stop_protection"] = {
                 "enabled": True,
-                "status": "shadow_simulated",
-                "duration": _initial_stop_payload_for_entry(
-                    ticker_n, int(qty), exec_price, skill_dir=skill_dir
-                )[0].get("duration"),
+                "status": (
+                    "shadow_bracket" if entry_protection.get("mode") == "bracket" else "shadow_simulated"
+                ),
+                "mode": entry_protection.get("mode"),
+                "duration": entry_protection.get("duration"),
             }
         else:
             shadow_result["_stop_protection"] = {"enabled": False, "status": "not_applicable"}
@@ -1975,13 +2422,31 @@ def place_order(
         )
         return shadow_result
 
+    entry_action = "entry_bracket" if entry_protection.get("mode") == "bracket" and side_n == "BUY" else "entry"
+    submit = _submit_broker_order(
+        method="post",
+        url=url,
+        payload=primary,
+        auth=auth,
+        skill_dir=skill_dir,
+        ticker=ticker_n,
+        action=entry_action,
+    )
+    if submit.error:
+        send_alert(
+            submit.error,
+            kind="guardrail" if submit.unknown else "order_rejected",
+            env_path=skill_dir / ".env",
+        )
+        return submit.error
+    resp = submit.response
+    if resp is None:
+        return "Error: order response was empty"
+
     try:
-        resp = _post_order_with_refresh(url, primary, auth)
-        resp.raise_for_status()
         _record_execution_metric(skill_dir, "action_live")
-        order_location = resp.headers.get("Location", "")
         result = resp.json() if resp.text else {}
-        order_id = order_location.split("/")[-1] if order_location else None
+        order_id = submit.order_id
         if (exec_quality_mode == "live" or _policy_live) and primary.get("orderType") == "LIMIT":
             order_id, primary, reprice_history = _run_limit_reprice_loop(
                 orders_url=url,
@@ -1997,7 +2462,7 @@ def place_order(
             if reprice_history:
                 result["_execution_quality_reprice"] = reprice_history
                 exec_quality_diag["reprice_attempts"] = len(reprice_history)
-        wrapper._record_trade(ticker_n, order_id or order_location)
+        wrapper._record_trade(ticker_n, order_id or "")
         if order_id and "orderId" not in result:
             result["orderId"] = order_id
         if exec_quality_mode in {"shadow", "live"}:
@@ -2039,7 +2504,58 @@ def place_order(
             except Exception as e:
                 logging.getLogger(__name__).debug("Fill monitor not started: %s", e)
 
-        if side_n == "BUY":
+        if side_n == "BUY" and entry_protection.get("mode") == "bracket":
+            child_id = _read_child_stop_id(url, order_id, auth) if order_id else None
+            exit_stop_pct = _safe_float(entry_protection.get("stop_pct"))
+            if exit_stop_pct is None:
+                exit_stop_pct = _compute_adaptive_stop_pct(
+                    ticker_n,
+                    _safe_float(entry_protection.get("reference_price")),
+                    skill_dir=skill_dir,
+                )
+            if order_id:
+                try:
+                    stage_exit_manager_entry_meta(
+                        skill_dir=skill_dir,
+                        entry_order_id=order_id,
+                        ticker=ticker_n,
+                        stop_order_id=child_id,
+                        stop_pct=exit_stop_pct,
+                        stop_grace_active=bool(entry_protection.get("stop_grace_active")),
+                        stop_attached=True,
+                    )
+                except Exception as exc:
+                    LOG.debug("Exit manager meta stage failed: %s", exc)
+            if child_id:
+                _start_exit_sell_watch(
+                    account_hash=account_hash,
+                    order_id=child_id,
+                    auth=auth,
+                    ticker=ticker_n,
+                    qty=int(qty),
+                    price=_safe_float(entry_protection.get("reference_price")),
+                    skill_dir=skill_dir,
+                )
+            _record_execution_metric(skill_dir, "stop_protection_attached")
+            result["_stop_placed"] = True
+            result["_stop_protection"] = {
+                "enabled": True,
+                "status": "attached" if child_id else "attached_child_unconfirmed",
+                "mode": "bracket",
+                "duration": entry_protection.get("duration"),
+                "stop_order_id": child_id,
+            }
+            child_note = (
+                "Protective stop is on the same Schwab bracket."
+                if child_id
+                else "Protective stop is on the same Schwab bracket. Child stop id was not in the order read-back."
+            )
+            send_alert(
+                f"Order placed: {side_n} {qty} {ticker_n}. {child_note}",
+                kind="order_filled",
+                env_path=skill_dir / ".env",
+            )
+        elif side_n == "BUY":
             exec_price = wrapper._get_quote_price(ticker_n)
             exit_stop_pct = _compute_adaptive_stop_pct(ticker_n, exec_price, skill_dir=skill_dir)
             stop_order, stop_kind = _initial_stop_payload_for_entry(
@@ -2182,3 +2698,102 @@ def place_order(
         msg = f"Error: {e}"
         send_alert(msg, kind="order_rejected", env_path=skill_dir / ".env")
         return msg
+
+
+def _resolution_detail(outcome: str, lock: dict[str, Any]) -> str:
+    action = str(lock.get("action") or "order")
+    if outcome == "absent":
+        return (
+            f"{action} was not at Schwab. The lock is cleared and this bot may send that action again."
+        )
+    if action in {"trailing_stop", "breakeven_stop"}:
+        return (
+            f"{action} was confirmed at Schwab. The new stop id was not captured, "
+            "so this bot will not move that stop again."
+        )
+    if action == "partial_tp":
+        return (
+            "The partial sale was confirmed at Schwab. Share count updates when the fill is matched. "
+            "This bot will not send another partial until you mark it Absent."
+        )
+    if action == "time_stop":
+        return "The time stop was confirmed at Schwab. This bot will not send another until you mark it Absent."
+    return (
+        f"{action} was confirmed at Schwab. If this book did not record the order id, "
+        "check the working stop there before sending another order."
+    )
+
+
+def _apply_ambiguity_resolution(
+    skill_dir: Path,
+    ticker: str,
+    outcome: str,
+    lock: dict[str, Any],
+) -> None:
+    action = str(lock.get("action") or "")
+    with _EXIT_MANAGER_LOCK:
+        state = _load_exit_manager_state(skill_dir)
+        positions = state.get("positions") or {}
+        changed = False
+        for pos in positions.values():
+            if not isinstance(pos, dict):
+                continue
+            if str(pos.get("ticker") or "").upper() != ticker:
+                continue
+            if outcome == "absent":
+                for field in ("partial_tp_order_id", "time_stop_order_id", "stop_order_id"):
+                    if pos.get(field) == AMBIGUOUS_ORDER_ID:
+                        pos[field] = None
+                        changed = True
+                continue
+            if action == "trailing_stop":
+                pos["trailing_stop_armed"] = True
+                pos["stop_grace_active"] = False
+                pos["stop_attached"] = True
+                pos["stop_order_id"] = AMBIGUOUS_ORDER_ID
+                changed = True
+            elif action == "breakeven_stop":
+                pos["breakeven_done"] = True
+                pos["pending_breakeven_move"] = False
+                pos["stop_attached"] = True
+                pos["stop_order_id"] = AMBIGUOUS_ORDER_ID
+                changed = True
+            elif action == "partial_tp":
+                pos["partial_tp_order_id"] = AMBIGUOUS_ORDER_ID
+                changed = True
+            elif action == "time_stop":
+                pos["time_stop_order_id"] = AMBIGUOUS_ORDER_ID
+                changed = True
+        if changed:
+            state["positions"] = positions
+            _save_exit_manager_state(skill_dir, state)
+
+
+def resolve_order_ambiguity(
+    skill_dir: Path | str,
+    ticker: str,
+    outcome: str,
+) -> dict[str, Any]:
+    """Clear a symbol lock after the operator checks the order at Schwab."""
+    outcome_n = outcome.strip().lower()
+    symbol = ticker.upper().strip()
+    if outcome_n not in {"landed", "absent"}:
+        return {"ok": False, "error": "outcome must be landed or absent"}
+    if not symbol:
+        return {"ok": False, "error": "ticker is required"}
+    skill_dir_p = Path(skill_dir)
+    try:
+        lock = take_lock(skill_dir_p, symbol)
+    except AmbiguityStoreError as exc:
+        return {"ok": False, "error": str(exc)}
+    if lock is None:
+        return {"ok": False, "error": f"No unknown order is locked for {symbol}."}
+    _apply_ambiguity_resolution(skill_dir_p, symbol, outcome_n, lock)
+    _record_execution_metric(skill_dir_p, "order_ambiguity_resolved", reason=f"{symbol}:{outcome_n}")
+    return {
+        "ok": True,
+        "ticker": symbol,
+        "outcome": outcome_n,
+        "action": lock.get("action"),
+        "detail": _resolution_detail(outcome_n, lock),
+    }

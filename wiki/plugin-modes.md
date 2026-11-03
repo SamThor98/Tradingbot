@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Plugin Modes.md
 created: 2026-04-13
-updated: 2026-06-10
+updated: 2026-10-15
 tags: [strategy, plugins, risk]
 ---
 
@@ -41,16 +41,14 @@ tags: [strategy, plugins, risk]
 |--------|------|-----------|------------|
 | `EXEC_QUALITY_MODE` | live | config default (promoted 2026-04-18) | 1 |
 | `EVENT_RISK_MODE` | live | config default (promoted 2026-04-18) | 2 |
-| `REGIME_V2_MODE` | shadow | `.env` override (2026-06-10) | 3 |
-| `EXIT_MANAGER_MODE` | shadow | `.env` override (2026-06-10) | 4 |
-| `CORRELATION_GUARD_MODE` | shadow | `.env` override (2026-06-10) | 5 |
+| `REGIME_V2_MODE` | live | `.env` (operator-signed 2026-10-06) | 20 |
+| `EXIT_MANAGER_MODE` | live | config default | 6 |
+| `CORRELATION_GUARD_MODE` | off | config default | 5 |
 
-Steps 3–5 were moved to **shadow only** on 2026-06-10. Live promotion is
-blocked by the Phase 2 edge audit verdict `halt_fix_signal_first` (bare-signal
-PF mean 1.005, worst-era PF 0.801 across 5 eras; PROCEED requires PF mean
->= 1.20 and worst-era PF >= 1.00 — see
-`schwab_skill/validation_artifacts/phase2_edge_audit_aug.md`). Re-run the
-audit after base-signal improvements before promoting any of the three.
+`REGIME_V2_MODE` was signed live on 2026-10-06 after the capped
+`stage2_pts52w_cap37` replay (PF mean 1.2137, worst era 1.1054).
+`CORRELATION_GUARD_MODE` stays off until a later signed week.
+`signal_edge_ledger.json` says `plugin_live: regime_v2_only`.
 `POSITION_SIZE_MODE` vol_target/kelly and adaptive guardrails remain
 backtest-only (not wired into `execution.py`) for the same reason.
 
@@ -61,6 +59,7 @@ backtest-only (not wired into `execution.py`) for the same reason.
 - [[plugin-modes-config]] — full env var reference
 - [[scan-catalog]] — Scan studio can filter shadow sleeves without promoting them to LIVE
 - [[horizon-strategies]] — new timeframe sleeves stay shadow/research
+- [[grok-agent-orchestration]] — `GROK_AGENT_MODE` defaults off and does not place orders
 
 ---
 

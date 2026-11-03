@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/evolve_logic.py
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-10-16
 tags: [intelligence, learning, post-mortem, env-tuning]
 ---
 
@@ -86,8 +86,10 @@ demands a [[promotion-playbook]]-grade signed ledger entry — see
 - [[feature-store]] — Inputs
 - [[self-study]] — Sibling outcome-attribution loop
 - [[promotion-playbook]] — Required approval flow
+- [[settled-lessons]] — Operator adjudication of a proposal; does not apply `.env`
 - [[scanner-tunables]] — The env knobs evolve-logic targets
+- [[autonomous-investment-network]] — Knob proposals stay in the review pile of the research network
 
 ---
 
-*Last compiled: 2026-04-17*
+*Last compiled: 2026-10-16*

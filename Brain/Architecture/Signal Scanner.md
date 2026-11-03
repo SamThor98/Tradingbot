@@ -37,7 +37,7 @@ flowchart TD
 - Mode: `QUALITY_GATES_MODE` — `off`, `shadow`, `soft` (default), `hard`
 - `soft` mode: filters only when multiple weak reasons exist (`QUALITY_SOFT_MIN_REASONS`, default 2)
 - `hard` mode: filters on any single weak reason
-- `weak_breakout_volume` is always a hard gate regardless of mode
+- `weak_breakout_volume` is one soft reason. Soft mode drops it only with a second reason. Hard mode drops it alone. `expansion_volume_ratio` is recorded and is not a gate.
 
 ## Signal Scoring
 - Composite score from Stage 2 proximity, VCP quality, sector strength, and enrichment features

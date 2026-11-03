@@ -31,11 +31,11 @@ def main() -> int:
 
     from core.entry_timing_live_compare import load_last_scan_diagnostics
     from core.plugin_shadow_evidence import (
-        append_plugin_shadow_record,
         build_plugin_shadow_record,
         ledger_path,
         load_plugin_shadow_records,
         summarize_plugin_shadow_records,
+        upsert_plugin_shadow_record,
     )
 
     if args.summarize_only:
@@ -60,10 +60,10 @@ def main() -> int:
         print("FAIL: regime_v2 and correlation_guard both off — nothing to record")
         return 1
 
-    path = append_plugin_shadow_record(SKILL_DIR, record)
+    upsert = upsert_plugin_shadow_record(SKILL_DIR, record)
     rows = load_plugin_shadow_records(SKILL_DIR)
     summary = summarize_plugin_shadow_records(rows)
-    print(f"APPENDED {path}")
+    print(f"{str(upsert.get('action') or 'upserted').upper()} {upsert.get('path')}")
     print(
         f"regime={record['regime_v2']['mode']} score={record['regime_v2']['score']} "
         f"bucket={record['regime_v2']['bucket']} | "

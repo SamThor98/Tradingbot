@@ -14,6 +14,20 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from discord_operator import (
+    SCAN_ALREADY_RUNNING,
+    SCAN_STARTED,
+    OperatorContext,
+    OperatorIntent,
+    OperatorReply,
+    begin_operator_scan,
+    end_operator_scan,
+    execute_operator_intent,
+    mutation_denial,
+    operator_denial,
+    parse_operator_text,
+)
+
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
 _pending: dict[str, dict] = {}
@@ -452,12 +466,243 @@ def _run_bot_async(env: dict) -> None:
 
     intents = discord.Intents.default()
     intents.message_content = True
+    _FAST_INTENTS = frozenset({"ping", "help", "unknown", "pending", "halt", "resume"})
+
+    def _operator_context() -> OperatorContext:
+        with _lock:
+            pending = {key: dict(value) for key, value in _pending.items()}
+        return OperatorContext(
+            skill_dir=SKILL_DIR,
+            pending=pending,
+            last_scan=_last_scan_info,
+        )
+
+    def _embed_batches(reply: OperatorReply) -> list[list[discord.Embed]]:
+        embeds = [discord.Embed.from_dict(item) for item in reply.embeds if isinstance(item, dict)]
+        if not embeds:
+            return []
+        return [embeds[index:index + 10] for index in range(0, len(embeds), 10)]
+
+    async def _run_intent(intent: OperatorIntent, *, authorized: bool) -> OperatorReply:
+        try:
+            return await asyncio.to_thread(
+                execute_operator_intent,
+                intent,
+                _operator_context(),
+                authorized=authorized,
+            )
+        except Exception:
+            LOG.exception("Operator intent failed: %s", intent.name)
+            return OperatorReply(content=_friendly_error("That command failed."))
+
+    _scan_tasks: set[asyncio.Task] = set()
+
+    async def _confirm_channel(client: discord.Client):
+        try:
+            channel_id = int(env.get("DISCORD_CONFIRM_CHANNEL_ID", "0") or "0")
+        except (TypeError, ValueError):
+            return None
+        if not channel_id:
+            return None
+        channel = client.get_channel(channel_id)
+        if channel is not None:
+            return channel
+        try:
+            return await client.fetch_channel(channel_id)
+        except Exception:
+            LOG.warning("Could not fetch confirm channel for scan result")
+            return None
+
+    async def _send_channel_reply(channel, reply: OperatorReply) -> None:
+        if channel is None:
+            LOG.warning("Scan finished with no Discord channel for the result")
+            return
+        batches = _embed_batches(reply)
+        content = reply.content
+        try:
+            if not batches:
+                await channel.send(content or "Done.")
+                return
+            await channel.send(content=content, embeds=batches[0])
+            for batch in batches[1:]:
+                await channel.send(embeds=batch)
+        except Exception:
+            LOG.exception("Operator channel send failed")
+
+    async def _background_scan(client: discord.Client, channel, intent: OperatorIntent, authorized: bool) -> None:
+        try:
+            reply = await _run_intent(intent, authorized=authorized)
+            target = channel if channel is not None else await _confirm_channel(client)
+            await _send_channel_reply(target, reply)
+            LOG.info("Discord scan finished")
+        finally:
+            end_operator_scan()
+
+    async def _begin_discord_scan(
+        client: discord.Client,
+        channel,
+        intent: OperatorIntent,
+        authorized: bool,
+        *,
+        interaction: discord.Interaction | None = None,
+        message: discord.Message | None = None,
+    ) -> None:
+        """Ack within Discord's interaction window, then scan off the webhook token.
+
+        A full-universe scan runs longer than the 15-minute interaction token.
+        The completion message is a normal channel send.
+        """
+        if not authorized:
+            return
+
+        async def _say(text: str, *, ephemeral: bool) -> None:
+            if interaction is not None:
+                await interaction.response.send_message(text, ephemeral=ephemeral)
+                return
+            if message is not None:
+                await message.reply(text)
+
+        if not begin_operator_scan():
+            try:
+                await _say(SCAN_ALREADY_RUNNING, ephemeral=True)
+            except Exception:
+                LOG.exception("Could not send scan-busy reply")
+            return
+        try:
+            await _say(SCAN_STARTED, ephemeral=False)
+        except Exception:
+            end_operator_scan()
+            LOG.exception("Could not acknowledge Discord scan")
+            return
+        LOG.info("Discord scan accepted")
+        task = asyncio.create_task(_background_scan(client, channel, intent, authorized))
+        _scan_tasks.add(task)
+        task.add_done_callback(_scan_tasks.discard)
+
+    async def _send_followup(
+        interaction: discord.Interaction,
+        reply: OperatorReply,
+        *,
+        ephemeral: bool = False,
+    ) -> None:
+        batches = _embed_batches(reply)
+        content = reply.content
+        try:
+            if not batches:
+                await interaction.followup.send(content or "Done.", ephemeral=ephemeral)
+                return
+            payload: dict[str, Any] = {"embeds": batches[0], "ephemeral": ephemeral}
+            if content:
+                payload["content"] = content
+            await interaction.followup.send(**payload)
+            for batch in batches[1:]:
+                await interaction.followup.send(embeds=batch, ephemeral=ephemeral)
+        except Exception:
+            LOG.exception("Operator followup failed")
+            channel = interaction.channel
+            if channel is None:
+                return
+            try:
+                if batches:
+                    fallback: dict[str, Any] = {"embeds": batches[0]}
+                    if content:
+                        fallback["content"] = content
+                    await channel.send(**fallback)
+                    for batch in batches[1:]:
+                        await channel.send(embeds=batch)
+                elif content:
+                    await channel.send(content)
+            except Exception:
+                LOG.warning("Operator channel send failed")
+
+    async def _send_message_reply(
+        message: discord.Message,
+        reply: OperatorReply,
+        *,
+        edit_message: discord.Message | None = None,
+    ) -> None:
+        batches = _embed_batches(reply)
+        content = reply.content
+        try:
+            if edit_message is not None:
+                if batches:
+                    await edit_message.edit(content=content, embeds=batches[0])
+                else:
+                    await edit_message.edit(content=content or "Done.")
+                for batch in batches[1:]:
+                    await message.channel.send(embeds=batch)
+                return
+            if not batches:
+                await message.reply(content or "Done.")
+                return
+            await message.reply(content=content, embeds=batches[0])
+            for batch in batches[1:]:
+                await message.channel.send(embeds=batch)
+        except Exception:
+            LOG.exception("Operator message reply failed")
+
+    async def _slash(interaction: discord.Interaction, intent: OperatorIntent) -> None:
+        user_id = getattr(getattr(interaction, "user", None), "id", None)
+        denial = mutation_denial(intent, user_id, env)
+        if denial:
+            LOG.info("Discord mutation denied")
+            try:
+                await interaction.response.send_message(denial, ephemeral=True)
+            except Exception:
+                LOG.exception("Could not send operator denial")
+            return
+        authorized = operator_denial(user_id, env) is None
+        if intent.name == "scan":
+            await _begin_discord_scan(
+                interaction.client,
+                interaction.channel,
+                intent,
+                authorized,
+                interaction=interaction,
+            )
+            return
+        ephemeral = intent.name == "ping"
+        if intent.name in _FAST_INTENTS:
+            reply = await _run_intent(intent, authorized=authorized)
+            batches = _embed_batches(reply)
+            try:
+                if batches:
+                    payload: dict[str, Any] = {"embeds": batches[0], "ephemeral": ephemeral}
+                    if reply.content:
+                        payload["content"] = reply.content
+                    await interaction.response.send_message(**payload)
+                else:
+                    await interaction.response.send_message(reply.content or "Done.", ephemeral=ephemeral)
+            except Exception:
+                LOG.exception("Operator slash response failed: %s", intent.name)
+            return
+        try:
+            await interaction.response.defer(ephemeral=False, thinking=True)
+        except discord.InteractionResponded:
+            return
+        except Exception as exc:
+            LOG.exception("Defer failed for %s: %s", intent.name, exc)
+            return
+        reply = await _run_intent(intent, authorized=authorized)
+        await _send_followup(interaction, reply)
 
     class TradeConfirmView(discord.ui.View):
-        def __init__(self, trade_id: str):
+        def __init__(self, trade_id: str, ticker: str):
             # Keep buttons valid longer; 10 minutes was easy to miss in real usage.
             super().__init__(timeout=3600)
             self.trade_id = trade_id
+            self.ticker = ticker
+
+        async def _deny_unless_operator(self, interaction: discord.Interaction) -> bool:
+            denial = operator_denial(getattr(interaction.user, "id", None), env)
+            if not denial:
+                return False
+            LOG.info("Discord mutation denied")
+            try:
+                await interaction.response.send_message(denial, ephemeral=True)
+            except Exception:
+                LOG.exception("Could not send operator denial")
+            return True
 
         async def _mark_message_done(self, interaction: discord.Interaction, status: str) -> None:
             """Disable buttons and annotate message so users see final state."""
@@ -492,6 +737,8 @@ def _run_bot_async(env: dict) -> None:
 
         @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
         async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if await self._deny_unless_operator(interaction):
+                return
             try:
                 # CRITICAL: Defer FIRST - Discord requires response within 3 seconds
                 await interaction.response.defer(ephemeral=True)
@@ -543,6 +790,8 @@ def _run_bot_async(env: dict) -> None:
 
         @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
         async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if await self._deny_unless_operator(interaction):
+                return
             try:
                 await interaction.response.defer(ephemeral=True)
             except Exception as e:
@@ -560,6 +809,26 @@ def _run_bot_async(env: dict) -> None:
                     "Trade was already handled or expired. Run a fresh scan if needed.",
                 )
                 await self._mark_message_done(interaction, "Trade expired or already handled")
+
+        @discord.ui.button(label="Check", style=discord.ButtonStyle.secondary)
+        async def check_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            try:
+                await interaction.response.defer(ephemeral=False, thinking=True)
+            except Exception as e:
+                LOG.exception("Check button: failed to defer: %s", e)
+                return
+            intent = OperatorIntent("check", False, ticker=self.ticker.upper().strip())
+            try:
+                reply = await asyncio.to_thread(
+                    execute_operator_intent,
+                    intent,
+                    _operator_context(),
+                    authorized=True,
+                )
+            except Exception as e:
+                LOG.exception("Check button failed for %s: %s", self.ticker, e)
+                reply = OperatorReply(content=_friendly_error(f"Check failed for **{self.ticker}**."))
+            await _send_followup(interaction, reply)
 
         async def on_timeout(self):
             with _lock:
@@ -582,134 +851,50 @@ def _run_bot_async(env: dict) -> None:
             self.tree = app_commands.CommandTree(self)
 
         async def setup_hook(self):
-            @self.tree.command(name="ping", description="Check that the bot responds (instant)")
+            @self.tree.command(name="ping", description="Check that the bot responds")
             async def ping(interaction: discord.Interaction):
-                await interaction.response.send_message("Pong - bot is online.", ephemeral=True)
+                await _slash(interaction, OperatorIntent("ping", False))
+
+            @self.tree.command(name="help", description="Show the operator desk commands")
+            async def help_cmd(interaction: discord.Interaction):
+                await _slash(interaction, OperatorIntent("help", False))
+
+            @self.tree.command(name="today", description="Today card: regime, book, pending confirms, gate")
+            async def today(interaction: discord.Interaction):
+                await _slash(interaction, OperatorIntent("today", False))
+
+            @self.tree.command(name="pending", description="Show open trade confirmations")
+            async def pending(interaction: discord.Interaction):
+                await _slash(interaction, OperatorIntent("pending", False))
+
+            @self.tree.command(name="pause", description="Pause new buys")
+            async def pause(interaction: discord.Interaction):
+                await _slash(interaction, OperatorIntent("halt", True))
+
+            @self.tree.command(name="resume", description="Resume new buys")
+            async def resume(interaction: discord.Interaction):
+                await _slash(interaction, OperatorIntent("resume", True))
 
             @self.tree.command(name="scan", description="Run a new signal scan (Stage 2 + VCP)")
             async def scan(interaction: discord.Interaction):
-                # Acknowledge within 3s — must run before any blocking work
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Scan: defer failed: %s", e)
-                    return
-
-                channel = interaction.channel
-
-                async def _finish(msg: str) -> None:
-                    try:
-                        await interaction.followup.send(msg, ephemeral=False)
-                    except Exception as e:
-                        LOG.warning("Scan followup failed (%s), posting to channel", e)
-                        if channel:
-                            try:
-                                await channel.send(msg)
-                            except Exception as e2:
-                                LOG.warning("Scan channel send failed: %s", e2)
-
-                try:
-                    from signal_scanner import run_scan_and_notify
-
-                    def do_scan():
-                        return run_scan_and_notify(skill_dir=SKILL_DIR, send_summary=False)
-
-                    n = await asyncio.to_thread(do_scan)
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-                    _now = datetime.now(ZoneInfo("America/New_York"))
-                    _last_scan_info["time"] = _now.strftime("%b %d %I:%M %p ET")
-                    _last_scan_info["signals"] = n
-                    await _finish(
-                        f"**Scan complete.** Found **{n}** signal(s). Check the channel for alerts.",
-                    )
-                except Exception as e:
-                    LOG.exception("Scan command failed: %s", e)
-                    await _finish(_friendly_error("Scan failed."))
+                await _slash(interaction, OperatorIntent("scan", True))
 
             @self.tree.command(name="check", description="Quick 3-line verdict for a ticker (fast)")
             @app_commands.describe(ticker="Stock ticker symbol (e.g. AAPL)")
             async def check(interaction: discord.Interaction, ticker: str):
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Check: defer failed: %s", e)
-                    return
-                try:
-                    from full_report import quick_check
-                    embed_data = await asyncio.to_thread(quick_check, ticker.upper().strip())
-                    embed = discord.Embed.from_dict(embed_data)
-                    await interaction.followup.send(embed=embed, ephemeral=False)
-                except Exception as e:
-                    LOG.exception("Check command failed: %s", e)
-                    try:
-                        await interaction.followup.send(_friendly_error(f"Check failed for **{ticker.upper()}**."), ephemeral=False)
-                    except Exception:
-                        pass
+                await _slash(interaction, OperatorIntent("check", False, ticker=ticker.upper().strip()))
 
             @self.tree.command(name="portfolio", description="Show current positions with P/L")
             async def portfolio(interaction: discord.Interaction):
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Portfolio: defer failed: %s", e)
-                    return
-                try:
-                    embed_data = await asyncio.to_thread(_build_portfolio_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await interaction.followup.send(embed=embed, ephemeral=False)
-                except Exception as e:
-                    LOG.exception("Portfolio command failed: %s", e)
-                    try:
-                        await interaction.followup.send(_friendly_error("Portfolio lookup failed."), ephemeral=False)
-                    except Exception:
-                        pass
+                await _slash(interaction, OperatorIntent("portfolio", False))
 
             @self.tree.command(name="sectors", description="Show sector heatmap vs SPY")
             async def sectors(interaction: discord.Interaction):
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Sectors: defer failed: %s", e)
-                    return
-                try:
-                    embed_data = await asyncio.to_thread(_build_sectors_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await interaction.followup.send(embed=embed, ephemeral=False)
-                except Exception as e:
-                    LOG.exception("Sectors command failed: %s", e)
-                    try:
-                        await interaction.followup.send(_friendly_error("Sector lookup failed."), ephemeral=False)
-                    except Exception:
-                        pass
+                await _slash(interaction, OperatorIntent("sectors", False))
 
             @self.tree.command(name="status", description="Show bot health, API status, and last scan info")
             async def status(interaction: discord.Interaction):
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Status: defer failed: %s", e)
-                    return
-                try:
-                    embed_data = await asyncio.to_thread(_build_status_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await interaction.followup.send(embed=embed, ephemeral=False)
-                except Exception as e:
-                    LOG.exception("Status command failed: %s", e)
-                    try:
-                        await interaction.followup.send(_friendly_error("Status check failed."), ephemeral=False)
-                    except Exception:
-                        pass
+                await _slash(interaction, OperatorIntent("status", False))
 
             @self.tree.command(name="report", description="Generate a full financial report for a ticker")
             @app_commands.describe(
@@ -725,184 +910,57 @@ def _run_bot_async(env: dict) -> None:
                 skip_mirofish: bool = False,
                 skip_edgar: bool = False,
             ):
-                try:
-                    await interaction.response.defer(ephemeral=False, thinking=True)
-                except discord.InteractionResponded:
-                    return
-                except Exception as e:
-                    LOG.exception("Report: defer failed: %s", e)
-                    return
-
-                channel = interaction.channel
-
-                try:
-                    from full_report import generate_full_report, report_to_discord_sections
-
-                    def do_report():
-                        return generate_full_report(
-                            ticker,
-                            skip_mirofish=skip_mirofish,
-                            skip_edgar=skip_edgar,
-                        )
-
-                    result = await asyncio.to_thread(do_report)
-                    embeds_raw = report_to_discord_sections(result, section_filter=section)
-                    embeds = [discord.Embed.from_dict(e) for e in embeds_raw]
-
-                    if not embeds:
-                        await interaction.followup.send(
-                            f"Report for **{ticker.upper()}** produced no sections.",
-                            ephemeral=False,
-                        )
-                        return
-
-                    for i in range(0, len(embeds), 10):
-                        batch = embeds[i:i + 10]
-                        await interaction.followup.send(embeds=batch, ephemeral=False)
-
-                except Exception as e:
-                    LOG.exception("Report command failed: %s", e)
-                    try:
-                        await interaction.followup.send(
-                            _friendly_error(f"Report failed for **{ticker.upper()}**."),
-                            ephemeral=False,
-                        )
-                    except Exception as e2:
-                        LOG.warning("Report error followup failed: %s", e2)
-                        if channel:
-                            try:
-                                await channel.send(f"Report failed for **{ticker.upper()}**: {e}")
-                            except Exception:
-                                pass
+                await _slash(
+                    interaction,
+                    OperatorIntent(
+                        "report",
+                        False,
+                        ticker=ticker.upper().strip(),
+                        section=section.lower().strip() if section else None,
+                        skip_mirofish=skip_mirofish,
+                        skip_edgar=skip_edgar,
+                    ),
+                )
 
         async def on_message(self, message):
             if message.author.bot:
                 return
-            channel_id = int(env.get("DISCORD_CONFIRM_CHANNEL_ID", "0"))
+            try:
+                channel_id = int(env.get("DISCORD_CONFIRM_CHANNEL_ID", "0") or "0")
+            except (TypeError, ValueError):
+                return
             if not channel_id or message.channel.id != channel_id:
                 return
-            text = (message.content or "").strip()
-            if not text.startswith("!"):
+            intent = parse_operator_text(message.content or "")
+            if intent is None:
                 return
-
-            parts = text[1:].split()
-            cmd = parts[0].lower() if parts else ""
-            args = parts[1:]
-
-            if cmd == "ping":
-                await message.reply("Pong - bot is online.")
-
-            elif cmd == "help":
-                help_text = (
-                    "**Available commands:**\n"
-                    "`!ping` -- Check the bot is online\n"
-                    "`!status` -- Bot health, API status, last scan\n"
-                    "`!check TICKER` -- Quick 3-line verdict (fast)\n"
-                    "`!report TICKER [section]` -- Full report (or just one section: tech, dcf, comps, health, edgar, mirofish)\n"
-                    "`!scan` -- Run signal scanner (Stage 2 + VCP)\n"
-                    "`!portfolio` -- Show positions with P/L\n"
-                    "`!sectors` -- Sector heatmap vs SPY\n"
-                    "`!help` -- Show this message"
+            user_id = getattr(message.author, "id", None)
+            denial = mutation_denial(intent, user_id, env)
+            if denial:
+                LOG.info("Discord mutation denied")
+                try:
+                    await message.reply(denial)
+                except Exception:
+                    LOG.exception("Could not send operator denial")
+                return
+            authorized = operator_denial(user_id, env) is None
+            if intent.name == "scan":
+                await _begin_discord_scan(
+                    self,
+                    message.channel,
+                    intent,
+                    authorized,
+                    message=message,
                 )
-                await message.reply(help_text)
-
-            elif cmd == "status":
+                return
+            working = None
+            if intent.name not in _FAST_INTENTS:
                 try:
-                    embed_data = await asyncio.to_thread(_build_status_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await message.reply(embed=embed)
-                except Exception as e:
-                    LOG.exception("!status command failed: %s", e)
-                    await message.reply(f"Status check failed: {e}")
-
-            elif cmd == "check":
-                if not args:
-                    await message.reply("Usage: `!check TICKER`")
-                    return
-                ticker = args[0].upper()
-                try:
-                    from full_report import quick_check
-                    embed_data = await asyncio.to_thread(quick_check, ticker)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await message.reply(embed=embed)
-                except Exception as e:
-                    LOG.exception("!check command failed: %s", e)
-                    await message.reply(f"Check failed for **{ticker}**: {e}")
-
-            elif cmd == "portfolio":
-                status_msg = await message.reply("Fetching portfolio...")
-                try:
-                    embed_data = await asyncio.to_thread(_build_portfolio_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await status_msg.edit(content=None, embed=embed)
-                except Exception as e:
-                    LOG.exception("!portfolio command failed: %s", e)
-                    await status_msg.edit(content=f"Portfolio failed: {e}")
-
-            elif cmd == "sectors":
-                status_msg = await message.reply("Building sector heatmap...")
-                try:
-                    embed_data = await asyncio.to_thread(_build_sectors_embed, SKILL_DIR)
-                    embed = discord.Embed.from_dict(embed_data)
-                    await status_msg.edit(content=None, embed=embed)
-                except Exception as e:
-                    LOG.exception("!sectors command failed: %s", e)
-                    await status_msg.edit(content=f"Sectors failed: {e}")
-
-            elif cmd == "report":
-                if not args:
-                    await message.reply("Usage: `!report TICKER [section]`\nSections: tech, dcf, comps, health, edgar, mirofish")
-                    return
-                ticker = args[0].upper()
-                section_filter = args[1].lower() if len(args) > 1 else None
-                label = f"**{ticker}** ({section_filter})" if section_filter else f"**{ticker}**"
-                status_msg = await message.reply(f"Generating report for {label}...")
-                try:
-                    from full_report import generate_full_report, report_to_discord_sections
-
-                    def do_report():
-                        return generate_full_report(ticker)
-
-                    result = await asyncio.to_thread(do_report)
-                    embeds_raw = report_to_discord_sections(result, section_filter=section_filter)
-                    embeds = [discord.Embed.from_dict(e) for e in embeds_raw]
-
-                    if not embeds:
-                        await status_msg.edit(content=f"Report for {label} produced no sections.")
-                        return
-
-                    await status_msg.edit(content=f"**Report -- {ticker}**")
-                    for i in range(0, len(embeds), 10):
-                        batch = embeds[i:i + 10]
-                        await message.channel.send(embeds=batch)
-
-                except Exception as e:
-                    LOG.exception("!report command failed: %s", e)
-                    await status_msg.edit(content=f"Report failed for {label}: {e}")
-
-            elif cmd == "scan":
-                status_msg = await message.reply("Running signal scan... this may take a minute.")
-                try:
-                    from signal_scanner import run_scan_and_notify
-
-                    def do_scan():
-                        return run_scan_and_notify(skill_dir=SKILL_DIR, send_summary=False)
-
-                    n = await asyncio.to_thread(do_scan)
-                    from datetime import datetime
-                    from zoneinfo import ZoneInfo
-                    _now = datetime.now(ZoneInfo("America/New_York"))
-                    _last_scan_info["time"] = _now.strftime("%b %d %I:%M %p ET")
-                    _last_scan_info["signals"] = n
-                    await status_msg.edit(
-                        content=f"**Scan complete.** Found **{n}** signal(s). Check the channel for alerts.",
-                    )
-                except Exception as e:
-                    LOG.exception("!scan command failed: %s", e)
-                    await status_msg.edit(content=_friendly_error("Scan failed."))
-
-            else:
-                await message.reply("Unknown command. Type `!help` for available commands.")
+                    working = await message.reply("Working on it...")
+                except Exception:
+                    LOG.warning("Operator ack failed for %s", intent.name)
+            reply = await _run_intent(intent, authorized=authorized)
+            await _send_message_reply(message, reply, edit_message=working)
 
         async def on_ready(self):
             global _bot_start_time
@@ -985,7 +1043,14 @@ def _run_bot_async(env: dict) -> None:
                     color=0x3498DB,
                 )
                 order_value = qty * p
-                embed.add_field(name="Order", value=f"**{qty}** shares @ **${p:,.2f}**\nEst. value: **${order_value:,.2f}**", inline=True)
+                embed.add_field(
+                    name="Order",
+                    value=(
+                        f"**BUY {qty}** @ **MARKET**\n"
+                        f"Ref **${p:,.2f}** · est. **${order_value:,.2f}**"
+                    ),
+                    inline=True,
+                )
                 sma50 = signal.get("sma_50")
                 sma200 = signal.get("sma_200")
                 sma50_str = f"${sma50:,.2f}" if isinstance(sma50, (int, float)) else "—"
@@ -998,7 +1063,7 @@ def _run_bot_async(env: dict) -> None:
                 setup_score = signal.get("signal_score")
                 if setup_score is not None:
                     embed.add_field(name="Setup Score", value=f"**{setup_score:.0f}/100**", inline=True)
-                embed.set_footer(text="Approve to execute market order • Reject to cancel")
+                embed.set_footer(text="Approve sends this market buy • Reject cancels • Check for a quick verdict")
 
                 # MiroFish embed: Conviction Meter + influential agent sentiment
                 mirofish_result = signal.get("mirofish_result")
@@ -1007,7 +1072,7 @@ def _run_bot_async(env: dict) -> None:
                 if mirofish_embed:
                     embeds_to_send.append(mirofish_embed)
 
-                view = TradeConfirmView(trade_id)
+                view = TradeConfirmView(trade_id, t)
                 try:
                     sent = await channel.send(embeds=embeds_to_send, view=view)
                     view.message = sent
@@ -1055,6 +1120,24 @@ def start_confirm_bot(env_path: Path | None = None) -> threading.Thread | None:
     return thread
 
 
+def run_confirm_bot() -> None:
+    """Run the confirm bot until its thread exits. Does not start the scheduler."""
+    import time
+
+    from logger_setup import setup_logging
+
+    setup_logging()
+    thread = start_confirm_bot(SKILL_DIR / ".env")
+    if thread is None:
+        LOG.warning("Discord confirm bot did not start (missing token or channel)")
+        return
+    if not _bot_ready.wait(timeout=30):
+        LOG.warning("Discord confirm bot did not become ready within 30s")
+    while thread.is_alive():
+        time.sleep(5)
+    LOG.warning("Discord confirm bot thread exited")
+
+
 def ensure_bot_ready(timeout: float = 15.0) -> bool:
     """Ensure confirm bot is running. Starts it if needed. Returns True when ready."""
     env = _load_env(SKILL_DIR / ".env")
@@ -1064,3 +1147,7 @@ def ensure_bot_ready(timeout: float = 15.0) -> bool:
         return True
     start_confirm_bot(SKILL_DIR / ".env")
     return _bot_ready.wait(timeout=timeout)
+
+
+if __name__ == "__main__":
+    run_confirm_bot()

@@ -28,17 +28,21 @@
  */
 
 import { api } from "../modules/api.js";
-import { safeText, safeNum, formatMoney, prettyJson } from "../modules/format.js";
-import {
-  formatConfidenceBucket,
-  formatDecisionReason,
-} from "../modules/decisionPlainLanguage.js";
+import { state } from "../modules/state.js";
+import { safeText, escapeHtml, formatMoney } from "../modules/format.js";
 import { buildOperatorAlertHtml } from "../modules/asyncState.js";
+import {
+  buildTicketModel,
+  rowStageBlockers,
+  systemStageBlockers,
+} from "../modules/ticketFacts.js";
 
 const TABS = ["decision", "recovery"];
 let _wired = false;
 /** Element that had focus before the drawer opened; restored on close. */
 let _returnFocusEl = null;
+/** Pending row that opened the drawer, used to keep its qty and limit. */
+let _ticketRow = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -83,16 +87,78 @@ function setActiveTab(tab) {
   }
 }
 
+function bookEquity() {
+  const portfolio = state.lastPortfolioData;
+  const risk = state.lastPortfolioRiskData;
+  const candidates = [portfolio?.total_market_value, portfolio?.total_value, risk?.total_value];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+function bookPositions() {
+  const risk = state.lastPortfolioRiskData;
+  if (Array.isArray(risk?.positions_weighted) && risk.positions_weighted.length) {
+    return risk.positions_weighted;
+  }
+  const dash = state.lastPortfolioRiskDashboard;
+  if (Array.isArray(dash?.positions_weighted) && dash.positions_weighted.length) {
+    return dash.positions_weighted;
+  }
+  const portfolio = state.lastPortfolioData;
+  if (Array.isArray(portfolio?.positions)) return portfolio.positions;
+  return [];
+}
+
+function stageSnapshot() {
+  return {
+    killSwitch: Boolean(state.publicConfig?.platform_live_trading_kill_switch),
+    tradingHalted: Boolean(state.accountMe?.trading_halted),
+    liveOff: Boolean(
+      state.publicConfig?.saas_mode &&
+        (!state.accountMe || !state.accountMe.live_execution_enabled),
+    ),
+  };
+}
+
+function moneyOrDash(value) {
+  return value === null || value === undefined ? "—" : formatMoney(value);
+}
+
+function factTone(kind, model) {
+  if (kind === "status") return model.clear ? "ok" : "bad";
+  if (kind === "guardrail") return model.guardrail ? "bad" : "neutral";
+  if (kind === "quality") {
+    const dq = String(model.dataQuality || "").toLowerCase();
+    if (!dq) return "neutral";
+    if (dq === "ok") return "ok";
+    if (dq === "degraded" || dq === "partial" || dq === "warn" || dq === "warning") return "warn";
+    return "bad";
+  }
+  if (kind === "book") {
+    if (model.book === "Yes") return "warn";
+    if (model.book === "No") return "ok";
+    return "neutral";
+  }
+  return "neutral";
+}
+
+function factCell(label, value, sub, tone, wide) {
+  return `<div class="ticket-fact${wide ? " ticket-fact--wide" : ""}" data-tone="${tone}">
+    <span class="ticket-fact-label">${escapeHtml(label)}</span>
+    <strong class="ticket-fact-value">${escapeHtml(value)}</strong>
+    ${sub ? `<small class="ticket-fact-sub">${escapeHtml(sub)}</small>` : ""}
+  </div>`;
+}
+
 /**
- * Render the decision-card summary for either the in-drawer Decision
- * tab or the legacy in-page #decisionSection. Pass an `idPrefix` of
- * `"tradeDrawerDecision"` for the drawer or `"decision"` for legacy.
+ * One row of ticket facts. `idPrefix` stays `tradeDrawerDecision` for the drawer.
  */
 function renderDecisionInto(idPrefix, data, error, opts = {}) {
   const ph = $(`${idPrefix}Placeholder`);
   const sum = $(`${idPrefix}Summary`);
-  const det = $(`${idPrefix}JsonDetails`);
-  const pre = $(`${idPrefix}Output`);
   if (error) {
     if (ph) {
       ph.innerHTML = buildOperatorAlertHtml({
@@ -108,65 +174,44 @@ function renderDecisionInto(idPrefix, data, error, opts = {}) {
       sum.classList.add("hidden");
       sum.innerHTML = "";
     }
-    if (det) det.classList.add("hidden");
-    if (pre) pre.textContent = "";
     return;
   }
   if (ph) ph.classList.add("hidden");
-  const d = data || {};
-  const ez = d.entry_zone || {};
-  const sz = d.size || {};
-  const conf = d.confidence || {};
-  const blocked = Boolean(d.checklist && d.checklist.blocked);
-  const scoreN = Number(conf.signal_score);
-  const scoreTxt = Number.isFinite(scoreN) ? scoreN.toFixed(1) : "—";
-  const confLabel = formatConfidenceBucket(conf.bucket);
-  const verdict = blocked
-    ? "Not ready — safety checks need attention."
-    : "Looks OK to review — no hard blocks right now.";
-  const verdictClass = blocked ? "bad" : "good";
-  const checklistLines = Array.isArray(d.checklist?.checklist_lines) ? d.checklist.checklist_lines : [];
-  const checklistHtml = checklistLines.length
-    ? `<ul class="tool-summary-list tool-summary-list--plain">${checklistLines
-        .map((line) => {
-          if (!line || typeof line !== "object") return "";
-          return `<li><strong>${safeText(line.label)}:</strong> ${safeText(line.value_plain)}</li>`;
-        })
-        .filter(Boolean)
-        .join("")}</ul>`
-    : "";
-  const reasonChips = (d.key_reasons || [])
-    .map((r) => formatDecisionReason(r))
-    .filter(Boolean)
-    .slice(0, 6);
+  const card = data || {};
+  const row = opts.pendingRow || null;
+  const model = buildTicketModel({
+    card,
+    row,
+    equity: bookEquity(),
+    positions: bookPositions(),
+    blockers: rowStageBlockers(row || { signal: {} }),
+    systemBlockers: systemStageBlockers(stageSnapshot()),
+  });
+  const qtyText = model.qty === null ? "—" : String(model.qty);
   if (sum) {
     sum.classList.remove("hidden");
     sum.innerHTML = `
-      <h4 class="tool-summary-title">${safeText(d.ticker)} — trade snapshot</h4>
-      <ul class="tool-summary-list tool-summary-list--plain">
-        <li><strong>Size:</strong> ${safeNum(sz.qty, 0)} shares (about ${formatMoney(sz.usd || 0)})</li>
-        <li><strong>Buy zone:</strong> $${safeText(ez.low)} – $${safeText(ez.high)}</li>
-        <li><strong>Stop level:</strong> $${safeText(d.stop_invalidation)} (idea only — not a live order)</li>
-        <li><strong>Confidence:</strong> ${confLabel} · signal score ${scoreTxt}</li>
-        <li><strong>Status:</strong> <span class="pill ${verdictClass} small">${verdict}</span></li>
-      </ul>
-      ${checklistHtml}
-      ${
-        reasonChips.length
-          ? `<div class="tool-summary-reasons"><span class="muted small">Why this ranked here:</span><ul class="tool-summary-list tool-summary-list--compact">${reasonChips.map((r) => `<li>${safeText(r)}</li>`).join("")}</ul></div>`
-          : ""
-      }
+      <h4 class="tool-summary-title">${escapeHtml(safeText(card.ticker || row?.ticker || ""))}</h4>
+      <div class="ticket-facts" aria-label="Trade ticket">
+        ${factCell("Side", model.side, "", "neutral", false)}
+        ${factCell("Qty", qtyText, "shares", "neutral", false)}
+        ${factCell("Limit", moneyOrDash(model.limit), "entry", "neutral", false)}
+        ${factCell("Stop", moneyOrDash(model.stop), "invalidation", "neutral", false)}
+        ${factCell("R", moneyOrDash(model.r), model.rFormula, model.r === null ? "neutral" : "ok", false)}
+        ${factCell("Heat", model.heat, "R percent of equity · open risk", "neutral", false)}
+        ${factCell("Sector", model.sector || "—", "", "neutral", false)}
+        ${factCell("Book", model.book || "—", "sector already held", factTone("book", model), false)}
+        ${factCell("Data quality", model.dataQuality || "—", "", factTone("quality", model), false)}
+        ${factCell("Guardrail", model.guardrail || "—", "", factTone("guardrail", model), true)}
+        ${factCell("Status", model.status, model.clear ? "" : "approve off", factTone("status", model), true)}
+      </div>
     `;
   }
-  if (det) det.classList.remove("hidden");
-  if (pre) pre.textContent = prettyJson(data);
 }
 
 function renderRecoveryInto(idPrefix, data, error, opts = {}) {
   const ph = $(`${idPrefix}Placeholder`);
   const sum = $(`${idPrefix}Summary`);
-  const det = $(`${idPrefix}JsonDetails`);
-  const pre = $(`${idPrefix}Output`);
   if (error) {
     if (ph) {
       ph.innerHTML = buildOperatorAlertHtml({
@@ -182,8 +227,6 @@ function renderRecoveryInto(idPrefix, data, error, opts = {}) {
       sum.classList.add("hidden");
       sum.innerHTML = "";
     }
-    if (det) det.classList.add("hidden");
-    if (pre) pre.textContent = "";
     return;
   }
   if (ph) ph.classList.add("hidden");
@@ -195,8 +238,6 @@ function renderRecoveryInto(idPrefix, data, error, opts = {}) {
       <p class="tool-summary-next"><strong>Next step:</strong> ${safeText(data.fix_path)}</p>
     `;
   }
-  if (det) det.classList.remove("hidden");
-  if (pre) pre.textContent = prettyJson(data);
 }
 
 async function fetchDecision(ticker) {
@@ -246,7 +287,10 @@ export async function loadDecisionInDrawer() {
     wireDrawerRetry("tradeDrawerDecision", "data-drawer-decision-retry", loadDecisionInDrawer);
     return;
   }
-  renderDecisionInto("tradeDrawerDecision", out.data, null);
+  const sym = ticker.toUpperCase().trim();
+  const pendingRow =
+    _ticketRow && String(_ticketRow.ticker || "").toUpperCase().trim() === sym ? _ticketRow : null;
+  renderDecisionInto("tradeDrawerDecision", out.data, null, { pendingRow });
 }
 
 /** Run the Recovery lookup driven by the drawer's own inputs. */
@@ -284,6 +328,7 @@ export function openTradeDrawer(opts = {}) {
   _returnFocusEl =
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const tab = opts.tab && TABS.includes(opts.tab) ? opts.tab : "decision";
+  _ticketRow = opts.pendingRow || null;
   setActiveTab(tab);
   drawer.classList.add("open");
   drawer.removeAttribute("hidden");
@@ -313,7 +358,7 @@ export function openTradeDrawer(opts = {}) {
 /** Backwards-compatible entry point used by the pending-trade Quick View row action. */
 export async function openTradeDrawerForTrade(row) {
   if (!row || !row.ticker) return;
-  openTradeDrawer({ tab: "decision", ticker: row.ticker });
+  openTradeDrawer({ tab: "decision", ticker: row.ticker, pendingRow: row });
 }
 
 export function closeTradeDrawer() {

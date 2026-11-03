@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from sec_filing_compare import (
     compare_ticker_vs_ticker,
 )
 from sector_strength import get_sector_heatmap
+from sharadar_data import get_sharadar_research_snapshot, sharadar_preflight_item
 
 from .._shared import build_portfolio_risk_analytics, build_portfolio_summary
 from ..dossier_sources import merge_research_snapshot
@@ -36,6 +38,8 @@ from ..report_trust import build_report_trust_payload
 from ..report_v2 import build_report_v2
 from ..route_helpers import require_api_key_if_set as _require_api_key_if_set
 from ..schemas import ApiResponse
+
+LOG = logging.getLogger(__name__)
 
 router = APIRouter(tags=["research"], dependencies=[Depends(_require_api_key_if_set)])
 
@@ -128,6 +132,7 @@ def _build_dossier_preflight(ticker: str) -> dict[str, Any]:
                 else "FINNHUB_API_KEY is missing; dossier will use report-stack fallbacks and omit analyst/news extras."
             ),
         },
+        sharadar_preflight_item(SKILL_DIR),
         {
             "id": "edgar_user_agent",
             "label": "SEC EDGAR contact",
@@ -136,6 +141,16 @@ def _build_dossier_preflight(ticker: str) -> dict[str, Any]:
                 "EDGAR_USER_AGENT looks valid."
                 if edgar_real
                 else "EDGAR_USER_AGENT is missing or still a placeholder; SEC filing sections may degrade."
+            ),
+        },
+        {
+            "id": "companyfacts",
+            "label": "SEC companyfacts pricing",
+            "status": "ok" if edgar_real else "warn",
+            "detail": (
+                "Pricing models load from cached SEC XBRL companyfacts (one document per CIK)."
+                if edgar_real
+                else "Set a real EDGAR_USER_AGENT to ingest companyfacts; otherwise DCF may fall back to Yahoo."
             ),
         },
         {
@@ -158,7 +173,9 @@ def _build_dossier_preflight(ticker: str) -> dict[str, Any]:
                 "id": "portfolio",
                 "label": "Schwab portfolio context",
                 "status": "ok" if portfolio_ok else "warn",
-                "detail": "Account status returned." if portfolio_ok else "Account status unavailable; portfolio fit will be partial.",
+                "detail": "Account status returned."
+                if portfolio_ok
+                else "Account status unavailable; portfolio fit will be partial.",
             }
         )
     except Exception as exc:  # noqa: BLE001
@@ -214,8 +231,7 @@ def _normalize_sec_analysis_payload(payload: dict[str, Any], *, analysis_mode: s
     if not summary_headline:
         verdict = str(data.get("verdict") or "neutral")
         summary_headline = (
-            f"{data.get('ticker', '')} {data.get('form', '')} filing reads {verdict} "
-            f"with confidence {confidence}/100."
+            f"{data.get('ticker', '')} {data.get('form', '')} filing reads {verdict} with confidence {confidence}/100."
         ).strip()
     narrative_summary = str(data.get("narrative_summary") or "").strip()
     if not narrative_summary:
@@ -241,7 +257,9 @@ def _normalize_sec_compare_payload(payload: dict[str, Any], *, analysis_mode: st
     investor_takeaway = str(compare_data.get("investor_takeaway") or "").strip()
     compare_data.setdefault(
         "summary_headline",
-        "SEC compare completed with meaningful differences." if differences else "SEC compare completed with broad alignment.",
+        "SEC compare completed with meaningful differences."
+        if differences
+        else "SEC compare completed with broad alignment.",
     )
     compare_data.setdefault(
         "narrative_summary",
@@ -330,7 +348,9 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "technical": {
             "verdict": bucket(signal_score, 65.0, 45.0),
-            "takeaway": "Trend setup aligned." if technical.get("stage_2") and technical.get("vcp") else "Setup quality is mixed.",
+            "takeaway": "Trend setup aligned."
+            if technical.get("stage_2") and technical.get("vcp")
+            else "Setup quality is mixed.",
         },
         "dcf": {
             "verdict": bucket(mos, 10.0, -10.0),
@@ -338,7 +358,9 @@ def _build_report_verdicts(report: dict[str, Any]) -> dict[str, Any]:
         },
         "health": {
             "verdict": "bullish" if len(health_flags) == 0 else ("bearish" if len(health_flags) >= 3 else "neutral"),
-            "takeaway": "Balance sheet and margins are stable." if len(health_flags) == 0 else "Review flagged financial risks.",
+            "takeaway": "Balance sheet and margins are stable."
+            if len(health_flags) == 0
+            else "Review flagged financial risks.",
         },
         "mirofish": {
             "verdict": bucket(conviction, 30.0, -30.0),
@@ -519,9 +541,9 @@ def _pick_catalysts_and_risks(finnhub: dict[str, Any]) -> dict[str, list[str]]:
         bullish_pct = _safe_float(news_sent.get("bullish_percent"))
         bearish_pct = _safe_float(news_sent.get("bearish_percent"))
         if bullish_pct is not None and bullish_pct >= 0.6:
-            _push(catalysts, seen_c, f"News sentiment skews bullish ({bullish_pct*100:.0f}% positive articles).")
+            _push(catalysts, seen_c, f"News sentiment skews bullish ({bullish_pct * 100:.0f}% positive articles).")
         if bearish_pct is not None and bearish_pct >= 0.6:
-            _push(risks, seen_r, f"News sentiment skews bearish ({bearish_pct*100:.0f}% negative articles).")
+            _push(risks, seen_r, f"News sentiment skews bearish ({bearish_pct * 100:.0f}% negative articles).")
 
     if isinstance(news_rows, list):
         for row in news_rows[:6]:
@@ -531,9 +553,15 @@ def _pick_catalysts_and_risks(finnhub: dict[str, Any]) -> dict[str, list[str]]:
             if not headline:
                 continue
             low = headline.lower()
-            if any(tok in low for tok in ("upgrade", "contract win", "beat", "launch", "partnership", "acquires", "buyback")):
+            if any(
+                tok in low
+                for tok in ("upgrade", "contract win", "beat", "launch", "partnership", "acquires", "buyback")
+            ):
                 _push(catalysts, seen_c, headline)
-            if any(tok in low for tok in ("downgrade", "investigation", "lawsuit", "miss", "delay", "cut", "recall", "warning")):
+            if any(
+                tok in low
+                for tok in ("downgrade", "investigation", "lawsuit", "miss", "delay", "cut", "recall", "warning")
+            ):
                 _push(risks, seen_r, headline)
 
     return {
@@ -582,7 +610,12 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         else:
             sec_analysis = {"ok": False, "error": str(sec_out.get("error") or "SEC analysis unavailable")}
             source_metadata.append(
-                _source_entry("sec_analyze", status="degraded", detail=str(sec_out.get("error") or "analysis failed"), fallback_used=True)
+                _source_entry(
+                    "sec_analyze",
+                    status="degraded",
+                    detail=str(sec_out.get("error") or "analysis failed"),
+                    fallback_used=True,
+                )
             )
     else:
         sec_analysis = {"ok": False, "error": "SEC filing analysis disabled by config"}
@@ -606,7 +639,12 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         else:
             sec_compare_data = {"ok": False, "error": str(sec_compare_out.get("error") or "SEC compare unavailable")}
             source_metadata.append(
-                _source_entry("sec_compare", status="degraded", detail=str(sec_compare_out.get("error") or "compare failed"), fallback_used=True)
+                _source_entry(
+                    "sec_compare",
+                    status="degraded",
+                    detail=str(sec_compare_out.get("error") or "compare failed"),
+                    fallback_used=True,
+                )
             )
     else:
         sec_compare_data = {"ok": False, "error": "SEC compare disabled by config"}
@@ -622,7 +660,9 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
             portfolio_risk = build_portfolio_risk_analytics(portfolio_summary, skill_dir=SKILL_DIR)
             source_metadata.append(_source_entry("portfolio", status="ok", detail="positions and risk context"))
         else:
-            source_metadata.append(_source_entry("portfolio", status="degraded", detail="account status unavailable", fallback_used=True))
+            source_metadata.append(
+                _source_entry("portfolio", status="degraded", detail="account status unavailable", fallback_used=True)
+            )
     except Exception as exc:  # noqa: BLE001
         portfolio_summary = {}
         portfolio_risk = {}
@@ -634,7 +674,9 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         source_metadata.append(_source_entry("sector_context", status="ok", detail="relative sector heatmap"))
     except Exception as exc:  # noqa: BLE001
         sector_context = {"ok": False, "error": str(exc)}
-        source_metadata.append(_source_entry("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True))
+        source_metadata.append(
+            _source_entry("sector_context", status="degraded", detail=str(exc)[:180], fallback_used=True)
+        )
 
     forensic_snapshot: dict[str, Any]
     try:
@@ -666,6 +708,38 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         )
     )
 
+    sharadar = get_sharadar_research_snapshot(symbol, skill_dir=SKILL_DIR)
+    sharadar_errors = list(sharadar.get("errors") or []) if isinstance(sharadar, dict) else []
+    sharadar_status = "ok" if sharadar.get("ok") else ("disabled" if not sharadar.get("enabled") else "degraded")
+    if sharadar.get("status") == "error":
+        sharadar_status = "degraded"
+    source_metadata.append(
+        _source_entry(
+            "sharadar",
+            status=sharadar_status,
+            detail=(
+                ", ".join(sharadar_errors)
+                if sharadar_errors
+                else "Bundle PIT: daily multiples, ART fundamentals, insiders, 13F, S&P 500 membership"
+            ),
+            as_of=str(sharadar.get("as_of") or generated_at),
+            fallback_used=sharadar_status != "ok",
+        )
+    )
+    try:
+        from sharadar_research import overlay_research_forensic
+
+        forensic_snapshot = overlay_research_forensic(forensic_snapshot, sharadar, skill_dir=SKILL_DIR)
+        art_lineage = str(forensic_snapshot.get("data_lineage") or "")
+        if "sharadar_art" in art_lineage:
+            for entry in source_metadata:
+                if entry.get("name") == "forensic":
+                    entry["detail"] = art_lineage
+                    entry["status"] = "ok" if forensic_snapshot.get("ok") else entry.get("status")
+                    break
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("Sharadar research forensic overlay skipped: %s", exc)
+
     report_v2 = build_report_v2(report_data, portfolio_summary=portfolio_summary or None)
     signal_score = _safe_float((report_data.get("technical") or {}).get("signal_score")) or 0.0
     margin_of_safety = _safe_float((report_data.get("dcf") or {}).get("margin_of_safety")) or 0.0
@@ -674,12 +748,10 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         raw_confidence = (signal_score * 0.7) + max(-20.0, min(20.0, margin_of_safety))
     confidence_score = max(0.0, min(100.0, raw_confidence))
     if isinstance(finnhub, dict):
-        finnhub = merge_research_snapshot(finnhub, report_data)
+        finnhub = merge_research_snapshot(finnhub, report_data, sharadar)
         merged_sources = finnhub.get("merged_sources") or {}
         fallback_fields = [
-            key
-            for key, source in (merged_sources.get("metrics") or {}).items()
-            if str(source).startswith("report.")
+            key for key, source in (merged_sources.get("metrics") or {}).items() if str(source).startswith("report.")
         ]
         if fallback_fields:
             source_metadata.append(
@@ -739,7 +811,9 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
     else:
         management_dashboard = {"ok": False, "error": sec_compare_data.get("error") or "SEC compare unavailable"}
         source_metadata.append(
-            _source_entry("management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True)
+            _source_entry(
+                "management_integrity", status="degraded", detail="SEC compare unavailable", fallback_used=True
+            )
         )
 
     raw_recommendation = (report_v2.get("ic_snapshot") or {}).get("recommendation")
@@ -748,7 +822,9 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         or (report_v2.get("ic_snapshot") or {}).get("horizon")
         or "3-12 months"
     )
-    confidence_label = (report_v2.get("ic_snapshot") or {}).get("confidence_label") or _confidence_label_from_score(confidence_score)
+    confidence_label = (report_v2.get("ic_snapshot") or {}).get("confidence_label") or _confidence_label_from_score(
+        confidence_score
+    )
 
     report_trust = build_report_trust_payload(
         {
@@ -761,7 +837,10 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
         "ticker": symbol,
         "generated_at": generated_at,
         "executive_pitch": {
-            "thesis": str((report_v2.get("thesis") or {}).get("claim") or f"{symbol} setup requires review of report stack and SEC context."),
+            "thesis": str(
+                (report_v2.get("thesis") or {}).get("claim")
+                or f"{symbol} setup requires review of report stack and SEC context."
+            ),
             "recommendation": _format_recommendation(raw_recommendation, default="WATCH"),
             "recommendation_raw": str(raw_recommendation or "").strip().lower(),
             "confidence_label": str(confidence_label),
@@ -788,14 +867,36 @@ def _compose_research_dossier(ticker: str) -> dict[str, Any]:
                 "catalysts": catalyst_risk["catalysts"],
                 "risks": catalyst_risk["risks"],
             },
+            "sharadar_bundle": sharadar,
             "management_integrity": management_dashboard,
             "forensic": forensic_snapshot,
         },
         "source_metadata": source_metadata,
-        "fallback_notes": [entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")],
+        "fallback_notes": [
+            entry["detail"] for entry in source_metadata if entry.get("fallback_used") and entry.get("detail")
+        ],
         "report_trust": report_trust,
     }
+    try:
+        from core.debate_grade import attach_dossier_grade
+
+        attach_dossier_grade(dossier, skill_dir=SKILL_DIR)
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("Dossier debate grade skipped for %s: %s", symbol, exc)
     return _cache_dossier(dossier)
+
+
+def _dossier_grade_lines(dossier: dict[str, Any]) -> list[str]:
+    grade = dossier.get("debate_grade")
+    if not isinstance(grade, dict) or grade.get("qual_abstain") or not grade.get("qual_letter"):
+        return []
+    letter = grade.get("qual_letter")
+    chair = str(grade.get("chair") or "").strip()
+    line = (
+        f"**Shadow grade:** {letter}. Uncalibrated. Does not change rank."
+        + (f" {chair}" if chair else "")
+    )
+    return [line, ""]
 
 
 def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
@@ -814,7 +915,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     comps = raw_report.get("comps") or {}
     health = raw_report.get("health") or {}
     sec_analyze = sec_narr.get("analyze") or {}
-    sec_compare = ((sec_narr.get("compare") or {}).get("compare") or {})
+    sec_compare = (sec_narr.get("compare") or {}).get("compare") or {}
     snapshot = fin.get("snapshot") or {}
     quote = snapshot.get("quote") or {}
     pt = snapshot.get("price_target") or {}
@@ -857,8 +958,12 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     forensic = sections.get("forensic") or {}
 
     sec_summary = str(sec_analyze.get("narrative_summary") or sec_analyze.get("error") or "SEC analysis unavailable.")
-    compare_summary = str(sec_compare.get("narrative_summary") or (sec_narr.get("compare") or {}).get("error") or "SEC compare unavailable.")
-    hhi_label = (((portfolio.get("portfolio_risk") or {}).get("concentration") or {}).get("hhi_label") or "Unavailable")
+    compare_summary = str(
+        sec_compare.get("narrative_summary")
+        or (sec_narr.get("compare") or {}).get("error")
+        or "SEC compare unavailable."
+    )
+    hhi_label = ((portfolio.get("portfolio_risk") or {}).get("concentration") or {}).get("hhi_label") or "Unavailable"
     positions_count = (portfolio.get("portfolio_summary") or {}).get("positions_count", "n/a")
     total_mv = (portfolio.get("portfolio_summary") or {}).get("total_market_value", "n/a")
     recommendation = pitch.get("recommendation") or "WATCH"
@@ -877,9 +982,9 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             return "n/a"
         abs_v = abs(v)
         if abs_v >= 1_000_000:
-            return f"${v/1_000_000:.2f}T"
+            return f"${v / 1_000_000:.2f}T"
         if abs_v >= 1_000:
-            return f"${v/1_000:.2f}B"
+            return f"${v / 1_000:.2f}B"
         return f"${v:,.2f}M"
 
     def _money_currency(value: Any) -> str:
@@ -914,9 +1019,9 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             return "n/a"
         abs_v = abs(v)
         if abs_v >= 1_000_000:
-            return f"{v/1_000_000:.2f}M shares"
+            return f"{v / 1_000_000:.2f}M shares"
         if abs_v >= 1_000:
-            return f"{v/1_000:.1f}K shares"
+            return f"{v / 1_000:.1f}K shares"
         return f"{v:,.0f} shares"
 
     def _cite(*names: str) -> str:
@@ -927,6 +1032,8 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
 
     def _metric_source(key: str) -> str:
         source = str(metric_sources.get(key) or "finnhub").strip()
+        if source == "sharadar":
+            return "Sharadar ART/daily"
         if source.startswith("report."):
             return f"{source} fallback"
         return "Finnhub metrics"
@@ -939,8 +1046,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     rec_consensus_summary = "Consensus panel data is unavailable."
     if bull_votes or bear_votes or hold_votes:
         rec_consensus_summary = (
-            f"Latest consensus panel: {bull_votes} bullish · {hold_votes} neutral · "
-            f"{bear_votes} bearish votes."
+            f"Latest consensus panel: {bull_votes} bullish · {hold_votes} neutral · {bear_votes} bearish votes."
         )
 
     operating_profile = "transitioning"
@@ -990,12 +1096,13 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         f"**52-Week Range:** {_money_currency(metrics.get('52week_low'))} – {_money_currency(metrics.get('52week_high'))}  ",
         (
             f"**Consensus Target (Mean):** {_money_currency(pt.get('mean'))}"
-            + (f" (n={pt.get('number_of_analysts')})" if pt.get('number_of_analysts') else "")
+            + (f" (n={pt.get('number_of_analysts')})" if pt.get("number_of_analysts") else "")
             + "  "
         ),
         "",
         f"**Recommendation:** {recommendation} | **Confidence:** {confidence_label} ({confidence_score}/100) | **Horizon:** {horizon_text}",
         "",
+        *_dossier_grade_lines(dossier),
         "Sections covered: Business Strategy & Operations · Fundamental Performance · Peer Relative Positioning · Valuation · Technical Stage Analysis · SEC Narrative · Portfolio Fit · Catalysts and Risks · Insider Activity · Analyst Actions · Monitoring",
         "",
         "## Executive Investment Summary",
@@ -1009,10 +1116,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             f"{_cite('finnhub', 'report_stack', 'portfolio')}"
         ),
         "",
-        (
-            f"Portfolio context is {hhi_label}; this drives risk budget and sizing."
-            f"{_cite('portfolio')}"
-        ),
+        (f"Portfolio context is {hhi_label}; this drives risk budget and sizing.{_cite('portfolio')}"),
         "",
         (
             f"Desk stance: **{recommendation}** with **{confidence_label}** confidence over a "
@@ -1071,61 +1175,65 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     ]
 
     if peers:
-        lines.extend([
+        lines.extend(
+            [
+                "",
+                "**Peer Universe**",
+                "",
+                (
+                    f"Comparable issuers identified by Finnhub: {', '.join(peers[:8])}. "
+                    "Peer set frames relative valuation and trend comparison; differences in scale, capital intensity, "
+                    "and exposure to end-markets should be considered before treating multiples as directly comparable."
+                    f"{_cite('finnhub')}"
+                ),
+            ]
+        )
+
+    lines.extend(
+        [
             "",
-            "**Peer Universe**",
+            "---",
+            "",
+            "## Part II: Fundamental Performance Analysis",
             "",
             (
-                f"Comparable issuers identified by Finnhub: {', '.join(peers[:8])}. "
-                "Peer set frames relative valuation and trend comparison; differences in scale, capital intensity, "
-                "and exposure to end-markets should be considered before treating multiples as directly comparable."
+                "Fundamental performance is read through a growth, margin, capital-efficiency, and balance-sheet lens. "
+                "These four dimensions together inform whether the business is in a re-rating regime or whether multiple "
+                "compression risk is elevated. The table below captures TTM trends and quarterly liquidity posture."
                 f"{_cite('finnhub')}"
             ),
-        ])
-
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## Part II: Fundamental Performance Analysis",
-        "",
-        (
-            "Fundamental performance is read through a growth, margin, capital-efficiency, and balance-sheet lens. "
-            "These four dimensions together inform whether the business is in a re-rating regime or whether multiple "
-            "compression risk is elevated. The table below captures TTM trends and quarterly liquidity posture."
-            f"{_cite('finnhub')}"
-        ),
-        "",
-        "| Fundamental Metric | Value | Source | Commentary |",
-        "|---|---:|---|---|",
-        f"| Revenue Growth (TTM YoY) | {_pct_finnhub(metrics.get('revenue_growth_ttm_yoy'))} | {_metric_source('revenue_growth_ttm_yoy')} | Top-line momentum, TTM vs prior TTM |",
-        f"| Revenue Growth (5Y CAGR) | {_pct_finnhub(metrics.get('revenue_growth_5y'))} | {_metric_source('revenue_growth_5y')} | Long-cycle compounding |",
-        f"| EPS Growth (TTM YoY) | {_pct_finnhub(metrics.get('eps_growth_ttm_yoy'))} | {_metric_source('eps_growth_ttm_yoy')} | Earnings trajectory check |",
-        f"| EPS Growth (5Y CAGR) | {_pct_finnhub(metrics.get('eps_growth_5y'))} | {_metric_source('eps_growth_5y')} | Earnings power durability |",
-        f"| Gross Margin (TTM) | {_pct_finnhub(metrics.get('gross_margin_ttm'))} | {_metric_source('gross_margin_ttm')} | Pricing power and unit economics |",
-        f"| Operating Margin (TTM) | {_pct_finnhub(metrics.get('operating_margin_ttm'))} | {_metric_source('operating_margin_ttm')} | Operating efficiency trend |",
-        f"| Net Margin (TTM) | {_pct_finnhub(metrics.get('net_margin_ttm'))} | {_metric_source('net_margin_ttm')} | Bottom-line profitability quality |",
-        f"| Free Cash Flow Margin (TTM) | {_pct_finnhub(metrics.get('fcf_margin_ttm'))} | {_metric_source('fcf_margin_ttm')} | Cash conversion quality |",
-        f"| ROE / ROA (TTM) | {_pct_finnhub(metrics.get('roe_ttm'))} / {_pct_finnhub(metrics.get('roa_ttm'))} | {_metric_source('roe_ttm')} / {_metric_source('roa_ttm')} | Capital efficiency read-through |",
-        f"| ROIC (TTM) | {_pct_finnhub(metrics.get('roic_ttm'))} | {_metric_source('roic_ttm')} | Return vs cost of capital |",
-        f"| Current Ratio / Quick Ratio | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('quick_ratio_quarterly'))} | {_metric_source('current_ratio_quarterly')} / {_metric_source('quick_ratio_quarterly')} | Liquidity posture |",
-        f"| Debt / Equity (Q) | {_num(metrics.get('debt_to_equity_quarterly'))} | {_metric_source('debt_to_equity_quarterly')} | Leverage profile |",
-        f"| Interest Coverage (TTM) | {_num(metrics.get('interest_coverage_ttm'))} | {_metric_source('interest_coverage_ttm')} | Solvency cushion |",
-        f"| Dividend Yield (TTM) | {_pct_finnhub(metrics.get('dividend_yield_ttm'))} | {_metric_source('dividend_yield_ttm')} | Total-return income contribution |",
-        f"| Payout Ratio (TTM) | {_pct_finnhub(metrics.get('payout_ratio_ttm'))} | {_metric_source('payout_ratio_ttm')} | Dividend coverage |",
-        "",
-        "### Earnings Quality (Recent Prints)",
-        "",
-        (
-            "Earnings dispersion and surprise cadence remain central to near-term re-rating potential. "
-            "Read these prints alongside valuation multiples; profitable growth at expanding margins typically "
-            "supports multiple expansion, while declining margins or earnings misses can compress multiples even "
-            f"when revenue growth is intact.{_cite('finnhub')}"
-        ),
-        "",
-        "| Period | Actual EPS | Estimate EPS | Surprise % |",
-        "|---|---:|---:|---:|",
-    ])
+            "",
+            "| Fundamental Metric | Value | Source | Commentary |",
+            "|---|---:|---|---|",
+            f"| Revenue Growth (TTM YoY) | {_pct_finnhub(metrics.get('revenue_growth_ttm_yoy'))} | {_metric_source('revenue_growth_ttm_yoy')} | Top-line momentum, TTM vs prior TTM |",
+            f"| Revenue Growth (5Y CAGR) | {_pct_finnhub(metrics.get('revenue_growth_5y'))} | {_metric_source('revenue_growth_5y')} | Long-cycle compounding |",
+            f"| EPS Growth (TTM YoY) | {_pct_finnhub(metrics.get('eps_growth_ttm_yoy'))} | {_metric_source('eps_growth_ttm_yoy')} | Earnings trajectory check |",
+            f"| EPS Growth (5Y CAGR) | {_pct_finnhub(metrics.get('eps_growth_5y'))} | {_metric_source('eps_growth_5y')} | Earnings power durability |",
+            f"| Gross Margin (TTM) | {_pct_finnhub(metrics.get('gross_margin_ttm'))} | {_metric_source('gross_margin_ttm')} | Pricing power and unit economics |",
+            f"| Operating Margin (TTM) | {_pct_finnhub(metrics.get('operating_margin_ttm'))} | {_metric_source('operating_margin_ttm')} | Operating efficiency trend |",
+            f"| Net Margin (TTM) | {_pct_finnhub(metrics.get('net_margin_ttm'))} | {_metric_source('net_margin_ttm')} | Bottom-line profitability quality |",
+            f"| Free Cash Flow Margin (TTM) | {_pct_finnhub(metrics.get('fcf_margin_ttm'))} | {_metric_source('fcf_margin_ttm')} | Cash conversion quality |",
+            f"| ROE / ROA (TTM) | {_pct_finnhub(metrics.get('roe_ttm'))} / {_pct_finnhub(metrics.get('roa_ttm'))} | {_metric_source('roe_ttm')} / {_metric_source('roa_ttm')} | Capital efficiency read-through |",
+            f"| ROIC (TTM) | {_pct_finnhub(metrics.get('roic_ttm'))} | {_metric_source('roic_ttm')} | Return vs cost of capital |",
+            f"| Current Ratio / Quick Ratio | {_num(metrics.get('current_ratio_quarterly'))} / {_num(metrics.get('quick_ratio_quarterly'))} | {_metric_source('current_ratio_quarterly')} / {_metric_source('quick_ratio_quarterly')} | Liquidity posture |",
+            f"| Debt / Equity (Q) | {_num(metrics.get('debt_to_equity_quarterly'))} | {_metric_source('debt_to_equity_quarterly')} | Leverage profile |",
+            f"| Interest Coverage (TTM) | {_num(metrics.get('interest_coverage_ttm'))} | {_metric_source('interest_coverage_ttm')} | Solvency cushion |",
+            f"| Dividend Yield (TTM) | {_pct_finnhub(metrics.get('dividend_yield_ttm'))} | {_metric_source('dividend_yield_ttm')} | Total-return income contribution |",
+            f"| Payout Ratio (TTM) | {_pct_finnhub(metrics.get('payout_ratio_ttm'))} | {_metric_source('payout_ratio_ttm')} | Dividend coverage |",
+            "",
+            "### Earnings Quality (Recent Prints)",
+            "",
+            (
+                "Earnings dispersion and surprise cadence remain central to near-term re-rating potential. "
+                "Read these prints alongside valuation multiples; profitable growth at expanding margins typically "
+                "supports multiple expansion, while declining margins or earnings misses can compress multiples even "
+                f"when revenue growth is intact.{_cite('finnhub')}"
+            ),
+            "",
+            "| Period | Actual EPS | Estimate EPS | Surprise % |",
+            "|---|---:|---:|---:|",
+        ]
+    )
 
     if earnings:
         for row in earnings[:6]:
@@ -1136,19 +1244,21 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         lines.append("| n/a | n/a | n/a | n/a |")
 
     if upcoming:
-        lines.extend([
-            "",
-            "### Upcoming Earnings Calendar",
-            "",
-            "| Date | Quarter | EPS Estimate | Revenue Estimate |",
-            "|---|---|---:|---:|",
-        ])
+        lines.extend(
+            [
+                "",
+                "### Upcoming Earnings Calendar",
+                "",
+                "| Date | Quarter | EPS Estimate | Revenue Estimate |",
+                "|---|---|---:|---:|",
+            ]
+        )
         for row in upcoming[:4]:
             quarter_str = ""
             if row.get("year") and row.get("quarter"):
                 quarter_str = f"{row.get('year')} Q{row.get('quarter')}"
             rev_est = _safe_float(row.get("revenue_estimate"))
-            rev_text = f"${rev_est/1_000_000_000:.2f}B" if rev_est else "n/a"
+            rev_text = f"${rev_est / 1_000_000_000:.2f}B" if rev_est else "n/a"
             lines.append(
                 f"| {row.get('date') or 'n/a'} | {quarter_str or 'n/a'} | {_num(row.get('eps_estimate'))} | {rev_text} |"
             )
@@ -1205,7 +1315,7 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             f"| EV / Sales | {_num(metrics.get('ev_to_sales'))} |",
             f"| EPS (TTM / Annual) | {_num(metrics.get('eps_ttm'))} / {_num(metrics.get('eps_annual'))} |",
             f"| Book Value / Share (Annual) | {_money_currency(metrics.get('book_value_per_share_annual'))} |",
-            f"| Technical Signal Score | {_num(technical.get('signal_score'), 0)} / 100 |",
+            f"| Technical signal points | {_num(technical.get('signal_score'), 0)} / 100 (composite, not a probability) |",
             f"| Stage 2 / VCP | {'YES' if technical.get('stage_2') else 'NO'} / {'YES' if technical.get('vcp') else 'NO'} |",
             "",
             (
@@ -1252,13 +1362,15 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     )
 
     if sec_filings:
-        lines.extend([
-            "",
-            "**Recent SEC Filings (Finnhub)**",
-            "",
-            "| Form | Filed | Accepted | Report |",
-            "|---|---|---|---|",
-        ])
+        lines.extend(
+            [
+                "",
+                "**Recent SEC Filings (Finnhub)**",
+                "",
+                "| Form | Filed | Accepted | Report |",
+                "|---|---|---|---|",
+            ]
+        )
         for row in sec_filings[:5]:
             url = row.get("report_url") or row.get("filing_url") or ""
             link = f"[link]({url})" if url else "n/a"
@@ -1270,16 +1382,20 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     pillars = list(scorecard.get("pillars") or [])
     red_flags = list(management.get("red_flags") or [])
     forensic_flags = list(forensic.get("forensic_flags") or [])
-    lines.extend([
-        "",
-        "### Management Integrity Scorecard",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "### Management Integrity Scorecard",
+            "",
+        ]
+    )
     if scorecard:
-        lines.extend([
-            f"- Score: {scorecard.get('score', 'n/a')}/100{_cite('management_integrity')}",
-            f"- Profile: {(management.get('profile') or {}).get('active_profile') or 'default'}",
-        ])
+        lines.extend(
+            [
+                f"- Score: {scorecard.get('score', 'n/a')}/100{_cite('management_integrity')}",
+                f"- Profile: {(management.get('profile') or {}).get('active_profile') or 'default'}",
+            ]
+        )
         if pillars:
             lines.extend(["", "| Pillar | Score | Takeaway |", "|---|---:|---|"])
             for row in pillars[:8]:
@@ -1290,60 +1406,68 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             lines.extend(["", "**Management red flags**"])
             lines.extend([f"- {flag}" for flag in red_flags[:8]])
     else:
-        lines.append(f"- Management integrity unavailable: {management.get('error') or 'SEC compare did not produce a scorecard.'}")
+        lines.append(
+            f"- Management integrity unavailable: {management.get('error') or 'SEC compare did not produce a scorecard.'}"
+        )
 
-    lines.extend([
-        "",
-        "### Forensic Accounting Flags",
-        "",
-        f"- Snapshot status: {'available' if forensic.get('ok') else 'degraded'}{_cite('forensic')}",
-        f"- Sloan: {forensic.get('sloan') or 'n/a'}",
-        f"- Beneish: {forensic.get('beneish') or 'n/a'}",
-        f"- Altman: {forensic.get('altman') or 'n/a'}",
-    ])
+    lines.extend(
+        [
+            "",
+            "### Forensic Accounting Flags",
+            "",
+            f"- Snapshot status: {'available' if forensic.get('ok') else 'degraded'}{_cite('forensic')}",
+            f"- Sloan: {forensic.get('sloan') or 'n/a'}",
+            f"- Beneish: {forensic.get('beneish') or 'n/a'}",
+            f"- Altman: {forensic.get('altman') or 'n/a'}",
+        ]
+    )
     if forensic_flags:
         lines.extend(["", "**Forensic flags**"])
         lines.extend([f"- {flag}" for flag in forensic_flags[:8]])
     else:
         lines.append("- No forensic flags returned.")
 
-    lines.extend([
-        "",
-        "---",
-        "",
-        "## Part V: Portfolio Fit and Risk Budget Context",
-        "",
-        (
-            "Portfolio fit converts a standalone idea into a position decision. Sector overlap, concentration "
-            "contribution, and risk-budget impact dictate sizing rather than the headline thesis alone. "
-            f"Concentration here reads as **{hhi_label}**, with {positions_count} open positions across "
-            f"a total market value of {total_mv}."
-            f"{_cite('portfolio', 'report_stack')}"
-        ),
-        "",
-        "| Portfolio Lens | Value |",
-        "|---|---|",
-        f"| Open positions | {positions_count} |",
-        f"| Total market value | {total_mv} |",
-        f"| Concentration label | {hhi_label} |",
-        f"| Risk budget impact | {(report_v2.get('portfolio_fit') or {}).get('risk_budget_impact') or 'Unavailable'} |",
-        f"| Sector overlap (%) | {_pct_finnhub((report_v2.get('portfolio_fit') or {}).get('sector_overlap_pct'))} |",
-        f"| Correlation proxy | {_num((report_v2.get('portfolio_fit') or {}).get('correlation_proxy'), 3)} |",
-        "",
-        "---",
-        "",
-        "## Part VI: Catalyst and Risk Matrix",
-        "",
-        (
-            "Catalysts and risks are aggregated across filing cadence, sentiment surfaces, and quantitative "
-            "checks. Treat this as a forward-event map: catalysts can re-rate price quickly in either direction, "
-            "and explicit risk lines define when the thesis must be re-underwritten or unwound."
-            f"{_cite('finnhub', 'sec_analyze', 'report_stack')}"
-        ),
-        "",
-        "| Type | Item |",
-        "|---|---|",
-    ])
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "## Part V: Portfolio Fit and Risk Budget Context",
+            "",
+            "This section is **operator book context**, not the requested ticker's own fundamentals.",
+            "",
+            (
+                "Portfolio fit converts a standalone idea into a position decision. Sector overlap, concentration "
+                "contribution, and risk-budget impact dictate sizing rather than the headline thesis alone. "
+                f"Concentration here reads as **{hhi_label}**, with {positions_count} open positions across "
+                f"a total market value of {total_mv}."
+                f"{_cite('portfolio', 'report_stack')}"
+            ),
+            "",
+            "| Portfolio Lens | Value |",
+            "|---|---|",
+            f"| Open positions | {positions_count} |",
+            f"| Total market value | {total_mv} |",
+            f"| Concentration label | {hhi_label} |",
+            f"| Risk budget impact | {(report_v2.get('portfolio_fit') or {}).get('risk_budget_impact') or 'Unavailable'} |",
+            f"| Sector overlap (%) | {_pct_finnhub((report_v2.get('portfolio_fit') or {}).get('sector_overlap_pct'))} |",
+            f"| Correlation proxy | {_num((report_v2.get('portfolio_fit') or {}).get('correlation_proxy'), 3)} |",
+            "",
+            "---",
+            "",
+            "## Part VI: Catalyst and Risk Matrix",
+            "",
+            (
+                "Catalysts and risks are aggregated across filing cadence, sentiment surfaces, and quantitative "
+                "checks. Treat this as a forward-event map: catalysts can re-rate price quickly in either direction, "
+                "and explicit risk lines define when the thesis must be re-underwritten or unwound."
+                f"{_cite('finnhub', 'sec_analyze', 'report_stack')}"
+            ),
+            "",
+            "| Type | Item |",
+            "|---|---|",
+        ]
+    )
 
     if catalysts:
         lines.extend([f"| Catalyst | {item} |" for item in catalysts[:8]])
@@ -1361,46 +1485,50 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
         lines.extend([f"- {item}" for item in invalidation[:5]])
 
     # --- Insider Activity -------------------------------------------------
-    has_insider_data = (insider_tx.get("rows") or insider_sent.get("rows"))
+    has_insider_data = insider_tx.get("rows") or insider_sent.get("rows")
     if has_insider_data:
-        lines.extend([
-            "",
-            "---",
-            "",
-            "## Part VII: Insider Activity (Trailing 180 Days)",
-            "",
-            (
-                "Form-4 insider transactions and Finnhub's Monthly Share Purchase Ratio (MSPR) capture "
-                "executive and director conviction. The scoring below counts only open-market activity "
-                "(SEC Form-4 codes **P** and **S**); stock-based compensation grants (A), option exercises (M), "
-                "tax-withholding sales (F), and dispositions to the issuer (D) are excluded because they are "
-                "non-discretionary and do not represent a market signal. Concentrated open-market buying or "
-                "persistent net-positive MSPR frequently precedes positive re-rating; sustained net-selling can "
-                "be an early signal of decelerating fundamentals or governance stress — though planned 10b5-1 "
-                "sales should still be discounted."
-                f"{_cite('finnhub')}"
-            ),
-            "",
-            "| Insider Lens (Open-Market Only) | Value |",
-            "|---|---:|",
-            f"| Net Shares (Buys − Sells, 180d) | {_shares_human(insider_tx.get('net_shares_180d'))} |",
-            f"| Net Dollars (Approx., 180d) | {_money_currency(insider_tx.get('net_dollars_180d'))} |",
-            f"| Open-Market Buys (P) | {insider_tx.get('buy_count_180d') or 0} |",
-            f"| Open-Market Sells (S) | {insider_tx.get('sell_count_180d') or 0} |",
-            f"| Insider Sentiment (MSPR Sum, 6m) | {_num(insider_sent.get('net_mspr_6m'))} |",
-            f"| Insider Net Share Change (6m) | {_num(insider_sent.get('net_change_6m'), 0)} |",
-        ])
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "## Part VII: Insider Activity (Trailing 180 Days)",
+                "",
+                (
+                    "Form-4 insider transactions and Finnhub's Monthly Share Purchase Ratio (MSPR) capture "
+                    "executive and director conviction. The scoring below counts only open-market activity "
+                    "(SEC Form-4 codes **P** and **S**); stock-based compensation grants (A), option exercises (M), "
+                    "tax-withholding sales (F), and dispositions to the issuer (D) are excluded because they are "
+                    "non-discretionary and do not represent a market signal. Concentrated open-market buying or "
+                    "persistent net-positive MSPR frequently precedes positive re-rating; sustained net-selling can "
+                    "be an early signal of decelerating fundamentals or governance stress — though planned 10b5-1 "
+                    "sales should still be discounted."
+                    f"{_cite('finnhub')}"
+                ),
+                "",
+                "| Insider Lens (Open-Market Only) | Value |",
+                "|---|---:|",
+                f"| Net Shares (Buys − Sells, 180d) | {_shares_human(insider_tx.get('net_shares_180d'))} |",
+                f"| Net Dollars (Approx., 180d) | {_money_currency(insider_tx.get('net_dollars_180d'))} |",
+                f"| Open-Market Buys (P) | {insider_tx.get('buy_count_180d') or 0} |",
+                f"| Open-Market Sells (S) | {insider_tx.get('sell_count_180d') or 0} |",
+                f"| Insider Sentiment (MSPR Sum, 6m) | {_num(insider_sent.get('net_mspr_6m'))} |",
+                f"| Insider Net Share Change (6m) | {_num(insider_sent.get('net_change_6m'), 0)} |",
+            ]
+        )
         ins_rows = insider_tx.get("rows") or []
         if ins_rows:
-            lines.extend([
-                "",
-                "**Recent Form-4 Activity**",
-                "",
-                "_Code legend: **P** open-market purchase · **S** open-market sale · **A** grant/award · **M** option exercise · **F** shares withheld for taxes · **D** disposition to issuer · **G** gift_",
-                "",
-                "| Date | Insider | Code | Type | Shares | Price |",
-                "|---|---|:--:|:--:|---:|---:|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Recent Form-4 Activity**",
+                    "",
+                    "_Code legend: **P** open-market purchase · **S** open-market sale · **A** grant/award · **M** option exercise · **F** shares withheld for taxes · **D** disposition to issuer · **G** gift_",
+                    "",
+                    "| Date | Insider | Code | Type | Shares | Price |",
+                    "|---|---|:--:|:--:|---:|---:|",
+                ]
+            )
             code_label = {
                 "P": "Buy",
                 "S": "Sell",
@@ -1419,39 +1547,45 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
 
     # --- Analyst Actions --------------------------------------------------
     if upgrades or rec_history:
-        lines.extend([
-            "",
-            "---",
-            "",
-            "## Part VIII: Sell-Side Analyst Activity",
-            "",
-            (
-                "Sell-side ratings actions and consensus drift surface how the analyst community is "
-                "repricing the issuer in real time. Upgrades clustered near earnings or guidance often "
-                "co-incide with revisions cycles, while persistent downgrade flow tends to lead price "
-                f"weakness on a multi-week basis. {rec_consensus_summary}{_cite('finnhub')}"
-            ),
-        ])
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "## Part VIII: Sell-Side Analyst Activity",
+                "",
+                (
+                    "Sell-side ratings actions and consensus drift surface how the analyst community is "
+                    "repricing the issuer in real time. Upgrades clustered near earnings or guidance often "
+                    "co-incide with revisions cycles, while persistent downgrade flow tends to lead price "
+                    f"weakness on a multi-week basis. {rec_consensus_summary}{_cite('finnhub')}"
+                ),
+            ]
+        )
         if rec_history:
-            lines.extend([
-                "",
-                "**Consensus History**",
-                "",
-                "| Period | Strong Buy | Buy | Hold | Sell | Strong Sell |",
-                "|---|---:|---:|---:|---:|---:|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Consensus History**",
+                    "",
+                    "| Period | Strong Buy | Buy | Hold | Sell | Strong Sell |",
+                    "|---|---:|---:|---:|---:|---:|",
+                ]
+            )
             for row in rec_history[:6]:
                 lines.append(
                     f"| {row.get('period') or 'n/a'} | {row.get('strong_buy', 0)} | {row.get('buy', 0)} | {row.get('hold', 0)} | {row.get('sell', 0)} | {row.get('strong_sell', 0)} |"
                 )
         if upgrades:
-            lines.extend([
-                "",
-                "**Recent Ratings Actions**",
-                "",
-                "| Date | Firm | From | To | Action |",
-                "|---|---|---|---|---|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Recent Ratings Actions**",
+                    "",
+                    "| Date | Firm | From | To | Action |",
+                    "|---|---|---|---|---|",
+                ]
+            )
             for row in upgrades[:6]:
                 date_str = row.get("grade_time") or "n/a"
                 if isinstance(date_str, str) and "T" in date_str:
@@ -1462,27 +1596,31 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
 
     # --- Capital Returns --------------------------------------------------
     if dividends or splits:
-        lines.extend([
-            "",
-            "---",
-            "",
-            "## Part IX: Capital Returns and Corporate Actions",
-            "",
-            (
-                "Dividend cadence, payout cover, and share-action history (splits, special distributions) "
-                "are part of the total-return picture. Read the dividend yield in Part II alongside the "
-                "schedule below — declining or skipped dividends materially change the income leg of the "
-                f"thesis.{_cite('finnhub')}"
-            ),
-        ])
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "## Part IX: Capital Returns and Corporate Actions",
+                "",
+                (
+                    "Dividend cadence, payout cover, and share-action history (splits, special distributions) "
+                    "are part of the total-return picture. Read the dividend yield in Part II alongside the "
+                    "schedule below — declining or skipped dividends materially change the income leg of the "
+                    f"thesis.{_cite('finnhub')}"
+                ),
+            ]
+        )
         if dividends:
-            lines.extend([
-                "",
-                "**Recent Dividends**",
-                "",
-                "| Ex-Date | Pay Date | Amount | Currency | Frequency |",
-                "|---|---|---:|---|---|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Recent Dividends**",
+                    "",
+                    "| Ex-Date | Pay Date | Amount | Currency | Frequency |",
+                    "|---|---|---:|---|---|",
+                ]
+            )
             freq_map = {1: "Annual", 2: "Semi-annual", 4: "Quarterly", 12: "Monthly"}
             for row in dividends[:6]:
                 freq_text = freq_map.get(int(row.get("frequency") or 0), "n/a")
@@ -1490,13 +1628,15 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
                     f"| {row.get('ex_date') or 'n/a'} | {row.get('pay_date') or 'n/a'} | {_money_currency(row.get('amount'))} | {row.get('currency') or 'USD'} | {freq_text} |"
                 )
         if splits:
-            lines.extend([
-                "",
-                "**Stock Splits**",
-                "",
-                "| Date | Ratio (To : From) |",
-                "|---|---|",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Stock Splits**",
+                    "",
+                    "| Date | Ratio (To : From) |",
+                    "|---|---|",
+                ]
+            )
             for row in splits[:4]:
                 ratio = "n/a"
                 tf = _safe_float(row.get("to_factor"))
@@ -1515,9 +1655,9 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
             score_delta = ""
             if sent_score is not None and sector_score is not None:
                 if sent_score > sector_score:
-                    score_delta = f" ({(sent_score - sector_score)*100:+.0f}bp vs sector)"
+                    score_delta = f" ({(sent_score - sector_score) * 100:+.0f}bp vs sector)"
                 else:
-                    score_delta = f" ({(sent_score - sector_score)*100:+.0f}bp vs sector)"
+                    score_delta = f" ({(sent_score - sector_score) * 100:+.0f}bp vs sector)"
             lines.append(
                 (
                     f"Finnhub measures a {(_num(sent_score, 2) if sent_score is not None else 'n/a')}"
@@ -1576,13 +1716,15 @@ def _dossier_to_markdown(dossier: dict[str, Any]) -> str:
     if "finnhub_api_key_missing" in {(row.get("detail") or "").lower() for row in source_rows} or any(
         "finnhub_api_key_missing" in str(note) for note in fallback_notes
     ):
-        lines.extend([
-            "",
-            "_Finnhub data is unavailable because no API key is configured. Set `FINNHUB_API_KEY` in your "
-            "environment to populate insider activity, analyst ratings, news sentiment, peers, and consensus "
-            "targets. Sign up for a free key at https://finnhub.io/ — the dossier respects the free-tier "
-            "60 calls/minute limit automatically._",
-        ])
+        lines.extend(
+            [
+                "",
+                "_Finnhub data is unavailable because no API key is configured. Set `FINNHUB_API_KEY` in your "
+                "environment to populate insider activity, analyst ratings, news sentiment, peers, and consensus "
+                "targets. Sign up for a free key at https://finnhub.io/ — the dossier respects the free-tier "
+                "60 calls/minute limit automatically._",
+            ]
+        )
 
     lines.extend(
         [
@@ -1679,7 +1821,9 @@ def _text_to_simple_pdf(text: str) -> bytes:
             + b"\nendstream endobj\n"
         )
 
-    objs.append(f"{first_font_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode("ascii"))
+    objs.append(
+        f"{first_font_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n".encode("ascii")
+    )
 
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -1691,12 +1835,7 @@ def _text_to_simple_pdf(text: str) -> bytes:
     out.extend(b"0000000000 65535 f \n")
     for off in offsets[1:]:
         out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
-    out.extend(
-        (
-            f"trailer << /Size {len(objs) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_start}\n%%EOF\n"
-        ).encode("ascii")
-    )
+    out.extend((f"trailer << /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n").encode("ascii"))
     return bytes(out)
 
 
@@ -1743,14 +1882,12 @@ def _xlsx_sheet_xml(rows: list[list[Any]]) -> bytes:
                 cells.append(f'<c r="{ref}"><v>{value}</v></c>')
             else:
                 txt = _xlsx_text(value)
-                cells.append(
-                    f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{txt}</t></is></c>'
-                )
+                cells.append(f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{txt}</t></is></c>')
         body.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
     xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<sheetData>{"".join(body)}</sheetData>'
+        f"<sheetData>{''.join(body)}</sheetData>"
         "</worksheet>"
     )
     return xml.encode("utf-8")
@@ -1767,10 +1904,19 @@ def _build_fundamental_workbook_sheets(dossier: dict[str, Any]) -> list[tuple[st
     health = raw.get("health") or {}
     snapshot = (sections.get("finnhub_catalysts_risks") or {}).get("snapshot") or {}
     metrics = snapshot.get("metrics") or {}
+    metric_sources = ((snapshot.get("merged_sources") or {}).get("metrics") or {})
     catalysts = list((sections.get("finnhub_catalysts_risks") or {}).get("catalysts") or [])
     risks = list((sections.get("finnhub_catalysts_risks") or {}).get("risks") or [])
-    sec_analyze = ((sections.get("sec_narrative") or {}).get("analyze") or {})
-    sec_compare = (((sections.get("sec_narrative") or {}).get("compare") or {}).get("compare") or {})
+    sec_analyze = (sections.get("sec_narrative") or {}).get("analyze") or {}
+    sec_compare = ((sections.get("sec_narrative") or {}).get("compare") or {}).get("compare") or {}
+
+    def _metric_source_label(key: str) -> str:
+        source = str(metric_sources.get(key) or "finnhub").strip()
+        if source == "sharadar":
+            return "Sharadar ART/daily"
+        if source.startswith("report."):
+            return f"{source} fallback"
+        return "Finnhub metrics"
 
     overview_rows: list[list[Any]] = [
         ["Field", "Value"],
@@ -1784,17 +1930,17 @@ def _build_fundamental_workbook_sheets(dossier: dict[str, Any]) -> list[tuple[st
 
     fundamental_rows: list[list[Any]] = [
         ["Metric", "Value", "Source"],
-        ["Revenue Growth TTM YoY (%)", metrics.get("revenue_growth_ttm_yoy"), "Finnhub metrics"],
-        ["EPS Growth TTM YoY (%)", metrics.get("eps_growth_ttm_yoy"), "Finnhub metrics"],
-        ["Operating Margin TTM (%)", metrics.get("operating_margin_ttm"), "Finnhub metrics"],
-        ["Net Margin TTM (%)", metrics.get("net_margin_ttm"), "Finnhub metrics"],
-        ["ROE TTM (%)", metrics.get("roe_ttm"), "Finnhub metrics"],
-        ["ROA TTM (%)", metrics.get("roa_ttm"), "Finnhub metrics"],
-        ["Current Ratio (Q)", metrics.get("current_ratio_quarterly"), "Finnhub metrics"],
-        ["Quick Ratio (Q)", metrics.get("quick_ratio_quarterly"), "Finnhub metrics"],
-        ["Debt/Equity (Q)", metrics.get("debt_to_equity_quarterly"), "Finnhub metrics"],
-        ["Interest Coverage TTM", metrics.get("interest_coverage_ttm"), "Finnhub metrics"],
-        ["Dividend Yield TTM (%)", metrics.get("dividend_yield_ttm"), "Finnhub metrics"],
+        ["Revenue Growth TTM YoY (%)", metrics.get("revenue_growth_ttm_yoy"), _metric_source_label("revenue_growth_ttm_yoy")],
+        ["EPS Growth TTM YoY (%)", metrics.get("eps_growth_ttm_yoy"), _metric_source_label("eps_growth_ttm_yoy")],
+        ["Operating Margin TTM (%)", metrics.get("operating_margin_ttm"), _metric_source_label("operating_margin_ttm")],
+        ["Net Margin TTM (%)", metrics.get("net_margin_ttm"), _metric_source_label("net_margin_ttm")],
+        ["ROE TTM (%)", metrics.get("roe_ttm"), _metric_source_label("roe_ttm")],
+        ["ROA TTM (%)", metrics.get("roa_ttm"), _metric_source_label("roa_ttm")],
+        ["Current Ratio (Q)", metrics.get("current_ratio_quarterly"), _metric_source_label("current_ratio_quarterly")],
+        ["Quick Ratio (Q)", metrics.get("quick_ratio_quarterly"), _metric_source_label("quick_ratio_quarterly")],
+        ["Debt/Equity (Q)", metrics.get("debt_to_equity_quarterly"), _metric_source_label("debt_to_equity_quarterly")],
+        ["Interest Coverage TTM", metrics.get("interest_coverage_ttm"), _metric_source_label("interest_coverage_ttm")],
+        ["Dividend Yield TTM (%)", metrics.get("dividend_yield_ttm"), _metric_source_label("dividend_yield_ttm")],
     ]
 
     valuation_rows: list[list[Any]] = [
@@ -1809,15 +1955,15 @@ def _build_fundamental_workbook_sheets(dossier: dict[str, Any]) -> list[tuple[st
         ["Median Peer P/S", comps.get("median_ps"), "report.comps"],
         ["Implied Price (P/E)", comps.get("implied_price_pe"), "report.comps"],
         ["Implied Price (P/S)", comps.get("implied_price_ps"), "report.comps"],
-        ["P/E TTM", metrics.get("pe_ttm"), "Finnhub metrics"],
-        ["P/B Annual", metrics.get("pb_annual"), "Finnhub metrics"],
-        ["P/S TTM", metrics.get("ps_ttm"), "Finnhub metrics"],
-        ["EV/EBITDA", metrics.get("ev_to_ebitda"), "Finnhub metrics"],
+        ["P/E TTM", metrics.get("pe_ttm"), _metric_source_label("pe_ttm")],
+        ["P/B Annual", metrics.get("pb_annual"), _metric_source_label("pb_annual")],
+        ["P/S TTM", metrics.get("ps_ttm"), _metric_source_label("ps_ttm")],
+        ["EV/EBITDA", metrics.get("ev_to_ebitda"), _metric_source_label("ev_to_ebitda")],
     ]
 
     technical_rows: list[list[Any]] = [
         ["Technical Signal", "Value", "Source"],
-        ["Signal Score", tech.get("signal_score"), "report.technical"],
+        ["Signal points", tech.get("signal_score"), "report.technical"],
         ["Stage 2", bool(tech.get("stage_2")), "report.technical"],
         ["VCP", bool(tech.get("vcp")), "report.technical"],
         ["Current Price", tech.get("current_price"), "report.technical"],
@@ -1903,8 +2049,7 @@ def _dossier_to_xlsx(dossier: dict[str, Any]) -> bytes:
             for idx in range(1, len(sheet_names) + 1)
         )
         + '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
-        'Target="styles.xml"/>'
-        + "</Relationships>"
+        'Target="styles.xml"/>' + "</Relationships>"
     ).encode("utf-8")
 
     root_rels_xml = (
@@ -1956,6 +2101,46 @@ def _dossier_to_xlsx(dossier: dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+def _history_as_of(df: Any, candles: list[dict[str, Any]] | None = None) -> str | None:
+    """ISO date of the last daily bar (chart candles preferred)."""
+    if candles:
+        try:
+            ts = int(candles[-1]["time"])
+            return datetime.fromtimestamp(ts, tz=UTC).date().isoformat()
+        except Exception:
+            pass
+    if df is None or getattr(df, "empty", True):
+        return None
+    try:
+        idx = df.index[-1]
+        if hasattr(idx, "strftime"):
+            return str(idx.strftime("%Y-%m-%d"))
+        text = str(idx)
+        if len(text) >= 10 and text[4:5] == "-":
+            return text[:10]
+    except Exception:
+        return None
+    return None
+
+
+def _chart_payload(
+    ticker: str,
+    df: Any,
+    meta: dict[str, Any] | None,
+    candles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    meta = meta or {}
+    return {
+        "ticker": str(ticker or "").upper().strip(),
+        "candles": candles,
+        "provider": meta.get("provider"),
+        "used_fallback": bool(meta.get("used_fallback")),
+        "fallback_reason": meta.get("fallback_reason"),
+        "as_of": _history_as_of(df, candles),
+        "history_price_basis": meta.get("history_price_basis"),
+    }
+
+
 @router.get("/api/chart/{ticker}", response_model=ApiResponse)
 def chart_data(ticker: str, days: int = 120) -> ApiResponse:
     """OHLCV candle data for Lightweight Charts."""
@@ -1978,6 +2163,8 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
                     "provider": meta.get("provider"),
                     "used_fallback": meta.get("used_fallback"),
                     "fallback_reason": meta.get("fallback_reason"),
+                    "history_price_basis": meta.get("history_price_basis"),
+                    "as_of": _history_as_of(df),
                 },
             )
 
@@ -1989,19 +2176,22 @@ def chart_data(ticker: str, days: int = 120) -> ApiResponse:
                     epoch = int(ts.timestamp())
                 else:
                     from datetime import datetime as _dt
+
                     epoch = int(_dt.fromisoformat(str(ts)).timestamp())
             except Exception:
                 continue
-            candles.append({
-                "time": epoch,
-                "open": round(float(row.get("open", 0)), 2),
-                "high": round(float(row.get("high", 0)), 2),
-                "low": round(float(row.get("low", 0)), 2),
-                "close": round(float(row.get("close", 0)), 2),
-                "volume": int(row.get("volume", 0) or 0),
-            })
+            candles.append(
+                {
+                    "time": epoch,
+                    "open": round(float(row.get("open", 0)), 2),
+                    "high": round(float(row.get("high", 0)), 2),
+                    "low": round(float(row.get("low", 0)), 2),
+                    "close": round(float(row.get("close", 0)), 2),
+                    "volume": int(row.get("volume", 0) or 0),
+                }
+            )
         candles.sort(key=lambda c: c["time"])
-        return _ok({"ticker": ticker.upper().strip(), "candles": candles})
+        return _ok(_chart_payload(ticker, df, meta, candles))
     except Exception as e:
         return _err_response("chart_data", e)
 
@@ -2027,7 +2217,9 @@ def report_ticker(
         if section:
             section_key = REPORT_SECTION_MAP.get(section.lower().strip())
             if not section_key:
-                return ApiResponse(ok=False, error=f"Invalid section '{section}'. Use: tech, dcf, comps, health, edgar, mirofish.")
+                return ApiResponse(
+                    ok=False, error=f"Invalid section '{section}'. Use: tech, dcf, comps, health, edgar, mirofish."
+                )
 
         report = generate_full_report(
             ticker=ticker.upper().strip(),
@@ -2052,16 +2244,18 @@ def report_ticker(
         section_verdicts = _build_report_verdicts(data)
         if section_key:
             section_data = data.get(section_key)
-            return _ok({
-                "ticker": data.get("ticker"),
-                "generated_at": data.get("generated_at"),
-                "section": section_key,
-                "data": section_data,
-                "report_v2": data.get("report_v2"),
-                "report_trust": data.get("report_trust"),
-                "section_verdicts": section_verdicts,
-                "section_quick_verdict": section_verdicts.get(section_key, {}),
-            })
+            return _ok(
+                {
+                    "ticker": data.get("ticker"),
+                    "generated_at": data.get("generated_at"),
+                    "section": section_key,
+                    "data": section_data,
+                    "report_v2": data.get("report_v2"),
+                    "report_trust": data.get("report_trust"),
+                    "section_verdicts": section_verdicts,
+                    "section_quick_verdict": section_verdicts.get(section_key, {}),
+                }
+            )
         data["section_verdicts"] = section_verdicts
         return _ok(data)
     except Exception as e:
@@ -2123,10 +2317,14 @@ def sec_compare(
             if not safe_ticker or not safe_ticker_b:
                 return ApiResponse(ok=False, error="ticker and ticker_b are required for ticker_vs_ticker mode.")
             out = compare_ticker_vs_ticker(
-                safe_ticker, safe_ticker_b,
-                form_type=safe_form, user_agent=cfg["user_agent"],
-                skill_dir=SKILL_DIR, cache_hours=cfg["cache_hours"],
-                max_chars=cfg["max_chars"], enable_llm=cfg["llm_enabled"],
+                safe_ticker,
+                safe_ticker_b,
+                form_type=safe_form,
+                user_agent=cfg["user_agent"],
+                skill_dir=SKILL_DIR,
+                cache_hours=cfg["cache_hours"],
+                max_chars=cfg["max_chars"],
+                enable_llm=cfg["llm_enabled"],
                 highlight_changes_only=bool(highlight_changes_only),
             )
         elif safe_mode == "ticker_over_time":
@@ -2134,9 +2332,12 @@ def sec_compare(
                 return ApiResponse(ok=False, error="ticker is required for ticker_over_time mode.")
             out = compare_ticker_over_time(
                 safe_ticker,
-                form_type=safe_form, user_agent=cfg["user_agent"],
-                skill_dir=SKILL_DIR, cache_hours=cfg["cache_hours"],
-                max_chars=cfg["max_chars"], enable_llm=cfg["llm_enabled"],
+                form_type=safe_form,
+                user_agent=cfg["user_agent"],
+                skill_dir=SKILL_DIR,
+                cache_hours=cfg["cache_hours"],
+                max_chars=cfg["max_chars"],
+                enable_llm=cfg["llm_enabled"],
                 highlight_changes_only=bool(highlight_changes_only),
             )
         else:
@@ -2175,8 +2376,11 @@ def sec_compare_alias(
     profile_override: str = "",
 ) -> ApiResponse:
     return sec_compare(
-        mode=mode, ticker=ticker, ticker_b=ticker_b,
-        form_type=form_type, highlight_changes_only=highlight_changes_only,
+        mode=mode,
+        ticker=ticker,
+        ticker_b=ticker_b,
+        form_type=form_type,
+        highlight_changes_only=highlight_changes_only,
         include_management_dashboard=include_management_dashboard,
         ruthless_mode=ruthless_mode,
         profile_override=profile_override,
@@ -2208,7 +2412,9 @@ def sec_management_dashboard(
         safe_override = profile_override.strip().lower() or persisted_override
         if safe_override and safe_override not in PROFILE_WEIGHTS:
             supported = ", ".join(sorted(PROFILE_WEIGHTS.keys()))
-            return ApiResponse(ok=False, error=f"Invalid profile_override '{profile_override}'. Use one of: {supported}.")
+            return ApiResponse(
+                ok=False, error=f"Invalid profile_override '{profile_override}'. Use one of: {supported}."
+            )
         if safe_mode not in {"ticker_vs_ticker", "ticker_over_time"}:
             return ApiResponse(ok=False, error="Invalid mode. Use ticker_vs_ticker or ticker_over_time.")
         if not safe_ticker:
@@ -2349,7 +2555,9 @@ def research_dossier_export(
         return Response(content=body, media_type=media_type, headers=headers)
     except Exception as exc:
         error = _err_response("research_dossier_export", exc)
-        return Response(content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500)
+        return Response(
+            content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500
+        )
 
 
 @router.get("/api/research/dossier/{ticker}/fundamental-workbook")
@@ -2368,4 +2576,6 @@ def research_fundamental_workbook_export(ticker: str, compose_id: str = Query(de
         )
     except Exception as exc:
         error = _err_response("research_fundamental_workbook_export", exc)
-        return Response(content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500)
+        return Response(
+            content=json.dumps(error.model_dump(), indent=2), media_type="application/json", status_code=500
+        )

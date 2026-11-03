@@ -6,9 +6,9 @@ the same contract):
 
 * ``?section=<alias>`` deep links — rewritten to the canonical ``#id``
   hash by ``modules/router.js`` (``applyQuerySectionDeepLink``).
-* ``?screen=<mode>`` workspace deep links — activate one of the four
-  topbar tabs (operations/research/intel/diagnostics).
-* Keyboard shortcuts — Ctrl/Cmd+1..4 screen switch and Ctrl+K palette
+* ``?screen=<mode>`` workspace deep links — activate one of the five
+  topbar tabs (operations/research/intel/diagnostics/backtest).
+* Keyboard shortcuts — Ctrl/Cmd+1..5 screen switch and Ctrl+K palette
   (``modules/shortcuts.js``).
 
 Run with a local dashboard already serving (default port 8182 via start_local_dashboard.py):
@@ -34,7 +34,7 @@ from playwright.sync_api import Page, expect  # noqa: E402
 
 BASE_URL = os.environ.get("E2E_BASE_URL", "https://127.0.0.1:8182").rstrip("/")
 
-SCREEN_MODES = ["operations", "research", "intel", "diagnostics"]
+SCREEN_MODES = ["operations", "research", "intel", "diagnostics", "backtest"]
 
 # Legacy ?screen= aliases normalize to a topbar tab (see SCREEN_ALIASES in app.js).
 SCREEN_MODE_ALIASES = [
@@ -54,6 +54,11 @@ ALIAS_CASES = [
     ("calibration", "calibrationSection"),
     ("book", "portfolioPanelBook"),
     ("book-calendar", "book-calendar"),
+    ("event-risk", "eventProbabilitySection"),
+    ("pricing", "pricingModelSection"),
+    ("sharadar", "sharadarBundleSection"),
+    ("sharadar-compare", "sharadarCompareSection"),
+    ("bundle-compare", "sharadarCompareSection"),
 ]
 
 
@@ -150,6 +155,7 @@ def test_hash_change_reopens_collapsed_details(page: Page) -> None:
         ("Control+2", "research"),
         ("Control+3", "intel"),
         ("Control+4", "diagnostics"),
+        ("Control+5", "backtest"),
     ],
 )
 def test_keyboard_screen_shortcuts(page: Page, key: str, mode: str) -> None:

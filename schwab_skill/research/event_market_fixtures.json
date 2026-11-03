@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "notes": [
+    "Fixture markets for the stub prediction-market provider (EVENT_PROB_PROVIDER=stub).",
+    "These let the ingest pipeline, storage, valuation, and dashboard run end to end with no network access or credentials.",
+    "updated_ts is refreshed by whoever edits this file; the calibrator treats an old timestamp as stale and shifts weight to the prior, which is the intended behavior for an unmaintained fixture."
+  ],
+  "markets": [
+    {
+      "source": "stub",
+      "source_market_id": "china-semi-export-2026",
+      "question": "Will the US impose tighter China semiconductor export restrictions before 2027?",
+      "description": "Resolves YES if new export control rules restricting advanced AI accelerator sales to China take effect before 2027-01-01.",
+      "event_category": "export_control",
+      "raw_probability": 0.42,
+      "volume": 250000.0,
+      "liquidity": 48000.0,
+      "spread": 0.02,
+      "resolution_date": "2027-01-01T00:00:00Z",
+      "updated_ts": "2026-08-27T12:00:00Z",
+      "resolution_status": "open"
+    },
+    {
+      "source": "stub",
+      "source_market_id": "fed-cut-2026h2",
+      "question": "Will the Fed cut rates at or before the December 2026 FOMC meeting?",
+      "description": "Resolves YES if the target federal funds rate is lowered at any FOMC meeting in the second half of 2026.",
+      "event_category": "monetary_policy",
+      "raw_probability": 0.61,
+      "volume": 900000.0,
+      "liquidity": 150000.0,
+      "spread": 0.01,
+      "resolution_date": "2026-12-31T00:00:00Z",
+      "updated_ts": "2026-08-27T12:00:00Z",
+      "resolution_status": "open"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ from config import (
     get_meta_policy_mode,
     get_meta_policy_size_mult_max,
     get_meta_policy_size_mult_min,
+    get_mirofish_abstain_mode,
     get_mirofish_weighting_mode,
     get_uncertainty_mode,
 )
@@ -24,6 +25,8 @@ def main() -> int:
 
     if get_mirofish_weighting_mode(skill_dir) not in {"off", "shadow", "live"}:
         failures.append("invalid MIROFISH_WEIGHTING_MODE")
+    if get_mirofish_abstain_mode(skill_dir) not in {"off", "shadow", "live"}:
+        failures.append("invalid MIROFISH_ABSTAIN_MODE")
     if get_meta_policy_mode(skill_dir) not in {"off", "shadow", "live"}:
         failures.append("invalid META_POLICY_MODE")
     if get_uncertainty_mode(skill_dir) not in {"off", "shadow", "live"}:

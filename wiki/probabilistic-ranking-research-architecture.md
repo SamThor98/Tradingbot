@@ -60,6 +60,7 @@ adding hard gates. See [[signal-ranking]] for rank-v2 control.
 - [[backtest]] — Live-parity harness used for dual-run evaluation
 - [[feature-store]] — Ops SQL store vs research Parquet warehouse
 - [[signal-ranking]] — Legacy composite / rank-v2 control
+- [[analog-overlay]] — Outcome-neighborhood shadow score (parallel to purged ML)
 - [[advisory-model]] — Baseline logistic; not the production ranker
 - [[signal-quality-rollout]] — Live stack including rank-v2 p75
 - [[promotion-playbook]] — Hard PF floors and promotion process

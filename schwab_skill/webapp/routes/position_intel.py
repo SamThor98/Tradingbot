@@ -59,18 +59,22 @@ def _err_response(endpoint: str, exc: Exception) -> ApiResponse:
     return ApiResponse(ok=False, error=err_out, data={"recovery": mapped})
 
 
-def _normalize_ticker(raw: str) -> str | None:
+def normalize_ticker(raw: str) -> str | None:
     ticker = str(raw or "").strip().upper()
     if not ticker or not _TICKER_RE.match(ticker):
         return None
     return ticker
 
 
-def _history_and_chain_fetchers(auth: Any):
+def _normalize_ticker(raw: str) -> str | None:
+    return normalize_ticker(raw)
+
+
+def _history_and_chain_fetchers(auth: Any, skill_dir: Path):
     from market_data import get_daily_history, get_options_chain_with_status
 
     def _history(ticker: str):
-        return get_daily_history(ticker, days=HISTORY_DAYS, auth=auth, skill_dir=SKILL_DIR)
+        return get_daily_history(ticker, days=HISTORY_DAYS, auth=auth, skill_dir=skill_dir)
 
     def _chain(ticker: str) -> dict[str, Any] | None:
         chain, _meta = get_options_chain_with_status(
@@ -78,7 +82,7 @@ def _history_and_chain_fetchers(auth: Any):
             contract_type="CALL",
             strike_count=CHAIN_STRIKE_COUNT,
             auth=auth,
-            skill_dir=SKILL_DIR,
+            skill_dir=skill_dir,
         )
         return chain
 
@@ -94,15 +98,13 @@ def _spot_from_history(df: Any) -> float | None:
         return None
 
 
-def _held_equity_row(ticker: str) -> dict[str, Any] | None:
+def _held_equity_row(ticker: str, skill_dir: Path, auth: Any) -> dict[str, Any] | None:
     """Return portfolio equity row for ``ticker`` if currently held, else None."""
     from execution import get_account_status
-    from schwab_auth import DualSchwabAuth
 
     from .._shared import build_portfolio_summary
 
-    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-    status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+    status_data = get_account_status(auth=auth, skill_dir=skill_dir)
     if isinstance(status_data, str):
         # Auth/account failure should not block a research lookup — caller
         # falls back to a synthetic position using history spot.
@@ -114,20 +116,18 @@ def _held_equity_row(ticker: str) -> dict[str, Any] | None:
     return None
 
 
-def _compute_payload() -> dict[str, Any]:
+def compute_position_intel_payload(skill_dir: Path, auth: Any) -> dict[str, Any]:
     from core.position_intel import build_position_intel
     from execution import get_account_status
-    from schwab_auth import DualSchwabAuth
 
     from .._shared import build_portfolio_summary
 
-    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-    status_data = get_account_status(auth=auth, skill_dir=SKILL_DIR)
+    status_data = get_account_status(auth=auth, skill_dir=skill_dir)
     if isinstance(status_data, str):
         raise RuntimeError(status_data)
     summary = build_portfolio_summary(status_data)
     positions = summary.get("positions") or []
-    history_fetcher, chain_fetcher = _history_and_chain_fetchers(auth)
+    history_fetcher, chain_fetcher = _history_and_chain_fetchers(auth, skill_dir)
 
     payload = build_position_intel(positions, history_fetcher=history_fetcher, chain_fetcher=chain_fetcher)
     payload["meta"] = {
@@ -139,15 +139,13 @@ def _compute_payload() -> dict[str, Any]:
     return payload
 
 
-def _compute_lookup_payload(ticker: str) -> dict[str, Any]:
+def compute_position_intel_lookup_payload(ticker: str, skill_dir: Path, auth: Any) -> dict[str, Any]:
     """Single-ticker intel — held or research-only (spot from last close)."""
     from core.position_intel import build_position_intel
-    from schwab_auth import DualSchwabAuth
 
-    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
-    history_fetcher, chain_fetcher = _history_and_chain_fetchers(auth)
+    history_fetcher, chain_fetcher = _history_and_chain_fetchers(auth, skill_dir)
 
-    held = _held_equity_row(ticker)
+    held = _held_equity_row(ticker, skill_dir, auth)
     if held is not None:
         position = dict(held)
         held_flag = True
@@ -179,6 +177,20 @@ def _compute_lookup_payload(ticker: str) -> dict[str, Any]:
         "shares": shares,
     }
     return payload
+
+
+def _compute_payload() -> dict[str, Any]:
+    from schwab_auth import DualSchwabAuth
+
+    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+    return compute_position_intel_payload(SKILL_DIR, auth=auth)
+
+
+def _compute_lookup_payload(ticker: str) -> dict[str, Any]:
+    from schwab_auth import DualSchwabAuth
+
+    auth = DualSchwabAuth(skill_dir=SKILL_DIR)
+    return compute_position_intel_lookup_payload(ticker, SKILL_DIR, auth=auth)
 
 
 @router.get("/api/position-intel", response_model=ApiResponse)

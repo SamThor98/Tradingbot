@@ -13,12 +13,6 @@ from typing import Any
 
 TIMEFRAMES: tuple[dict[str, str], ...] = (
     {
-        "id": "intraday",
-        "display_name": "Intraday",
-        "description": "Same-session confirmation of a daily setup using the live quote (and optional 5m/15m bars). Not a standalone minute-bar book.",
-        "default_strategy_id": "breakout_confirm",
-    },
-    {
         "id": "daily",
         "display_name": "Daily",
         "description": "Primary live engine: daily bars, Stage 2 + VCP, typical multi-week hold.",
@@ -37,6 +31,11 @@ TIMEFRAMES: tuple[dict[str, str], ...] = (
         "default_strategy_id": "monthly_position",
     },
 )
+
+def _profile(*, style: str, hold: str, payoff: str, edge: str) -> dict[str, str]:
+    """High-level return shape for Scan studio cards. Qualitative only — not a backtest print."""
+    return {"style": style, "hold": hold, "payoff": payoff, "edge": edge}
+
 
 # plugin / entry-family ids that map onto a catalog strategy
 _STRATEGY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -73,6 +72,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {"BREAKOUT_CONFIRM_ENABLED": "true"},
         "description": "Requires the daily Stage 2 name to trade through the breakout on the live quote before it stays on the shortlist. Overlay on the daily engine, not a separate minute-bar scanner.",
+        "return_profile": _profile(
+            style="Overlay confirm",
+            hold="Same session as the daily setup — does not change the multi-week Stage 2 hold.",
+            payoff="Cuts false breaks; it is a filter, not a separate P&L stream.",
+            edge="Live-quote confirmation that the breakout is trading through.",
+        ),
     },
     {
         "id": "gap_and_go",
@@ -84,6 +89,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Session-structure proxy on the last completed daily bar: ≥1% opening gap that holds, close in the upper half of the range, volume vs the 50-day average, trend filter above the 200-day SMA. Shadow only — not a 1-minute gap-and-go book. Daily low cannot prove an intraday fill.",
+        "return_profile": _profile(
+            style="Gap continuation",
+            hold="Same day to a few sessions. Daily-bar proxy — not a 1-minute book.",
+            payoff="Held gaps can run; faded gaps give back quickly. Fill quality is unknown on daily bars.",
+            edge="Opening gap that holds in an uptrend, with volume confirmation.",
+        ),
     },
     {
         "id": "range_expansion",
@@ -95,6 +106,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Opening-drive proxy: close through the prior high, today's true range ≥ 1.25× ATR(14), close in the top quartile, above the 50-day SMA. Shadow only.",
+        "return_profile": _profile(
+            style="Range expansion",
+            hold="Days, not minutes — this is a completed daily bar, not an opening-drive tape.",
+            payoff="Wide-range closes can continue; failed expansions reverse the next session.",
+            edge="True-range expansion through the prior high in an uptrend.",
+        ),
     },
     {
         "id": "trend_breakout",
@@ -106,6 +123,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Weinstein Stage 2 uptrend plus volume contraction, ranked as a momentum breakout. This is the live book.",
+        "return_profile": _profile(
+            style="Momentum breakout",
+            hold="Multi-week. Live time-stop is about 40 sessions; trail/partials wait ~15 days.",
+            payoff="Right-skew: many small stops vs fewer trend runners. Not a day-trade.",
+            edge="Stage 2 + VCP continuation. This is the only live order-routing sleeve.",
+        ),
     },
     {
         "id": "pullback",
@@ -117,6 +140,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Uptrend names pulling back toward the 50-day SMA. Evaluated in shadow unless an operator has promoted STRATEGY_PULLBACK_MODE; selecting it here filters the scan, it does not go LIVE.",
+        "return_profile": _profile(
+            style="Trend pullback",
+            hold="Days to a few weeks if the 50-day bounce holds.",
+            payoff="Tighter than a fresh breakout; failed 50-day tags become quick losers.",
+            edge="Buy strength on a dip in a Stage 2 trend — not a falling-knife catch.",
+        ),
     },
     {
         "id": "pead_primary",
@@ -128,6 +157,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Post-earnings announcement drift sleeve. Paper / canary only — Stage 2 still owns executable entries.",
+        "return_profile": _profile(
+            style="Post-event drift",
+            hold="Days after the print. Canary only — this sleeve does not own live entries.",
+            payoff="Slow drift after a surprise; the next print can gap against you.",
+            edge="PEAD literature. Stage 2 still owns executable entries here.",
+        ),
     },
     {
         "id": "donchian_20",
@@ -139,6 +174,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Close through the prior 20-day high (channel excludes today) with a 200-day SMA trend filter. Classic Turtle / channel breakout. Shadow only — selecting it does not go LIVE.",
+        "return_profile": _profile(
+            style="Channel breakout",
+            hold="Weeks while price holds the new-high regime.",
+            payoff="Turtle-style skew: frequent whipsaws, occasional long trends.",
+            edge="20-day high plus a 200-day filter. Shadow only.",
+        ),
     },
     {
         "id": "nr7_breakout",
@@ -150,6 +191,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Mark Fisher NR7: yesterday was the narrowest range of the last 7 sessions, today closes above that bar's high, above the 50-day SMA. Shadow only.",
+        "return_profile": _profile(
+            style="Compression breakout",
+            hold="Short swing after the range expands.",
+            payoff="A few expansions run; many NR7s go nowhere or fake out.",
+            edge="Narrowest 7-day range, then a close through that high.",
+        ),
     },
     {
         "id": "weekly_swing",
@@ -161,6 +208,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Weinstein-style weekly Stage 2 on resampled Friday bars: close > 10-week SMA > 30-week SMA, 30-week SMA rising, within 15% of the 52-week high. Research — not the live book.",
+        "return_profile": _profile(
+            style="Weekly momentum",
+            hold="Multi-week to a few months on Friday bars.",
+            payoff="Same right-skew idea as daily Stage 2, slower and fewer trades.",
+            edge="Weekly 10w > 30w rising, near 52-week highs. Research — not live.",
+        ),
     },
     {
         "id": "weekly_vcp",
@@ -172,6 +225,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Multi-week volume dryness: last 5 weekly bars each print below the 10-week average volume, close above the 30-week SMA. Not Minervini VCP (range contraction). Research only.",
+        "return_profile": _profile(
+            style="Volume dry-up",
+            hold="Weeks after dryness, if the next expansion is up.",
+            payoff="Quiet volume that resolves higher can run; a breakdown after dryness fails fast.",
+            edge="Five quiet weeks above the 30-week SMA — not Minervini range contraction.",
+        ),
     },
     {
         "id": "weekly_breakout",
@@ -183,6 +242,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Weekly close through the prior week's high while above the 30-week SMA. Research only.",
+        "return_profile": _profile(
+            style="Weekly breakout",
+            hold="Weeks while the weekly close holds the new high.",
+            payoff="Weekly whipsaws vs slower trend continuation.",
+            edge="Weekly close through last week's high, above the 30-week SMA.",
+        ),
     },
     {
         "id": "monthly_position",
@@ -194,6 +259,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Meb Faber GTAA timing on month-end bars: monthly close above a rising 10-month SMA. Research — not a live monthly engine.",
+        "return_profile": _profile(
+            style="Trend timing",
+            hold="Months — in above a rising 10-month SMA, out below it.",
+            payoff="Captures long bull legs and sits out deep bears; lags at turns.",
+            edge="Faber-style month-end close above a rising 10-month SMA. Single-name analog, not the ETF GTAA book.",
+        ),
     },
     {
         "id": "monthly_52w_high",
@@ -205,6 +276,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Position-style strength: month-end close within 5% of the 52-week high and above the 10-month SMA. Research only.",
+        "return_profile": _profile(
+            style="Position momentum",
+            hold="Months while the name stays near highs.",
+            payoff="Strength can persist; late-cycle highs round over.",
+            edge="Month-end close within 5% of the 52-week high and above the 10-month SMA.",
+        ),
     },
     {
         "id": "monthly_pullback",
@@ -216,6 +293,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
         "proxy_ids": (),
         "env_on_select": {},
         "description": "Uptrend pullback toward the 10-month SMA: average rising, this month's low tagged it, close still holds above. Research only.",
+        "return_profile": _profile(
+            style="Position pullback",
+            hold="Months if the 10-month bounce holds.",
+            payoff="Better entry than chasing highs; failed SMA tags continue down.",
+            edge="Rising 10-month SMA, this month tagged it, close still holds above.",
+        ),
     },
     {
         "id": "opening_range_breakout",
@@ -233,6 +316,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "The paper is 5-minute ORB on the top-20 relative-volume 'stocks in play'. This is a completed-daily RVOL ≥ 1.5× strong-close screen — not a 5-minute ORB engine and not an opening-range entry.",
         },
         "description": "Completed-daily stocks-in-play proxy: relative volume ≥ 1.5×, close above the open and prior high, close in the upper half of the range. Not a 5-minute opening-range breakout.",
+        "return_profile": _profile(
+            style="High-RVOL proxy",
+            hold="The paper is same-day 5-minute ORB. This screen is a completed daily bar.",
+            payoff="Literature: trend days in 'stocks in play'. This proxy is not that book.",
+            edge="Relative volume + strong close — not an opening-range entry.",
+        ),
     },
     {
         "id": "st_reversal_5d",
@@ -250,6 +339,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "The papers are cross-sectional loser portfolios. This is a single-name −8% formation then bounce, with a $2M ADV floor that removes the illiquid names where the paper edge concentrated. Not a WML book.",
         },
         "description": "Long-only 1-week bounce screen: five completed sessions ending yesterday ≤ −8%, today's completed close turns up, 50-day dollar volume ≥ $2M. Research — not the live book.",
+        "return_profile": _profile(
+            style="Short-term mean reversion",
+            hold="About one week on the paper portfolios. This is a single-name screen.",
+            payoff="Small bounce vs leftover downtrend. Costs eat the microcap versions.",
+            edge="Loser rebound after −8% in five days, with a $2M ADV floor.",
+        ),
     },
     {
         "id": "overnight_gap_fade",
@@ -267,6 +362,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "Overnight premium is close-to-open hold and has been decaying since 2020. This sleeve labels a completed session where a ≥1.5% gap down recovered ≥50% — not an entry at the open.",
         },
         "description": "EOD label of a ≥1.5% opening gap down that recovered at least half by the completed close. Distinct from gap-and-go. Not an open fade. Research only.",
+        "return_profile": _profile(
+            style="Gap recovery label",
+            hold="The paper edge is overnight. This only labels a completed recovery.",
+            payoff="Not a tradable open fade in this implementation.",
+            edge="Gap-down that recovered ≥50% by the close — diagnostic, not an entry.",
+        ),
     },
     {
         "id": "weekly_reversal",
@@ -284,6 +385,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "Same construction warning as the daily bounce: this is a single-name screen on completed Friday bars, not a weekly loser portfolio, and costs eat the edge in microcaps.",
         },
         "description": "Prior completed week's return ≤ −6% and this completed week closes above last week's close. Research only.",
+        "return_profile": _profile(
+            style="Weekly mean reversion",
+            hold="About one to two weeks on completed Friday bars.",
+            payoff="Short bounce after a down week; strong downtrends keep falling.",
+            edge="Prior week ≤ −6%, this week turns up. Single-name screen, not a loser portfolio.",
+        ),
     },
     {
         "id": "momentum_12_1",
@@ -301,6 +408,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "The paper is cross-sectional winner-minus-loser with a 1-month hold. This is a single-name 12-1 strength screen (skip last month, ≥20%, above SMA200), then top-10 of those hits in the current scan — not a WML portfolio.",
         },
         "description": "12-month formation skipping the most recent month: return from 252 to 21 days ago ≥ 20%, last completed close above the 200-day SMA. Single-name screen. Research — not LIVE.",
+        "return_profile": _profile(
+            style="12-1 momentum",
+            hold="Paper WML holds ~1 month. This is a single-name strength screen, then top-10 of hits.",
+            payoff="Literature: winners keep winning after skipping last month. Not a WML book here.",
+            edge="12-month return ≥20% skipping last month, above the 200-day SMA.",
+        ),
     },
     {
         "id": "tsmom_12m",
@@ -318,6 +431,12 @@ STRATEGIES: tuple[dict[str, Any], ...] = (
             "caveat": "Original TSMOM is a vol-scaled futures overlay (long/short). This is the single-name analog on completed month-end closes — close above the close 12 months earlier — not crisis alpha.",
         },
         "description": "Completed month-end close above the close 12 months ago. Distinct from the 10-month SMA Faber sleeve. Research only.",
+        "return_profile": _profile(
+            style="Time-series trend",
+            hold="Months on a 12-month lookback.",
+            payoff="Paper TSMOM is vol-scaled futures. This is a single-name analog, not crisis alpha.",
+            edge="Month-end close above the close 12 months earlier.",
+        ),
     },
 )
 
@@ -618,12 +737,68 @@ def filter_signals_for_scan_selection(
     return [s for s in rows if signal_matches_strategy_ids(s, ids)]
 
 
+def scan_arm_flags(strategy_ids: list[str] | None) -> dict[str, Any]:
+    """Which Stage A arms to run so unchecked sleeves do not hit Schwab."""
+    from core.horizon_strategies import selected_dual_admit_ids
+
+    ids = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    if not ids:
+        return {
+            "want_stage2": True,
+            "want_pead": False,
+            "want_breakout_quotes": False,
+            "want_horizon": [],
+        }
+    want_horizon = selected_dual_admit_ids(ids)
+    want_stage2 = any(sid in {"trend_breakout", "breakout_confirm", "breakout", "stage2", "stage2_vcp"} for sid in ids)
+    return {
+        "want_stage2": bool(want_stage2),
+        "want_pead": "pead_primary" in ids,
+        "want_breakout_quotes": "breakout_confirm" in ids,
+        "want_horizon": list(want_horizon),
+    }
+
+
+def annotate_passed_strategies(
+    signals: list[dict[str, Any]] | None,
+    strategy_ids: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Stamp each row with the selected sleeves it actually passed."""
+    ids = [str(s).strip().lower() for s in (strategy_ids or []) if str(s).strip()]
+    rows = [s for s in (signals or []) if isinstance(s, dict)]
+    for sig in rows:
+        passed_ids = [sid for sid in ids if signal_matches_strategy_ids(sig, [sid])] if ids else []
+        if not passed_ids:
+            tokens = _signal_match_tokens(sig)
+            passed_ids = [sid for sid in known_strategy_ids() if sid in tokens]
+        names: list[str] = []
+        for sid in passed_ids:
+            row = get_strategy(sid)
+            names.append(str(row["display_name"]) if row else sid)
+        attr = dict(sig.get("strategy_attribution") or {}) if isinstance(sig.get("strategy_attribution"), dict) else {}
+        attr["passed_ids"] = list(passed_ids)
+        attr["passed_names"] = names
+        if passed_ids:
+            lead = get_strategy(passed_ids[0]) or {}
+            attr["catalog_id"] = passed_ids[0]
+            attr["display_name"] = names[0]
+            attr["timeframe"] = lead.get("timeframe") or attr.get("timeframe")
+            attr["description"] = lead.get("description") or attr.get("description")
+            family = str(sig.get("entry_family") or "")
+            if family == "horizon" or str(attr.get("top_live") or "") in {"", "unknown"}:
+                attr["top_live"] = passed_ids[0]
+        sig["strategy_attribution"] = attr
+    return rows
+
+
 def _strategy_payload_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     sid = str(out.get("id") or "")
     out.setdefault("origin", "iterated" if sid in ITERATED_STRATEGY_IDS else "literature")
     if not isinstance(out.get("evidence"), dict):
         out["evidence"] = {}
+    if not isinstance(out.get("return_profile"), dict):
+        out["return_profile"] = {}
     return out
 
 
@@ -643,7 +818,7 @@ def build_scan_catalog_payload() -> dict[str, Any]:
             "plugin_promotion": "Selecting a shadow strategy filters results for this scan; it does not promote plugins to LIVE.",
             "strategy_merge": "Literature sleeves are additive. Iterated ids (Yours) are never removed when paper strategies are added.",
             "one_thesis": "Each timeframe tab defaults to one primary sleeve. Paper rows are opt-in and are not batch-selected with their opposite.",
-            "completed_bars": "Research sleeves evaluate completed daily/weekly/monthly bars. Intraday live-quote overlay is breakout_confirm only.",
+            "completed_bars": "Research sleeves evaluate completed daily/weekly/monthly bars.",
         },
     }
 

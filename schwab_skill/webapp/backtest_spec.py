@@ -10,11 +10,24 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from core.scan_catalog import (
+    DEFAULT_UNIVERSE,
+    default_strategy_ids_for_timeframe,
+    env_overrides_for_strategies,
+    known_strategy_ids,
+    known_timeframe_ids,
+    known_universe_ids,
+    resolve_strategy_ids,
+)
+
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,16}$")
+_SP1500_PRESETS = frozenset({"sp1500", "watchlist", ""})
+# Named indexes follow the catalog size. The live account focus stays on scans.
+_FULL_INDEX_PRESETS = frozenset({"sp1500", "sp500", "nasdaq100", "sector_etfs"})
 
 
 class StrategyOverrides(BaseModel):
@@ -45,6 +58,13 @@ class StrategyOverrides(BaseModel):
     event_risk_mode: Literal["off", "shadow", "live"] | None = None
     exit_manager_mode: Literal["off", "shadow", "live"] | None = None
     exec_quality_mode: Literal["off", "shadow", "live"] | None = None
+    stage2_52w_pct: float | None = Field(default=None, ge=0.5, le=1.0)
+    stage2_sma_upward_days: int | None = Field(default=None, ge=1, le=120)
+    vcp_days: int | None = Field(default=None, ge=1, le=30)
+    scan_vcp_gate_mode: Literal["hard", "shadow"] | None = None
+    backtest_hold_days: int | None = Field(default=None, ge=1, le=120)
+    backtest_min_hold_days_before_trail: int | None = Field(default=None, ge=0, le=60)
+    rank_filter_shadow_min_percentile_rank_v2: int | None = Field(default=None, ge=0, le=95)
 
     def to_env_overrides(self) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -102,6 +122,22 @@ class StrategyOverrides(BaseModel):
             out["EXIT_MANAGER_MODE"] = self.exit_manager_mode
         if self.exec_quality_mode is not None:
             out["EXEC_QUALITY_MODE"] = self.exec_quality_mode
+        if self.stage2_52w_pct is not None:
+            out["STAGE2_52W_PCT"] = str(float(self.stage2_52w_pct))
+        if self.stage2_sma_upward_days is not None:
+            out["STAGE2_SMA_UPWARD_DAYS"] = str(int(self.stage2_sma_upward_days))
+        if self.vcp_days is not None:
+            out["VCP_DAYS"] = str(int(self.vcp_days))
+        if self.scan_vcp_gate_mode is not None:
+            out["SCAN_VCP_GATE_MODE"] = self.scan_vcp_gate_mode
+        if self.backtest_hold_days is not None:
+            out["BACKTEST_HOLD_DAYS"] = str(int(self.backtest_hold_days))
+        if self.backtest_min_hold_days_before_trail is not None:
+            out["BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL"] = str(int(self.backtest_min_hold_days_before_trail))
+        if self.rank_filter_shadow_min_percentile_rank_v2 is not None:
+            out["RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"] = str(
+                int(self.rank_filter_shadow_min_percentile_rank_v2)
+            )
         return out
 
 
@@ -111,7 +147,10 @@ class StrategySpecV1(BaseModel):
     schema_version: Literal[1] = 1
     theory_name: str | None = Field(default=None, max_length=200)
     universe_mode: Literal["watchlist", "tickers"]
+    universe_preset: str | None = None
     tickers: list[str] = Field(default_factory=list)
+    strategy_ids: list[str] = Field(default_factory=list)
+    scan_timeframe: str | None = None
     start_date: str = Field(min_length=10, max_length=10)
     end_date: str = Field(min_length=10, max_length=10)
     slippage_bps_per_side: float = Field(default=15.0, ge=0.0, le=200.0)
@@ -141,19 +180,81 @@ class StrategySpecV1(BaseModel):
                 raise ValueError(f"invalid ticker symbol: {t!r}")
         return v
 
+    @field_validator("universe_preset", mode="before")
+    @classmethod
+    def _normalize_universe_preset(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        key = str(v).strip().lower()
+        if not key:
+            return None
+        if key in _SP1500_PRESETS:
+            return "sp1500"
+        if key in {"tickers"}:
+            return "custom"
+        return key
+
+    @field_validator("universe_preset")
+    @classmethod
+    def _universe_available(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in known_universe_ids(available_only=True):
+            raise ValueError(f"universe preset {v!r} is not available")
+        return v
+
+    @field_validator("strategy_ids", mode="before")
+    @classmethod
+    def _lower_strategy_ids(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        return [str(s).strip().lower() for s in v if str(s).strip()]
+
+    @field_validator("strategy_ids")
+    @classmethod
+    def _strategy_ids_known(cls, v: list[str]) -> list[str]:
+        known = known_strategy_ids()
+        unknown = [s for s in v if s not in known]
+        if unknown:
+            raise ValueError(f"unknown strategy_ids: {unknown}")
+        return v
+
+    @field_validator("scan_timeframe")
+    @classmethod
+    def _timeframe_known(cls, v: str | None) -> str | None:
+        if v is None or str(v).strip() == "":
+            return None
+        key = str(v).strip().lower()
+        if key not in known_timeframe_ids():
+            raise ValueError(f"unknown scan_timeframe: {v!r}")
+        return key
+
     @model_validator(mode="after")
     def _universe_and_range(self) -> StrategySpecV1:
         max_tickers = max(1, int(os.getenv("SAAS_BACKTEST_MAX_TICKERS", "40")))
         max_days = max(30, int(os.getenv("SAAS_BACKTEST_MAX_RANGE_DAYS", "3652")))
         min_days = max(1, int(os.getenv("SAAS_BACKTEST_MIN_RANGE_DAYS", "30")))
 
-        if self.universe_mode == "tickers":
+        preset = self.universe_preset
+        if preset is None:
+            preset = "custom" if self.universe_mode == "tickers" else DEFAULT_UNIVERSE
+            self.universe_preset = preset
+        custom = preset == "custom" or self.universe_mode == "tickers"
+        if custom:
+            self.universe_mode = "tickers"
+            self.universe_preset = "custom"
             if not self.tickers:
-                raise ValueError("tickers required when universe_mode is 'tickers'")
+                raise ValueError("tickers required when universe_mode is 'tickers' or universe_preset is 'custom'")
             if len(self.tickers) > max_tickers:
                 raise ValueError(f"at most {max_tickers} tickers allowed")
         else:
+            self.universe_mode = "watchlist"
             self.tickers = []
+
+        if self.strategy_ids:
+            self.strategy_ids = resolve_strategy_ids(list(self.strategy_ids), scan_timeframe=self.scan_timeframe)
+        elif self.scan_timeframe:
+            self.strategy_ids = default_strategy_ids_for_timeframe(self.scan_timeframe)
 
         start = datetime.strptime(self.start_date, "%Y-%m-%d")
         end = datetime.strptime(self.end_date, "%Y-%m-%d")
@@ -167,9 +268,15 @@ class StrategySpecV1(BaseModel):
         return self
 
     def env_overrides_merged(self) -> dict[str, str] | None:
-        if not self.overrides:
-            return None
-        o = self.overrides.to_env_overrides()
+        o: dict[str, str] = {}
+        if self.overrides:
+            o.update(self.overrides.to_env_overrides())
+        extra = env_overrides_for_strategies(list(self.strategy_ids or []))
+        for key, val in extra.items():
+            o.setdefault(str(key), str(val))
+        preset = str(self.universe_preset or "")
+        if self.universe_mode != "tickers" and preset in _FULL_INDEX_PRESETS and "SIGNAL_UNIVERSE_MODE" not in o:
+            o["SIGNAL_UNIVERSE_MODE"] = "broad"
         return o or None
 
 
@@ -180,10 +287,15 @@ def parse_strategy_spec(raw: dict[str, Any]) -> StrategySpecV1:
     return StrategySpecV1.model_validate(raw)
 
 
-def run_strategy_backtest(skill_dir: Path, spec: StrategySpecV1) -> dict[str, Any]:
+def run_strategy_backtest(
+    skill_dir: Path,
+    spec: StrategySpecV1,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     from backtest import run_backtest
 
     tickers: list[str] | None = spec.tickers if spec.universe_mode == "tickers" else None
+    preset = spec.universe_preset if spec.universe_mode != "tickers" else None
     return run_backtest(
         tickers=tickers,
         start_date=spec.start_date,
@@ -194,6 +306,9 @@ def run_strategy_backtest(skill_dir: Path, spec: StrategySpecV1) -> dict[str, An
         max_adv_participation=spec.max_adv_participation,
         skill_dir=skill_dir,
         env_overrides=spec.env_overrides_merged(),
+        universe_preset=preset,
+        strategy_ids=list(spec.strategy_ids or []) or None,
+        on_progress=on_progress,
     )
 
 
@@ -202,7 +317,10 @@ def spec_preview_dict(spec: StrategySpecV1) -> dict[str, Any]:
         "schema_version": spec.schema_version,
         "theory_name": spec.theory_name,
         "universe_mode": spec.universe_mode,
+        "universe_preset": spec.universe_preset,
         "tickers": spec.tickers,
+        "strategy_ids": list(spec.strategy_ids or []),
+        "scan_timeframe": spec.scan_timeframe,
         "start_date": spec.start_date,
         "end_date": spec.end_date,
         "slippage_bps_per_side": spec.slippage_bps_per_side,

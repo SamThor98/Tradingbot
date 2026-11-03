@@ -30,6 +30,7 @@ tags: [runbook, auth]
 
 ## Related Pages
 
+- [[local-ops-box]] — copy `.env` + `tokens_*.enc` onto the dedicated host
 - [[schwab-auth]] — architecture overview
 - [[schwab-api-keys]] — env var reference
 - [[troubleshooting]] — common auth issues

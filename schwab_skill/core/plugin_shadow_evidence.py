@@ -8,9 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+TZ_NY = ZoneInfo("America/New_York")
+RTH_OPEN_MINUTES = 9 * 60 + 30
+RTH_CLOSE_MINUTES = 16 * 60
 
 LOG = logging.getLogger(__name__)
 
@@ -26,12 +33,57 @@ def ledger_path(skill_dir: Path) -> Path:
     return shadow_evidence_dir(skill_dir) / LEDGER_FILENAME
 
 
+def _parse_scan_datetime(raw: Any) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(TZ_NY)
+
+
+def evidence_session_date(row: dict[str, Any]) -> str | None:
+    """ET calendar date (YYYY-MM-DD) for a ledger row, or None if unparseable."""
+    parsed = _parse_scan_datetime(row.get("scan_at") or row.get("ts"))
+    if parsed is None:
+        return None
+    return parsed.date().isoformat()
+
+
+def evidence_session_is_rth(row: dict[str, Any] | str | None) -> bool:
+    """True when scan_at/ts is a weekday 09:30–16:00 America/New_York.
+
+    Fail-closed: missing or unparseable timestamps are not RTH.
+    """
+    if isinstance(row, dict):
+        raw = row.get("scan_at") or row.get("ts")
+    else:
+        raw = row
+    parsed = _parse_scan_datetime(raw)
+    if parsed is None:
+        return False
+    if parsed.weekday() >= 5:
+        return False
+    minutes = parsed.hour * 60 + parsed.minute
+    return RTH_OPEN_MINUTES <= minutes < RTH_CLOSE_MINUTES
+
+
 def _pead_primary_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
-    eff = str(
-        diagnostics.get("strategy_pead_primary_effective_mode")
-        or diagnostics.get("strategy_pead_primary_mode")
-        or "off"
-    ).strip().lower()
+    eff = (
+        str(
+            diagnostics.get("strategy_pead_primary_effective_mode")
+            or diagnostics.get("strategy_pead_primary_mode")
+            or "off"
+        )
+        .strip()
+        .lower()
+    )
     shadow_names = diagnostics.get("pead_primary_shadow_names") or []
     listed = len(shadow_names) if isinstance(shadow_names, list) else 0
     try:
@@ -53,9 +105,7 @@ def _pead_primary_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "admitted": int(diagnostics.get("pead_primary_admitted") or 0),
         "overlap_with_stage2": int(diagnostics.get("overlap_with_stage2") or 0),
         "would_rank_top_n": int(diagnostics.get("pead_primary_would_rank_top_n") or 0),
-        "would_rank_capacity_top_n": int(
-            diagnostics.get("pead_primary_would_rank_capacity_top_n") or 0
-        ),
+        "would_rank_capacity_top_n": int(diagnostics.get("pead_primary_would_rank_capacity_top_n") or 0),
         "capacity_rank_arm": diagnostics.get("pead_primary_capacity_rank_arm"),
         "shadow_sort_key": diagnostics.get("pead_primary_shadow_sort_key"),
         "shadow_truncated": int(diagnostics.get("pead_primary_shadow_truncated") or 0),
@@ -63,6 +113,64 @@ def _pead_primary_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
         "lookback_days": diagnostics.get("pead_primary_lookback_days"),
         "canary_sleeve": canary,
         "executable_still_stage2_only": True,
+    }
+
+
+def _diag_mode(diagnostics: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        raw = diagnostics.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip().lower()
+        if text:
+            return text
+    return "off"
+
+
+def _entry_timing_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    mode = _diag_mode(diagnostics, "entry_timing_shadow_mode")
+    return {
+        "mode": mode,
+        "effective_mode": mode,
+        "live_enforced": int(diagnostics.get("entry_timing_live_enforced") or 0),
+        "blocked": int(diagnostics.get("entry_timing_blocked") or 0),
+        "would_filter_any": int(diagnostics.get("entry_shadow_would_filter_any") or 0),
+        "would_filter_breakout_buffer": int(
+            diagnostics.get("entry_shadow_would_filter_breakout_buffer") or 0
+        ),
+    }
+
+
+def _rank_filter_v2_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    mode = _diag_mode(diagnostics, "rank_filter_v2_mode")
+    evaluated = int(diagnostics.get("rank_filter_v2_evaluated") or 0)
+    dropped = int(diagnostics.get("rank_filter_v2_dropped") or 0)
+    would_drop = int(diagnostics.get("rank_filter_v2_would_drop") or dropped or 0)
+    return {
+        "mode": mode,
+        "effective_mode": mode,
+        "evaluated": evaluated,
+        "dropped": dropped,
+        "would_drop": would_drop,
+        "min_percentile": diagnostics.get("rank_filter_v2_min_percentile"),
+    }
+
+
+def _prob_rank_shadow_block(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    mode = _diag_mode(diagnostics, "prob_rank_mode")
+    evaluated = int(
+        diagnostics.get("prob_rank_evaluated") or diagnostics.get("prob_rank_scored") or 0
+    )
+    selected = int(
+        diagnostics.get("prob_rank_selected") or diagnostics.get("prob_rank_would_keep") or 0
+    )
+    return {
+        "mode": mode,
+        "effective_mode": mode,
+        "evaluated": evaluated,
+        "selected": selected,
+        "would_drop": int(diagnostics.get("prob_rank_would_drop") or 0),
+        "unscored": int(diagnostics.get("prob_rank_unscored") or 0),
     }
 
 
@@ -75,16 +183,22 @@ def build_plugin_shadow_record(
 ) -> dict[str, Any] | None:
     """Build one ledger row from scan diagnostics.
 
-    Returns None when regime, correlation, and PEAD-primary modes are all off.
+    Returns None when every wired plugin mode is off.
     """
-    regime_mode = str(diagnostics.get("regime_v2_mode") or "off").strip().lower()
-    corr_mode = str(diagnostics.get("correlation_guard_mode") or "off").strip().lower()
-    pead_eff = str(
-        diagnostics.get("strategy_pead_primary_effective_mode")
-        or diagnostics.get("strategy_pead_primary_mode")
-        or "off"
-    ).strip().lower()
-    if regime_mode == "off" and corr_mode == "off" and pead_eff == "off":
+    regime_mode = _diag_mode(diagnostics, "regime_v2_mode")
+    corr_mode = _diag_mode(diagnostics, "correlation_guard_mode")
+    pead_eff = _diag_mode(
+        diagnostics,
+        "strategy_pead_primary_effective_mode",
+        "strategy_pead_primary_mode",
+    )
+    entry_mode = _diag_mode(diagnostics, "entry_timing_shadow_mode")
+    rank_mode = _diag_mode(diagnostics, "rank_filter_v2_mode")
+    prob_mode = _diag_mode(diagnostics, "prob_rank_mode")
+    if all(
+        m == "off"
+        for m in (regime_mode, corr_mode, pead_eff, entry_mode, rank_mode, prob_mode)
+    ):
         return None
 
     rank_eval = int(diagnostics.get("rank_filter_v2_evaluated") or 0)
@@ -148,6 +262,9 @@ def build_plugin_shadow_record(
             "pair_demotions": int(diagnostics.get("correlation_guard_pair_demotions") or 0),
         },
         "pead_primary": _pead_primary_shadow_block(diagnostics),
+        "entry_timing": _entry_timing_shadow_block(diagnostics),
+        "rank_filter_v2": _rank_filter_v2_shadow_block(diagnostics),
+        "prob_rank": _prob_rank_shadow_block(diagnostics),
         "multi_sleeve": multi_sleeve,
         "quality_gates_mode": diagnostics.get("quality_gates_mode"),
         "prob_rank_mode": diagnostics.get("prob_rank_mode"),
@@ -160,6 +277,63 @@ def append_plugin_shadow_record(skill_dir: Path, record: dict[str, Any]) -> Path
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, default=str) + "\n")
     return path
+
+
+def _rewrite_ledger(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for row in records:
+                fh.write(json.dumps(row, default=str) + "\n")
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def upsert_plugin_shadow_record(skill_dir: Path, record: dict[str, Any]) -> dict[str, Any]:
+    """Insert or replace the ledger row for this record's ET calendar date.
+
+    Rows without a parseable date always append (legacy undated evidence).
+    A Regular Trading Hours (RTH) row is never replaced by a non-RTH scan
+    on the same ET date.
+    """
+    path = ledger_path(skill_dir)
+    et_date = evidence_session_date(record)
+    existing = load_plugin_shadow_records(skill_dir)
+    if not et_date:
+        append_plugin_shadow_record(skill_dir, record)
+        return {"action": "appended_undated", "path": str(path), "et_date": None}
+
+    replaced = False
+    kept_rth = False
+    out: list[dict[str, Any]] = []
+    new_is_rth = evidence_session_is_rth(record)
+    for row in existing:
+        if evidence_session_date(row) == et_date:
+            if not replaced:
+                if evidence_session_is_rth(row) and not new_is_rth:
+                    out.append(row)
+                    kept_rth = True
+                else:
+                    out.append(record)
+                replaced = True
+            continue
+        out.append(row)
+    if not replaced:
+        out.append(record)
+        action = "inserted"
+    elif kept_rth:
+        action = "kept_rth"
+    else:
+        action = "replaced"
+    if action != "kept_rth":
+        _rewrite_ledger(path, out)
+    return {"action": action, "path": str(path), "et_date": et_date}
 
 
 def load_plugin_shadow_records(skill_dir: Path) -> list[dict[str, Any]]:
@@ -191,15 +365,12 @@ def summarize_plugin_shadow_records(records: list[dict[str, Any]]) -> dict[str, 
         for r in records
         if isinstance(r.get("regime_v2"), dict) and r["regime_v2"].get("score") is not None
     ]
-    would_demote = [
-        int((r.get("correlation_guard") or {}).get("would_demote") or 0) for r in records
-    ]
+    would_demote = [int((r.get("correlation_guard") or {}).get("would_demote") or 0) for r in records]
     dq_ok = sum(1 for r in records if str(r.get("data_quality") or "").lower() == "ok")
     pead_rows = [
         r.get("pead_primary")
         for r in records
-        if isinstance(r.get("pead_primary"), dict)
-        and str(r["pead_primary"].get("effective_mode") or "off") != "off"
+        if isinstance(r.get("pead_primary"), dict) and str(r["pead_primary"].get("effective_mode") or "off") != "off"
     ]
     pead_admitted = [int(p.get("admitted") or 0) for p in pead_rows]
     pead_dq_ok = sum(
@@ -219,8 +390,6 @@ def summarize_plugin_shadow_records(records: list[dict[str, Any]]) -> dict[str, 
         "correlation_would_demote_max": max(would_demote) if would_demote else 0,
         "pead_primary_shadow_n": len(pead_rows),
         "pead_primary_dq_ok_n": pead_dq_ok,
-        "pead_primary_admitted_mean": (
-            round(sum(pead_admitted) / len(pead_admitted), 3) if pead_admitted else None
-        ),
+        "pead_primary_admitted_mean": (round(sum(pead_admitted) / len(pead_admitted), 3) if pead_admitted else None),
         "latest_scan_at": records[-1].get("scan_at") or records[-1].get("ts"),
     }

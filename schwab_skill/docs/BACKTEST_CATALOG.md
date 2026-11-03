@@ -10,10 +10,10 @@
 
 | Question | Answer |
 |---|---|
-| Bare-signal verdict | **`proceed`** after `pts_52w≤37` — PF mean **1.214**, worst-era **1.105** (`stage2_pts52w_cap37`, 2026-07-18) |
+| Committed gate | **`schwab_skill/signal_edge_ledger.json`** — plugin LIVE **`blocked`**. Cap37 artifact says `proceed` (PF mean **1.2137**, worst-era **1.1054**). Pre-cap artifact says `iterate_with_caution` (PF mean **1.1624**, worst-era **1.0323**). Those profit factors are quoted from the artifacts, not a new run. |
 | Pre-cap bare (historical) | `stage2_only_aug` — PF mean **1.162**, worst-era **1.032** (`iterate_with_caution`) |
 | Promotion gates | PF mean ≥ **1.20**, worst-era PF ≥ **1.00** |
-| Bare signal clears gates? | **Yes** with live `PTS_52W_CAP_MODE` (blocks lifted for bare gate; keep PROB_RANK shadow) |
+| Bare signal clears numeric floors? | Cap37 artifact **yes** (PF mean 1.2137 / worst 1.1054). Plugin LIVE stays **blocked** in `signal_edge_ledger.json` until a capped-replay re-audit is signed. |
 | Promoted offline stack (pre-cap) | Exit grace 15/40 + 1% breakout buffer → PF mean **1.212**, worst **1.037** |
 | Post-cap stack (pts_52w≤37) | Buffer book PF mean **1.283**, worst **1.058**; **p75 fails** worst-era — **p76 live** (PF mean **1.323**, worst **1.034**) |
 | PF 1.50 peer (Track B) | **`pead_primary_aug_fixed_full_c40`** clears — PF mean **1.550**, worst **1.167**; pullback full **rejects** (worst 0.959) |

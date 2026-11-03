@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/Signal Scanner.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-10-05
 tags: [architecture, scanner, signals]
 ---
 
@@ -11,7 +11,7 @@ tags: [architecture, scanner, signals]
 
 ## Stage A — Fast Filters
 
-Workers: `SCAN_STAGE_A_MAX_WORKERS` (default 4)
+Workers: `SCAN_STAGE_A_MAX_WORKERS` (default 4; 8-core ops box: 6 — see [[local-ops-box]])
 
 1. [[stage-2-analysis]] — price within 85% of 52W high + rising 200 SMA
 2. [[vcp-detection]] — consecutive days of volume contraction
@@ -49,18 +49,20 @@ Every scan returns `(signals, diagnostics)` with counters: `stage2_fail`, `vcp_f
 
 ## Related Pages
 
+- [[local-ops-box]] — dedicated host worker caps (do not scale Stage A to 16 threads)
 - [[signal-ranking]] — how signals are scored and sorted
 - [[scanner-tunables]] — all env var knobs
 - [[quality-gates]] — quality filtering modes
 - [[system-overview]] — pipeline context
 - [[agent-intelligence]] — dynamic weighting + meta-policy applied to scanner output
 - [[mirofish-engine]] — Stage B persona simulation
+- [[agent-session-handoff]] — read-only review after scanner or backtest edits
 - [[prediction-market]] — Stage B prediction-market overlay
 - [[backtest]] — historical replay that reuses these same Stage A/B rules
 - [[scan-catalog]] — timeframe / universe picker in front of this pipeline
-- [[horizon-strategies]] — extra sleeves dual-admit at Stage A when selected; horizon-only is non-executable, ranked on `research_score`, and uses completed bars
+- [[horizon-strategies]] — extra sleeves dual-admit at Stage A when selected; horizon-only and dedicated PEAD are non-executable, ranked on that sleeve's own score, and get a full Stage B budget when Stage 2 is not selected
 - [[feature-store]] — every emitted signal is recorded here
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-10-05*

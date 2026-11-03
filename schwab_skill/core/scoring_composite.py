@@ -203,11 +203,9 @@ def apply_composite_risk_caps(
         capped = min(capped, 58.0)
     tag = str(sec_risk_tag or "unknown").lower()
     if tag == "unknown" and sec_risk_score is not None:
-        try:
-            risk = float(sec_risk_score)
-            tag = "high" if risk >= 0.67 else ("medium" if risk >= 0.33 else "low")
-        except (TypeError, ValueError):
-            tag = "unknown"
+        from core.sec_risk_score import sec_risk_tag_from_score
+
+        tag = sec_risk_tag_from_score(sec_risk_score)
     flags = list(forensic_flags or [])
     if tag == "high" or "beneish_manipulator" in flags or "altman_distress" in flags:
         capped = min(capped, 45.0)
@@ -241,6 +239,44 @@ def compute_composite_quality(
     close_vs_sma200_pct: float = 0.0,
     weights: CompositeQualityWeights | None = None,
 ) -> float:
+    """Capped composite. The pre-cap blend is ``composite_quality_with_raw``."""
+    capped, _raw = composite_quality_with_raw(
+        signal_score=signal_score,
+        pts_52w=pts_52w,
+        pts_volume=pts_volume,
+        pts_mirofish=pts_mirofish,
+        p_up_calibrated=p_up_calibrated,
+        reliability_score=reliability_score,
+        execution_score=execution_score,
+        sec_risk_tag=sec_risk_tag,
+        forensic_flags=forensic_flags,
+        sec_risk_score=sec_risk_score,
+        close_vs_sma200_pct=close_vs_sma200_pct,
+        weights=weights,
+    )
+    return capped
+
+
+def composite_quality_with_raw(
+    *,
+    signal_score: float,
+    pts_52w: float,
+    pts_volume: float,
+    pts_mirofish: float,
+    p_up_calibrated: float,
+    reliability_score: float | None,
+    execution_score: float | None,
+    sec_risk_tag: str | None,
+    forensic_flags: list[str] | None,
+    sec_risk_score: float | None = None,
+    close_vs_sma200_pct: float = 0.0,
+    weights: CompositeQualityWeights | None = None,
+) -> tuple[float, float]:
+    """Return ``(capped composite, pre-cap blend)``.
+
+    The capped value is what ``composite_score`` stores. The raw blend is
+    display-only so a forensic ceiling is not read as the model's score.
+    """
     w = weights or composite_quality_weights_from_config()
     sig_for_edge, _, _, _ = normalized_component_scores(
         signal_score=signal_score,
@@ -285,7 +321,8 @@ def compute_composite_quality(
             + (exe * w.composite_execution_weight)
         )
 
-    return apply_composite_risk_caps(
+    raw = round(_clamp(base), 2)
+    capped = apply_composite_risk_caps(
         base,
         reliability_score=reliability_score,
         execution_score=execution_score,
@@ -293,6 +330,7 @@ def compute_composite_quality(
         forensic_flags=forensic_flags,
         sec_risk_score=sec_risk_score,
     )
+    return capped, raw
 
 
 def composite_quality_from_signal_row(
@@ -453,5 +491,6 @@ def compute_composite_quality_series(
     composite = np.where(execution < 45.0, np.minimum(composite, 58.0), composite)
     sec = _series_from_df(df, "sec_risk_score", default=0.0) if "sec_risk_score" in df.columns else None
     if sec is not None:
-        composite = np.where(sec >= 0.67, np.minimum(composite, 45.0), composite)
+        # Advisory encoding: high risk is -1, low risk is +1. Zero is unknown.
+        composite = np.where(sec <= -0.5, np.minimum(composite, 45.0), composite)
     return pd.Series(np.clip(composite, 0.0, 100.0), index=df.index, dtype=float)

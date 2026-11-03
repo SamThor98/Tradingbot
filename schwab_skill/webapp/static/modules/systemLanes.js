@@ -1,11 +1,12 @@
 /**
- * System screen lane navigation — Ready / Decide / Calibrate / Shadow /
- * Review / Connect / Advanced. Keeps the command strip visible and shows
- * one lane body at a time (decision facelift IA).
+ * System screen lane navigation. The visible nav leads with Ready and
+ * Connect; Decide / Calibrate / Shadow / Review / Advanced follow.
+ * Keeps the command strip visible and shows one lane body at a time.
  */
 
 import { state } from "./state.js";
 import { safeText } from "./format.js";
+import { marketDataCardOrNull } from "./marketDataFix.js";
 
 export const SYSTEM_LANES = Object.freeze([
   "ready",
@@ -23,6 +24,8 @@ export const SYSTEM_LANE_ALIASES = Object.freeze({
   decide: "decide",
   promote: "decide",
   decision: "decide",
+  bookwidth: "decide",
+  "book-width": "decide",
   calibrate: "calibrate",
   calibration: "calibrate",
   shadow: "shadow",
@@ -42,7 +45,7 @@ export const SYSTEM_LANE_ALIASES = Object.freeze({
 /** Panels belonging to each lane (command strip / alert stay always-on). */
 export const SYSTEM_LANE_PANELS = Object.freeze({
   ready: ["healthRibbon", "systemStatusCompact"],
-  decide: ["systemDecisionPanel", "decisionDashboardCard"],
+  decide: ["systemDecisionPanel", "decisionDashboardCard", "decisionBookWidth"],
   calibrate: ["systemQualityDiagnostics", "calibrationSection"],
   shadow: ["systemQualityDiagnostics", "shadowScoreboardSection"],
   review: ["systemQualityDiagnostics", "reviewLoopSection"],
@@ -66,6 +69,17 @@ export function normalizeSystemLane(raw) {
   if (SYSTEM_LANES.includes(key)) return key;
   if (SYSTEM_LANE_ALIASES[key]) return SYSTEM_LANE_ALIASES[key];
   return "ready";
+}
+
+/** Map a DOM id or ?section= alias to a System lane, or "" if unknown. */
+export function systemLaneForPanelId(panelId) {
+  const hid = safeText(panelId || "").replace(/^#/, "");
+  if (!hid) return "";
+  if (SYSTEM_LANES.includes(hid) || SYSTEM_LANE_ALIASES[hid]) return normalizeSystemLane(hid);
+  for (const [lane, ids] of Object.entries(SYSTEM_LANE_PANELS)) {
+    if (ids.includes(hid)) return lane;
+  }
+  return "";
 }
 
 function setLaneHidden(el, hidden) {
@@ -145,12 +159,13 @@ export function applySystemLane(lane, { updateUrl = false } = {}) {
     }
   }
 
-  // Soft-scroll active lane body into view (skip command strip).
+  // Soft-scroll only when the operator picked a lane. Boot calls pass
+  // updateUrl: false and must leave the page at the top.
   const focusId = (SYSTEM_LANE_PANELS[next] || [])[0];
   const focusEl = focusId ? document.getElementById(focusId) : null;
-  if (focusEl && !focusEl.classList.contains("system-lane-hidden")) {
+  if (updateUrl && focusEl && !focusEl.classList.contains("system-lane-hidden")) {
     try {
-      focusEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      focusEl.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch {
       /* ignore */
     }
@@ -170,25 +185,29 @@ export function applySystemLane(lane, { updateUrl = false } = {}) {
 
 /**
  * Build the command-strip "Next decision" card copy from health + blockers.
- * @param {{ blockers?: string[], authState?: string, quoteOk?: boolean|null, systemState?: string }} input
+ * A market-data card replaces the generic blocker card unless a higher
+ * priority stop (kill switch, pause, API errors, deep health) is first.
+ * @param {{ blockers?: string[], authState?: string, quoteOk?: boolean|null, systemState?: string, marketData?: object }} input
  */
 export function buildSystemNextDecision(input = {}) {
   const blockers = Array.isArray(input.blockers) ? input.blockers : [];
   const auth = safeText(input.authState).toLowerCase();
   const systemState = safeText(input.systemState).toLowerCase();
+  const marketCard = marketDataCardOrNull(blockers, input.marketData);
+  if (marketCard) return marketCard;
 
   if (blockers.length) {
     const first = blockers[0];
     const needsConnect =
-      /auth|schwab|reconnect|sign-in|token/i.test(first) ||
       auth === "disconnected" ||
-      auth === "unverified";
+      auth === "unverified" ||
+      /auth disconnected|auth unverified|reconnect account|sign-in|no usable schwab/i.test(first);
     return {
       decision: "fix",
-      title: needsConnect ? "Do not trade until Auth is green." : "Fix blockers before new risk.",
+      title: needsConnect ? "Do not trade until Schwab is connected." : "Fix blockers before new risk.",
       why: first,
       ctaLabel: needsConnect ? "Open Connect" : "Open Ready",
-      ctaHref: needsConnect ? "#settingsSummaryLanding" : "#healthRibbon",
+      ctaHref: needsConnect ? "#onboardingSection" : "#healthRibbon",
       ctaLane: needsConnect ? "connect" : "ready",
     };
   }
@@ -196,7 +215,7 @@ export function buildSystemNextDecision(input = {}) {
     return {
       decision: "hold",
       title: "Wait for health probes.",
-      why: "No decision until Auth / Quotes / Validation resolve.",
+      why: "No decision until connection, quotes, and validation resolve.",
       ctaLabel: "Health tiles",
       ctaHref: "#healthRibbon",
       ctaLane: "ready",
@@ -204,25 +223,42 @@ export function buildSystemNextDecision(input = {}) {
   }
   return {
     decision: "hold",
-    title: "Hold stack — allocator stays shadow.",
-    why: "Trade readiness is green. Open Decide before flipping ALLOCATOR_MODE=live.",
+    title: "Health is green — keep plugins in shadow.",
+    why: "Do not go live yet. Open Decide before promoting anything past shadow.",
     ctaLabel: "Open Decide",
     ctaHref: "#systemDecisionPanel",
     ctaLane: "decide",
   };
 }
 
-export function getSystemLaneFromUrl(search = "") {
+export function getSystemLaneFromUrl(search = "", hash = "") {
+  return readExplicitSystemLane(search, hash) || "ready";
+}
+
+/**
+ * Lane named by `?lane=`, `?section=`, or `#panelId`. Empty when the URL
+ * does not specify a System lane (callers then keep sticky state).
+ * @param {string} [search]
+ * @param {string} [hash]
+ * @returns {string}
+ */
+export function readExplicitSystemLane(search = "", hash = "") {
   try {
-    const params = new URLSearchParams(search || window.location.search || "");
+    const params = new URLSearchParams(
+      search || (typeof window !== "undefined" ? window.location.search : "") || "",
+    );
     const lane = params.get("lane");
     if (lane) return normalizeSystemLane(lane);
     const section = safeText(params.get("section") || "").toLowerCase();
-    if (section && SYSTEM_LANE_ALIASES[section]) return SYSTEM_LANE_ALIASES[section];
+    if (section) {
+      const fromSection = systemLaneForPanelId(section);
+      if (fromSection) return fromSection;
+    }
+    const hid = safeText(hash || (typeof window !== "undefined" ? window.location.hash : "") || "").replace(/^#/, "");
+    return systemLaneForPanelId(hid);
   } catch {
-    /* ignore */
+    return "";
   }
-  return "ready";
 }
 
 export function wireSystemLaneNav() {
@@ -235,4 +271,33 @@ export function wireSystemLaneNav() {
     e.preventDefault();
     applySystemLane(btn.getAttribute("data-system-lane"), { updateUrl: true });
   });
+  if (!document.body.dataset.healthTileBound) {
+    document.body.dataset.healthTileBound = "1";
+    const jumpFromTile = (tile) => {
+      const targetId = tile?.getAttribute?.("data-health-jump");
+      if (!targetId) return;
+      applySystemLane("advanced", { updateUrl: true });
+      const panel = document.getElementById("statusDetailsPanel");
+      if (panel) panel.open = true;
+      const target = document.getElementById(targetId);
+      target?.focus?.();
+      (target || panel)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    document.querySelectorAll("[data-health-jump]").forEach((tile) => {
+      tile.addEventListener("click", () => jumpFromTile(tile));
+      tile.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        jumpFromTile(tile);
+      });
+    });
+  }
+  if (typeof window !== "undefined" && !window.__systemLaneHashBound) {
+    window.__systemLaneHashBound = true;
+    window.addEventListener("route_hash_applied", (e) => {
+      if (!document.body.classList.contains("ui-screen-diagnostics")) return;
+      const lane = systemLaneForPanelId(e.detail?.id);
+      if (lane) applySystemLane(lane, { updateUrl: false });
+    });
+  }
 }

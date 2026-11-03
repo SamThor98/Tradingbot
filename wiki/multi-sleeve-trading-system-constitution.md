@@ -1,7 +1,7 @@
 ---
 source: n/a (grilled design session 2026-07-27)
 created: 2026-07-27
-updated: 2026-07-27
+updated: 2026-10-06
 tags: [architecture, design, portfolio, multi-sleeve, promotion, p0]
 ---
 
@@ -242,9 +242,9 @@ Aligns with and extends [[promotion-playbook]] and [[hypothesis-ledger]].
 
 ## Relationship to current north star
 
-Phase-2 style guidance (`halt_fix_signal_first`) still applies to **plugin
-LIVE proliferation** on top of an unfinished base book. This constitution
-**does not** waive bare-signal floors. It reframes “best system” as:
+Plugin LIVE stays blocked while `schwab_skill/signal_edge_ledger.json` says
+`plugin_live: blocked`. This constitution does not waive the bare-signal
+floors (PF mean ≥ 1.20, worst-era PF ≥ 1.00). It reframes “best system” as:
 
 1. Keep S0 clearing floors with capacity-aware research (R3/R2/R1/R7).
 2. Add **orthogonal** sleeve edge (S1, later S5/S4) under caps.

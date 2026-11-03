@@ -155,6 +155,13 @@ def _check_execution_gate_and_size() -> tuple[bool, str]:
             patch("sector_strength.is_market_regime_bullish", return_value=(True, {"spy_price": 500, "spy_sma_200": 490})),
             patch("sector_strength.get_regime_v2_snapshot", return_value={"score": 60.0, "bucket": "medium", "components": {}}),
             patch.object(execution, "_post_order_with_refresh", return_value=_FakeResponse()),
+            patch.object(execution, "_get_order_with_refresh", return_value=_FakeResponse()),
+            patch.object(
+                execution,
+                "_get_quote_quality_snapshot",
+                return_value={"bid": 99.5, "ask": 100.0, "last": 100.0, "mid": 99.75, "spread_bps": 50.0},
+            ),
+            patch.object(execution, "_compute_adaptive_stop_pct", return_value=0.07),
             patch.object(execution, "send_alert", return_value=True),
             patch("order_monitor.start_fill_monitor", return_value=None),
         ):

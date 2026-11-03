@@ -412,21 +412,27 @@ def _summarise_per_era(
             c_pf_f = float(c_pf) if c_pf not in (None, "inf") else None
         except (TypeError, ValueError):
             c_pf_f = None
-        pf_delta = (t_pf_f - c_pf_f) if (t_pf_f is not None and c_pf_f is not None) else None
+        trades = int(t.get("total_trades", 0) or 0)
+        thin = trades < PER_ERA_MIN_TRADES
+        if thin:
+            thin_eras.append(era)
+        # An empty era often stores profit_factor_net=0. That zero is a
+        # placeholder, not a measured edge, and must not enter the mean,
+        # the delta, or the regression list.
+        measured = (not thin) and t_pf_f is not None
+        pf_delta = (t_pf_f - c_pf_f) if (measured and c_pf_f is not None) else None
         if pf_delta is not None:
             pf_deltas.append(pf_delta)
-        if t_pf_f is not None:
+        if measured:
             pf_treatment.append(t_pf_f)
-        trades = int(t.get("total_trades", 0) or 0)
-        if trades < PER_ERA_MIN_TRADES:
-            thin_eras.append(era)
         if pf_delta is not None and pf_delta < -MAX_PER_ERA_PF_REGRESSION:
             regressed_eras.append({"era": era, "pf_delta": round(pf_delta, 4)})
         rows.append({
             "era": era,
             "trades": trades,
+            "included_in_mean": measured,
             "win_rate_net": t.get("win_rate_net"),
-            "pf_treatment": t_pf_f,
+            "pf_treatment": t_pf_f if measured else None,
             "pf_control": c_pf_f,
             "pf_delta": round(pf_delta, 4) if pf_delta is not None else None,
             "dd_treatment": t.get("max_drawdown_net_pct"),
@@ -434,17 +440,42 @@ def _summarise_per_era(
             "ret_treatment": t.get("total_return_net_pct"),
             "ret_control": (c or {}).get("total_return_net_pct") if c else None,
         })
-    pf_mean_treatment = sum(pf_treatment) / len(pf_treatment) if pf_treatment else 0.0
-    pf_mean_delta = sum(pf_deltas) / len(pf_deltas) if pf_deltas else 0.0
+    sample_status = "measured" if pf_treatment else "insufficient_sample"
+    pf_mean_treatment = (sum(pf_treatment) / len(pf_treatment)) if pf_treatment else None
+    pf_mean_delta = (sum(pf_deltas) / len(pf_deltas)) if pf_deltas else None
     return {
         "rows": rows,
-        "pf_mean_treatment": round(pf_mean_treatment, 4),
-        "pf_mean_delta": round(pf_mean_delta, 4),
+        "sample_status": sample_status,
+        "pf_mean_treatment": round(pf_mean_treatment, 4) if pf_mean_treatment is not None else None,
+        "pf_mean_delta": round(pf_mean_delta, 4) if pf_mean_delta is not None else None,
         "worst_era_pf_treatment": round(min(pf_treatment), 4) if pf_treatment else None,
         "thin_eras": thin_eras,
         "regressed_eras": regressed_eras,
-        "passes_guardrails": (not thin_eras) and (not regressed_eras),
+        "passes_guardrails": sample_status == "measured" and (not thin_eras) and (not regressed_eras),
     }
+
+
+def ranking_sample_status(summary: dict[str, Any]) -> str:
+    """Measured books stay in the sort. Empty books do not.
+
+    A profit factor of 0 with every era under ``PER_ERA_MIN_TRADES`` is the
+    June 2026 empty-auth placeholder, not a strategy result.
+    """
+    explicit = str(summary.get("sample_status") or "")
+    if explicit in {"measured", "insufficient_sample"}:
+        return explicit
+    thin = summary.get("thin_eras") or []
+    if isinstance(thin, list) and len(thin) >= 5:
+        return "insufficient_sample"
+    if summary.get("pf_mean_treatment") is None:
+        return "insufficient_sample"
+    return "measured"
+
+
+def _fmt_pf(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.3f}"
+    return "n/a"
 
 
 def _read_multi_era(config_id: str) -> dict[str, dict[str, Any]] | None:
@@ -665,10 +696,13 @@ def main() -> int:
         else:
             state["completed"].append(cfg.config_id)
             s = result["summary"]
+            delta = s.get("pf_mean_delta")
+            delta_txt = f"{delta:+.3f}" if isinstance(delta, (int, float)) else "n/a"
             print(
                 f"[phase1] {cfg.config_id} done. "
-                f"PF mean treatment={s['pf_mean_treatment']:.3f} "
-                f"PF mean delta={s['pf_mean_delta']:+.3f} "
+                f"sample={s.get('sample_status')} "
+                f"PF mean treatment={_fmt_pf(s.get('pf_mean_treatment'))} "
+                f"PF mean delta={delta_txt} "
                 f"worst era PF={s['worst_era_pf_treatment']} "
                 f"thin_eras={s['thin_eras']} "
                 f"regressed_eras={s['regressed_eras']} "
@@ -677,8 +711,9 @@ def main() -> int:
         state["currently_running"] = None
         _write_progress(state, progress_path)
 
-    # Final ranking once everything is in.
+    # Final ranking once everything is in. Empty books stay out of the sort.
     rankable: list[dict[str, Any]] = []
+    unranked: list[dict[str, Any]] = []
     for cfg in configs:
         rp = _result_path(cfg.config_id)
         if not rp.exists():
@@ -688,18 +723,35 @@ def main() -> int:
         except Exception:
             continue
         s = d["summary"]
-        rankable.append({
+        status = ranking_sample_status(s)
+        row = {
             "config_id": cfg.config_id,
             "description": cfg.description,
+            "sample_status": status,
             "pf_mean_treatment": s["pf_mean_treatment"],
             "pf_mean_delta": s["pf_mean_delta"],
             "worst_era_pf_treatment": s["worst_era_pf_treatment"],
             "thin_eras": s["thin_eras"],
             "regressed_eras": s["regressed_eras"],
             "passes_guardrails": s["passes_guardrails"],
-        })
-    rankable.sort(key=lambda r: (-r["pf_mean_delta"], -float(r["worst_era_pf_treatment"] or 0)))
+        }
+        if status == "measured" and s.get("pf_mean_treatment") is not None:
+            rankable.append(row)
+        else:
+            unranked.append(row)
+    rankable.sort(
+        key=lambda r: (
+            -float(r["pf_mean_delta"] or 0),
+            -float(r["worst_era_pf_treatment"] or 0),
+        )
+    )
     state["ranking"] = rankable
+    state["unranked_insufficient_sample"] = unranked
+    state["ranking_note"] = (
+        "ranking includes only configs with at least one era of "
+        f">= {PER_ERA_MIN_TRADES} trades. Empty books are listed under "
+        "unranked_insufficient_sample and are not a profit factor."
+    )
     state["finished_at"] = datetime.now(timezone.utc).isoformat()
     _write_progress(state, progress_path)
     return 0

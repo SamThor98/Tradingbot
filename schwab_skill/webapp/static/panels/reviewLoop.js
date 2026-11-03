@@ -7,7 +7,7 @@
  */
 
 import { api } from "../modules/api.js";
-import { escapeHtml, prettyJson } from "../modules/format.js";
+import { escapeHtml, formatPercentPoints, formatSignedPercentPoints, pct } from "../modules/format.js";
 import { updateActionCenter } from "../modules/logger.js";
 import { setSystemStatusStrip } from "../modules/systemStatus.js";
 import {
@@ -17,10 +17,6 @@ import {
   syncSystemSectionState,
 } from "../modules/systemPanelContract.js";
 
-function pct(x, digits = 1) {
-  const n = Number(x);
-  return Number.isFinite(n) ? `${n.toFixed(digits)}%` : "—";
-}
 
 function paintReviewSnapshot(stateName, opts = {}) {
   const {
@@ -61,7 +57,7 @@ function renderRegimeTable(byRegime) {
   if (!entries.length) return '<div class="muted">No resolved packets yet.</div>';
   const rows = entries
     .map(([regime, s]) => {
-      const fp = s.fp_rate != null ? `${(Number(s.fp_rate) * 100).toFixed(1)}%` : "—";
+      const fp = s.fp_rate != null ? pct(s.fp_rate, 1) : "—"; // ratio 0–1 from trade_review.false_positives_by_regime
       return `<tr><td>${escapeHtml(regime)}</td><td>${Number(s.resolved) || 0}</td><td>${Number(s.losses) || 0}</td><td>${fp}</td></tr>`;
     })
     .join("");
@@ -86,8 +82,8 @@ function renderCohortRows(featureBlock) {
   if (!entries.length) return "";
   return entries
     .map(([bucket, s]) => {
-      const win = s.win_rate != null ? `${(Number(s.win_rate) * 100).toFixed(0)}%` : "—";
-      const avg = s.avg_return_pct != null ? pct(s.avg_return_pct, 2) : "—";
+      const win = s.win_rate != null ? pct(s.win_rate, 0) : "—"; // ratio 0–1 from packet_feature_analysis._win_rate
+      const avg = s.avg_return_pct != null ? formatPercentPoints(s.avg_return_pct, 2) : "—"; // points from realized_return_pct
       return `<tr><td>${escapeHtml(bucket)}</td><td>${Number(s.resolved) || 0}</td><td>${win}</td><td>${avg}</td></tr>`;
     })
     .join("");
@@ -149,7 +145,7 @@ function renderPackets(packets) {
     .map((p) => {
       const created = String(p.created_at || "").slice(0, 16).replace("T", " ");
       const outcome = p.outcome || {};
-      const realized = outcome.realized_return_pct != null ? pct(outcome.realized_return_pct, 2) : "open";
+      const realized = outcome.realized_return_pct != null ? formatSignedPercentPoints(outcome.realized_return_pct, 2) : "open"; // points from outcome_backfill
       const mi = p.management_integrity || null;
       const miText = mi ? `${escapeHtml(String(mi.score_bucket || "?"))}${mi.score != null ? ` (${Number(mi.score)})` : ""}` : "—";
       return `<tr>
@@ -183,7 +179,7 @@ export function renderReviewLoopPanel(panel, review, packets, error) {
   const rep = review || {};
   const total = Number(rep.total_packets) || 0;
   const resolved = Number(rep.resolved_packets) || 0;
-  const coverageLabel = pct(rep.coverage_pct);
+  const coverageLabel = formatPercentPoints(rep.coverage_pct, 1); // points from packet_feature_analysis.coverage_pct
   const statusState = total > 0 ? (resolved > 0 ? "success" : "partial") : "empty";
   const head = `<div class="perf-metric"><span class="label">Total packets</span><span class="value">${total}</span></div>
     <div class="perf-metric"><span class="label">Resolved</span><span class="value">${resolved}</span></div>
@@ -194,8 +190,7 @@ export function renderReviewLoopPanel(panel, review, packets, error) {
     <div class="preset-subsection"><h3>Edge decay by setup</h3>${renderSetupTable(rep.edge_decay_by_setup)}</div>
     <div class="preset-subsection"><h3>Shadow feature lift (Mgmt integrity)</h3>${renderFeatureLift(rep.feature_lift)}</div>
     <div class="preset-subsection"><h3>Tuning proposals</h3>${renderProposals(rep.tuning_proposals)}</div>
-    <div class="preset-subsection"><h3>Recent decision packets</h3>${renderPackets(packets)}</div>
-    <details class="tool-json-details" style="margin-top: 8px;"><summary>Raw report</summary><pre class="code-block code-block--tight">${escapeHtml(prettyJson(rep))}</pre></details>`;
+    <div class="preset-subsection"><h3>Recent decision packets</h3>${renderPackets(packets)}</div>`;
   if (statusState === "empty") {
     paintSystemPanelAlert(panel, "empty", {
       headline: "No results yet",

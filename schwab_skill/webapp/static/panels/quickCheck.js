@@ -3,29 +3,37 @@
  * summary card and (when LightweightCharts is loaded) a small candle
  * chart underneath. The chart lifecycle is tracked locally in
  * `_activeChart` so re-runs replace the existing instance cleanly.
+ *
+ * In-flight requests are keyed by `_quickCheckGen` so a slower AAPL
+ * response cannot overwrite a later MSFT check.
  */
 
 import { api } from "../modules/api.js";
 import { getLightweightChartsProps } from "../modules/chartThemeAdapters.js";
 import { humanizeFieldLabel } from "../modules/humanize.js";
 import { YourThemeConfig } from "../modules/YourThemeConfig.js";
-import { safeText, prettyJson } from "../modules/format.js";
+import { safeText } from "../modules/format.js";
 import { logEvent } from "../modules/logger.js";
 import { setResearchPanelStatus } from "../modules/researchStatus.js";
 import { buildOperatorAlertHtml } from "../modules/asyncState.js";
 import { decorateGlossary } from "../modules/glossary.js";
+import { state } from "../modules/state.js";
+import {
+  formatAsOf,
+  payloadTicker,
+  providerLabel,
+  syncResearchTickerRail,
+} from "../modules/researchTickerFlow.js";
 
 export function renderQuickCheckCard(data, error) {
   const ph = document.getElementById("checkPlaceholder");
   const sum = document.getElementById("checkSummary");
-  const det = document.getElementById("checkJsonDetails");
-  const pre = document.getElementById("checkOutput");
   if (!sum) return;
+  const gradeCard = document.getElementById("debateGradeCard");
   if (error) {
     if (ph) { ph.textContent = error; ph.classList.remove("hidden"); }
     sum.classList.add("hidden"); sum.innerHTML = "";
-    if (det) det.classList.add("hidden");
-    if (pre) pre.textContent = "";
+    if (gradeCard) { gradeCard.classList.add("hidden"); gradeCard.innerHTML = ""; }
     return;
   }
   if (ph) ph.classList.add("hidden");
@@ -58,7 +66,7 @@ export function renderQuickCheckCard(data, error) {
     if (vcp != null) items.push(`<li><strong>Volatility pattern:</strong> <span class="pill ${vcp ? 'good' : 'bad'} small">${vcp ? 'Detected' : 'None'}</span></li>`);
     if (score != null) items.push(`<li><strong>Signal score:</strong> ${Number(score).toFixed(1)}/100</li>`);
     if (sector) items.push(`<li><strong>Sector:</strong> ${safeText(sector)}</li>`);
-    const hiddenKeys = new Set(["title", "description", "color", "timestamp", "ticker", "stage_2", "is_stage_2", "vcp", "vcp_detected", "signal_score", "score", "sector", "sector_etf", "price", "current_price", "last_price"]);
+    const hiddenKeys = new Set(["title", "description", "color", "timestamp", "ticker", "stage_2", "is_stage_2", "vcp", "vcp_detected", "signal_score", "score", "sector", "sector_etf", "price", "current_price", "last_price", "as_of", "provider", "used_fallback", "history_price_basis", "data_quality"]);
     Object.entries(d).forEach(([k, v]) => {
       if (v != null && typeof v !== "object" && !hiddenKeys.has(k)) {
         items.push(`<li><strong>${safeText(humanizeFieldLabel(k))}:</strong> ${safeText(String(v))}</li>`);
@@ -73,24 +81,90 @@ export function renderQuickCheckCard(data, error) {
     ${desc ? `<p class="tool-summary-p" style="margin-bottom: 4px;">${safeText(desc)}</p>` : ""}
     ${fieldsHtml}
   `;
-  if (det) det.classList.remove("hidden");
-  if (pre) pre.textContent = prettyJson(data);
+  renderDebateGradeCard(d.debate_grade);
+}
+
+function renderDebateGradeCard(grade) {
+  const card = document.getElementById("debateGradeCard");
+  if (!card) return;
+  if (!grade || typeof grade !== "object") {
+    card.classList.add("hidden");
+    card.innerHTML = "";
+    return;
+  }
+  const letter = grade.qual_letter ? safeText(grade.qual_letter) : "—";
+  const pillars = [
+    ["Trend", grade.qual_trend, grade.qual_coverage_trend],
+    ["Setup", grade.qual_setup, grade.qual_coverage_setup],
+    ["Risk", grade.qual_asymmetry, grade.qual_coverage_asymmetry],
+    ["Extension risk", grade.qual_crowding, grade.qual_coverage_crowding],
+  ];
+  const bars = pillars.map(([name, score, coverage]) => {
+    if (score == null || Number.isNaN(Number(score))) {
+      return `<div class="debate-grade-pillar"><span>${safeText(name)}</span><span class="muted">Abstained</span></div>`;
+    }
+    const width = Math.max(0, Math.min(100, Number(score)));
+    const cov = coverage == null ? "" : ` <span class="muted">coverage ${Math.round(Number(coverage) * 100)}%</span>`;
+    return `<div class="debate-grade-pillar">
+      <span>${safeText(name)}${cov}</span>
+      <span class="debate-grade-bar" style="--debate-fill:${width}%"><b>${width.toFixed(0)}</b></span>
+    </div>`;
+  }).join("");
+  const seats = Array.isArray(grade.seats) ? grade.seats : [];
+  const seatHtml = seats.map((seat) => (
+    `<li><strong>${safeText(seat.seat)}:</strong> ${safeText(seat.line)}</li>`
+  )).join("");
+  let disagree = "No committee votes on this bar.";
+  if (grade.disagreement_source === "votes" && grade.qual_disagreement != null) {
+    disagree = `Disagreement ${Number(grade.qual_disagreement).toFixed(2)}`;
+  }
+  const business = grade.qual_business == null
+    ? "Abstained"
+    : String(Math.round(Number(grade.qual_business)));
+  const committee = grade.committee && grade.committee.chair
+    ? `<p class="debate-grade-chair">Committee: ${safeText(grade.committee.chair)}</p>`
+    : "";
+  const debateScore = grade.debate_score == null
+    ? ""
+    : `<p class="debate-grade-disagree">Committee score ${Number(grade.debate_score).toFixed(0)} (beside the checklist, does not change rank)</p>`;
+  card.classList.remove("hidden");
+  card.innerHTML = `
+    <p class="debate-grade-label">${safeText(grade.label || "Uncalibrated shadow. Does not change rank.")}</p>
+    <p class="debate-grade-letter" data-letter="${letter}">${letter}</p>
+    <p class="debate-grade-chair">${safeText(grade.chair || "")}</p>
+    <div class="debate-grade-pillars">${bars}</div>
+    <p class="debate-grade-business muted">Business: ${safeText(business)}</p>
+    ${committee}
+    ${debateScore}
+    <p class="debate-grade-disagree">${safeText(disagree)}</p>
+    ${seatHtml ? `<ul class="debate-grade-seats">${seatHtml}</ul>` : ""}
+  `;
 }
 
 let _activeChart = null;
+let _quickCheckGen = 0;
+let _quickCheckBusy = false;
 
-export async function renderTickerChart(ticker) {
+function isCurrentGen(gen) {
+  return gen === _quickCheckGen;
+}
+
+export async function renderTickerChart(ticker, gen = _quickCheckGen) {
   const container = document.getElementById("tickerChartContainer");
   if (!container || typeof LightweightCharts === "undefined") return;
+  const requested = String(ticker || "").trim().toUpperCase();
   container.classList.remove("hidden");
   container.innerHTML = "";
 
-  const out = await api.get(`/api/chart/${encodeURIComponent(ticker)}`);
+  const out = await api.get(`/api/chart/${encodeURIComponent(requested)}`);
+  if (!isCurrentGen(gen)) return;
+  const chartTicker = payloadTicker(out.data, requested);
+  if (chartTicker && chartTicker !== requested) return;
   if (!out.ok || !out.data?.candles?.length) {
     const reason = out?.error || out?.data?.recovery?.summary || "";
     const reasonLine = reason ? `<div class="muted" style="padding:0 12px 12px; font-size:0.82rem;">${safeText(reason)}</div>` : "";
     container.innerHTML = `
-      <div class="muted" style="padding:12px 12px 4px;">No chart data available for ${safeText(ticker)}.</div>
+      <div class="muted" style="padding:12px 12px 4px;">No chart data available for ${safeText(requested)}.</div>
       ${reasonLine}
     `;
     return;
@@ -130,6 +204,7 @@ export async function renderTickerChart(ticker) {
 }
 
 function paintQuickCheckSurface(stateName, title, detail, extras = {}) {
+  const hideSnapshot = extras.hidden === true || stateName === "empty" || stateName === "loading";
   return setResearchPanelStatus({
     stripId: "quickCheckStatusStrip",
     snapshotId: "quickCheckSnapshot",
@@ -141,8 +216,37 @@ function paintQuickCheckSurface(stateName, title, detail, extras = {}) {
     output: extras.output,
     data: extras.data,
     action: extras.action,
-    confidence: extras.confidence,
+    meter: extras.meter,
+    hidden: hideSnapshot,
   });
+}
+
+function dataTileFromPayload(data) {
+  const asOf = formatAsOf(data?.as_of);
+  const usedFallback = Boolean(data?.used_fallback);
+  const label = providerLabel(data?.provider, usedFallback);
+  return {
+    value: label,
+    sub: asOf ? `as of ${asOf}` : "last daily bar",
+    tone: usedFallback ? "warn" : "success",
+  };
+}
+
+export function applyQuickCheckTickerStale(inputTicker) {
+  if (_quickCheckBusy) return;
+  const shown = String(state.lastQuickCheckTicker || "").trim().toUpperCase();
+  const input = String(inputTicker || "").trim().toUpperCase();
+  if (!shown || shown === input) return;
+  paintQuickCheckSurface(
+    "partial",
+    `Showing ${shown}. Press Check for ${input || "the new ticker"}.`,
+    `Quick check still displays ${shown}. Chart and score are not ${input || "the current input"}.`,
+    {
+      output: { value: "Stale", sub: "check", tone: "warn" },
+      data: { value: "Stale", sub: `showing ${shown}`, tone: "warn" },
+      action: { value: "Check", sub: input || "new ticker", tone: "warn" },
+    },
+  );
 }
 
 export async function quickCheck() {
@@ -151,27 +255,27 @@ export async function quickCheck() {
     paintQuickCheckSurface(
       "empty",
       "No ticker entered.",
-      "Enter a ticker to load chart, score, and raw evidence.",
+      "Enter a ticker to load chart, score, and a brief card.",
       {
         output: { value: "None", sub: "check" },
         data: { value: "—", sub: "ticker" },
         action: { value: "Wait", sub: "enter symbol" },
-        confidence: 0,
       },
     );
     return;
   }
+  const gen = ++_quickCheckGen;
+  _quickCheckBusy = true;
   const ph = document.getElementById("checkPlaceholder");
   renderQuickCheckCard(null, "");
   paintQuickCheckSurface(
     "loading",
     `Checking ${ticker}.`,
-    "Loading quick score, chart context, and raw evidence.",
+    "Loading quick score and chart context.",
     {
       output: { value: "…", sub: "check" },
       data: { value: "…", sub: "market" },
       action: { value: "Wait", sub: "hold" },
-      confidence: 28,
     },
   );
   if (ph) {
@@ -182,7 +286,9 @@ export async function quickCheck() {
     </span>`;
   }
   const out = await api.get(`/api/check/${ticker}`);
+  if (!isCurrentGen(gen)) return;
   if (!out.ok) {
+    _quickCheckBusy = false;
     const msg = out.user_message || out.error || "Request failed";
     renderQuickCheckCard(null, "");
     if (ph) {
@@ -204,56 +310,74 @@ export async function quickCheck() {
         output: { value: "—", sub: "check" },
         data: { value: "—", sub: "market" },
         action: { value: "Retry", sub: "reload", tone: "bad" },
-        confidence: 0,
       },
     );
     logEvent({ kind: "system", severity: "error", message: `Check ${ticker} failed: ${out.error}` });
     return;
   }
+  const shownTicker = payloadTicker(out.data, ticker);
+  if (shownTicker && shownTicker !== ticker) {
+    _quickCheckBusy = false;
+    return;
+  }
+  const dataQuality = out.data?.data_quality || "";
+  state.lastQuickCheckTicker = shownTicker || ticker;
+  state.lastQuickCheckQuality = dataQuality || "ok";
+  state.lastQuickCheckAt = out.data?.as_of || new Date().toISOString();
+  state.lastQuickCheckProvider = out.data?.provider || "";
   renderQuickCheckCard(out.data, null);
   // Surface data_quality verbatim: a payload with no real market data must
   // never be presented as a fresh, high-confidence result.
-  const dataQuality = out.data?.data_quality || "";
   if (dataQuality) {
     if (ph) ph.setAttribute("data-async-state", "success");
     paintQuickCheckSurface(
       "partial",
-      `${ticker}: no market data found.`,
+      `${shownTicker}: no market data found.`,
       `Symbol may be invalid or unsupported. Data quality: ${safeText(String(dataQuality))}`,
       {
         output: { value: "Degraded", sub: "check" },
         data: { value: "Missing", sub: safeText(String(dataQuality)), tone: "bad" },
         action: { value: "Verify", sub: "symbol" },
-        confidence: 10,
+        meter: null,
       },
     );
     logEvent({
       kind: "system",
       severity: "warn",
-      message: `Check ${ticker}: data_quality=${dataQuality}`,
+      message: `Check ${shownTicker}: Data quality: ${safeText(String(dataQuality))}`,
     });
   } else {
     if (ph) ph.setAttribute("data-async-state", "success");
-    const checkedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const scoreRaw = out.data?.signal_score ?? out.data?.score;
+    const scoreNum = Number(scoreRaw);
+    const dataTile = dataTileFromPayload(out.data);
+    const asOf = formatAsOf(out.data?.as_of);
     paintQuickCheckSurface(
       "success",
-      `${ticker} quick check ready.`,
-      `Checked ${checkedAt} — review chart, score, and raw evidence before deeper research.`,
+      `${shownTicker} quick check ready.`,
+      asOf
+        ? `Last daily bar ${asOf} — review the brief card and chart before deeper research.`
+        : "Review the brief card and chart before deeper research.",
       {
         output: { value: "Ready", sub: "check" },
-        data: { value: "Fresh", sub: `as of ${checkedAt}` },
-        action: { value: "Pass", sub: "review" },
-        confidence: 80,
+        data: dataTile,
+        action: { value: "Review", sub: "brief" },
+        meter: Number.isFinite(scoreNum)
+          ? { value: scoreNum, label: "Signal score", unit: "points" }
+          : null,
       },
     );
   }
-  const reportInput = document.getElementById("reportTickerInput");
-  if (reportInput && !reportInput.value.trim()) reportInput.value = ticker;
-  const secInput = document.getElementById("secCompareTickerA");
-  if (secInput && !secInput.value.trim()) secInput.value = ticker;
-  renderTickerChart(ticker);
+  syncResearchTickerRail(shownTicker || ticker, { sourceId: "tickerInput" });
+  _quickCheckBusy = false;
+  void renderTickerChart(shownTicker || ticker, gen);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("research_summary_refresh"));
+    // Panels that need the checked symbol but must not slow the check itself
+    // (e.g. event risk, which may build a valuation) load off this event.
+    window.dispatchEvent(new CustomEvent("research_quick_check_complete", {
+      detail: { ticker: shownTicker || ticker },
+    }));
   }
-  logEvent({ kind: "system", severity: "info", message: `Check complete for ${ticker}.` });
+  logEvent({ kind: "system", severity: "info", message: `Check complete for ${shownTicker || ticker}.` });
 }

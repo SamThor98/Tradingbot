@@ -21,6 +21,9 @@ export const GLOSSARY = Object.freeze({
   SLO: "Service-level objective: the reliability target for scans and data feeds.",
   shadow: "Shadow mode: the plugin computes decisions for comparison but never affects live orders.",
   bps: "Basis points: 1 bps = 0.01%.",
+  Tradeable: "Eligible to stage into the pending queue for approval.",
+  Research: "Kept for review but not executable — weekly, monthly, PEAD paper, or horizon names.",
+  GARCH: "A statistical model that forecasts near-term volatility from recent swings. Tables fall back to a simpler average when the fit fails.",
 });
 
 /** Default subset that is safe to auto-decorate inside prose. */

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from core.scan_catalog import (
+    annotate_passed_strategies,
     build_scan_catalog_payload,
     catalog_fields_for_signal,
     filter_signals_for_scan_selection,
     resolve_strategy_ids,
+    scan_arm_flags,
     scan_studio_public_config,
     selected_strategies_bypass_bull_regime,
     signal_matches_strategy_ids,
 )
 
 
-def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
+def test_catalog_payload_has_three_timeframes_and_live_breakout() -> None:
     payload = build_scan_catalog_payload()
     tf_ids = [t["id"] for t in payload["timeframes"]]
-    assert tf_ids == ["intraday", "daily", "weekly", "monthly"]
+    assert tf_ids == ["daily", "weekly", "monthly"]
+    assert "intraday" not in tf_ids
     ids = {s["id"] for s in payload["strategies"]}
     assert "trend_breakout" in ids
     assert "pullback" in ids
@@ -31,7 +34,6 @@ def test_catalog_payload_has_four_timeframes_and_live_breakout() -> None:
     assert payload["notes"]["one_thesis"]
     by_tf = {t["id"]: t.get("default_strategy_id") for t in payload["timeframes"]}
     assert by_tf == {
-        "intraday": "breakout_confirm",
         "daily": "trend_breakout",
         "weekly": "weekly_swing",
         "monthly": "monthly_position",
@@ -61,7 +63,6 @@ def test_resolve_strategy_ids_defaults_to_timeframe() -> None:
     assert resolve_strategy_ids(["trend_breakout", "trend_breakout"]) == ["trend_breakout"]
     assert resolve_strategy_ids([], scan_timeframe="daily") == ["trend_breakout"]
     assert resolve_strategy_ids([], scan_timeframe="monthly") == ["monthly_position"]
-    assert resolve_strategy_ids([], scan_timeframe="intraday") == ["breakout_confirm"]
 
 
 def test_filter_weekly_sleeve_matches_triggered_plugin_not_live_breakout() -> None:
@@ -80,6 +81,38 @@ def test_filter_weekly_sleeve_matches_triggered_plugin_not_live_breakout() -> No
     assert pull == []
     pead = filter_signals_for_scan_selection(rows, ["pead_primary"])
     assert [r["ticker"] for r in pead] == ["MSFT"]
+
+
+def test_scan_arm_flags_default_is_own_scanner() -> None:
+    empty = scan_arm_flags([])
+    assert empty["want_stage2"] is True
+    assert empty["want_pead"] is False
+    assert empty["want_breakout_quotes"] is False
+    assert empty["want_horizon"] == []
+    weekly = scan_arm_flags(["weekly_swing"])
+    assert weekly["want_stage2"] is False
+    assert weekly["want_horizon"] == ["weekly_swing"]
+    mixed = scan_arm_flags(["trend_breakout", "donchian_20", "breakout_confirm"])
+    assert mixed["want_stage2"] is True
+    assert mixed["want_breakout_quotes"] is True
+    assert "donchian_20" in mixed["want_horizon"]
+
+
+def test_annotate_passed_strategies_lists_every_selected_hit() -> None:
+    rows = [
+        {
+            "ticker": "NVDA",
+            "entry_family": "stage2",
+            "strategy_attribution": {"top_live": "trend_breakout"},
+            "strategy_plugins": [{"name": "donchian_20", "triggered": True, "mode": "shadow"}],
+        }
+    ]
+    out = annotate_passed_strategies(rows, ["trend_breakout", "donchian_20", "weekly_swing"])
+    attr = out[0]["strategy_attribution"]
+    assert attr["passed_ids"] == ["trend_breakout", "donchian_20"]
+    assert "Stage 2" in attr["passed_names"][0] or "VCP" in attr["passed_names"][0]
+    assert any("Donchian" in n for n in attr["passed_names"])
+    assert attr["top_live"] == "trend_breakout"
 
 
 def test_breakout_confirm_matcher() -> None:
@@ -121,6 +154,7 @@ def test_run_scan_applies_strategy_id_filter(tmp_path, monkeypatch) -> None:
         scan_timeframe="daily",
     )
     assert [s["ticker"] for s in out.signals] == ["MSFT"]
+    assert out.signals[0]["strategy_attribution"]["passed_ids"] == ["pullback"]
     assert out.diagnostics["strategy_id_filter_dropped"] == 1
     assert out.diagnostics["scan_timeframe"] == "daily"
     assert out.diagnostics["universe_preset"] == "nasdaq100"
@@ -141,7 +175,20 @@ def test_dashboard_html_embeds_full_scan_catalog() -> None:
         assert sid in body
 
 
-def test_js_fallback_catalog_covers_python_strategy_ids() -> None:
+def test_every_strategy_has_a_return_profile() -> None:
+    payload = build_scan_catalog_payload()
+    for row in payload["strategies"]:
+        rp = row.get("return_profile") or {}
+        assert rp.get("style"), row["id"]
+        assert rp.get("hold"), row["id"]
+        assert rp.get("payoff"), row["id"]
+        assert rp.get("edge"), row["id"]
+    live = next(s for s in payload["strategies"] if s["id"] == "trend_breakout")
+    assert "40" in live["return_profile"]["hold"]
+    assert "right-skew" in live["return_profile"]["payoff"].lower()
+
+
+def test_js_fallback_return_profiles_cover_python_strategy_ids() -> None:
     import re
     from pathlib import Path
 
@@ -150,6 +197,27 @@ def test_js_fallback_catalog_covers_python_strategy_ids() -> None:
     js = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "panels" / "scanStudio.js").read_text(
         encoding="utf-8"
     )
+    block = re.search(r"const FALLBACK_RETURN_PROFILES = Object\.freeze\(\{([\s\S]*?)\n\}\);", js)
+    assert block, "FALLBACK_RETURN_PROFILES block missing"
+    ids = set(re.findall(r"^\s{2}([a-z0-9_]+): \{", block.group(1), flags=re.MULTILINE))
+    missing = sorted(known_strategy_ids() - ids)
+    assert not missing, f"JS fallback return profiles missing {missing}"
+
+
+def test_js_fallback_catalog_covers_python_strategy_ids() -> None:
+    import re
+    from pathlib import Path
+
+    from core.scan_catalog import known_strategy_ids, known_timeframe_ids
+
+    js = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "panels" / "scanStudio.js").read_text(
+        encoding="utf-8"
+    )
     ids = set(re.findall(r'_fb\("([a-z0-9_]+)"', js))
     missing = sorted(known_strategy_ids() - ids)
     assert not missing, f"JS fallback catalog missing {missing}"
+    tf_block = re.search(r"timeframes:\s*\[([\s\S]*?)\],\s*strategies:", js)
+    assert tf_block, "JS fallback timeframes block missing"
+    tf_ids = re.findall(r'id:\s*"([a-z]+)"', tf_block.group(1))
+    assert tf_ids == sorted(known_timeframe_ids(), key=["daily", "weekly", "monthly"].index)
+    assert "intraday" not in tf_ids

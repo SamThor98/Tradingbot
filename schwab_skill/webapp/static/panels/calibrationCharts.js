@@ -3,7 +3,7 @@
  * Matches Figma frame "Calibration — Success" (node 5:2) in Old Logan DS.
  */
 
-import { escapeHtml, safeNum, safeText, timeAgo } from "../modules/format.js";
+import { escapeHtml, formatPercentPoints, formatSignedPercentPoints, pct, safeNum, safeText, timeAgo } from "../modules/format.js";
 
 const DEFAULT_HIT_GATE = 0.5;
 
@@ -14,21 +14,18 @@ function gateClass(passed) {
 }
 
 function fmtPctFraction(value, digits = 1) {
-  const n = Number(value);
-  return Number.isFinite(n) ? `${(n * 100).toFixed(digits)}%` : "—";
+  // ratio 0–1 from hypothesis_ledger.hit_rate
+  return pct(value, digits);
 }
 
 function fmtWinRate(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  const pct = n <= 1 ? n * 100 : n;
-  return `${pct.toFixed(1)}%`;
+  // percent points from self_study.py run_self_study
+  return formatPercentPoints(value, 1);
 }
 
 function fmtSignedPct(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+  // percent points from self_study.avg_return_pct
+  return formatSignedPercentPoints(value, 2);
 }
 
 function topReliabilitySource(calibration = {}) {
@@ -99,10 +96,7 @@ export function renderCalibrationKpiTiles(container, selfStudy = {}) {
       label: "Win rate",
       value: winRate != null ? fmtWinRate(winRate) : "—",
       sub: "self-study cohort",
-      state:
-        winRate != null
-          ? (Number(winRate) <= 1 ? Number(winRate) : Number(winRate) / 100) >= 0.5
-          : null,
+      state: winRate != null ? Number(winRate) >= 50 : null, // points vs 50% gate from self_study
     },
     {
       label: "Avg return",
@@ -186,7 +180,7 @@ export function renderCalibrationReliabilityDiagram(container, calibration = {})
   const body = rows
     .map((row) => {
       const pass = Number.isFinite(row.hitRate) ? row.hitRate >= DEFAULT_HIT_GATE : null;
-      const width = Number.isFinite(row.hitRate) ? Math.min(100, row.hitRate * 100) : 0;
+      const width = Number.isFinite(row.hitRate) ? Math.min(100, Math.max(0, row.hitRate * 100)) : null; // hit_rate 0–1 before *100 width
       return `
         <div class="calibration-reliability-row calibration-reliability-row--${pass === true ? "pass" : pass === false ? "fail" : "neutral"}">
           <div class="calibration-reliability-head">
@@ -196,8 +190,12 @@ export function renderCalibrationReliabilityDiagram(container, calibration = {})
           <div class="calibration-reliability-bar-row">
             <span class="calibration-reliability-label">Hit rate</span>
             <div class="calibration-reliability-track">
-              <div class="calibration-reliability-fill" style="--calib-fill-pct:${width}%"></div>
-              <div class="calibration-reliability-gate" style="--calib-gate-pct:${gateLeft}%"></div>
+              ${
+                width == null
+                  ? `<div class="calibration-reliability-fill calibration-reliability-fill--empty" style="--calib-fill-pct:0%"></div>`
+                  : `<div class="calibration-reliability-fill" style="--calib-fill-pct:${width}%"></div>`
+              }
+              <div class="calibration-reliability-gate" style="--calib-gate-pct:${gateLeft}%" title="50% hit-rate gate"></div>
             </div>
             <span class="calibration-reliability-value mono-nums">${fmtPctFraction(row.hitRate)}</span>
           </div>

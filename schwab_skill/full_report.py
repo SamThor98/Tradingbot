@@ -595,7 +595,9 @@ def _synthesize(report: FullReport) -> str:
             lines.append("- **Technical**: Stage 2 confirmed but VCP not met. Watch for volume dry-up.")
         else:
             lines.append("- **Technical**: Does NOT meet Stage 2 criteria. Not a breakout candidate.")
-        lines.append(f"- **Signal Score**: {t.signal_score:.1f}/100")
+        lines.append(
+            f"- **Signal points**: {t.signal_score:.1f}/100 (composite, not a probability)"
+        )
 
     d = report.dcf
     if d and not d.error:
@@ -661,7 +663,7 @@ def _fmt_technical(t: TechnicalSection) -> str:
         f"|-------|--------|\n"
         f"| Stage 2 | {stage} |\n"
         f"| VCP Volume | {vcp} |\n"
-        f"| Signal Score | {t.signal_score:.1f}/100 |\n"
+        f"| Signal points | {t.signal_score:.1f}/100 (composite, not a probability) |\n"
         f"| Sector ETF | {t.sector_etf} |\n"
     )
 
@@ -947,7 +949,7 @@ def _discord_embed_technical(t: TechnicalSection) -> dict[str, Any]:
         "fields": [
             {"name": "Price", "value": f"**${t.current_price:,.2f}**", "inline": True},
             {"name": "52w Range", "value": f"${t.low_52w:,.2f} - ${t.high_52w:,.2f}\n({t.pct_from_high:.1f}% of high)", "inline": True},
-            {"name": "Signal Score", "value": f"**{t.signal_score:.0f}/100**", "inline": True},
+            {"name": "Signal points", "value": f"**{t.signal_score:.0f}/100**", "inline": True},
             {"name": "Moving Averages", "value": f"SMA 50: ${t.sma_50:,.2f}\nSMA 150: ${t.sma_150:,.2f}\nSMA 200: ${t.sma_200:,.2f}", "inline": True},
             {"name": "Volume", "value": f"Last: {t.last_volume:,.0f}\n50d Avg: {t.avg_vol_50:,.0f}\nATR-14: ${t.atr_14:,.2f}", "inline": True},
             {"name": "Checks", "value": f"Stage 2: **{stage}**\nVCP: **{vcp}**\nSector: **{t.sector_etf}**", "inline": True},
@@ -1182,10 +1184,14 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
 
     sd = _resolve_skill_dir(skill_dir)
     ticker = ticker.upper().strip()
+    hist_meta: dict[str, Any] = {"provider": "unknown", "used_fallback": False}
 
     try:
-        from market_data import get_daily_history
-        df = get_daily_history(ticker, days=400, auth=auth, skill_dir=sd)
+        from market_data import get_daily_history_with_meta
+
+        df, fetched_meta = get_daily_history_with_meta(ticker, days=400, auth=auth, skill_dir=sd)
+        if isinstance(fetched_meta, dict):
+            hist_meta = fetched_meta
     except Exception:
         try:
             import yfinance as yf
@@ -1197,6 +1203,7 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
                 raw = t.history(period="2y", auto_adjust=True)
             df = raw.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume"})
             df = df[["open", "high", "low", "close", "volume"]].sort_index()
+            hist_meta = {"provider": "yfinance", "used_fallback": True}
         except Exception:
             df = pd.DataFrame()
 
@@ -1247,8 +1254,47 @@ def quick_check(ticker: str, auth: Any = None, skill_dir: Path | None = None) ->
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "footer": {"text": f"Want more? Use /report {ticker}"},
     }
+    embed["ticker"] = ticker
     if not has_price_data:
         embed["data_quality"] = "NO_PRICE_DATA"
+    elif len(df.index):
+        embed["as_of"] = pd.Timestamp(df.index[-1]).date().isoformat()
+        embed["provider"] = hist_meta.get("provider")
+        embed["used_fallback"] = bool(hist_meta.get("used_fallback"))
+
+    try:
+        from core.debate_grade import attach_debate_grade, stamp_checklist_fields
+
+        grade_signal: dict[str, Any] = {
+            "ticker": ticker,
+            "price": tech.current_price or None,
+            "sma_50": tech.sma_50 or None,
+            "signal_score": tech.signal_score,
+            "data_quality": "conflict" if not has_price_data else "ok",
+        }
+        if has_price_data:
+            stamped = stamp_checklist_fields(df, sd)
+            for key in ("trend_stack_ok", "sma200_rising", "vcp_present", "pts_52w", "pts_volume"):
+                if key in stamped:
+                    grade_signal[key] = stamped[key]
+            if grade_signal.get("pts_52w") is not None or grade_signal.get("pts_volume") is not None:
+                grade_signal["score_components"] = {
+                    "pts_52w": grade_signal.get("pts_52w"),
+                    "pts_volume": grade_signal.get("pts_volume"),
+                }
+            try:
+                from backtest import _resolve_stop_pct_for_entry
+
+                grade_signal["stop_pct"] = float(
+                    _resolve_stop_pct_for_entry(df, len(df) - 1, skill_dir=sd)
+                )
+            except Exception:
+                pass
+        attach_debate_grade(grade_signal, diagnostics={}, skill_dir=sd)
+        if isinstance(grade_signal.get("debate_grade"), dict):
+            embed["debate_grade"] = grade_signal["debate_grade"]
+    except Exception as exc:
+        LOG.debug("Debate grade skipped for quick check %s: %s", ticker, exc)
 
     fund_parts = []
     if dcf and not dcf.error and dcf.intrinsic_value > 0:

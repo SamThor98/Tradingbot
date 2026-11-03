@@ -1,11 +1,12 @@
 import { escapeHtml } from "./format.js";
 
-const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error"]);
+const VALID_STATES = new Set(["success", "partial", "empty", "loading", "error", "hold"]);
 
 /** Factual operator-facing pill labels (avoid Error / Failed / Broken). */
 export const STATUS_PILL_LABELS = {
   success: "Ready",
   partial: "Degraded",
+  hold: "Hold",
   empty: "Clear",
   loading: "Loading",
   error: "Unavailable",

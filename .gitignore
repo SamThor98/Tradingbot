@@ -1,6 +1,8 @@
 # Secrets
 .env
 .cursor/mcp.json
+.cursor/handoffs/*
+!.cursor/handoffs/.gitkeep
 *.enc
 tokens_*.enc
 localhost.pem
@@ -36,6 +38,7 @@ strategy_state.json
 strategy_chat_log.jsonl
 execution_safety_metrics.json
 .exit_manager_state.json
+.order_ambiguity.json
 .portfolio_country_cache.json
 cockpit_observability_metrics.json
 risk_payload*.json
@@ -88,3 +91,26 @@ mirofish_sims/
 .neo4j/
 neo4j_data/
 ollama/
+
+# Local clutter (added 2026-11-03 sync)
+/*.png
+/*.doc
+/*.docx
+/*.url
+/contrast_*.json
+diag_screens/
+/experiments/
+.playwright-mcp/
+.cursor/figma-tab-comprehension-state.json
+*.tmp
+*.lock
+schwab_skill/.*cache*.json
+schwab_skill/.universe_cache_*.json
+schwab_skill/.sec_filing_archive.json
+schwab_skill/.companyfacts/
+schwab_skill/.*_log.jsonl
+schwab_skill/.debate_committee_log.jsonl
+schwab_skill/.mirofish_model_log.jsonl
+
+*.db-shm
+*.db-wal

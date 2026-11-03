@@ -1,7 +1,7 @@
 ---
 source: n/a (operations runbook)
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-10-16
 tags: [operations, rollout, governance]
 ---
 
@@ -93,6 +93,10 @@ To revert a `live` flag:
 - [[canary-rollout]] — Pre-live live-trading sanity steps
 - [[backtest-intelligence-overlay]] — Generates the historical PnL evidence the gates require
 - [[multi-sleeve-trading-system-constitution]] — Portfolio-level Pareto floors + R7 sleeve promotion contract
+- [[agent-session-handoff]] — signal-edge review quotes the profit-factor gates before promotion claims
+- [[thirty-day-signal-cut-plan]] — the only promotion signature scheduled through 2026-11-07
+- [[hypothesis-cards]] — Evidence cards that stay unsigned until this playbook's ledger append
+- [[autonomous-investment-network]] — Agents may file cards; they may not append this ledger
 
 ---
-*Last compiled: 2026-04-17*
+*Last compiled: 2026-10-16*

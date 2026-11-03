@@ -24,7 +24,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from stage_analysis import add_indicators, check_vcp_volume, compute_signal_components, is_stage_2
+from stage_analysis import (
+    add_indicators,
+    check_vcp_volume,
+    compute_signal_components,
+    expansion_volume_ratio,
+    is_stage_2,
+)
 
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
@@ -114,14 +120,9 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _risk_tag_to_score(tag: str | None) -> float:
-    t = (tag or "").strip().lower()
-    if t == "low":
-        return 1.0
-    if t == "medium":
-        return 0.0
-    if t == "high":
-        return -1.0
-    return 0.0
+    from core.sec_risk_score import risk_tag_to_score
+
+    return risk_tag_to_score(tag)
 
 
 def _fetch_history(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -225,6 +226,7 @@ def _extract_row_features(
         "ret_5d_prev": ((price / c5) - 1.0) if c5 > 0 else 0.0,
         "ret_20d_prev": ((price / c20) - 1.0) if c20 > 0 else 0.0,
         "volume_ratio": (latest_vol / avg_vol_50) if avg_vol_50 > 0 else 1.0,
+        "expansion_volume_ratio": expansion_volume_ratio(window),
         "sector_rel_21d": float(sector_rel_21d),
         "sec_risk_score": _risk_tag_to_score(sec_risk_tag),
         "miro_continuation_prob": _safe_float(miro.get("continuation_probability"), 0.5),
@@ -954,9 +956,49 @@ def _confidence_bucket(p: float, skill_dir: Path) -> str:
     return "low"
 
 
+def _advisory_history(
+    signal: dict[str, Any],
+    window: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, bool]:
+    """Return bars for feature extraction and whether they carry real history.
+
+    A one-row quote cannot see 5-day or 20-day returns. Callers that still
+    hold the Stage A frame should pass it so those returns and ATR match
+    the training extractor.
+    """
+    if isinstance(window, pd.DataFrame) and not window.empty and "close" in window.columns and len(window) >= 2:
+        return window, True
+    components = signal.get("score_components") if isinstance(signal.get("score_components"), dict) else {}
+    atr = _safe_float(components.get("atr_14"), 0.0)
+    if atr <= 0.0:
+        atr = _safe_float(signal.get("atr_14"), 0.0)
+    frame = pd.DataFrame(
+        [
+            {
+                "close": _safe_float(signal.get("price"), 0.0),
+                "sma_50": _safe_float(signal.get("sma_50"), 0.0),
+                "sma_200": _safe_float(signal.get("sma_200"), 0.0),
+                "atr_14": atr,
+                "volume": _safe_float(signal.get("latest_volume"), 0.0),
+                "avg_vol_50": _safe_float(signal.get("avg_vol_50"), 0.0),
+            }
+        ]
+    )
+    return frame, False
+
+
+def _overlay_measured_returns(feature_map: dict[str, float], signal: dict[str, Any]) -> None:
+    """Fill returns and ATR when the bar history was too short to compute them."""
+    for key in ("ret_5d_prev", "ret_20d_prev", "atr_pct"):
+        if signal.get(key) is None:
+            continue
+        feature_map[key] = _safe_float(signal.get(key), feature_map.get(key, 0.0))
+
+
 def score_signal_advisory(
     signal: dict[str, Any],
     skill_dir: Path | str | None = None,
+    window: pd.DataFrame | None = None,
 ) -> AdvisoryPrediction | None:
     skill_dir = Path(skill_dir or SKILL_DIR)
     from config import get_advisory_model_enabled
@@ -975,25 +1017,17 @@ def score_signal_advisory(
     bins = list(model.get("calibration_bins") or [])
 
     components = signal.get("score_components") or {}
+    history, used_history = _advisory_history(signal, window)
     feature_map = _extract_row_features(
-        window=pd.DataFrame(
-            [
-                {
-                    "close": _safe_float(signal.get("price"), 0.0),
-                    "sma_50": _safe_float(signal.get("sma_50"), 0.0),
-                    "sma_200": _safe_float(signal.get("sma_200"), 0.0),
-                    "atr_14": _safe_float((signal.get("score_components") or {}).get("atr_14"), 0.0),
-                    "volume": _safe_float(signal.get("latest_volume"), 0.0),
-                    "avg_vol_50": _safe_float(signal.get("avg_vol_50"), 0.0),
-                }
-            ]
-        ),
+        window=history,
         signal_score=_safe_float(signal.get("signal_score"), 0.0),
         components=components,
         sector_rel_21d=_safe_float(signal.get("sector_rel_21d"), 0.0),
         sec_risk_tag=str(signal.get("sec_risk_tag") or ""),
         miro_result=signal.get("mirofish_result") or {},
     )
+    if not used_history:
+        _overlay_measured_returns(feature_map, signal)
     feature_map = _add_interaction_features(pd.DataFrame([feature_map])).iloc[0].to_dict()
     x = np.array([_safe_float(feature_map.get(c), 0.0) for c in cols], dtype=np.float64)
     coverage = float(sum(1 for c in cols if feature_map.get(c) is not None) / max(1, len(cols)))

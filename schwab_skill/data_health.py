@@ -10,12 +10,20 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as time_of_day
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
+_ET = ZoneInfo("America/New_York")
+# Schwab US-equity extended session (premarket 04:00 through 20:00 ET).
+_EXTENDED_OPEN = time_of_day(4, 0)
+_EXTENDED_CLOSE = time_of_day(20, 0)
+_SCAN_QUOTE_SLACK_SEC = 1800.0
+QuoteAgeMode = Literal["live", "scan"]
 
 
 def _safe_float(v: Any) -> float | None:
@@ -58,12 +66,53 @@ def _quote_epoch_ms(quote: dict[str, Any] | None) -> float | None:
     return None
 
 
-def _quote_age_sec(quote: dict[str, Any] | None) -> float | None:
+def _quote_age_sec(quote: dict[str, Any] | None, now: datetime | None = None) -> float | None:
     ms = _quote_epoch_ms(quote)
     if ms is None:
         return None
-    now_ms = time.time() * 1000.0
+    if now is None:
+        now_ms = time.time() * 1000.0
+    else:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now_ms = now.timestamp() * 1000.0
     return max(0.0, (now_ms - ms) / 1000.0)
+
+
+def _as_et(now: datetime | None) -> datetime:
+    stamp = now or datetime.now(_ET)
+    if stamp.tzinfo is None:
+        return stamp.replace(tzinfo=_ET)
+    return stamp.astimezone(_ET)
+
+
+def last_extended_close_et(now: datetime | None = None) -> datetime:
+    """Most recent weekday 20:00 America/New_York at or before ``now``."""
+    stamp = _as_et(now)
+    day = stamp.date()
+    for _ in range(10):
+        if day.weekday() < 5:
+            close = datetime.combine(day, _EXTENDED_CLOSE, tzinfo=_ET)
+            if close <= stamp:
+                return close
+        day -= timedelta(days=1)
+    return datetime.combine(day, _EXTENDED_CLOSE, tzinfo=_ET)
+
+
+def scan_quote_max_age_sec(live_max_age_sec: float, now: datetime | None = None) -> float:
+    """Quote budget for a scan session.
+
+    During the weekday extended session, keep the live 10-minute timer so a
+    hung feed still flags stale. After the close (nights/weekends), last-session
+    prints are expected to age — that must not mark the whole scan ``stale``.
+    """
+    live = max(0.0, float(live_max_age_sec))
+    stamp = _as_et(now)
+    in_session = stamp.weekday() < 5 and _EXTENDED_OPEN <= stamp.time() < _EXTENDED_CLOSE
+    if in_session:
+        return live
+    since_close = (stamp - last_extended_close_et(stamp)).total_seconds()
+    return max(live, since_close + _SCAN_QUOTE_SLACK_SEC)
 
 
 def _load_sec_cache_max_ts(skill_dir: Path) -> float | None:
@@ -108,16 +157,24 @@ def assess_symbol_data_health(
     ticker: str,
     auth: Any,
     skill_dir: Path | str | None = None,
+    *,
+    quote_age_mode: QuoteAgeMode = "live",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """
     Assess quote age, daily bar freshness, SEC cache (global), optional yfinance cross-check.
+
+    ``quote_age_mode="live"`` (default) uses DATA_QUOTE_MAX_AGE_SEC so execution
+    cannot ride a stale print. ``quote_age_mode="scan"`` widens the budget after
+    the extended-hours close so overnight scans are not marked stale.
 
     Returns a dict including data_quality, reasons (list[str]), and detail fields suitable
     for logs and operator payloads.
     """
     skill_dir = Path(skill_dir or SKILL_DIR)
     reasons: list[str] = []
-    details: dict[str, Any] = {"ticker": ticker.upper()}
+    assessed_at = now or datetime.now(timezone.utc)
+    details: dict[str, Any] = {"ticker": ticker.upper(), "quote_age_mode": quote_age_mode}
 
     try:
         from config import (
@@ -151,15 +208,34 @@ def assess_symbol_data_health(
     except Exception as e:
         LOG.debug("assess_symbol_data_health quote fetch failed: %s", e)
         quote = None
+    if quote is None:
+        # Surface *why* the quote is missing (e.g. Schwab HTTP 401) instead of
+        # only the generic "quote_unavailable" so operators can act on it.
+        try:
+            from market_data import get_current_quote_with_status
 
-    q_age = _quote_age_sec(quote)
+            _q2, quote_meta = get_current_quote_with_status(ticker, auth=auth, skill_dir=skill_dir)
+            if isinstance(quote_meta, dict):
+                details["quote_failure_reason"] = quote_meta.get("reason")
+                details["quote_http_status"] = quote_meta.get("http_status")
+                details["quote_fallback_provider"] = quote_meta.get("fallback_provider")
+                if _q2 is not None:
+                    quote = _q2
+        except Exception as e:
+            LOG.debug("assess_symbol_data_health quote status fetch failed: %s", e)
+
+    q_age = _quote_age_sec(quote, now=assessed_at)
+    applied_quote_max_age = float(quote_max_age)
+    if quote_age_mode == "scan":
+        applied_quote_max_age = scan_quote_max_age_sec(quote_max_age, now=assessed_at)
     details["quote_age_sec"] = round(q_age, 2) if q_age is not None else None
+    details["quote_max_age_sec"] = round(applied_quote_max_age, 1)
     if quote is None:
         reasons.append("quote_unavailable")
     elif q_age is None:
         reasons.append("quote_timestamp_missing")
-    elif q_age > quote_max_age:
-        reasons.append(f"quote_stale_age_sec_{q_age:.0f}_gt_{quote_max_age:.0f}")
+    elif q_age > applied_quote_max_age:
+        reasons.append(f"quote_stale_age_sec_{q_age:.0f}_gt_{applied_quote_max_age:.0f}")
 
     last_close: float | None = None
     bar_last_date: str | None = None
@@ -183,7 +259,7 @@ def assess_symbol_data_health(
     if bar_last_date:
         try:
             last_dt = datetime.strptime(bar_last_date, "%Y-%m-%d").date()
-            today = datetime.now(timezone.utc).date()
+            today = _as_et(assessed_at).date()
             gap = (today - last_dt).days
             details["bar_age_calendar_days"] = gap
             if gap > bar_days:
@@ -261,7 +337,9 @@ def assess_symbol_data_health(
         "data_quality": status,
         "reasons": reasons,
         "details": details,
-        "assessed_at": datetime.now(timezone.utc).isoformat(),
+        "assessed_at": assessed_at.astimezone(timezone.utc).isoformat()
+        if assessed_at.tzinfo
+        else assessed_at.replace(tzinfo=timezone.utc).isoformat(),
     }
     if status != "ok":
         LOG.info("data_health %s %s: %s", ticker.upper(), status, "; ".join(reasons[:5]))
@@ -271,9 +349,17 @@ def assess_symbol_data_health(
 def assess_scan_session_data_health(
     auth: Any,
     skill_dir: Path | str | None = None,
+    *,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """SPY-proxied session health for scanner / operator summaries."""
-    return assess_symbol_data_health("SPY", auth=auth, skill_dir=skill_dir)
+    return assess_symbol_data_health(
+        "SPY",
+        auth=auth,
+        skill_dir=skill_dir,
+        quote_age_mode="scan",
+        now=now,
+    )
 
 
 # Stable names for tests / CI scripts (avoid importing private helpers).

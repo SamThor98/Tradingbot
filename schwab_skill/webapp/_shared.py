@@ -56,41 +56,46 @@ def trade_to_dict(row: Any) -> dict[str, Any]:
 
 
 def build_portfolio_summary(account_status: dict[str, Any]) -> dict[str, Any]:
-    """Flatten a Schwab account status payload into a UI-friendly summary."""
+    """Flatten a Schwab account status payload into a UI-friendly summary.
+
+    ``positions`` stays flat (signed quantities, shorts negative) for risk and
+    intel consumers. ``position_groups`` is the display view where option legs
+    nest under the equity that covers them.
+    """
+    from core.portfolio_position_groups import (
+        group_portfolio_positions,
+        normalize_schwab_position,
+        summarize_position_groups,
+    )
+
     accounts = account_status.get("accounts", []) if isinstance(account_status, dict) else []
     positions: list[dict[str, Any]] = []
     total_value = 0.0
     for acc in accounts:
         sec = acc.get("securitiesAccount", acc) if isinstance(acc, dict) else {}
         for pos in sec.get("positions", []) if isinstance(sec, dict) else []:
-            inst = pos.get("instrument", {}) if isinstance(pos, dict) else {}
-            sym = inst.get("symbol", "?")
-            qty = pos.get("longQuantity", 0) or pos.get("shortQuantity", 0) or 0
-            if not qty:
+            row = normalize_schwab_position(pos if isinstance(pos, dict) else {})
+            if row is None:
                 continue
-            mkt_val = float(pos.get("marketValue", 0) or 0)
-            day_pl = float(pos.get("currentDayProfitLoss", 0) or 0)
-            avg_cost = float(pos.get("averagePrice", 0) or 0)
-            last = (mkt_val / qty) if qty else 0.0
-            pl_pct = ((last - avg_cost) / avg_cost * 100.0) if avg_cost else 0.0
-            total_value += mkt_val
-            positions.append(
-                {
-                    "symbol": sym,
-                    "qty": int(qty),
-                    "market_value": round(mkt_val, 2),
-                    "day_pl": round(day_pl, 2),
-                    "avg_cost": round(avg_cost, 4),
-                    "last": round(last, 4),
-                    "pl_pct": round(pl_pct, 2),
-                }
-            )
+            total_value += float(row.get("market_value") or 0.0)
+            positions.append(row)
     positions.sort(key=lambda row: abs(float(row.get("market_value", 0))), reverse=True)
+
+    groups = group_portfolio_positions(positions)
+    counts = summarize_position_groups(groups)
+    option_count = sum(1 for row in positions if str(row.get("asset_type") or "").upper() == "OPTION")
     return {
         "account_count": len(accounts),
         "positions_count": len(positions),
+        "equity_count": len(positions) - option_count,
+        "option_count": option_count,
+        "option_leg_count": counts["option_leg_count"],
+        "orphan_option_count": counts["orphan_option_count"],
+        "standalone_option_count": counts["standalone_option_count"],
+        "covered_package_count": counts["covered_package_count"],
         "total_market_value": round(total_value, 2),
         "positions": positions,
+        "position_groups": groups,
     }
 
 

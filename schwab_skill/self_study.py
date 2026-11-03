@@ -15,7 +15,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 LOG = logging.getLogger(__name__)
 SKILL_DIR = Path(__file__).resolve().parent
@@ -35,10 +35,30 @@ CONVICTION_BAND_SHRINK_PRIOR_TRIPS = 12
 # Conviction bands for aggregation
 CONVICTION_BANDS = [(0, 20), (20, 40), (40, 60), (60, 80), (80, 101)]
 
+# Fingerprint of scripts/seed_calibration_demo.py — never use as a live floor.
+_DEMO_SEED_ROUND_TRIPS = 12
+_DEMO_SEED_WIN_RATE = 58.3
+_DEMO_SEED_AVG_RETURN_PCT = 2.41
+_DEMO_SEED_MIN_CONVICTION = 40
+_DEMO_SEED_ADVISORY_SAMPLES = 14
+_DEMO_SEED_ADVISORY_HIT_RATE = 0.62
+
+SelfStudyMode = Literal["off", "shadow", "live"]
+
+
+@dataclass(frozen=True)
+class SelfStudyFloor:
+    """Resolved conviction floor for the scanner (shadow or live)."""
+
+    mode: SelfStudyMode
+    min_conviction: int | None
+    reason: str
+
 
 @dataclass
 class RoundTrip:
     """A completed BUY -> SELL cycle for one ticker."""
+
     ticker: str
     buy_date: str
     buy_price: float
@@ -91,6 +111,7 @@ def record_trade_outcome(
     skill_dir = skill_dir or SKILL_DIR
     ticker = ticker.upper()
     from datetime import date
+
     today = date.today().isoformat()
 
     with _LOCK:
@@ -112,16 +133,18 @@ def record_trade_outcome(
                 break
 
         if not updated:
-            entries.append({
-                "order_id": order_id,
-                "ticker": ticker,
-                "side": side.upper(),
-                "qty": int(qty),
-                "fill_price": fill_price,
-                "date": today,
-                "mirofish_conviction": int(mirofish_conviction) if mirofish_conviction is not None else None,
-                "sector_etf": sector_etf,
-            })
+            entries.append(
+                {
+                    "order_id": order_id,
+                    "ticker": ticker,
+                    "side": side.upper(),
+                    "qty": int(qty),
+                    "fill_price": fill_price,
+                    "date": today,
+                    "mirofish_conviction": int(mirofish_conviction) if mirofish_conviction is not None else None,
+                    "sector_etf": sector_etf,
+                }
+            )
 
         _save_outcomes(entries, skill_dir)
 
@@ -138,8 +161,14 @@ def register_pending_order(
 ) -> None:
     """Register an order immediately after placement (before fill). Fill price updated by order_monitor."""
     record_trade_outcome(
-        order_id, ticker, side, qty, fill_price=price_hint,
-        skill_dir=skill_dir, mirofish_conviction=mirofish_conviction, sector_etf=sector_etf,
+        order_id,
+        ticker,
+        side,
+        qty,
+        fill_price=price_hint,
+        skill_dir=skill_dir,
+        mirofish_conviction=mirofish_conviction,
+        sector_etf=sector_etf,
     )
 
 
@@ -208,7 +237,9 @@ def _compute_round_trips(outcomes: list[dict]) -> list[RoundTrip]:
             continue
         # Find matching BUY (same ticker, before sell date)
         sell_date = sell.get("date", "")
-        matching_buys = [b for b in buys if (b.get("ticker") or "").upper() == ticker and (b.get("date") or "") <= sell_date]
+        matching_buys = [
+            b for b in buys if (b.get("ticker") or "").upper() == ticker and (b.get("date") or "") <= sell_date
+        ]
         if not matching_buys:
             continue
         buy = min(matching_buys, key=lambda b: (b.get("date", ""), b.get("order_id", "")))
@@ -218,17 +249,19 @@ def _compute_round_trips(outcomes: list[dict]) -> list[RoundTrip]:
             continue
         ret_pct = 100 * (float(sell_price) - float(buy_price)) / float(buy_price)
         qty = min(int(buy.get("qty", 0) or 0), int(sell.get("qty", 0) or 0)) or 1
-        round_trips.append(RoundTrip(
-            ticker=ticker,
-            buy_date=buy.get("date", ""),
-            buy_price=float(buy_price),
-            sell_date=sell_date,
-            sell_price=float(sell_price),
-            qty=qty,
-            return_pct=ret_pct,
-            mirofish_conviction=buy.get("mirofish_conviction"),
-            sector_etf=buy.get("sector_etf"),
-        ))
+        round_trips.append(
+            RoundTrip(
+                ticker=ticker,
+                buy_date=buy.get("date", ""),
+                buy_price=float(buy_price),
+                sell_date=sell_date,
+                sell_price=float(sell_price),
+                qty=qty,
+                return_pct=ret_pct,
+                mirofish_conviction=buy.get("mirofish_conviction"),
+                sector_etf=buy.get("sector_etf"),
+            )
+        )
         buys.remove(buy)  # Consume this BUY
     return round_trips
 
@@ -302,24 +335,15 @@ def run_self_study(skill_dir: Path | None = None) -> dict[str, Any]:
             "avg_return_pct": round(sum(r.return_pct for r in trips) / len(trips), 2),
         }
 
-    # Suggest min conviction only when a band clears:
-    # - minimum support
-    # - shrinkage-adjusted positive expectancy
+    # Floor = first well-sampled band where shrinkage-adjusted expectancy
+    # turns sustainably positive (lower well-sampled bands are non-positive,
+    # later well-sampled bands stay positive). All-green books yield no floor.
     if result["min_round_trips_met"] and result["by_conviction"]:
-        global_avg = float(result.get("avg_return_pct") or 0.0)
-        best_min = 0
-        for lo, hi in CONVICTION_BANDS:
-            key = f"{lo}-{hi}"
-            if key in result["by_conviction"]:
-                band = result["by_conviction"][key]
-                band_count = int(band.get("count", 0) or 0)
-                band_avg = float(band.get("avg_return_pct", 0.0) or 0.0)
-                shrunk_avg = (
-                    (band_avg * band_count) + (global_avg * CONVICTION_BAND_SHRINK_PRIOR_TRIPS)
-                ) / max(1, band_count + CONVICTION_BAND_SHRINK_PRIOR_TRIPS)
-                if band_count >= MIN_BAND_SAMPLES_FOR_THRESHOLD and shrunk_avg > 0:
-                    best_min = max(best_min, lo)
-        result["suggested_min_conviction"] = best_min if best_min > 0 else None
+        result["suggested_min_conviction"] = suggest_min_conviction_from_bands(
+            result["by_conviction"],
+            float(result.get("avg_return_pct") or 0.0),
+        )
+    result["threshold_rule"] = "first_sustainable_positive_band"
 
     try:
         from config import get_hypothesis_self_study_merge
@@ -338,35 +362,159 @@ def run_self_study(skill_dir: Path | None = None) -> dict[str, Any]:
 
         result["last_run"] = datetime.now(timezone.utc).isoformat()
         atomic_write_json(skill_dir / ".self_study.json", result, indent=2)
-        LOG.info("Self-study complete: %d round trips, win_rate=%.1f%%, suggested_min_conviction=%s",
-                 len(round_trips), result["win_rate"] or 0, result["suggested_min_conviction"])
+        LOG.info(
+            "Self-study complete: %d round trips, win_rate=%.1f%%, suggested_min_conviction=%s",
+            len(round_trips),
+            result["win_rate"] or 0,
+            result["suggested_min_conviction"],
+        )
     except Exception as e:
         LOG.warning("Self-study write failed: %s", e)
 
     return result
 
 
-def get_learned_min_conviction(skill_dir: Path | None = None) -> int | None:
+def _band_shrunk_avg(band: dict[str, Any], global_avg: float) -> tuple[int, float]:
+    band_count = int(band.get("count", 0) or 0)
+    band_avg = float(band.get("avg_return_pct", 0.0) or 0.0)
+    shrunk_avg = ((band_avg * band_count) + (global_avg * CONVICTION_BAND_SHRINK_PRIOR_TRIPS)) / max(
+        1, band_count + CONVICTION_BAND_SHRINK_PRIOR_TRIPS
+    )
+    return band_count, shrunk_avg
+
+
+def suggest_min_conviction_from_bands(
+    by_conviction: dict[str, Any],
+    global_avg_return_pct: float,
+) -> int | None:
+    """Return the lowest conviction floor supported by band expectancy.
+
+    Requires a well-sampled non-positive band below a well-sampled positive
+    band, with every later well-sampled band remaining positive. Does not
+    ratchet to the highest profitable band, and does not invent a floor when
+    every well-sampled band is already green.
     """
-    Return suggested minimum MiroFish conviction from self-study, if available and enabled.
-    Returns None if self-study has not learned a threshold or SELF_STUDY_ENABLED=false.
+    well: list[tuple[int, float]] = []
+    for lo, hi in CONVICTION_BANDS:
+        band = by_conviction.get(f"{lo}-{hi}")
+        if not isinstance(band, dict):
+            continue
+        band_count, shrunk_avg = _band_shrunk_avg(band, global_avg_return_pct)
+        if band_count >= MIN_BAND_SAMPLES_FOR_THRESHOLD:
+            well.append((lo, shrunk_avg))
+    if not well:
+        return None
+    for i, (lo, shrunk) in enumerate(well):
+        if shrunk <= 0:
+            continue
+        below = well[:i]
+        above = well[i:]
+        if not below:
+            return None
+        if any(avg > 0 for _, avg in below):
+            continue
+        if not all(avg > 0 for _, avg in above):
+            continue
+        if all(avg <= 0 for _, avg in below):
+            return lo
+    return None
+
+
+def is_demo_calibration_seed(data: dict[str, Any]) -> bool:
+    """True when `.self_study.json` matches scripts/seed_calibration_demo.py."""
+    try:
+        trips = int(data.get("round_trips_count") or 0)
+        min_conv = data.get("suggested_min_conviction")
+        min_conv_i = int(min_conv) if min_conv is not None else None
+    except (TypeError, ValueError):
+        return False
+    if trips != _DEMO_SEED_ROUND_TRIPS or min_conv_i != _DEMO_SEED_MIN_CONVICTION:
+        return False
+    if data.get("win_rate") != _DEMO_SEED_WIN_RATE:
+        return False
+    if data.get("avg_return_pct") != _DEMO_SEED_AVG_RETURN_PCT:
+        return False
+    by_source = (data.get("hypothesis_calibration") or {}).get("by_source") or {}
+    advisory = by_source.get("advisory") or {}
+    return (
+        advisory.get("scored_samples") == _DEMO_SEED_ADVISORY_SAMPLES
+        and advisory.get("hit_rate") == _DEMO_SEED_ADVISORY_HIT_RATE
+    )
+
+
+def _parse_suggested_min_conviction(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _floor_from_study_payload(data: dict[str, Any]) -> tuple[int | None, str]:
+    if is_demo_calibration_seed(data):
+        return None, "demo_seed"
+    try:
+        trips = int(data.get("round_trips_count") or 0)
+    except (TypeError, ValueError):
+        trips = 0
+    if trips < MIN_ROUND_TRIPS_FOR_LEARNING:
+        return None, "insufficient_round_trips"
+    if not data.get("min_round_trips_met"):
+        return None, "min_round_trips_not_met"
+    min_conv = _parse_suggested_min_conviction(data.get("suggested_min_conviction"))
+    if min_conv is None:
+        return None, "no_threshold"
+    return min_conv, "applied"
+
+
+def resolve_self_study_floor(skill_dir: Path | None = None) -> SelfStudyFloor:
+    """Resolve mode + applyable min conviction for the scanner.
+
+    A floor is applyable only when the study file is not the demo seed, has
+    at least ``MIN_ROUND_TRIPS_FOR_LEARNING`` round trips, and carries a
+    positive ``suggested_min_conviction``. Process env / ``SELF_STUDY_MODE``
+    win over the legacy ``SELF_STUDY_ENABLED`` boolean.
     """
     skill_dir = skill_dir or SKILL_DIR
-    env_path = skill_dir / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("SELF_STUDY_ENABLED="):
-                val = line.split("=", 1)[1].strip().lower()
-                if val not in ("1", "true", "yes", "on"):
-                    return None
-                break
+    try:
+        from config import get_self_study_mode
+
+        raw_mode = str(get_self_study_mode(skill_dir) or "off").strip().lower()
+    except Exception:
+        raw_mode = "off"
+    mode: SelfStudyMode = raw_mode if raw_mode in ("off", "shadow", "live") else "off"
+    if mode == "off":
+        return SelfStudyFloor(mode="off", min_conviction=None, reason="mode_off")
 
     study_path = skill_dir / ".self_study.json"
     if not study_path.exists():
-        return None
+        return SelfStudyFloor(mode=mode, min_conviction=None, reason="no_study_file")
     try:
-        data = json.loads(study_path.read_text())
-        return data.get("suggested_min_conviction")
+        data = json.loads(study_path.read_text(encoding="utf-8"))
     except Exception:
-        return None
+        return SelfStudyFloor(mode=mode, min_conviction=None, reason="invalid_study_file")
+    if not isinstance(data, dict):
+        return SelfStudyFloor(mode=mode, min_conviction=None, reason="invalid_study_file")
+    min_conv, reason = _floor_from_study_payload(data)
+    return SelfStudyFloor(mode=mode, min_conviction=min_conv, reason=reason)
+
+
+def signal_below_self_study_floor(signal: dict[str, Any], min_conv: int) -> bool:
+    """True when a live-book signal is below the learned conviction floor."""
+    if str(signal.get("entry_family") or "").strip().lower() in {"horizon", "pead_primary"}:
+        return False
+    try:
+        conviction = float(signal.get("mirofish_conviction") or 0)
+    except (TypeError, ValueError):
+        conviction = 0.0
+    return conviction < float(min_conv)
+
+
+def get_learned_min_conviction(skill_dir: Path | None = None) -> int | None:
+    """
+    Return suggested minimum MiroFish conviction from self-study, if available
+    and the gate is in shadow or live with an applyable floor.
+    """
+    return resolve_self_study_floor(skill_dir).min_conviction

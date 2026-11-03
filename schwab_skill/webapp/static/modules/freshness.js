@@ -24,6 +24,7 @@ export const FRESHNESS_BUDGETS_SEC = {
   performance: 1800,
   calibration: 86400,
   status_details: 120,
+  intel: 300,
 };
 
 /** Three-state freshness verdict. `unknown` means we have no timestamp. */
@@ -141,4 +142,34 @@ export function clearUnavailable(el) {
   if (!el) return;
   el.removeAttribute("data-unavailable");
   el.removeAttribute("title");
+}
+
+/** ISO timestamp from an API field. Page-fetch time is never a substitute. */
+export function isoFromPayload(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
+/** Scan as-of: finished_at, then last_scan.at. */
+export function scanAsOfFrom(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const lastScan = payload.last_scan && typeof payload.last_scan === "object" ? payload.last_scan : null;
+  return isoFromPayload(payload.finished_at) || isoFromPayload(payload.at) || isoFromPayload(lastScan && lastScan.at);
+}
+
+/** Newest pending-row updated_at, else created_at. Empty queue has no as-of. */
+export function pendingAsOfFrom(rows) {
+  let bestMs = -Infinity;
+  let best = null;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const raw = row && (row.updated_at || row.created_at);
+    const ms = Date.parse(typeof raw === "string" ? raw : "");
+    if (Number.isFinite(ms) && ms >= bestMs) {
+      bestMs = ms;
+      best = new Date(ms).toISOString();
+    }
+  }
+  return best;
 }

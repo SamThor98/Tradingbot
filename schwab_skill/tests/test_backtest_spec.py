@@ -87,3 +87,164 @@ def test_overrides_to_env() -> None:
     assert env.get("EVENT_RISK_MODE") == "live"
     assert env.get("EXIT_MANAGER_MODE") == "off"
     assert env.get("EXEC_QUALITY_MODE") == "shadow"
+
+
+def test_parse_named_universe_and_strategy_ids() -> None:
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "universe_preset": "nasdaq100",
+            "strategy_ids": ["donchian_20"],
+            "scan_timeframe": "daily",
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+            "overrides": {
+                "stage2_52w_pct": 0.9,
+                "stage2_sma_upward_days": 25,
+                "vcp_days": 6,
+                "quality_min_signal_score": 55,
+                "backtest_hold_days": 50,
+                "backtest_min_hold_days_before_trail": 20,
+                "rank_filter_shadow_min_percentile_rank_v2": 68,
+            },
+        }
+    )
+    assert s.universe_preset == "nasdaq100"
+    assert s.universe_mode == "watchlist"
+    assert s.strategy_ids == ["donchian_20"]
+    assert s.scan_timeframe == "daily"
+    env = s.env_overrides_merged()
+    assert env is not None
+    assert env["STAGE2_52W_PCT"] == "0.9"
+    assert env["STAGE2_SMA_UPWARD_DAYS"] == "25"
+    assert env["VCP_DAYS"] == "6"
+    assert env["QUALITY_MIN_SIGNAL_SCORE"] == "55"
+    assert env["BACKTEST_HOLD_DAYS"] == "50"
+    assert env["BACKTEST_MIN_HOLD_DAYS_BEFORE_TRAIL"] == "20"
+    assert env["RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2"] == "68"
+    prev = spec_preview_dict(s)
+    assert prev["universe_preset"] == "nasdaq100"
+    assert prev["strategy_ids"] == ["donchian_20"]
+
+
+def test_parse_legacy_watchlist_defaults_to_sp1500() -> None:
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "tickers": [],
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+        }
+    )
+    assert s.universe_preset == "sp1500"
+    assert s.strategy_ids == []
+
+
+def test_rejects_unwired_universe() -> None:
+    with pytest.raises(ValueError, match="not available"):
+        parse_strategy_spec(
+            {
+                "schema_version": 1,
+                "universe_mode": "watchlist",
+                "universe_preset": "russell2000",
+                "start_date": "2018-01-01",
+                "end_date": "2023-12-31",
+            }
+        )
+
+
+def test_breakout_confirm_strategy_sets_env() -> None:
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "universe_preset": "sp500",
+            "strategy_ids": ["breakout_confirm"],
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+        }
+    )
+    env = s.env_overrides_merged()
+    assert env is not None
+    assert env.get("BREAKOUT_CONFIRM_ENABLED") == "true"
+
+
+def test_parse_weekly_sp1500_queue_payload() -> None:
+    """Exact composer payload that 8182 rejected while uvicorn still had the old spec."""
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "universe_preset": "sp1500",
+            "scan_timeframe": "weekly",
+            "strategy_ids": ["weekly_swing", "weekly_reversal"],
+            "start_date": "2024-09-11",
+            "end_date": "2026-09-11",
+            "overrides": {"stage2_sma_upward_days": 18},
+        }
+    )
+    assert s.universe_preset == "sp1500"
+    assert s.scan_timeframe == "weekly"
+    assert s.strategy_ids == ["weekly_swing", "weekly_reversal"]
+    env = s.env_overrides_merged()
+    assert env is not None
+    assert env["STAGE2_SMA_UPWARD_DAYS"] == "18"
+    assert env["SIGNAL_UNIVERSE_MODE"] == "broad"
+
+
+def test_explicit_focus_stays_on_a_named_index() -> None:
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "universe_preset": "sp1500",
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+            "overrides": {"signal_universe_mode": "focused"},
+        }
+    )
+    assert s.env_overrides_merged()["SIGNAL_UNIVERSE_MODE"] == "focused"
+
+
+def test_weekly_timeframe_defaults_primary_strategy() -> None:
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "scan_timeframe": "weekly",
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+        }
+    )
+    assert s.strategy_ids == ["weekly_swing"]
+
+
+def test_run_strategy_backtest_passes_catalog_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    def fake_run_backtest(**kwargs):
+        captured.update(kwargs)
+        return {"total_trades": 0}
+
+    monkeypatch.setattr("backtest.run_backtest", fake_run_backtest)
+    s = parse_strategy_spec(
+        {
+            "schema_version": 1,
+            "universe_mode": "watchlist",
+            "universe_preset": "nasdaq100",
+            "strategy_ids": ["trend_breakout"],
+            "start_date": "2018-01-01",
+            "end_date": "2023-12-31",
+        }
+    )
+    from pathlib import Path
+
+    from webapp.backtest_spec import run_strategy_backtest
+
+    out = run_strategy_backtest(Path("."), s)
+    assert out["total_trades"] == 0
+    assert captured["universe_preset"] == "nasdaq100"
+    assert captured["strategy_ids"] == ["trend_breakout"]
+    assert captured["tickers"] is None

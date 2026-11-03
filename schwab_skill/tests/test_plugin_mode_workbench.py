@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core import plugin_mode_workbench as wb
-from core.env_local import parse_env_file, upsert_env_file
+from core.env_local import parse_env_file
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +70,16 @@ def test_build_workbench_tiers_and_session_gaps(tmp_path: Path, monkeypatch: pyt
     assert "lacking" in (by_id["regime_v2"]["sessions"]["lacking_summary"] or "")
     assert by_id["confluence_gate"]["sessions"]["collected"] == 0
     assert "teaser" in payload["summary"]
+    assert by_id["entry_timing"]["sessions"]["target"] == 5
+    assert by_id["rank_filter_v2"]["sessions"]["target"] == 5
+    assert by_id["prob_rank"]["sessions"]["target"] == 5
+
+
+def test_wired_evidence_keys_include_timing_rank_prob() -> None:
+    by_id = {spec.id: spec for spec in wb.plugin_catalog()}
+    assert by_id["entry_timing"].evidence_key == "entry_timing"
+    assert by_id["rank_filter_v2"].evidence_key == "rank_filter_v2"
+    assert by_id["prob_rank"].evidence_key == "prob_rank"
 
 
 def test_set_plugin_mode_shadow_upsert_and_verify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

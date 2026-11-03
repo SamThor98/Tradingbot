@@ -7,6 +7,7 @@ Configurable via STAGE2_52W_PCT, STAGE2_SMA_UPWARD_DAYS, VCP_DAYS in .env.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,65 @@ def is_stage_2(
     return True
 
 
+def expansion_volume_ratio(df: pd.DataFrame) -> float | None:
+    """Entry-bar volume divided by the 50-day average of the bars before it.
+
+    ``avg_vol_50`` on the entry bar includes that bar. Dividing by it cannot
+    show expansion while the VCP window also includes the entry bar. The prior
+    bar's rolling average is the 50 sessions strictly before the entry. This
+    value is recorded. It is not a gate.
+    """
+    if df is None or len(df) < 51 or "volume" not in df.columns or AVG_VOL_50 not in df.columns:
+        return None
+    try:
+        latest = float(df["volume"].iloc[-1])
+        prior = float(df[AVG_VOL_50].iloc[-2])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(latest) or not math.isfinite(prior) or latest < 0 or prior <= 0:
+        return None
+    return round(latest / prior, 4)
+
+
+def expansion_volume_ratio_by_date(df: pd.DataFrame) -> pd.Series:
+    """Entry-bar volume over the prior 50-session average, indexed by session date.
+
+    The first 50 sessions are missing: the prior window is not 50 days yet.
+    This is the same ratio as ``expansion_volume_ratio`` on a frame that ends
+    that session. It is not a gate.
+    """
+    empty = pd.Series(dtype="float64", name="expansion_volume_ratio")
+    if df is None or getattr(df, "empty", True) or "volume" not in getattr(df, "columns", []):
+        return empty
+    work = df
+    if not isinstance(work.index, pd.DatetimeIndex):
+        if "date" not in work.columns:
+            return empty
+        work = work.set_index("date")
+    work = work.copy()
+    idx = pd.to_datetime(work.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    work.index = idx.normalize()
+    work = work.sort_index()
+    work = work[~work.index.duplicated(keep="last")]
+    for col in ("open", "high", "low", "close"):
+        if col not in work.columns:
+            work[col] = work["close"] if "close" in work.columns else 1.0
+    indicated = add_indicators(work)
+    prior = pd.to_numeric(indicated[AVG_VOL_50], errors="coerce").shift(1)
+    latest = pd.to_numeric(indicated["volume"], errors="coerce")
+    ratio = latest / prior
+    valid = prior.notna() & (prior > 0) & latest.notna() & (latest >= 0)
+    if len(valid) > 50:
+        valid.iloc[:50] = False
+    else:
+        valid[:] = False
+    out = ratio.where(valid).round(4)
+    out.name = "expansion_volume_ratio"
+    return out
+
+
 def check_vcp_volume(
     df: pd.DataFrame,
     skill_dir: Path | None = None,
@@ -138,7 +198,11 @@ def check_vcp_volume(
         df = df.iloc[:-exclude]
     if df.empty or len(df) < 50 or len(df) < vcp_days:
         return False
-    df = add_indicators(df)
+    # A prefix of an already-indicated series has the same causal volume average
+    # as recomputing it. Replays pass that prefix once per bar.
+    tail_ready = AVG_VOL_50 in df.columns and not df[AVG_VOL_50].iloc[-vcp_days:].isna().any()
+    if not tail_ready:
+        df = add_indicators(df)
     last_n = df.iloc[-vcp_days:]
     for _, row in last_n.iterrows():
         if row["volume"] >= row[AVG_VOL_50]:

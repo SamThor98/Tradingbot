@@ -1,0 +1,14 @@
+{
+  "META_POLICY_MODE": "off",
+  "UNCERTAINTY_MODE": "off",
+  "EVENT_RISK_MODE": "off",
+  "EXIT_MANAGER_MODE": "off",
+  "EXEC_QUALITY_MODE": "off",
+  "PTS_52W_CAP_MODE": "off",
+  "RANK_FILTER_V2_MODE": "off",
+  "CONFLUENCE_GATE_MODE": "off",
+  "ENTRY_TIMING_SHADOW_MODE": "off",
+  "EARLY_STOP_GATE_MODE": "off",
+  "BACKTEST_AUGMENTED_LOGGING": "true",
+  "BACKTEST_OHLC_PATH": "true"
+}

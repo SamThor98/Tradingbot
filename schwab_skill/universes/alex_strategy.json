@@ -1,0 +1,105 @@
+{
+  "name": "alex_strategy",
+  "source": "Swing Edge v10 (labeled Alex strategy)",
+  "excluded_sectors": ["Information Technology"],
+  "rate_hike_sectors": ["Financials", "Real Estate"],
+  "sectors": {
+    "Communication Services": [
+      "CARG", "CHTR", "CMCSA", "DIS", "EA", "FWONA", "GOOGL", "GSAT", "GTN", "IMAX",
+      "LBRDK", "LBTYA", "LBTYK", "LYV", "META", "MGNI", "MTCH", "NFLX", "NWSA", "NYT",
+      "OMC", "OOMA", "PINS", "RBLX", "SBGI", "SNAP", "SPOT", "T", "TBLA", "TMUS",
+      "TTWO", "VZ", "WBD", "ZM"
+    ],
+    "Consumer Discretionary": [
+      "ABG", "ABNB", "AMZN", "AN", "ARCO", "ARHS", "ARLO", "AWI", "AZO", "BBWI",
+      "BBY", "BKNG", "CCL", "CHH", "CMG", "CROX", "CVCO", "DASH", "DHI", "DIN",
+      "DPZ", "DRI", "EBAY", "ETSY", "EVVTY", "EXPE", "F", "FOXF", "FWRG", "GM",
+      "GNTX", "GOLF", "GPC", "GRAB", "GRMN", "HAYW", "HD", "HLT", "HMC", "HTZ",
+      "JMIA", "KSS", "LEN", "LOCO", "LOW", "LULU", "LVS", "M", "MAR", "MBUU",
+      "MCD", "MELI", "MGM", "MHK", "NATH", "NIO", "NKE", "NVR", "OLLI", "ONON",
+      "ORLY", "PAG", "PENN", "PHM", "PLNT", "PTON", "PVH", "RAVE", "RCL", "RIVN",
+      "RL", "ROST", "RRR", "SBUX", "SCI", "SHAK", "TCOM", "TGT", "THRM", "TJX",
+      "TNL", "TOL", "TSCO", "TSLA", "TXRH", "ULTA", "VAC", "VIPS", "WGO", "WH",
+      "WW", "WYNN", "YUM"
+    ],
+    "Consumer Staples": [
+      "ADM", "ANDE", "BG", "BJ", "BRBR", "CAG", "CALM", "CASY", "CHD", "CL",
+      "CLX", "COST", "COTY", "CPB", "EL", "EPC", "FLO", "GIS", "GO", "HRL",
+      "HSY", "IMKTA", "INGR", "JBSS", "KHC", "KMB", "KO", "KR", "KVUE", "LWAY",
+      "MDLZ", "MGPI", "MKC", "MNST", "MO", "PEP", "PFGC", "PG", "PM", "POST",
+      "REYN", "SENEA", "SJM", "SMPL", "STZ", "SYY", "TAP", "UFPT", "USFD", "USNA",
+      "WMT"
+    ],
+    "Energy": [
+      "APA", "AR", "BKR", "BP", "CAPL", "CLMT", "COP", "CQP", "CVE", "CVX",
+      "DK", "DKL", "DVN", "ENB", "EOG", "EQNR", "EQT", "FANG", "FTI", "GRNT",
+      "HAL", "IMO", "KMI", "LNG", "MPC", "MTDR", "NOV", "OKE", "OVV", "OXY",
+      "PARR", "PBR", "PSX", "PTEN", "REPX", "RES", "RRC", "SLB", "SM", "SU",
+      "TPL", "TRGP", "VIST", "VLO", "WMB", "XOM"
+    ],
+    "Financials": [
+      "AB", "ACGL", "AFL", "AIG", "AIZ", "ALL", "ALLY", "AMG", "AON", "APO",
+      "AXP", "BAC", "BAM", "BEN", "BLK", "BXSL", "C", "CB", "CBNK", "CFBK",
+      "CFFI", "CFG", "CINF", "CME", "CNS", "COF", "CUBI", "DCOM", "EIG", "ENVA",
+      "EQH", "ERIE", "ESNT", "FAF", "FBIZ", "FG", "FITB", "FMBH", "FUTU", "GBCI",
+      "GL", "GLAD", "GS", "HBAN", "HIG", "HLI", "HRTG", "ICE", "INBK", "ITUB",
+      "JPM", "KEY", "KKR", "KMPR", "KREF", "LCNB", "LMND", "LPLA", "MA", "MBIN",
+      "MET", "MS", "MTB", "NMFC", "NMIH", "NMR", "NOAH", "NTRS", "NU", "OFG",
+      "OMF", "OPFI", "ORI", "OWL", "PFSI", "PIPR", "PJT", "PNC", "PRAA", "PRU",
+      "PSEC", "RBCAA", "RDN", "RF", "RJF", "RKT", "RLI", "ROOT", "RYAN", "SCHW",
+      "SF", "SFNC", "SIGI", "SLM", "SMBC", "SPGI", "STEP", "STT", "SYF", "TBBK",
+      "TFC", "TIGR", "TIPT", "TROW", "TRV", "UBSI", "USB", "UVE", "V", "VCTR",
+      "WAL", "WF", "WFC", "WRB", "WRLD"
+    ],
+    "Health Care": [
+      "A", "ABBV", "ABT", "ACAD", "ADPT", "AGEN", "ALGN", "ALHC", "ALLO", "ALNY",
+      "AMGN", "AMSF", "ANAB", "ARDX", "ASND", "ATAI", "ATRC", "AURA", "AXSM", "BAX",
+      "BDX", "BEAM", "BIIB", "BMY", "BSX", "CAH", "CGEM", "CI", "CLDX", "CNC",
+      "COO", "CORT", "CRL", "CRSP", "CVS", "DHR", "DNLI", "DVA", "DXCM", "ELV",
+      "EW", "GEHC", "GH", "GILD", "HALO", "HCA", "HIMS", "HRMY", "HUM", "ICLR",
+      "IDXX", "INCY", "INSM", "IQV", "IRTC", "ISRG", "JAZZ", "JNJ", "KIDS", "KRYS",
+      "LIVN", "LLY", "LMAT", "MCK", "MDGL", "MDT", "MEDP", "MIRM", "MLAB", "MNKD",
+      "MOH", "MRK", "MTD", "NRXP", "NUVB", "NVAX", "NVO", "PFE", "PGNY", "PODD",
+      "PRAX", "PRVA", "PTGX", "RARE", "RCKT", "RCUS", "REGN", "RHHBY", "RLAY", "RMD",
+      "RVMD", "RVTY", "RXRX", "SRPT", "STE", "SYK", "TAK", "TARS", "TBPH", "TMO",
+      "TWST", "UNH", "VCEL", "VKTX", "VRTX", "WAT", "ZBH", "ZTS", "ZYME"
+    ],
+    "Industrials": [
+      "ABM", "ADP", "AME", "AOS", "AOUT", "ASTE", "AXON", "BA", "BAH", "BWXT",
+      "CACI", "CARR", "CAT", "CECO", "CHRW", "CNH", "CPA", "CTAS", "CVLG", "CW",
+      "DAL", "DE", "DY", "EFX", "EME", "EMR", "ENS", "ESAB", "ETN", "EXPD",
+      "FAST", "FDX", "FELE", "FTAI", "FTV", "GATX", "GD", "GE", "GEO", "GNRC",
+      "GRBK", "GWW", "GXO", "HEI", "HLIO", "HON", "HTLD", "HUBB", "HURN", "IESC",
+      "IIIN", "IR", "ITW", "J", "JBHT", "JOBY", "KAI", "KBR", "KFRC", "KFY",
+      "KTOS", "LHX", "LMB", "LMT", "LQDT", "LSTR", "MAN", "MAS", "MGRC", "MMM",
+      "MRCY", "MRTN", "MYRG", "NDSN", "NOC", "NPK", "NPO", "ODFL", "OMAB", "OTIS",
+      "PAC", "PCAR", "PH", "POOL", "PRIM", "PWR", "REZI", "ROAD", "ROK", "RSG",
+      "RTX", "RUSHA", "SAIA", "SGRY", "SITE", "STRL", "SWK", "TDG", "TDY", "TNC",
+      "UHAL", "UPS", "VLTO", "VRRM", "VRSK", "WAB", "WERN", "WLFC", "WM", "WMS",
+      "WTS", "XPO", "XYL"
+    ],
+    "Materials": [
+      "AA", "AEM", "AGI", "ALB", "APD", "ASIX", "ATI", "ASKR", "ATR", "AVY",
+      "BALL", "BHP", "BTG", "CC", "CCK", "CDE", "CF", "CLF", "CTVA", "DD",
+      "DOW", "ECL", "EGO", "EMN", "FCX", "FSM", "GEF", "GFI", "GOLD", "GVA",
+      "HBM", "HCC", "HL", "HMY", "HWKN", "IP", "KALU", "KNF", "LIN", "LYB",
+      "METC", "MLM", "MOS", "MP", "MTRN", "MUX", "NEM", "NUE", "NWPX", "OR",
+      "PAAS", "PKG", "PKX", "PPG", "RIO", "RPM", "RYAM", "SA", "SHW", "SLGN",
+      "SLVM", "SON", "STLD", "SW", "SXC", "TREX", "TROX", "UFPI", "VALE", "VMC",
+      "WFG", "WOR", "WPM"
+    ],
+    "Real Estate": [
+      "AMH", "AMT", "ARE", "AVB", "BRSP", "CCI", "COLD", "CUBE", "DLR", "EGP",
+      "ELME", "EPRT", "EQIX", "EQR", "EXR", "FCPT", "GLPI", "HST", "INVH", "IRM",
+      "KIM", "NNN", "O", "PDM", "PINE", "PLD", "PSA", "PSTL", "RHP", "SBAC",
+      "SITC", "SPG", "STAG", "UNIT", "VICI", "VTR", "WELL", "WPC"
+    ],
+    "Utilities": [
+      "AEE", "AEP", "AMRC", "ARTNA", "AVA", "BE", "BEPC", "BLDP", "CMS", "CSIQ",
+      "CWCO", "CWEN", "D", "DUK", "EIX", "ES", "ETR", "EVGO", "EVRG", "EXC",
+      "GWRS", "JKS", "LNT", "MDU", "MNTK", "MSEX", "NEE", "NI", "NJR", "OGE",
+      "OGS", "OTTR", "PCG", "PEG", "PLUG", "POR", "PPL", "SHLS", "SO", "SRE",
+      "SWX", "UTL", "WEC", "XEL", "YORW"
+    ]
+  }
+}

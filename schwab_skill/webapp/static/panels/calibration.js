@@ -8,7 +8,7 @@
 
 import { state } from "../modules/state.js";
 import { api } from "../modules/api.js";
-import { escapeHtml, prettyJson } from "../modules/format.js";
+import { escapeHtml } from "../modules/format.js";
 import { updateActionCenter } from "../modules/logger.js";
 import {
   renderCalibrationKpiTiles,
@@ -27,15 +27,6 @@ function _hypothesisCalibration(data) {
   );
 }
 
-function _renderRawDetails(label, payload) {
-  if (!payload || typeof payload !== "object") return "";
-  return `
-    <details class="tool-json-details calibration-raw-details">
-      <summary>${escapeHtml(label)}</summary>
-      <pre class="code-block code-block--tight">${escapeHtml(prettyJson(payload))}</pre>
-    </details>
-  `;
-}
 
 export function renderCalibrationChrome(data) {
   renderCalibrationSummaryStrip(document.getElementById("calibrationSummaryStrip"), data);
@@ -87,13 +78,6 @@ export function renderCalibrationPanel(panel, data, error) {
         <div id="calibrationLedgerSources"></div>
       </section>
     `);
-  }
-
-  const rawBlocks = [];
-  if (ss) rawBlocks.push(_renderRawDetails("Self-study raw data", ss));
-  if (hl) rawBlocks.push(_renderRawDetails("Ledger raw data", hl));
-  if (rawBlocks.length) {
-    parts.push(`<div class="calibration-raw-wrap">${rawBlocks.join("")}</div>`);
   }
 
   panel.innerHTML =
@@ -149,7 +133,7 @@ export async function submitTradingHaltSave({ refreshAccountMe = async () => {} 
   if (!out.ok) {
     const msg =
       out.user_message ||
-      (typeof out.error === "string" ? out.error : JSON.stringify(out.error || "Request failed"));
+      (typeof out.error === "string" ? out.error : out.user_message || "Request failed");
     updateActionCenter({ title: "Trading pause", message: msg, severity: "error" });
     return;
   }

@@ -15,7 +15,7 @@ globalThis.localStorage = {
   },
 };
 
-const { state, SCAN_STUDIO_PREFS_KEY, LEGACY_SCAN_STUDIO_PREFS_KEY } = await import(
+const { state, SCAN_STUDIO_PREFS_KEY, SCAN_STUDIO_PREFS_V2_KEY, LEGACY_SCAN_STUDIO_PREFS_KEY } = await import(
   "../../webapp/static/modules/state.js"
 );
 const {
@@ -91,12 +91,13 @@ test("primaryStrategyIdForTimeframe uses catalog default", () => {
   assert.equal(primaryStrategyIdForTimeframe("daily"), "trend_breakout");
 });
 
-test("scan studio prefs key is versioned past the select-all era", () => {
-  assert.equal(SCAN_STUDIO_PREFS_KEY, "tradingbot.scan.studio.v2");
+test("scan studio prefs key is versioned past leftover monthly/paper sessions", () => {
+  assert.equal(SCAN_STUDIO_PREFS_KEY, "tradingbot.scan.studio.v3");
+  assert.equal(SCAN_STUDIO_PREFS_V2_KEY, "tradingbot.scan.studio.v2");
   assert.equal(LEGACY_SCAN_STUDIO_PREFS_KEY, "tradingbot.scan.studio");
 });
 
-test("loadScanStudioPrefs migrates v1 select-all sessions to the tab primary", () => {
+test("loadScanStudioPrefs resets stale v1 select-all sessions to own Stage 2 scanner", () => {
   state.scanCatalog.timeframes = [
     { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
   ];
@@ -118,21 +119,48 @@ test("loadScanStudioPrefs migrates v1 select-all sessions to the tab primary", (
   );
   const prefs = loadScanStudioPrefs();
   assert.equal(prefs.timeframe, "daily");
-  assert.equal(prefs.universe_preset, "nasdaq100");
-  assert.equal(prefs.tickersText, "AAPL");
+  assert.equal(prefs.universe_preset, "sp1500");
+  assert.equal(prefs.tickersText, "");
   assert.deepEqual(prefs.strategy_ids, ["trend_breakout"]);
   assert.ok(store.has(SCAN_STUDIO_PREFS_KEY));
   const saved = JSON.parse(store.get(SCAN_STUDIO_PREFS_KEY));
   assert.deepEqual(saved.strategy_ids, ["trend_breakout"]);
 });
 
-test("loadScanStudioPrefs prefers v2 over a leftover v1 select-all blob", () => {
+test("loadScanStudioPrefs resets leftover v2 monthly sessions to own Stage 2 scanner", () => {
   store.set(
-    LEGACY_SCAN_STUDIO_PREFS_KEY,
+    SCAN_STUDIO_PREFS_V2_KEY,
     JSON.stringify({
-      timeframe: "daily",
+      timeframe: "monthly",
+      universe_preset: "focused",
+      strategy_ids: ["monthly_position"],
+      tickersText: "",
+    }),
+  );
+  const prefs = loadScanStudioPrefs();
+  assert.equal(prefs.timeframe, "daily");
+  assert.deepEqual(prefs.strategy_ids, ["trend_breakout"]);
+  assert.equal(prefs.universe_preset, "sp1500");
+});
+
+test("loadScanStudioPrefs prefers v3 over a leftover v2 monthly blob", () => {
+  // The v3 timeframe must exist in the catalog, otherwise prefsFromParsed drops
+  // it as a stale horizon and the assertion below tests sanitizing, not v3
+  // precedence (that reset path is covered by the two tests above).
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+    { id: "weekly", display_name: "Weekly", default_strategy_id: "weekly_swing" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "trend_breakout", timeframe: "daily", runnable: true },
+    { id: "weekly_swing", timeframe: "weekly", runnable: true },
+  ];
+  store.set(
+    SCAN_STUDIO_PREFS_V2_KEY,
+    JSON.stringify({
+      timeframe: "monthly",
       universe_preset: "sp1500",
-      strategy_ids: ["trend_breakout", "pullback"],
+      strategy_ids: ["monthly_position"],
       tickersText: "",
     }),
   );
@@ -164,8 +192,9 @@ test("fallback catalog paints daily sleeves without an API payload", () => {
   assert.match(html, /data-scan-strategy="st_reversal_5d"/);
   assert.match(html, /data-scan-strategy="weekly_swing"/);
   assert.match(html, /data-scan-strategy="monthly_position"/);
-  assert.match(html, /data-scan-timeframe="weekly"/);
-  assert.match(html, /20 sleeves are listed below/);
+  assert.match(html, /scan-studio-profile/);
+  assert.match(html, /<dt>Hold<\/dt>/);
+  assert.match(html, /Right-skew/);
 });
 
 test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => {
@@ -178,7 +207,8 @@ test("scanStudioMarkup groups Yours vs Paper and marks the primary card", () => 
     { id: "st_reversal_5d", display_name: "5-day loser bounce (screen)", timeframe: "daily", origin: "literature", status: "research", runnable: true },
   ];
   const html = scanStudioMarkup(state.scanStudioPrefs);
-  assert.match(html, /Scan lens/);
+  assert.match(html, /Scan setup/);
+  assert.match(html, /This scan will use/);
   assert.match(html, /scan-studio-group--paper/);
   assert.match(html, /scan-studio-strategy--primary/);
   assert.match(html, /data-scan-strategy="trend_breakout"[^>]*checked/);
@@ -201,4 +231,49 @@ test("scanStudioMarkup keeps every timeframe visible when Daily is selected", ()
   assert.match(html, /data-scan-strategy="trend_breakout"/);
   assert.match(html, /data-scan-strategy="weekly_swing"/);
   assert.match(html, /data-scan-horizon="weekly"/);
+  assert.match(html, /<details class="scan-studio-horizon"/);
+  assert.match(html, /name="scanUniverse"/);
+  assert.match(html, /scan-studio-selected-flag/);
+});
+
+test("readScanStudioBody posts every checked sleeve, not only the active tab", () => {
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+    { id: "weekly", display_name: "Weekly", default_strategy_id: "weekly_swing" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "trend_breakout", display_name: "Stage 2 / VCP breakout", timeframe: "daily", runnable: true },
+    { id: "donchian_20", display_name: "Donchian 20-day breakout", timeframe: "daily", runnable: true },
+    { id: "weekly_swing", display_name: "Weekly Stage 2", timeframe: "weekly", runnable: true },
+  ];
+  state.scanStudioPrefs = {
+    timeframe: "daily",
+    universe_preset: "nasdaq100",
+    strategy_ids: ["trend_breakout", "donchian_20", "weekly_swing"],
+    tickersText: "",
+  };
+  const out = readScanStudioBody();
+  assert.equal(out.error, undefined);
+  assert.deepEqual(out.body.strategy_ids, ["trend_breakout", "donchian_20", "weekly_swing"]);
+  assert.equal(out.body.scan_timeframe, "daily");
+});
+
+test("readScanStudioBody uses the sleeve horizon when only weekly names are checked", () => {
+  state.scanCatalog.timeframes = [
+    { id: "daily", display_name: "Daily", default_strategy_id: "trend_breakout" },
+    { id: "weekly", display_name: "Weekly", default_strategy_id: "weekly_swing" },
+  ];
+  state.scanCatalog.strategies = [
+    { id: "trend_breakout", display_name: "Stage 2 / VCP breakout", timeframe: "daily", runnable: true },
+    { id: "weekly_swing", display_name: "Weekly Stage 2", timeframe: "weekly", runnable: true },
+  ];
+  state.scanStudioPrefs = {
+    timeframe: "daily",
+    universe_preset: "nasdaq100",
+    strategy_ids: ["weekly_swing"],
+    tickersText: "",
+  };
+  const out = readScanStudioBody();
+  assert.equal(out.body.scan_timeframe, "weekly");
+  assert.deepEqual(out.body.strategy_ids, ["weekly_swing"]);
 });

@@ -199,6 +199,29 @@ export function formatPP(value, digits = 2) {
 }
 
 /**
+ * Signed percent points already in % units. 4.2 → "+4.20%"; −18 → "−18.00%".
+ * Use for realized_return_pct, avg_return_pct, max_drawdown_pct, MOS, EMS gap.
+ */
+export function formatSignedPercentPoints(value, digits = 2) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const body = `${Math.abs(n).toFixed(digits)}%`;
+  if (n > 0) return `+${body}`;
+  if (n < 0) return `-${body}`;
+  return body;
+}
+
+/**
+ * Signed 0–1 ratio as a percent. 0.023 → "+2.3%".
+ * Use for relative_lift_vs_baseline ((v-b)/|b|) from score_ablation_report.
+ */
+export function formatSignedRatioPct(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return formatSignedPercentPoints(n * 100, digits);
+}
+
+/**
  * Render a signed delta with a leading "+" for positive numbers, suitable for
  * day P/L columns. `formatter` controls the magnitude rendering.
  *

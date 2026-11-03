@@ -74,6 +74,8 @@ def test_signal_stack_enforced_readiness_rejects_shadow_rank_filter() -> None:
     readiness = signal_stack_enforced_readiness_from_values(values)
     assert readiness["ready"] is False
     assert "RANK_FILTER_V2_MODE=live" in readiness["missing_env"]
+
+
 def test_apply_multi_sleeve_rth_shadow_env_ready(tmp_path: Path) -> None:
     from core.env_local import (
         MULTI_SLEEVE_RTH_SHADOW_ENV,
@@ -97,6 +99,16 @@ def test_apply_multi_sleeve_rth_shadow_env_ready(tmp_path: Path) -> None:
     assert readiness["s1_live"] is False
 
 
+def test_multi_sleeve_rth_shadow_requires_collector() -> None:
+    from core.env_local import MULTI_SLEEVE_RTH_SHADOW_ENV, multi_sleeve_rth_shadow_readiness_from_values
+
+    values = dict(MULTI_SLEEVE_RTH_SHADOW_ENV)
+    values.pop("EXPERIMENT_COLLECTOR_ENABLED")
+    readiness = multi_sleeve_rth_shadow_readiness_from_values(values)
+    assert readiness["ready"] is False
+    assert "EXPERIMENT_COLLECTOR_ENABLED=true" in readiness["missing_env"]
+
+
 def test_multi_sleeve_rth_shadow_rejects_s1_live() -> None:
     from core.env_local import MULTI_SLEEVE_RTH_SHADOW_ENV, multi_sleeve_rth_shadow_readiness_from_values
 
@@ -105,3 +117,72 @@ def test_multi_sleeve_rth_shadow_rejects_s1_live() -> None:
     readiness = multi_sleeve_rth_shadow_readiness_from_values(values)
     assert readiness["ready"] is False
     assert "MULTI_SLEEVE_S1_LIVE=false" in readiness["missing_env"]
+
+
+def test_apply_pead_canary_paper_env_ready(tmp_path: Path) -> None:
+    from core.env_local import (
+        PEAD_CANARY_PAPER_ENV,
+        apply_pead_canary_paper_env,
+        pead_canary_paper_readiness_from_values,
+    )
+
+    env_path = tmp_path / ".env"
+    changed = apply_pead_canary_paper_env(env_path)
+    assert len(changed) == len(PEAD_CANARY_PAPER_ENV)
+    assert apply_pead_canary_paper_env(env_path) == []
+    values = {
+        k: v
+        for line in env_path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+        for k, v in [line.split("=", 1)]
+    }
+    readiness = pead_canary_paper_readiness_from_values(values)
+    assert readiness["ready"] is True
+    assert readiness["allow_live"] is False
+    assert readiness["rank_top_n"] == 5
+    assert "STRATEGY_PEAD_PRIMARY_ALLOW_LIVE=true" not in env_path.read_text(encoding="utf-8")
+
+
+def test_pead_canary_paper_rejects_allow_live() -> None:
+    from core.env_local import PEAD_CANARY_PAPER_ENV, pead_canary_paper_readiness_from_values
+
+    values = dict(PEAD_CANARY_PAPER_ENV)
+    values["STRATEGY_PEAD_PRIMARY_ALLOW_LIVE"] = "true"
+    readiness = pead_canary_paper_readiness_from_values(values)
+    assert readiness["ready"] is False
+    assert "STRATEGY_PEAD_PRIMARY_ALLOW_LIVE=false" in readiness["missing_env"]
+
+
+def test_apply_mirofish_grok_shadow_env_ready(tmp_path: Path) -> None:
+    from core.env_local import (
+        MIROFISH_GROK_SHADOW_ENV,
+        apply_mirofish_grok_shadow_env,
+        mirofish_grok_shadow_readiness_from_values,
+    )
+
+    env_path = tmp_path / ".env"
+    changed = apply_mirofish_grok_shadow_env(env_path)
+    assert len(changed) == len(MIROFISH_GROK_SHADOW_ENV)
+    assert apply_mirofish_grok_shadow_env(env_path) == []
+    values = {
+        k: v
+        for line in env_path.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+        for k, v in [line.split("=", 1)]
+    }
+    readiness = mirofish_grok_shadow_readiness_from_values(values)
+    assert readiness["ready"] is True
+    assert readiness["weighting_mode"] == "shadow"
+    assert str(readiness["llm_model"]).startswith("grok")
+    assert readiness["key_present"] is False
+    assert any("XAI_API_KEY" in w for w in readiness["warnings"])
+
+
+def test_mirofish_grok_shadow_rejects_openai_model() -> None:
+    from core.env_local import MIROFISH_GROK_SHADOW_ENV, mirofish_grok_shadow_readiness_from_values
+
+    values = dict(MIROFISH_GROK_SHADOW_ENV)
+    values["LLM_MODEL_NAME"] = "gpt-4o-mini"
+    readiness = mirofish_grok_shadow_readiness_from_values(values)
+    assert readiness["ready"] is False
+    assert "LLM_MODEL_NAME=grok-4.6" in readiness["missing_env"]

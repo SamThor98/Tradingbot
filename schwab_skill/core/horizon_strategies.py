@@ -41,6 +41,25 @@ DUAL_ADMIT_STRATEGY_IDS: frozenset[str] = frozenset(
 # shortlist capacity.
 HORIZON_STAGE_B_CAP = 40
 
+# Stage A `get_daily_history_with_meta(days=N)` is calendar days, not sessions.
+# 300 days is about 207 trading sessions: enough for SMA200, not for an
+# untruncated 52-week high (252 sessions) and not for monthly Faber or 12-1
+# momentum. The executable pass uses EXECUTABLE_STAGE_A_HISTORY_DAYS.
+STAGE_A_DEFAULT_HISTORY_DAYS = 300
+# 60 weeks. Clears weekends and US holidays so the 52-week high is 252 sessions.
+EXECUTABLE_STAGE_A_HISTORY_DAYS = 420
+_STRATEGY_HISTORY_CALENDAR_DAYS: dict[str, int] = {
+    "donchian_20": 400,
+    "weekly_swing": 420,
+    "weekly_vcp": 400,
+    "weekly_breakout": 400,
+    "monthly_position": 520,
+    "monthly_52w_high": 500,
+    "monthly_pullback": 520,
+    "momentum_12_1": 450,
+    "tsmom_12m": 560,
+}
+
 # Matches config.get_pretrade_min_dollar_volume default. Share-count floors
 # are not liquidity.
 DEFAULT_MIN_ADV_USD = 2_000_000.0
@@ -104,9 +123,7 @@ def _as_et_day(value: Any) -> pd.Timestamp | None:
 
 def session_is_closed(*, now: Any | None = None) -> bool:
     clock = _eastern_now(now)
-    return int(clock.hour) > _SESSION_CLOSE_HOUR or (
-        int(clock.hour) == _SESSION_CLOSE_HOUR and int(clock.minute) >= 0
-    )
+    return int(clock.hour) > _SESSION_CLOSE_HOUR or (int(clock.hour) == _SESSION_CLOSE_HOUR and int(clock.minute) >= 0)
 
 
 def completed_daily_bars(df: pd.DataFrame, *, now: Any | None = None) -> pd.DataFrame:
@@ -193,20 +210,43 @@ def is_horizon_research_signal(signal: dict[str, Any] | None) -> bool:
     return str(signal.get("entry_family") or "").strip().lower() == "horizon"
 
 
+def is_research_admit(signal: dict[str, Any] | None) -> bool:
+    """Horizon-only and PEAD-only admits are research; Stage 2 / both stay live."""
+    if not isinstance(signal, dict):
+        return False
+    return str(signal.get("entry_family") or "").strip().lower() in {"horizon", "pead_primary"}
+
+
+def _pead_research_score(signal: dict[str, Any]) -> float:
+    for key in ("edge_score", "research_score", "pead_surprise_pct"):
+        raw = signal.get(key)
+        if raw is None:
+            continue
+        try:
+            return _clip_score(float(raw) if key != "pead_surprise_pct" else abs(float(raw)) * 100.0)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
 def partition_live_and_research(
     signals: list[dict[str, Any]] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split Stage 2 / both names from horizon-only research admits."""
+    """Split Stage 2 / both names from horizon-only and PEAD-only research admits."""
     live: list[dict[str, Any]] = []
     research: list[dict[str, Any]] = []
     for row in signals or []:
         if not isinstance(row, dict):
             continue
-        if is_horizon_research_signal(row):
+        if is_research_admit(row):
+            family = str(row.get("entry_family") or "").strip().lower()
             if row.get("research_score") is None:
-                row["research_score"] = research_score_from_plugins(
-                    row.get("strategy_plugins") if isinstance(row.get("strategy_plugins"), list) else []
-                )
+                if family == "pead_primary":
+                    row["research_score"] = _pead_research_score(row)
+                else:
+                    row["research_score"] = research_score_from_plugins(
+                        row.get("strategy_plugins") if isinstance(row.get("strategy_plugins"), list) else []
+                    )
             row["rank_basis"] = "research_score"
             research.append(row)
         else:
@@ -326,6 +366,11 @@ def _sma(series: pd.Series, window: int) -> pd.Series:
     return series.astype(float).rolling(window, min_periods=window).mean()
 
 
+def _min_bars_for_sma_rising(*, window: int, lookback: int) -> int:
+    """Bars needed for SMA(window) plus a rising lookback comparison."""
+    return max(1, int(window)) + max(0, int(lookback))
+
+
 def _sma_rising(series: pd.Series, *, lookback: int) -> bool:
     clean = series.dropna()
     if len(clean) < lookback + 1:
@@ -347,6 +392,23 @@ def _true_range(df: pd.DataFrame) -> pd.Series:
     cl = df["close"].astype(float)
     prev = cl.shift(1)
     return pd.concat([hi - lo, (hi - prev).abs(), (lo - prev).abs()], axis=1).max(axis=1)
+
+
+def executable_stage_a_history_days() -> int:
+    """Calendar lookback for the executable Stage 2 pass.
+
+    Research sleeves must not raise this. A monthly momentum fetch belongs on
+    the sidecar pass, after every symbol already has a Stage 2 decision.
+    """
+    return EXECUTABLE_STAGE_A_HISTORY_DAYS
+
+
+def stage_a_history_days(strategy_ids: list[str] | None) -> int:
+    """Calendar-day lookback so selected dual-admit sleeves have completed bars."""
+    needed = STAGE_A_DEFAULT_HISTORY_DAYS
+    for sid in selected_dual_admit_ids(strategy_ids):
+        needed = max(needed, int(_STRATEGY_HISTORY_CALENDAR_DAYS.get(sid, needed)))
+    return needed
 
 
 def selected_dual_admit_ids(strategy_ids: list[str] | None) -> list[str]:
@@ -551,7 +613,8 @@ def evaluate_nr7_breakout(df: pd.DataFrame, *, now: Any | None = None) -> dict[s
 def evaluate_weekly_swing(df: pd.DataFrame, *, now: Any | None = None) -> dict[str, Any]:
     """Weinstein-style weekly Stage 2: close > 10w SMA > 30w SMA, 30w rising, near highs."""
     weekly = resample_weekly(df, now=now)
-    if len(weekly) < 36:
+    min_weekly = _min_bars_for_sma_rising(window=30, lookback=8)
+    if len(weekly) < min_weekly:
         return _plugin(name="weekly_swing", triggered=False, raw_score=0.0, meta={"reason": "insufficient_weekly_bars"})
     close = weekly["close"].astype(float)
     sma10 = _sma(close, 10)
@@ -664,7 +727,8 @@ def evaluate_weekly_breakout(df: pd.DataFrame, *, now: Any | None = None) -> dic
 def evaluate_monthly_position(df: pd.DataFrame, *, now: Any | None = None) -> dict[str, Any]:
     """Meb Faber 10-month SMA timing: monthly close above a rising 10-month SMA."""
     monthly = resample_monthly(df, now=now)
-    if len(monthly) < 12:
+    min_monthly = _min_bars_for_sma_rising(window=10, lookback=3)
+    if len(monthly) < min_monthly:
         return _plugin(
             name="monthly_position", triggered=False, raw_score=0.0, meta={"reason": "insufficient_monthly_bars"}
         )
@@ -732,7 +796,8 @@ def evaluate_monthly_52w_high(df: pd.DataFrame, *, now: Any | None = None) -> di
 def evaluate_monthly_pullback(df: pd.DataFrame, *, now: Any | None = None) -> dict[str, Any]:
     """Uptrend pullback toward the 10-month SMA: still above, this month tagged it."""
     monthly = resample_monthly(df, now=now)
-    if len(monthly) < 12:
+    min_monthly = _min_bars_for_sma_rising(window=10, lookback=3)
+    if len(monthly) < min_monthly:
         return _plugin(
             name="monthly_pullback", triggered=False, raw_score=0.0, meta={"reason": "insufficient_monthly_bars"}
         )
@@ -900,7 +965,9 @@ def evaluate_weekly_reversal(df: pd.DataFrame, *, now: Any | None = None) -> dic
     """Weekly loser bounce on completed Friday bars (not a Lehmann WML book)."""
     weekly = resample_weekly(df, now=now)
     if len(weekly) < 4:
-        return _plugin(name="weekly_reversal", triggered=False, raw_score=0.0, meta={"reason": "insufficient_weekly_bars"})
+        return _plugin(
+            name="weekly_reversal", triggered=False, raw_score=0.0, meta={"reason": "insufficient_weekly_bars"}
+        )
     prior_close = _safe_float(weekly["close"].iloc[-2])
     prior_start = _safe_float(weekly["close"].iloc[-3])
     last = _safe_float(weekly["close"].iloc[-1])
@@ -1007,13 +1074,29 @@ _EVALUATORS: dict[str, Any] = {
 }
 
 
-def evaluate_horizon_plugins(df: pd.DataFrame | None, *, now: Any | None = None) -> list[dict[str, Any]]:
-    """Evaluate every horizon sleeve against completed daily OHLCV. Always shadow mode."""
+def evaluate_horizon_plugins(
+    df: pd.DataFrame | None,
+    *,
+    now: Any | None = None,
+    names: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Evaluate selected (or all) horizon sleeves. Always shadow mode. No extra vendor calls.
+
+    ``names=None`` evaluates every sleeve (legacy / tests). ``names=set()``
+    evaluates none — empty is not treated as "all".
+    """
+    if names is None:
+        evaluators = dict(_EVALUATORS)
+    else:
+        wanted = {str(n).strip().lower() for n in names if str(n).strip()}
+        evaluators = {k: v for k, v in _EVALUATORS.items() if k in wanted}
+    if not evaluators:
+        return []
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return [
-            _plugin(name=name, triggered=False, raw_score=0.0, meta={"reason": "missing_df"}) for name in _EVALUATORS
+            _plugin(name=name, triggered=False, raw_score=0.0, meta={"reason": "missing_df"}) for name in evaluators
         ]
-    return [fn(df, now=now) for fn in _EVALUATORS.values()]
+    return [fn(df, now=now) for fn in evaluators.values()]
 
 
 def selected_horizon_plugin_hits(
@@ -1032,7 +1115,8 @@ def selected_horizon_plugin_hits(
         hits.append({"name": "pullback", "raw_score": 50.0, "triggered": True, "meta": {}})
     if df is None:
         return hits
-    for plugin in evaluate_horizon_plugins(df, now=now):
+    eval_names = wanted - {"pullback"}
+    for plugin in evaluate_horizon_plugins(df, now=now, names=eval_names):
         name = str(plugin.get("name") or "")
         if name in wanted and plugin.get("triggered"):
             hits.append(plugin)
@@ -1049,8 +1133,6 @@ def triggered_dual_admit_ids(
     """Return selected dual-admit ids that fired on this name."""
     return [
         str(hit.get("name") or "")
-        for hit in selected_horizon_plugin_hits(
-            df, strategy_ids, pullback_triggered=pullback_triggered, now=now
-        )
+        for hit in selected_horizon_plugin_hits(df, strategy_ids, pullback_triggered=pullback_triggered, now=now)
         if str(hit.get("name") or "")
     ]

@@ -17,6 +17,8 @@ FORBIDDEN_FEATURE_PREFIXES = (
     "net_return",
     "r_multiple",
     "strategy_",
+    "barrier_",
+    "y_win_barrier",
 )
 
 # Explicit allowlist exception: prior returns are features
@@ -65,6 +67,8 @@ def assert_no_label_columns_in_features(feature_cols: list[str]) -> list[str]:
             errors.append(f"label-like column used as feature: {col}")
         if col in ("net_return", "r_multiple") or col.startswith("strategy_"):
             errors.append(f"strategy outcome used as feature: {col}")
+        if col.startswith("barrier_") or col in ("y_win_barrier", "label"):
+            errors.append(f"barrier/meta label used as feature: {col}")
     return errors
 
 

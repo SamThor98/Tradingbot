@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from webapp.routes import research
 
 
@@ -93,17 +95,29 @@ def _patch_shared_dependencies(monkeypatch, *, finnhub_ok: bool) -> None:
         "build_portfolio_risk_analytics",
         lambda summary, skill_dir: {"concentration": {"hhi_label": "Moderate"}, "position_count": 2},
     )
-    monkeypatch.setattr(research, "get_sector_heatmap", lambda **kwargs: {"rows": [{"sector": "Technology", "rel_strength": 1.2}]})
+    monkeypatch.setattr(
+        research, "get_sector_heatmap", lambda **kwargs: {"rows": [{"sector": "Technology", "rel_strength": 1.2}]}
+    )
     monkeypatch.setattr(
         research,
         "compute_forensic_snapshot",
-        lambda *args, **kwargs: {"ok": True, "ticker": "AAPL", "sloan": {"sloan_ratio": 0.02}, "beneish": None, "altman": None, "forensic_flags": []},
+        lambda *args, **kwargs: {
+            "ok": True,
+            "ticker": "AAPL",
+            "sloan": {"sloan_ratio": 0.02},
+            "beneish": None,
+            "altman": None,
+            "forensic_flags": [],
+        },
     )
     monkeypatch.setattr(
         research,
         "build_management_dashboard",
         lambda **kwargs: {
-            "integrity_scorecard": {"score": 82, "pillars": [{"label": "Consistency", "score": 85, "takeaway": "Stable"}]},
+            "integrity_scorecard": {
+                "score": 82,
+                "pillars": [{"label": "Consistency", "score": 85, "takeaway": "Stable"}],
+            },
             "profile": {"active_profile": "balanced"},
             "red_flags": [],
         },
@@ -117,43 +131,83 @@ def _patch_shared_dependencies(monkeypatch, *, finnhub_ok: bool) -> None:
             "as_of": "2026-05-07T10:00:00+00:00",
             "errors": [] if finnhub_ok else ["company_news:rate_limited"],
             "recommendation_trends": {
-                "buy": 12, "strong_buy": 3, "sell": 1, "strong_sell": 0, "hold": 4,
+                "buy": 12,
+                "strong_buy": 3,
+                "sell": 1,
+                "strong_sell": 0,
+                "hold": 4,
                 "history": [
                     {"period": "2026-04-01", "strong_buy": 3, "buy": 12, "hold": 4, "sell": 1, "strong_sell": 0},
                     {"period": "2026-03-01", "strong_buy": 2, "buy": 11, "hold": 5, "sell": 2, "strong_sell": 0},
                 ],
             },
             "news": [
-                {"headline": "Analyst upgrade after product launch", "source": "Reuters",
-                 "datetime": "2026-05-01T14:00:00+00:00"},
+                {
+                    "headline": "Analyst upgrade after product launch",
+                    "source": "Reuters",
+                    "datetime": "2026-05-01T14:00:00+00:00",
+                },
                 {"headline": "Lawsuit filed by former vendor", "source": "Bloomberg"},
             ],
             "earnings": [{"period": "2026-Q1", "actual": 1.5, "estimate": 1.4, "surprise_percent": 8.2}],
             "earnings_calendar": [
-                {"symbol": "AAPL", "date": "2026-07-31", "year": 2026, "quarter": 3, "eps_estimate": 1.55,
-                 "revenue_estimate": 95_000_000_000},
+                {
+                    "symbol": "AAPL",
+                    "date": "2026-07-31",
+                    "year": 2026,
+                    "quarter": 3,
+                    "eps_estimate": 1.55,
+                    "revenue_estimate": 95_000_000_000,
+                },
             ],
             "price_target": {"mean": 220.0, "high": 250, "low": 180, "median": 218, "number_of_analysts": 32},
             "quote": {"current": 192.4, "previous_close": 190.0, "change": 2.4, "change_percent": 1.26},
             "profile": {
-                "name": "Apple Inc.", "finnhub_industry": "Hardware", "exchange": "NASDAQ",
-                "country": "US", "currency": "USD", "market_cap": 3_200_000.0, "share_outstanding": 16_000.0,
+                "name": "Apple Inc.",
+                "finnhub_industry": "Hardware",
+                "exchange": "NASDAQ",
+                "country": "US",
+                "currency": "USD",
+                "market_cap": 3_200_000.0,
+                "share_outstanding": 16_000.0,
                 "ipo": "1980-12-12",
             },
             "metrics": {
-                "pe_ttm": 28.0, "pb_annual": 35.0, "ps_ttm": 7.5, "ev_to_ebitda": 22.0,
-                "revenue_growth_ttm_yoy": 8.2, "operating_margin_ttm": 31.0, "net_margin_ttm": 24.0,
-                "roe_ttm": 145.0, "roa_ttm": 28.0, "current_ratio_quarterly": 1.2, "quick_ratio_quarterly": 1.0,
-                "debt_to_equity_quarterly": 1.55, "interest_coverage_ttm": 30.0, "dividend_yield_ttm": 0.5,
-                "52week_high": 220.0, "52week_low": 165.0, "beta": 1.2,
+                "pe_ttm": 28.0,
+                "pb_annual": 35.0,
+                "ps_ttm": 7.5,
+                "ev_to_ebitda": 22.0,
+                "revenue_growth_ttm_yoy": 8.2,
+                "operating_margin_ttm": 31.0,
+                "net_margin_ttm": 24.0,
+                "roe_ttm": 145.0,
+                "roa_ttm": 28.0,
+                "current_ratio_quarterly": 1.2,
+                "quick_ratio_quarterly": 1.0,
+                "debt_to_equity_quarterly": 1.55,
+                "interest_coverage_ttm": 30.0,
+                "dividend_yield_ttm": 0.5,
+                "52week_high": 220.0,
+                "52week_low": 165.0,
+                "beta": 1.2,
             },
             "peers": ["MSFT", "GOOG", "META"],
             "insider_transactions": {
                 "rows": [
-                    {"name": "Tim Cook", "share": -10000, "transaction_price": 195.0,
-                     "transaction_date": "2026-04-12", "transaction_code": "S"},
-                    {"name": "Insider B", "share": 5000, "transaction_price": 188.0,
-                     "transaction_date": "2026-03-30", "transaction_code": "P"},
+                    {
+                        "name": "Tim Cook",
+                        "share": -10000,
+                        "transaction_price": 195.0,
+                        "transaction_date": "2026-04-12",
+                        "transaction_code": "S",
+                    },
+                    {
+                        "name": "Insider B",
+                        "share": 5000,
+                        "transaction_price": 188.0,
+                        "transaction_date": "2026-03-30",
+                        "transaction_code": "P",
+                    },
                 ],
                 "net_shares_180d": -5000,
                 "net_dollars_180d": -950_000.0,
@@ -166,16 +220,26 @@ def _patch_shared_dependencies(monkeypatch, *, finnhub_ok: bool) -> None:
                 "net_change_6m": 4500,
             },
             "upgrade_downgrade": [
-                {"symbol": "AAPL", "company": "Morgan Stanley", "from_grade": "Equal-Weight",
-                 "to_grade": "Overweight", "action": "up", "grade_time": "2026-04-15T13:00:00+00:00"},
+                {
+                    "symbol": "AAPL",
+                    "company": "Morgan Stanley",
+                    "from_grade": "Equal-Weight",
+                    "to_grade": "Overweight",
+                    "action": "up",
+                    "grade_time": "2026-04-15T13:00:00+00:00",
+                },
             ],
             "sec_filings": [
-                {"form": "10-Q", "filed_date": "2026-04-30", "accepted_date": "2026-04-30",
-                 "report_url": "https://example.com/10q", "filing_url": "https://example.com/idx"},
+                {
+                    "form": "10-Q",
+                    "filed_date": "2026-04-30",
+                    "accepted_date": "2026-04-30",
+                    "report_url": "https://example.com/10q",
+                    "filing_url": "https://example.com/idx",
+                },
             ],
             "dividends": [
-                {"amount": 0.24, "ex_date": "2026-05-10", "pay_date": "2026-05-15",
-                 "currency": "USD", "frequency": 4},
+                {"amount": 0.24, "ex_date": "2026-05-10", "pay_date": "2026-05-15", "currency": "USD", "frequency": 4},
             ],
             "splits": [],
             "news_sentiment": {
@@ -185,6 +249,38 @@ def _patch_shared_dependencies(monkeypatch, *, finnhub_ok: bool) -> None:
                 "sector_avg_news_score": 0.66,
                 "bullish_percent": 0.55,
                 "bearish_percent": 0.18,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        research,
+        "get_sharadar_research_snapshot",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "enabled": True,
+            "status": "ok",
+            "ticker": "AAPL",
+            "as_of": "2026-05-07",
+            "from_cache": True,
+            "errors": [],
+            "warnings": [],
+            "data_quality": "ok",
+            "profile": {"name": "Apple Inc", "exchange": "NASDAQ", "sector": "Technology"},
+            "sp500": {"is_member": True, "asof": "2026-05-07"},
+            "daily": {"date": "2026-05-07", "marketcap": 3.2e12, "pe": 28.0},
+            "fundamentals": {"revenue": 4e11, "netinc": 1e11, "roe": 1.47, "datekey": "2026-05-01"},
+            "fundamentals_history": [],
+            "insiders": [],
+            "holders": [],
+            "actions": [],
+            "events": [],
+            "pit_fields": {
+                "market_cap": 3.2e12,
+                "float_shares": None,
+                "institutional_ownership": None,
+                "insider_ownership": None,
+                "estimate_revisions": None,
+                "roe": 1.47,
             },
         },
     )
@@ -201,6 +297,95 @@ def test_compose_dossier_merges_required_sections(monkeypatch) -> None:
     assert "finnhub_catalysts_risks" in dossier["sections"]
     assert any(row["name"] == "report_stack" and row["status"] == "ok" for row in dossier["source_metadata"])
     assert any(row["name"] == "finnhub" and row["status"] == "ok" for row in dossier["source_metadata"])
+    assert "sharadar_bundle" in dossier["sections"]
+    assert any(row["name"] == "sharadar" for row in dossier["source_metadata"])
+
+
+def test_dossier_sharadar_metrics_win_when_finite(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    dossier = research._compose_research_dossier("AAPL")
+    snapshot = dossier["sections"]["finnhub_catalysts_risks"]["snapshot"]
+    metrics = snapshot["metrics"]
+    sources = snapshot["merged_sources"]["metrics"]
+    assert metrics["roe_ttm"] == pytest.approx(147.0)
+    assert sources["roe_ttm"] == "sharadar"
+    assert metrics["pe_ttm"] == pytest.approx(28.0)
+    assert sources["pe_ttm"] == "sharadar"
+    md = research._dossier_to_markdown(dossier)
+    assert "Sharadar ART/daily" in md
+    sheets = {name: rows for name, rows in research._build_fundamental_workbook_sheets(dossier)}
+    fund = sheets["Fundamentals"]
+    roe_row = next(row for row in fund if str(row[0]).startswith("ROE TTM"))
+    assert roe_row[2] == "Sharadar ART/daily"
+    pe_row = next(row for row in sheets["Valuation"] if row[0] == "P/E TTM")
+    assert pe_row[2] == "Sharadar ART/daily"
+
+
+def test_dossier_keeps_finnhub_when_sharadar_cell_null(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    monkeypatch.setattr(
+        research,
+        "get_sharadar_research_snapshot",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "enabled": True,
+            "status": "ok",
+            "ticker": "AAPL",
+            "as_of": "2026-05-07",
+            "errors": [],
+            "data_quality": "ok",
+            "profile": {},
+            "daily": {"date": "2026-05-07", "pe": None, "ps": None},
+            "fundamentals": {"roe": None},
+            "fundamentals_history": [],
+            "insiders": [],
+            "holders": [],
+            "actions": [],
+            "events": [],
+            "pit_fields": {},
+        },
+    )
+    dossier = research._compose_research_dossier("AAPL")
+    snapshot = dossier["sections"]["finnhub_catalysts_risks"]["snapshot"]
+    assert snapshot["metrics"]["roe_ttm"] == 145.0
+    assert snapshot["merged_sources"]["metrics"]["roe_ttm"] == "finnhub"
+
+
+def test_dossier_research_forensic_uses_art_sloan(monkeypatch) -> None:
+    _patch_shared_dependencies(monkeypatch, finnhub_ok=True)
+    monkeypatch.setattr(
+        research,
+        "get_sharadar_research_snapshot",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "enabled": True,
+            "status": "ok",
+            "ticker": "AAPL",
+            "as_of": "2026-05-07",
+            "errors": [],
+            "data_quality": "ok",
+            "profile": {},
+            "daily": {"marketcap": 3.2e12},
+            "fundamentals": {
+                "netinc": 100.0,
+                "ncfo": 80.0,
+                "assets": 400.0,
+                "datekey": "2026-05-01",
+            },
+            "fundamentals_history": [
+                {"netinc": 100.0, "ncfo": 80.0, "assets": 400.0, "datekey": "2026-05-01"},
+            ],
+            "insiders": [],
+            "holders": [],
+            "actions": [],
+            "events": [],
+            "pit_fields": {},
+        },
+    )
+    dossier = research._compose_research_dossier("AAPL")
+    forensic = dossier["sections"]["forensic"]
+    assert forensic["sloan"]["sloan_ratio"] == pytest.approx(0.05)
+    assert "sharadar_art" in str(forensic.get("data_lineage") or "")
 
 
 def test_compose_dossier_records_finnhub_fallback_notes(monkeypatch) -> None:
@@ -254,6 +439,8 @@ def test_research_dossier_preflight_contract(monkeypatch) -> None:
     ids = {item["id"]: item for item in payload["items"]}
     assert ids["report_stack"]["status"] == "ok"
     assert ids["finnhub"]["status"] == "warn"
+    assert "companyfacts" in ids
+    assert "sharadar" in ids
 
 
 def test_dossier_export_reuses_compose_id_cache(monkeypatch) -> None:
@@ -287,7 +474,13 @@ def test_export_endpoint_sets_content_disposition(monkeypatch) -> None:
         lambda ticker: {
             "ticker": "AAPL",
             "generated_at": "2026-05-07T10:00:00+00:00",
-            "executive_pitch": {"recommendation": "BUY", "confidence_label": "High", "confidence_score": 84, "time_horizon": "3-6 months", "thesis": "Stub thesis"},
+            "executive_pitch": {
+                "recommendation": "BUY",
+                "confidence_label": "High",
+                "confidence_score": 84,
+                "time_horizon": "3-6 months",
+                "thesis": "Stub thesis",
+            },
             "sections": {"sec_narrative": {}, "portfolio_and_sector_context": {}, "finnhub_catalysts_risks": {}},
             "source_metadata": [],
             "fallback_notes": [],
@@ -297,30 +490,32 @@ def test_export_endpoint_sets_content_disposition(monkeypatch) -> None:
     json_resp = research.research_dossier_export("AAPL", format="json")
     assert json_resp.status_code == 200
     assert json_resp.media_type == "application/json"
-    assert "attachment; filename=\"aapl_research_dossier.json\"" == json_resp.headers.get("content-disposition")
+    assert 'attachment; filename="aapl_research_dossier.json"' == json_resp.headers.get("content-disposition")
 
     md_resp = research.research_dossier_export("AAPL", format="md")
     assert md_resp.status_code == 200
     assert md_resp.media_type == "text/markdown; charset=utf-8"
-    assert "attachment; filename=\"aapl_research_dossier.md\"" == md_resp.headers.get("content-disposition")
+    assert 'attachment; filename="aapl_research_dossier.md"' == md_resp.headers.get("content-disposition")
 
     pdf_resp = research.research_dossier_export("AAPL", format="pdf")
     assert pdf_resp.status_code == 200
     assert pdf_resp.media_type == "application/pdf"
-    assert "attachment; filename=\"aapl_research_dossier.pdf\"" == pdf_resp.headers.get("content-disposition")
+    assert 'attachment; filename="aapl_research_dossier.pdf"' == pdf_resp.headers.get("content-disposition")
     assert bytes(pdf_resp.body).startswith(b"%PDF-1.4")
 
     xlsx_resp = research.research_dossier_export("AAPL", format="xlsx")
     assert xlsx_resp.status_code == 200
     assert xlsx_resp.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert "attachment; filename=\"aapl_fundamental_workbook.xlsx\"" == xlsx_resp.headers.get("content-disposition")
+    assert 'attachment; filename="aapl_fundamental_workbook.xlsx"' == xlsx_resp.headers.get("content-disposition")
     # XLSX container should start with ZIP magic bytes.
     assert bytes(xlsx_resp.body).startswith(b"PK\x03\x04")
 
     model_wb_resp = research.research_fundamental_workbook_export("AAPL")
     assert model_wb_resp.status_code == 200
     assert model_wb_resp.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert "attachment; filename=\"aapl_fundamental_model_workbook.xlsx\"" == model_wb_resp.headers.get("content-disposition")
+    assert 'attachment; filename="aapl_fundamental_model_workbook.xlsx"' == model_wb_resp.headers.get(
+        "content-disposition"
+    )
     assert bytes(model_wb_resp.body).startswith(b"PK\x03\x04")
 
 
@@ -349,6 +544,8 @@ def test_dossier_markdown_includes_institutional_sections(monkeypatch) -> None:
         assert idx != -1, f"Missing institutional section: {header}"
         assert idx > last_idx, f"Section out of order: {header}"
         last_idx = idx
+
+    assert "operator book context" in md
 
     # The Markdown must use real pipe-tables, not pre-formatted code blocks.
     assert "| Fundamental Metric | Value | Source | Commentary |" in md
@@ -445,9 +642,9 @@ def test_dossier_markdown_renders_finnhub_percent_fields_correctly(monkeypatch) 
 
     # Dividend yield in fixture is 0.5 (already percent → 0.5%).
     assert "| Dividend Yield (TTM) | 0.5%" in md
-    # Revenue growth fixture is 8.2 → 8.2%; ROE is 145.0 → 145.0%.
+    # Revenue growth fixture is 8.2 → 8.2%. Sharadar ART ROE 1.47 overlays Finnhub 145 → 147.0%.
     assert "| Revenue Growth (TTM YoY) | 8.2%" in md
-    assert "| ROE / ROA (TTM) | 145.0% / 28.0%" in md
+    assert "| ROE / ROA (TTM) | 147.0% / 28.0%" in md
 
 
 def test_dossier_markdown_emits_finnhub_setup_hint_when_disabled(monkeypatch) -> None:
@@ -461,12 +658,22 @@ def test_dossier_markdown_emits_finnhub_setup_hint_when_disabled(monkeypatch) ->
             "ok": False,
             "errors": ["finnhub_api_key_missing"],
             "as_of": "2026-05-07T10:00:00+00:00",
-            "profile": {}, "quote": {}, "price_target": {},
+            "profile": {},
+            "quote": {},
+            "price_target": {},
             "recommendation_trends": {"history": []},
-            "news": [], "earnings": [], "metrics": {}, "peers": [],
-            "insider_transactions": {"rows": []}, "insider_sentiment": {"rows": []},
-            "upgrade_downgrade": [], "sec_filings": [], "dividends": [], "splits": [],
-            "earnings_calendar": [], "news_sentiment": {},
+            "news": [],
+            "earnings": [],
+            "metrics": {},
+            "peers": [],
+            "insider_transactions": {"rows": []},
+            "insider_sentiment": {"rows": []},
+            "upgrade_downgrade": [],
+            "sec_filings": [],
+            "dividends": [],
+            "splits": [],
+            "earnings_calendar": [],
+            "news_sentiment": {},
         }
 
     monkeypatch.setattr(research, "get_finnhub_research_snapshot", _disabled_snapshot)
@@ -518,8 +725,9 @@ def test_finnhub_client_retries_on_429(monkeypatch) -> None:
     session = MagicMock()
     session.get.side_effect = [rate_limited_resp, success_resp]
 
-    client = finnhub_data.FinnhubClient(api_key="x", timeout_sec=1.0, session=session, max_retries=2,
-                                        rate_limit_per_min=999)
+    client = finnhub_data.FinnhubClient(
+        api_key="x", timeout_sec=1.0, session=session, max_retries=2, rate_limit_per_min=999
+    )
     errors: list[str] = []
     payload = client._get_json("stock/profile2", {"symbol": "AAPL"}, label="profile2", errors=errors)
     assert payload == {"name": "Apple Inc."}
@@ -539,11 +747,15 @@ def test_finnhub_client_softly_marks_premium_endpoint_failures() -> None:
     session = MagicMock()
     session.get.return_value = forbidden_resp
 
-    client = finnhub_data.FinnhubClient(api_key="x", timeout_sec=1.0, session=session, max_retries=0,
-                                        rate_limit_per_min=999)
+    client = finnhub_data.FinnhubClient(
+        api_key="x", timeout_sec=1.0, session=session, max_retries=0, rate_limit_per_min=999
+    )
     errors: list[str] = []
     payload = client._get_json(
-        "stock/insider-sentiment", {"symbol": "AAPL"}, label="insider_sentiment", errors=errors,
+        "stock/insider-sentiment",
+        {"symbol": "AAPL"},
+        label="insider_sentiment",
+        errors=errors,
     )
     assert payload is None
     assert errors == ["insider_sentiment:forbidden"]
@@ -564,15 +776,16 @@ def test_report_v2_exposes_institutional_section_blueprint() -> None:
     for entry in blueprint:
         assert entry["title"], f"Blueprint entry missing title: {entry}"
 
-    payload = build_report_v2({
-        "ticker": "AAPL",
-        "technical": {"signal_score": 70, "stage_2": True, "vcp": True, "sector_etf": "XLK"},
-        "dcf": {"margin_of_safety": 12.0},
-        "health": {"flags": []},
-        "edgar": {},
-        "mirofish": {"conviction_score": 30, "summary": ""},
-    })
+    payload = build_report_v2(
+        {
+            "ticker": "AAPL",
+            "technical": {"signal_score": 70, "stage_2": True, "vcp": True, "sector_etf": "XLK"},
+            "dcf": {"margin_of_safety": 12.0},
+            "health": {"flags": []},
+            "edgar": {},
+            "mirofish": {"conviction_score": 30, "summary": ""},
+        }
+    )
     assert payload["institutional_section_order"] == list(INSTITUTIONAL_SECTION_ORDER)
     assert payload["institutional_sections"][0]["id"] == "cover"
     assert payload["institutional_sections"][-1]["id"] == "disclaimer"
-

@@ -428,7 +428,7 @@ Example intent: ASYS candidates should know SMH/SOXX (and industry when mapped)
 | `pts_52w` / `pts_volume` / `pts_mirofish` | float | reuse | Components; `pts_sma` often zeroed | true |
 | `edge_score` / `reliability_score` / `execution_score` | float | reuse | Score stack | true |
 | `composite_score` / `rank_score` / `rank_score_v2` | float | reuse | Control / baseline features | true |
-| `p_up_calibrated` / `ev_10d` | float | reuse | | true |
+| `p_up_calibrated` | float | reuse | Advisory up-chance. The formulaic `ev_10d` proxy was removed; it is not a feature. | true |
 | `advisory_p_up_10d` | float | reuse | From `advisory_model` — **baseline, not production ranker** | true |
 | `miro_continuation_prob` / `miro_bull_trap_prob` | float | reuse | | true |
 | `trend_strength_score` | float | new | Continuous replacement for trend yes/no | true |

@@ -54,6 +54,8 @@ diagnostics = {
     "breakout_not_confirmed": 0,
     "exceptions": 0,
     "self_study_filtered": 0,
+    "self_study_would_filter": 0,
+    "self_study_would_filter_cached": 0,
     # ...quality gate and plugin counters
 }
 ```

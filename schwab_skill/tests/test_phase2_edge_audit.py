@@ -79,9 +79,11 @@ def test_win_rate_and_expectancy() -> None:
 
 
 def test_equity_curve_compounds_then_drawdown() -> None:
+    # Holds are 10 days. Day 12 starts after the first trade has exited,
+    # so a 100% gross cap still takes both.
     trades = [
-        _make_trade("late_bull", 0.10, 1),
-        _make_trade("late_bull", -0.20, 2),
+        _make_trade("late_bull", 0.10, 0),
+        _make_trade("late_bull", -0.20, 12),
     ]
     curve = equity_curve(trades, starting_equity=100_000.0, position_pct=1.0)
     # Trade 1: +10% on full equity -> 110_000
@@ -91,6 +93,16 @@ def test_equity_curve_compounds_then_drawdown() -> None:
     # Peak was 110_000 -> drawdown = (110-88)/110 = 20%
     assert curve[1]["drawdown_pct"] == pytest.approx(20.0, abs=1e-3)
     assert max_drawdown_pct(trades, position_pct=1.0) == pytest.approx(20.0, abs=1e-3)
+
+
+def test_equity_curve_skips_trades_past_gross_cap() -> None:
+    trades = [_make_trade("late_bull", 0.10, 0) for _ in range(11)]
+    capped = equity_curve(trades, starting_equity=100_000.0, position_pct=0.10, max_gross_pct=1.0)
+    stacked = equity_curve(trades, starting_equity=100_000.0, position_pct=0.10, max_gross_pct=None)
+    assert len(capped) == 10
+    assert capped[-1]["equity"] == pytest.approx(110_000.0, abs=0.02)
+    assert len(stacked) == 11
+    assert stacked[-1]["equity"] == pytest.approx(111_000.0, abs=0.02)
 
 
 def test_per_era_stats_filters_empty_eras() -> None:

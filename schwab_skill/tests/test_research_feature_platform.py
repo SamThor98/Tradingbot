@@ -60,6 +60,9 @@ def test_load_feature_registry_schema_v1() -> None:
     # Deferred / disabled must not appear in ohlcv enabled list
     assert "float_shares" not in names
     assert "rs_percentile_252d" not in names
+    assert "market_cap" not in enabled_feature_names(reg)
+    assert "institutional_ownership" not in enabled_feature_names(reg)
+    assert "roe" not in enabled_feature_names(reg)
 
 
 def test_align_ops_features_maps_aliases() -> None:

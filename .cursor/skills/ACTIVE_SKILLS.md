@@ -18,6 +18,12 @@ unless explicitly added here.
   - Stage A/B scan pipeline, diagnostics, plugin rollouts.
 - `front-end-design` (`.cursor/skills/front-end-design/SKILL.md`)
   - TradingBot dashboard UX redesign guidance.
+- `session-handoff` (`.cursor/skills/session-handoff/SKILL.md`)
+  - One unreviewed note after schwab_skill changes. Wiki ingest promotes accepted facts.
+- `signal-edge-review` (`.cursor/skills/signal-edge-review/SKILL.md`)
+  - Read-only review of scanner, backtest, scoring, and exit diffs against the PF gates.
+- `backtest-result-review` (`.cursor/skills/backtest-result-review/SKILL.md`)
+  - Score hypothesis cards from existing artifacts and report the next pre-registered backtest.
 
 ## Candidate Skills
 

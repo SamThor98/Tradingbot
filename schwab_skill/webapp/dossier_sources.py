@@ -7,9 +7,12 @@ def _safe_float(value: Any) -> float | None:
     try:
         if value is None or value == "":
             return None
-        return float(value)
+        fval = float(value)
     except (TypeError, ValueError):
         return None
+    if fval != fval or abs(fval) == float("inf"):
+        return None
+    return fval
 
 
 def _has_value(value: Any) -> bool:
@@ -35,6 +38,20 @@ def _set_if_missing(
     sources[key] = source
 
 
+def _overlay_finite(
+    target: dict[str, Any],
+    sources: dict[str, str],
+    key: str,
+    value: Any,
+    source: str,
+) -> None:
+    """Sharadar ART/daily wins when the cell is present and finite. Never invent zeros."""
+    if _safe_float(value) is None:
+        return
+    target[key] = _safe_float(value)
+    sources[key] = source
+
+
 def _mark_existing_sources(values: dict[str, Any], prefix: str) -> dict[str, str]:
     return {key: prefix for key, value in values.items() if _has_value(value)}
 
@@ -42,11 +59,21 @@ def _mark_existing_sources(values: dict[str, Any], prefix: str) -> dict[str, str
 def merge_fundamental_metrics(
     finnhub_snapshot: dict[str, Any],
     raw_report: dict[str, Any],
+    sharadar_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """Merge dossier metrics with report-stack fallbacks and source labels."""
+    """Merge dossier metrics: Sharadar ART/daily when finite, else Finnhub, else report."""
 
     metrics = dict(finnhub_snapshot.get("metrics") or {})
     sources = _mark_existing_sources(metrics, "finnhub")
+
+    try:
+        from sharadar_research import dossier_metric_overrides
+    except Exception:
+        dossier_metric_overrides = None  # type: ignore[assignment]
+    if dossier_metric_overrides is not None:
+        for key, value in dossier_metric_overrides(sharadar_snapshot).items():
+            _overlay_finite(metrics, sources, key, value, "sharadar")
+
     health = raw_report.get("health") or {}
     dcf = raw_report.get("dcf") or {}
     technical = raw_report.get("technical") or {}
@@ -111,11 +138,12 @@ def merge_peers(finnhub_peers: Any, raw_report: dict[str, Any]) -> tuple[list[st
 def merge_research_snapshot(
     finnhub_snapshot: dict[str, Any],
     raw_report: dict[str, Any],
+    sharadar_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return a Finnhub-shaped snapshot enriched with report-stack fallbacks."""
+    """Return a Finnhub-shaped snapshot enriched with Sharadar then report-stack fallbacks."""
 
     snapshot = dict(finnhub_snapshot or {})
-    metrics, metric_sources = merge_fundamental_metrics(snapshot, raw_report)
+    metrics, metric_sources = merge_fundamental_metrics(snapshot, raw_report, sharadar_snapshot)
     profile, profile_sources = merge_company_profile(snapshot, raw_report)
     peers, peer_source = merge_peers(snapshot.get("peers"), raw_report)
 

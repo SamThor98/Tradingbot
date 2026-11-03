@@ -10,12 +10,12 @@ Active when editing scanner, backtest, ranking, or exit logic. North star: impro
 
 ## Promotion gate (do not skip)
 
-Phase 2 verdict: `halt_fix_signal_first`. Target before promoting REGIME_V2 / EXIT_MANAGER / CORRELATION_GUARD to LIVE:
+Quote `schwab_skill/signal_edge_ledger.json` before claiming a verdict. Plugin LIVE stays blocked while that file says `plugin_live: blocked`. Numeric floors, until the ledger says otherwise:
 
 - PF mean ≥ 1.20 across multi-era backtest
 - Worst-era PF ≥ 1.00
 
-Check `schwab_skill/phase1_progress_signal_gate.json` and `schwab_skill/README.md` Recommended Rollout Sequence before claiming edge improvement.
+`phase1_progress_signal_gate.json` ranks only measured samples. Do not cite an empty-book profit factor of 0. See `schwab_skill/README.md` Recommended Rollout Sequence.
 
 ## Change discipline
 

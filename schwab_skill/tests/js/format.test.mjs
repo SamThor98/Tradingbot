@@ -22,6 +22,8 @@ import {
   formatSignedDelta,
   formatDecimal,
   formatStrategyLabel,
+  formatSignedPercentPoints,
+  formatSignedRatioPct,
 } from "../../webapp/static/modules/format.js";
 
 test("safeText renders em-dash for null/undefined and stringifies everything else", () => {
@@ -121,6 +123,13 @@ test("formatDecimal honors digits and fallback", () => {
   assert.equal(formatDecimal(12.345, 2), "12.35");
   assert.equal(formatDecimal("nope"), "—");
   assert.equal(formatDecimal(undefined, 1, "n/a"), "n/a");
+});
+
+test("formatSignedPercentPoints and formatSignedRatioPct keep units distinct", () => {
+  assert.equal(formatSignedPercentPoints(4.2), "+4.20%");
+  assert.equal(formatSignedPercentPoints(-18), "-18.00%");
+  assert.equal(formatSignedRatioPct(0.123), "+12.3%");
+  assert.equal(formatSignedRatioPct(-0.05), "-5.0%");
 });
 
 test("formatStrategyLabel uses catalog display names when provided", () => {

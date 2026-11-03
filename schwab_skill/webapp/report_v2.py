@@ -102,10 +102,14 @@ def _pick_thesis_items(report: dict[str, Any]) -> tuple[list[str], list[str], li
         risks.append("Technical regime is not Stage 2, reducing breakout reliability.")
         invalidation.append("Price structure remains below Stage 2 conditions.")
     if signal is not None:
+        points = (
+            f"Technical signal points are {signal:.1f}/100. "
+            "Points are a composite, not a probability of profit."
+        )
         if signal >= 65:
-            thesis.append(f"Technical signal score {signal:.1f}/100 supports directional conviction.")
+            thesis.append(points)
         elif signal <= 45:
-            risks.append(f"Technical signal score {signal:.1f}/100 indicates weak setup quality.")
+            risks.append(points)
 
     mos = _safe_float(dcf.get("margin_of_safety"))
     if mos is not None:
@@ -468,7 +472,9 @@ def build_report_v2(
     evidence: list[str] = []
     signal_score = _safe_float(technical.get("signal_score"))
     if signal_score is not None:
-        evidence.append(f"Technical signal score: {signal_score:.1f}/100")
+        evidence.append(
+            f"Technical signal points: {signal_score:.1f}/100 (composite, not a probability)"
+        )
     if mos is not None:
         evidence.append(f"DCF margin of safety: {mos:.1f}%")
     if sec_takeaway:

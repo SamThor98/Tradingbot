@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "updated": "2026-08-27",
+  "notes": [
+    "Event -> company exposure mappings for the event-probability layer.",
+    "Point-in-time rule: never edit an active row in place. To change a mapping, set effective_to on the existing row and append a new row with effective_from set to the same timestamp. Editing in place rewrites history and breaks backtest reproducibility.",
+    "fundamental_variable must be one of core/event_probability/valuation.py FUNDAMENTAL_VARIABLES.",
+    "impact_if_yes / impact_if_no are decimal deltas on that variable (e.g. -0.06 = -6 percentage points of growth). materiality scales the impact once; it is not applied again in sensitivity or the mispricing score.",
+    "Seed rows below are illustrative and paired with the stub fixtures in research/event_market_fixtures.json. Replace them with reviewed mappings before enabling EVENT_PROB_MODE=live."
+  ],
+  "mappings": [
+    {
+      "event_id": "stub:china-semi-export-2026",
+      "ticker": "NVDA",
+      "industry": "semiconductors",
+      "exposure_type": "revenue",
+      "direction": "negative",
+      "materiality": 0.6,
+      "confidence": 0.5,
+      "fundamental_variable": "revenue_growth",
+      "impact_if_yes": -0.06,
+      "impact_if_no": 0.0,
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": null,
+      "notes": "Tighter China export restrictions reduce data-center revenue growth. Materiality reflects the share of revenue exposed to restricted destinations."
+    },
+    {
+      "event_id": "stub:china-semi-export-2026",
+      "ticker": "AVGO",
+      "industry": "semiconductors",
+      "exposure_type": "revenue",
+      "direction": "negative",
+      "materiality": 0.3,
+      "confidence": 0.4,
+      "fundamental_variable": "revenue_growth",
+      "impact_if_yes": -0.03,
+      "impact_if_no": 0.0,
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": null,
+      "notes": "Second-order exposure via custom accelerator and networking demand."
+    },
+    {
+      "event_id": "stub:fed-cut-2026h2",
+      "ticker": "NVDA",
+      "industry": "semiconductors",
+      "exposure_type": "valuation",
+      "direction": "positive",
+      "materiality": 0.5,
+      "confidence": 0.4,
+      "fundamental_variable": "wacc",
+      "impact_if_yes": -0.005,
+      "impact_if_no": 0.0,
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": null,
+      "notes": "Rate cuts lower the discount rate. Deliberately small: a single policy step is not a full re-rating."
+    }
+  ]
+}

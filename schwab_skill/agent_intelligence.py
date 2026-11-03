@@ -273,6 +273,26 @@ def apply_meta_policy_to_signal(
     return out, True
 
 
+def meta_policy_counterfactual_reason(
+    *,
+    keep: bool,
+    meta: dict[str, Any] | None,
+) -> str | None:
+    """Map a meta-policy decision to a counterfactual log reason.
+
+    Shadow keeps the signal (``keep=True``) and records would-suppress /
+    would-downsize. Live suppress returns ``keep=False`` and records the
+    applied action. Allow is a no-op so the later ``fired`` row is the control.
+    """
+    payload = meta if isinstance(meta, dict) else {}
+    action = str(payload.get("shadow_action") or payload.get("decision") or "").strip().lower()
+    if action == "suppress":
+        return "meta_policy_would_suppress" if keep else "meta_policy_suppressed"
+    if action == "downsize":
+        return "meta_policy_would_downsize" if keep else "meta_policy_downsized"
+    return None
+
+
 def log_counterfactual_event(
     *,
     signal: dict[str, Any],
@@ -302,5 +322,5 @@ def log_counterfactual_event(
             f.write(json.dumps(payload, default=str) + "\n")
         return True
     except Exception as exc:
-        LOG.debug("Counterfactual log write failed for %s: %s", payload.get("ticker"), exc)
+        LOG.warning("Counterfactual log write failed for %s: %s", payload.get("ticker"), exc)
         return False

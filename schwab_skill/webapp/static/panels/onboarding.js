@@ -24,7 +24,7 @@ import {
   hasVerifiedEmailOnce,
   markEmailVerifiedOnce,
 } from "../modules/auth.js";
-import { safeText, prettyJson } from "../modules/format.js";
+import { safeText } from "../modules/format.js";
 import { logEvent, updateActionCenter } from "../modules/logger.js";
 import { showToast } from "../modules/notifications.js";
 import {
@@ -270,6 +270,10 @@ function deriveCurrentStep(data) {
   const ah = data?.api_health || {};
   if (!ah.account_token_ok) return "account";
   if (!ah.market_token_ok) return "market";
+  // Tokens can be present while a later probe failed. Do not call that "cleared".
+  for (const step of ["verify_token_health", "test_scan", "test_paper_order"]) {
+    if (stepStatus(step, data) === "failed") return step;
+  }
   return "done";
 }
 
@@ -341,7 +345,15 @@ function renderNextCta(data, currentStep, deps) {
   const copy = STEPPER_COPY[currentStep] || STEPPER_COPY.account;
   titleEl.textContent = copy.title;
   descEl.textContent = copy.desc;
-  btn.textContent = currentStep === "done" ? "Connected" : "Connect Schwab";
+  const nextLabel = {
+    account: "Connect account",
+    market: "Connect market data",
+    verify_token_health: "Verify tokens",
+    test_scan: "Retry test scan",
+    test_paper_order: "Retry paper check",
+    done: "Connected",
+  };
+  btn.textContent = nextLabel[currentStep] || "Continue";
 
   const handler = actionForStep(currentStep, deps);
   // Replace listener (clone trick) so re-renders don't pile up listeners.
@@ -366,13 +378,10 @@ function renderNextCta(data, currentStep, deps) {
 
 export function renderOnboardingCards(data, { portalConfig = null } = {}) {
   const cards = document.getElementById("onboardingCards");
-  const det = document.getElementById("onboardingJsonDetails");
-  const pre = document.getElementById("onboardingOutput");
   if (!cards) return;
   if (!data) {
     cards.innerHTML = `${renderAuthBootstrapSection(portalConfig)}<p class="muted">Run the wizard or click individual steps above.</p>`;
     wireOnboardingCopyButtons(cards);
-    if (det) det.classList.add("hidden");
     return;
   }
   const steps = data.steps || {};
@@ -398,12 +407,19 @@ export function renderOnboardingCards(data, { portalConfig = null } = {}) {
   const elapsed = data.elapsed_minutes;
   const done = data.completed_under_target;
   if (elapsed != null) {
-    html += `<p class="muted" style="margin-top: 10px;">Elapsed: ${elapsed} min${done ? ' · <span class="pill good small">Under target</span>' : ""}</p>`;
+    const mins = Number(elapsed);
+    const elapsedLabel = !Number.isFinite(mins)
+      ? String(elapsed)
+      : mins >= 1440
+        ? `${Math.round(mins / 1440)} days`
+        : mins >= 120
+          ? `${Math.round(mins / 60)} hours`
+          : `${Math.round(mins)} min`;
+    const fresh = Number.isFinite(mins) && mins < 1440;
+    html += `<p class="muted" style="margin-top: 10px;">Elapsed: ${elapsedLabel}${done && fresh ? ' · <span class="pill good small">Under target</span>' : ""}</p>`;
   }
   cards.innerHTML = html;
   wireOnboardingCopyButtons(cards);
-  if (det) det.classList.remove("hidden");
-  if (pre) pre.textContent = prettyJson(data);
 }
 
 /**

@@ -26,6 +26,16 @@ def map_failure(message: str, source: str = "unknown") -> dict[str, Any]:
                 "action": "update_config",
             }
         )
+    elif "companyfacts" in msg or "cik_not_found" in msg:
+        mapped.update(
+            {
+                "code": "data_error",
+                "title": "SEC companyfacts unavailable",
+                "summary": "The pricing model could not load SEC XBRL companyfacts.",
+                "fix_path": "Set a real EDGAR_USER_AGENT, wait out a 429, then Refresh fundamentals in Research → Pricing model.",
+                "action": "retry",
+            }
+        )
     elif any(k in msg for k in ("not authenticated", "token", "oauth", "401", "unauthorized")):
         mapped.update(
             {

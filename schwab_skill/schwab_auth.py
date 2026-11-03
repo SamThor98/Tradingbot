@@ -41,7 +41,7 @@ KEY_ENV_VAR = "SCHWAB_TOKEN_ENCRYPTION_KEY"
 # Schwab refresh token TTL is 7 days from issue. We surface warnings well
 # before that so the operator has time to re-OAuth.
 REFRESH_TOKEN_TTL_DAYS = 7
-TOKEN_HEALTH_WARN_DAYS_REMAINING = 2.0   # < 2 days left  -> "warn"
+TOKEN_HEALTH_WARN_DAYS_REMAINING = 2.0  # < 2 days left  -> "warn"
 TOKEN_HEALTH_CRITICAL_DAYS_REMAINING = 0.5  # < 12h left     -> "critical"
 
 
@@ -199,7 +199,7 @@ def _load_env(env_path: Path | None) -> dict:
                 continue
             if "=" in line:
                 k, _, v = line.partition("=")
-                creds[k.strip()] = v.strip().strip('"\'')
+                creds[k.strip()] = v.strip().strip("\"'")
                 if k.strip() not in os.environ:
                     os.environ[k.strip()] = creds[k.strip()]
     return creds
@@ -238,6 +238,7 @@ def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: s
                     "OAuth code exchange failed "
                     f"(status={resp.status_code}, redirect_uri={redirect_uri}, detail={detail[:300]})"
                 )
+            schwab_circuit.record_success()
             return resp.json()
         except requests.exceptions.RequestException as exc:
             last_exc = exc
@@ -261,6 +262,7 @@ def refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> di
                 timeout=60,
             )
             resp.raise_for_status()
+            schwab_circuit.record_success()
             return resp.json()
         except requests.exceptions.RequestException as exc:
             last_exc = exc
@@ -317,9 +319,7 @@ class SchwabSession:
         code = redirect_url_or_code
         if "code=" in redirect_url_or_code:
             code = extract_code_from_redirect(redirect_url_or_code) or redirect_url_or_code
-        tokens = exchange_code(
-            self.client_id, self.client_secret, code, self.redirect_uri
-        )
+        tokens = exchange_code(self.client_id, self.client_secret, code, self.redirect_uri)
         self._save_tokens(tokens)
         self._tokens = tokens
         self._start_refresh()
@@ -369,15 +369,14 @@ class SchwabSession:
 
     def _refresh_loop(self) -> None:
         import logging
+
         log = logging.getLogger(f"schwab_auth.{self.session_name}")
         while not self._stop.wait(timeout=REFRESH_INTERVAL_SEC):
             with self._lock:
                 t = self._tokens
             if t and "refresh_token" in t:
                 try:
-                    new = refresh_tokens(
-                        self.client_id, self.client_secret, t["refresh_token"]
-                    )
+                    new = refresh_tokens(self.client_id, self.client_secret, t["refresh_token"])
                     merged = {**t, **new}
                     with self._lock:
                         self._tokens = merged
@@ -422,9 +421,7 @@ class SchwabSession:
         if not t or "refresh_token" not in t:
             return False
         try:
-            new = refresh_tokens(
-                self.client_id, self.client_secret, t["refresh_token"]
-            )
+            new = refresh_tokens(self.client_id, self.client_secret, t["refresh_token"])
             merged = {**t, **new}
             with self._lock:
                 self._tokens = merged
@@ -469,15 +466,14 @@ class DualSchwabAuth:
         # single-user deploys on ephemeral hosts (e.g. Render web instances)
         # can point token storage at a persistent disk mount that lives
         # *outside* the read-only source tree.
-        token_base = Path(
-            token_dir
-            or os.getenv("SCHWAB_TOKEN_DIR")
-            or env.get("SCHWAB_TOKEN_DIR")
-            or self.skill_dir
-        )
+        token_base = Path(token_dir or os.getenv("SCHWAB_TOKEN_DIR") or env.get("SCHWAB_TOKEN_DIR") or self.skill_dir)
 
-        account_callback = (os.getenv("SCHWAB_CALLBACK_URL") or env.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1").strip()
-        market_callback = (os.getenv("SCHWAB_MARKET_CALLBACK_URL") or env.get("SCHWAB_MARKET_CALLBACK_URL") or account_callback).strip()
+        account_callback = (
+            os.getenv("SCHWAB_CALLBACK_URL") or env.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1"
+        ).strip()
+        market_callback = (
+            os.getenv("SCHWAB_MARKET_CALLBACK_URL") or env.get("SCHWAB_MARKET_CALLBACK_URL") or account_callback
+        ).strip()
 
         market_key = (os.getenv("SCHWAB_MARKET_APP_KEY") or env.get("SCHWAB_MARKET_APP_KEY") or "").strip()
         market_secret = (os.getenv("SCHWAB_MARKET_APP_SECRET") or env.get("SCHWAB_MARKET_APP_SECRET") or "").strip()

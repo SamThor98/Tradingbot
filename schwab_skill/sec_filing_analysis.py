@@ -8,7 +8,6 @@ optional LLM summarization pass (for concise narrative output).
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any
 
@@ -247,17 +246,20 @@ def _derive_takeaway(analysis: dict[str, Any]) -> str:
 
 
 def _call_llm_summary(prompt: str, max_tokens: int = 260) -> str:
-    api_key = os.environ.get("MIROFISH_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
+    from core.llm_endpoint import resolve_llm_endpoint
+
+    endpoint = resolve_llm_endpoint()
+    if not endpoint.api_key:
         return ""
-    base_url = (os.environ.get("LLM_BASE_URL") or "").strip()
-    model = os.environ.get("LLM_MODEL_NAME", "gpt-4o-mini")
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key, base_url=base_url if base_url else None)
+        client = OpenAI(
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url or None,
+        )
         resp = client.chat.completions.create(
-            model=model,
+            model=endpoint.model,
             messages=[
                 {
                     "role": "system",

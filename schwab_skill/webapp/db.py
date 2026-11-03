@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -169,9 +169,29 @@ DATABASE_URL = _validate_database_url(
 )
 _reject_http_database_url(DATABASE_URL)
 
+
+def configure_sqlite_connection(dbapi_conn: Any) -> None:
+    """Let a long read share the file with the rest of the local dashboard.
+
+    The backtest hub loads many stored results. Without WAL that read holds
+    the database and every other panel waits until it finishes. File-backed
+    connections use WAL; ``:memory:`` databases keep the default journal.
+    """
+    cursor = dbapi_conn.cursor()
+    try:
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA database_list")
+        file_backed = any(len(row) >= 3 and row[2] for row in cursor.fetchall())
+        if file_backed:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
+
+
 engine_kwargs: dict[str, object] = {}
 if DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
+    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
 else:
     engine_kwargs.update(
         pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
@@ -181,6 +201,13 @@ else:
     )
 
 engine = create_engine(DATABASE_URL, json_serializer=_json_serializer, **engine_kwargs)
+if DATABASE_URL.startswith("sqlite"):
+
+    @event.listens_for(engine, "connect")
+    def _on_sqlite_connect(dbapi_conn: Any, _connection_record: Any) -> None:
+        configure_sqlite_connection(dbapi_conn)
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

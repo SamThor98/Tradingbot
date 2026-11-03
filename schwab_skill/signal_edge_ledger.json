@@ -1,0 +1,102 @@
+{
+  "updated": "2026-10-08",
+  "promotion_floors": {
+    "pf_mean": 1.2,
+    "worst_era_pf": 1.0
+  },
+  "plugin_live": "regime_v2_only",
+  "plugin_live_reason": "Operator signed REGIME_V2_MODE=live on 2026-10-06 (promotion ledger seq 20) after the capped stage2_pts52w_cap37 replay: PF mean 1.2137, worst era 1.1054, worst drawdown 15.6099%. CORRELATION_GUARD_MODE stays off until a later signed week. SCAN_LIVE_SORT_KEY stays signal_score.",
+  "books": [
+    {
+      "role": "bare_pre_cap",
+      "source": "validation_artifacts/phase2_edge_audit.json",
+      "generated_at": "2026-07-28T00:09:01.231073+00:00",
+      "run_id": "stage2_only_aug",
+      "n_trades": 16423,
+      "verdict": "iterate_with_caution",
+      "pf_mean": 1.1624,
+      "worst_era_pf": 1.0323,
+      "clears_floors": false,
+      "note": "Quoted from the artifact on 2026-10-06. Not recomputed in that pass."
+    },
+    {
+      "role": "bare_pts52w_cap37",
+      "source": "validation_artifacts/phase2_edge_audit_post_pts52w_cap37.json",
+      "generated_at": "2026-07-18T19:50:05.021524+00:00",
+      "run_id": "stage2_pts52w_cap37",
+      "n_trades": 15994,
+      "verdict": "proceed",
+      "pf_mean": 1.2137,
+      "worst_era_pf": 1.1054,
+      "clears_floors": true,
+      "note": "Quoted from the artifact on 2026-10-06. Not recomputed in that pass. total_return and max_dd in that file are not portfolio results."
+    },
+    {
+      "role": "setup_confidence",
+      "source": "validation_artifacts/scan_confidence/counterfactual_control_legacy_aug.json",
+      "generated_at": "2026-09-21T23:31:49.696888+00:00",
+      "run_id": "control_legacy_aug",
+      "n_trades": 16433,
+      "verdict": "keep_shadow_single_variable_explains_it",
+      "promote": false,
+      "note": "confidence_p76 does not clear the +0.03 bar versus inv_pts52w_p76. On that book, selecting the top of signal_score is worse than taking every trade. Live sort stays signal_score until a shadow comparison beats the single-variable control."
+    }
+  ],
+  "capped_replay": {
+    "command": "python scripts/phase2_edge_audit.py --bare-run-id stage2_pts52w_cap37 --control-run-id control_legacy_aug --out-prefix phase2_edge_audit_cap37_capped",
+    "source": "validation_artifacts/phase2_edge_audit_cap37_capped.json",
+    "generated_at": "2026-10-06T21:42:55.896489+00:00",
+    "run_id": "stage2_pts52w_cap37",
+    "n_trades": 15994,
+    "verdict": "proceed",
+    "overlay_finding": "overlays_neutral",
+    "pf_mean": 1.2137,
+    "worst_era_pf": 1.1054,
+    "equity_replay": {"position_pct": 0.1, "max_gross_pct": 1.0},
+    "max_dd_pct_by_era": {
+      "late_bull": 15.6099,
+      "volatility_chop": 9.9421,
+      "crash_recovery": 9.6132,
+      "bear_rates": 14.3058,
+      "recent_current": 15.3303
+    },
+    "total_return_pct_by_era": {
+      "late_bull": 2.49,
+      "volatility_chop": 7.11,
+      "crash_recovery": 24.19,
+      "bear_rates": 12.71,
+      "recent_current": 11.1
+    }
+  },
+  "sort_shadow": {
+    "command": "python scripts/compare_cap37_unsorted_vs_live.py",
+    "source": "validation_artifacts/cap37_unsorted_vs_live.json",
+    "generated_at": "2026-10-06T21:43:52.985916+00:00",
+    "run_id": "control_legacy_aug",
+    "verdict": "shadow_ahead_intervals_overlap",
+    "promote_sort": false,
+    "cap37_unsorted": {"n": 8791, "pf_mean": 1.2584, "worst_era_pf": 1.0525, "pf_lo": 1.0932, "pf_hi": 1.3714},
+    "live_p76_top5": {"n": 3482, "pf_mean": 1.0276, "worst_era_pf": 0.9368, "pf_lo": 0.9125, "pf_hi": 1.1549},
+    "ci_method": "week_block"
+  },
+  "capacity_note": "Quoted from validation_artifacts/cap37_unsorted_vs_live.json on 2026-10-08. Uncapped wider-than-5 books stay keep_live_top5. On the raw capped book the top-5 cut removes 88 names and cap37_p76 misses the 1.20 mean (1.1531 / 1.0484). The configured SIGNAL_TOP_N=3 cut on that same capped p76 book removes 265 names (1.1532 / 1.0438) and still misses 1.20. SIGNAL_TOP_N was not changed. The live stack measurement remains the July buffer-plus-exit p76 row in sweep_cf_rank_under_pts52w_cap37_control_legacy_aug.md (PF mean 1.3231, worst era 1.0343, n=859).",
+  "capped_rank": {
+    "command": "python scripts/compare_cap37_unsorted_vs_live.py",
+    "source": "validation_artifacts/cap37_unsorted_vs_live.json",
+    "generated_at": "2026-10-09T01:53:25.243261+00:00",
+    "run_id": "control_legacy_aug",
+    "verdict": "top5_not_the_lever",
+    "promote_sort": false,
+    "apply_live": false,
+    "names_removed_by_top5": 88,
+    "names_removed_by_top3": 265,
+    "cap37_p76": {"n": 2110, "pf_mean": 1.1531, "worst_era_pf": 1.0484, "pf_lo": 0.9901, "pf_hi": 1.3326},
+    "cap37_p76_top10": {"n": 2093, "pf_mean": 1.1678, "worst_era_pf": 1.0484, "pf_lo": 1.015, "pf_hi": 1.3402},
+    "cap37_p76_top5": {"n": 2022, "pf_mean": 1.1624, "worst_era_pf": 1.0514, "pf_lo": 1.0166, "pf_hi": 1.3472},
+    "cap37_p76_top3": {"n": 1845, "pf_mean": 1.1532, "worst_era_pf": 1.0438, "pf_lo": 1.0058, "pf_hi": 1.3309},
+    "ci_method": "week_block",
+    "note": "Percentile and top-N run after pts_52w <= 37 on the raw control book. This is not the July buffer-plus-exit stack. SCAN_LIVE_SORT_KEY, RANK_FILTER_V2_MODE, and SIGNAL_TOP_N stay unchanged."
+  },
+  "phase1_gate_file": "phase1_progress_signal_gate.json",
+  "phase1_note": "The phase-1 ranking lists only measured samples. Configs with every era under 50 trades are in unranked_insufficient_sample. A profit factor of 0 on those rows was an empty-book placeholder."
+}

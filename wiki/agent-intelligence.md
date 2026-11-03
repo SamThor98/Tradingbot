@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/agent_intelligence.py
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-10-15
 tags: [scanner, intelligence, meta-policy, uncertainty]
 ---
 
@@ -76,6 +76,7 @@ To move any of the three modes from ``shadow`` → ``live``:
 - [[feature-store]] — Source of truth for persona reliability buckets
 - [[promotion-playbook]] — Turn shadow features into live features
 - [[plugin-modes]] — General off / shadow / live rollout pattern
+- [[grok-agent-orchestration]] — Separate Grok research/review agent; not a scan scorer
 
 ---
 *Last compiled: 2026-04-17*

@@ -1,7 +1,7 @@
 ---
 source: n/a (repository governance policy)
 created: 2026-04-30
-updated: 2026-07-04
+updated: 2026-10-10
 tags: [governance, docs, rules, skills]
 ---
 
@@ -47,6 +47,9 @@ tags: [governance, docs, rules, skills]
 | `validation-release.mdc` | Validators, promotion scripts, pre-PR / pre-promotion gate |
 | `agent_mode_prompt.md` | Live research, DCF/comps, SEC review, manual scan/order workflows |
 | `openclaw_operator_prompt.txt` | OpenClaw tool-only operator (analyze / account / execute) |
+| `session-handoff` | One unreviewed note after a `schwab_skill` change |
+| `signal-edge-review` | Read-only pass on scanner, backtest, scoring, or exit diffs |
+| `backtest-result-review` | Quote hypothesis-card results; do not sign a promotion |
 
 ## Related Pages
 
@@ -54,7 +57,9 @@ tags: [governance, docs, rules, skills]
 - [[project-overview]] — system context
 - [[signal-scanner]] — two-stage pipeline context for P0 work
 - [[quality-gates]] — shadow-first signal filtering rollout
+- [[agent-session-handoff]] — how session notes stay unreviewed until wiki ingest
+- [[hypothesis-cards]] — card schema the backtest-result-review skill reads
 
 ---
 
-*Last compiled: 2026-07-04*
+*Last compiled: 2026-10-05*

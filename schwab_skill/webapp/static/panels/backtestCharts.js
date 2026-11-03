@@ -75,7 +75,8 @@ export function renderBacktestEquityCharts(wrap, result) {
   wrap.setAttribute("aria-hidden", "false");
 
   if (typeof LightweightCharts === "undefined") {
-    equityHost.innerHTML = `<p class="muted">Chart library unavailable.</p>`;
+    equityHost.innerHTML = `<div class="operator-alert operator-alert--neutral"><div class="operator-alert__body"><strong class="operator-alert__headline">Chart library unavailable.</strong><p class="operator-alert__detail">Reload the dashboard to draw equity and drawdown.</p></div></div>`;
+    ddHost.innerHTML = "";
     return;
   }
 
@@ -111,9 +112,13 @@ export function renderBacktestEquityCharts(wrap, result) {
     const ddSeries = _drawdownChart.addLineSeries({
       color: theme.candlestick.downColor,
       lineWidth: 2,
+      priceFormat: { type: "percent", precision: 2 },
     });
     ddSeries.setData(ddRows);
     _drawdownChart.timeScale().fitContent();
+    ddHost.setAttribute("aria-label", "Backtest drawdown percent");
+  } else {
+    ddHost.innerHTML = `<div class="operator-alert operator-alert--neutral"><div class="operator-alert__body"><strong class="operator-alert__headline">Drawdown series not in this result.</strong><p class="operator-alert__detail">Equity is shown above. Drawdown percent was not returned for this run.</p></div></div>`;
   }
 
   _resizeObserver = new ResizeObserver(() => {

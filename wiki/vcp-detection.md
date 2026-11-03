@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/VCP Detection.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-10-16
 tags: [strategy, technical]
 ---
 
@@ -25,7 +25,7 @@ tags: [strategy, technical]
 ## Breakout Confirmation
 
 - `BREAKOUT_CONFIRM_ENABLED` (default true) — require intraday price above prior high
-- `QUALITY_REQUIRE_BREAKOUT_VOLUME` (default false) — require volume above 50-day avg (always hard gate)
+- `QUALITY_REQUIRE_BREAKOUT_VOLUME` (default false) — compare entry volume with the 50-day average that includes the entry bar. In soft mode a miss is one reason. Hard mode drops it alone. `expansion_volume_ratio` is recorded and is not a gate.
 
 ## Tuning
 
@@ -35,6 +35,7 @@ tags: [strategy, technical]
 
 ## Related Pages
 
+- [[vcp-invalidation-exit]] — replay of skipping the VCP exit under grace; not live
 - [[stage-2-analysis]] — prerequisite for VCP
 - [[signal-scanner]] — VCP is second filter in Stage A
 - [[scanner-tunables]] — env var reference
@@ -43,4 +44,4 @@ tags: [strategy, technical]
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-09-26*

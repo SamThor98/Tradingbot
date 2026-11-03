@@ -7,6 +7,8 @@ from config import (
     get_meta_policy_mode,
     get_meta_policy_size_mult_max,
     get_meta_policy_size_mult_min,
+    get_mirofish_abstain_disagreement,
+    get_mirofish_abstain_mode,
     get_mirofish_weighting_mode,
     get_uncertainty_mode,
 )
@@ -14,12 +16,13 @@ from config import (
 
 @pytest.fixture(autouse=True)
 def _clean_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # webapp.main_saas promotes the repo .env into os.environ at import time
-    # (bootstrap_dotenv_into_environ), and pytest imports it during collection
-    # via the SaaS test modules. Process env wins over the tmp_path .env these
-    # tests write, so clear the keys under test first.
+    # Process env wins over the tmp_path .env these tests write, so drop the
+    # keys under test in case the developer's shell exports them. Import-time
+    # `.env` promotion is handled globally in tests/conftest.py.
     for key in (
         "MIROFISH_WEIGHTING_MODE",
+        "MIROFISH_ABSTAIN_MODE",
+        "MIROFISH_ABSTAIN_DISAGREEMENT",
         "META_POLICY_MODE",
         "UNCERTAINTY_MODE",
         "COUNTERFACTUAL_LOGGING_ENABLED",
@@ -29,6 +32,8 @@ def _clean_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_agent_intelligence_config_defaults(tmp_path) -> None:
     assert get_mirofish_weighting_mode(tmp_path) == "off"
+    assert get_mirofish_abstain_mode(tmp_path) == "shadow"
+    assert get_mirofish_abstain_disagreement(tmp_path) == 0.65
     assert get_meta_policy_mode(tmp_path) == "shadow"
     assert get_uncertainty_mode(tmp_path) == "shadow"
     assert get_counterfactual_logging_enabled(tmp_path) is True

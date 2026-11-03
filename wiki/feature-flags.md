@@ -1,7 +1,7 @@
 ---
 source: Brain/Config/Feature Flags.md
 created: 2026-04-13
-updated: 2026-07-17
+updated: 2026-09-23
 tags: [config, features, flags]
 ---
 
@@ -47,6 +47,9 @@ tags: [config, features, flags]
 | `HYPOTHESIS_LEDGER_ENABLED` | false | Enable hypothesis recording |
 | `HYPOTHESIS_SELF_STUDY_MERGE` | false | Include in self-study output |
 | `HYPOTHESIS_PROMOTION_GUARD_ENABLED` | false | Gate promotions on hit rate |
+| `SELF_STUDY_MODE` | off | `off` / `shadow` / `live` conviction floor. Demo seeds and <30 round trips are refused. Legacy `SELF_STUDY_ENABLED=true` maps to live when MODE is unset |
+
+See [[self-study]].
 
 ## Forensic & PEAD
 
@@ -71,14 +74,39 @@ tags: [config, features, flags]
 
 See [[probabilistic-ranking-research-architecture]].
 
+## Analog overlay (research)
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `ANALOG_OVERLAY_MODE` | shadow | `off` / `shadow` / `live` — winner-neighborhood k-NN; **live is refused** |
+| `ANALOG_OVERLAY_ARTIFACT` | (empty) | Optional path; else `research_store/models/analog_library.json` |
+| `ANALOG_OVERLAY_K` | 40 | Neighbor count (Euclidean in normalized space) |
+| `ANALOG_OVERLAY_MIN_N` | 20 | Below this, shrink toward the era prior and mark `analog_thin` |
+
+See [[analog-overlay]].
+
+## Ranking readouts (research)
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `CONFIDENCE_RANK_MODE` | shadow | `off` / `shadow` / `live` — survival readout in the Rank cell; **live is refused** |
+| `CONFIDENCE_RANK_ARTIFACT` | (empty) | Optional path; else `research_store/models/scan_confidence.json` |
+| `EXTENSION_SORT_MODE` | shadow | `off` / `shadow` / `live` — inverted `pts_52w` stamp; **live is refused**; does not change `SCAN_LIVE_SORT_KEY` |
+| `PEAD_EXTENSION_DROP_MODE` | shadow | `off` / `shadow` / `live` — PEAD-only mark when `close_vs_sma200_pct` ≥ 0.2028; **live is refused**; Stage 2 and `both` are not stamped; the row stays on the scan |
+
+See [[scan-confidence]].
+
 ## Related Pages
 
 - [[scanner-tunables]] — scanner-specific tunables
 - [[plugin-modes-config]] — plugin env vars
 - [[guardrails]] — kill switches
 - [[signal-scanner]] — where flags take effect
+- [[self-study]] — conviction-floor ladder
 - [[probabilistic-ranking-research-architecture]] — research platform
+- [[analog-overlay]] — winner-neighborhood shadow score
+- [[scan-confidence]] — survival readout; live ranking is inverted on this book
 
 ---
 
-*Last compiled: 2026-07-17*
+*Last compiled: 2026-09-23*

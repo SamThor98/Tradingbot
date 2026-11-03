@@ -15,19 +15,29 @@ STACK_COLUMNS = (
     "composite_score",
     "rank_score",
     "p_up_calibrated",
-    "ev_10d",
 )
 ENRICHED_COLUMNS = COMPONENT_COLUMNS + STACK_COLUMNS
 
 
+def _optional_row_float(row: pd.Series, key: str) -> float | None:
+    if key not in row.index:
+        return None
+    raw = row.get(key)
+    if raw is None or (isinstance(raw, float) and raw != raw):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value:
+        return None
+    return value
+
+
 def _sec_score_to_tag(score: float) -> str:
-    if score >= 0.67:
-        return "high"
-    if score >= 0.33:
-        return "medium"
-    if score <= -0.67:
-        return "high"
-    return "unknown"
+    from core.sec_risk_score import sec_risk_tag_from_score
+
+    return sec_risk_tag_from_score(score)
 
 
 def _reconstruct_components(row: pd.Series, *, stage2_floor: float) -> dict[str, Any]:
@@ -90,6 +100,9 @@ def signal_dict_from_audit_row(row: pd.Series, *, skill_dir: Path, stage2_floor:
             "bull_trap_probability": float(row.get("miro_bull_trap_prob") or 0.5),
         },
         "sec_risk_tag": _sec_score_to_tag(float(row.get("sec_risk_score") or 0.0)),
+        "ret_5d_prev": _optional_row_float(row, "ret_5d_prev"),
+        "ret_20d_prev": _optional_row_float(row, "ret_20d_prev"),
+        "atr_pct": _optional_row_float(row, "atr_pct"),
         "forensic_flags": [],
         "data_provider": "audit_dataset",
         "data_provider_primary": True,

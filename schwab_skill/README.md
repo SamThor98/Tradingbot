@@ -39,6 +39,10 @@ Use this order to avoid duplicate/conflicting guidance:
 3. `pip install -r requirements.txt`  
    TA-Lib optional: `pip install TA-Lib` (fallback to pandas if missing)
 
+Dedicated always-on mini PC (local dashboard + overnight backtests): run
+`python scripts/setup_local_ops_box.py` then `--apply-env` once `.env` exists.
+See `wiki/local-ops-box.md`. Do not point the live tree at OneDrive or a USB SSD.
+
 ## OAuth quickstart (fastest safe path)
 
 For the lowest-risk local auth setup:
@@ -77,7 +81,7 @@ Legacy path (advanced only): `python run_dual_auth.py` or manual token injection
 
 ## Self-Study
 
-The bot learns from trade outcomes: records filled BUY/SELL prices, computes round-trip returns, and analyzes performance by MiroFish conviction band and sector. With enough data (5+ round trips), it suggests a minimum conviction threshold; when `SELF_STUDY_ENABLED=true`, signals below that threshold are filtered out. Runs automatically at 4:00 PM ET; or manually: `python scripts/run_self_study.py`.
+The bot learns from trade outcomes: records filled BUY/SELL prices, computes round-trip returns, and analyzes performance by MiroFish conviction band and sector. With enough data (30+ round trips and 8+ samples in a band), it may suggest a minimum conviction floor using the first band where shrinkage-adjusted expectancy turns sustainably positive. `SELF_STUDY_MODE` is `off` / `shadow` / `live` (legacy `SELF_STUDY_ENABLED=true` maps to live). Shadow counts would-filter only. Demo calibration seeds and under-sampled books are refused. Runs automatically at 4:00 PM ET; or manually: `python scripts/run_self_study.py`.
 
 ## Hypothesis ledger & outcome scoring (calibration)
 
@@ -417,15 +421,16 @@ so production behavior for those remains legacy until explicitly enabled.
 
 1. ✅ `EXEC_QUALITY_MODE=shadow` -> `live` (promoted 2026-Q2; bare default is now `live`)
 2. ✅ `EVENT_RISK_MODE=shadow` -> `live` (promoted 2026-Q2; bare default is now `live`)
-3. 🟡 `REGIME_V2_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 3)
+3. ✅ `REGIME_V2_MODE=live` (operator-signed 2026-10-06; ledger seq 20). Correlation guard stays off.
 4. ✅ `EXIT_MANAGER_MODE=shadow` -> `live` (operator-promoted after shadow run; ledger seq 6)
 5. 🟡 `CORRELATION_GUARD_MODE=shadow` (entered shadow 2026-06-10 via `.env`; ledger seq 5)
 
-Live promotion of steps 3 and 5 remains blocked until bare-signal PF mean
->= 1.20 (2026-07-17 re-audit: `iterate_with_caution`, PF mean 1.162,
-worst-era 1.032 — `validation_artifacts/phase2_edge_audit_post_rank_live.md`).
-Plugins may stay in shadow; promote LIVE only once PF mean >= 1.20 and
-worst-era PF >= 1.00.
+Step 3 is live as of ledger seq 20. Step 5 (`CORRELATION_GUARD_MODE`) stays
+off until a later signed week. The 2026-10-06 capped replay of
+`stage2_pts52w_cap37` says `proceed` (PF mean 1.2137, worst era 1.1054, worst
+drawdown 15.61% at 10% size and 100% gross). The cap37 unsorted shadow beats
+the live cut on point estimates; the week-block intervals overlap, so
+`SCAN_LIVE_SORT_KEY` stays `signal_score`.
 
 P0 operating stack (Stages 2c–2d): live 1% breakout buffer + live exit grace
 + live rank-v2 p76 trim + live pts_52w≤37

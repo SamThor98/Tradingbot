@@ -19,6 +19,12 @@ tags: [architecture, database, schema]
 | `scan_results` | Stored scan outputs and diagnostics | Both |
 | `user_credentials` | Encrypted Schwab OAuth tokens | SaaS |
 | `backtest_runs` | Async backtest job results | SaaS |
+| `event_probability_events` | Current normalized state of a prediction-market event (global, not user-scoped) | Both |
+| `event_probability_history` | Append-only observation log behind point-in-time reads; unique on `(event_id, timestamp)` | Both |
+
+The two `event_probability_*` tables back the [[event-probability-layer]]. History
+rows are never updated or deleted by the ingest path — that is what makes a
+historical replay reproducible.
 
 ## Engine Configuration
 
@@ -36,6 +42,7 @@ tags: [architecture, database, schema]
 ## Related Pages
 
 - [[saas-infrastructure]] — DB connection config
+- [[event-probability-layer]] — Owner of the `event_probability_*` tables
 - [[system-overview]] — where DB fits in architecture
 - [[webapp-dashboard]] — routes that query these tables
 

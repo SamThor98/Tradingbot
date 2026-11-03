@@ -43,26 +43,51 @@ def build_default_strategy_plugins(
         family = str(candidate.get("entry_family") or "")
     family = family or "stage2"
     stage2_live = family in {"stage2", "both"}
-    base_score = max(0.0, min(100.0, _safe_float(signal.get("signal_score"), 0.0)))
-    plugins.append(
-        {
-            "name": "trend_breakout",
-            "mode": "live",
-            "raw_score": round(base_score, 2) if stage2_live else 0.0,
-            "triggered": stage2_live,
-            "meta": {"source": "existing_signal_score", "entry_family": family},
-        }
-    )
+    selected_raw: list[str] | None = None
+    if isinstance(candidate, dict) and "selected_strategy_ids" in candidate:
+        selected_raw = [
+            str(s).strip().lower() for s in (candidate.get("selected_strategy_ids") or []) if str(s).strip()
+        ]
 
-    pullback = evaluate_pullback_strategy(signal=signal, candidate=candidate, mode=pullback_mode)
-    if pullback is not None:
-        plugins.append(pullback)
+    def _include(name: str) -> bool:
+        if selected_raw is None:
+            return True
+        if not selected_raw:
+            return name == "trend_breakout"
+        if name == "trend_breakout":
+            return any(
+                sid in {"trend_breakout", "breakout_confirm", "breakout", "stage2", "stage2_vcp"}
+                for sid in selected_raw
+            )
+        return name in selected_raw
+
+    base_score = max(0.0, min(100.0, _safe_float(signal.get("signal_score"), 0.0)))
+    if _include("trend_breakout"):
+        plugins.append(
+            {
+                "name": "trend_breakout",
+                "mode": "live",
+                "raw_score": round(base_score, 2) if stage2_live else 0.0,
+                "triggered": stage2_live,
+                "meta": {"source": "existing_signal_score", "entry_family": family},
+            }
+        )
+
+    if _include("pullback"):
+        pullback = evaluate_pullback_strategy(signal=signal, candidate=candidate, mode=pullback_mode)
+        if pullback is not None:
+            plugins.append(pullback)
 
     try:
         from core.horizon_strategies import evaluate_horizon_plugins
 
         df = candidate.get("df") if isinstance(candidate, dict) else None
-        plugins.extend(evaluate_horizon_plugins(df))
+        if selected_raw is None:
+            plugins.extend(evaluate_horizon_plugins(df))
+        else:
+            wanted = {sid for sid in selected_raw if sid not in {"trend_breakout", "pead_primary", "breakout_confirm"}}
+            if wanted:
+                plugins.extend(evaluate_horizon_plugins(df, names=wanted))
     except Exception:
         pass
     return plugins

@@ -986,7 +986,7 @@ def dossier_to_pdf(dossier: dict[str, Any]) -> bytes:
             ["SMA 50 / 150 / 200", f"{_fmt_money(technical.get('sma_50'))} / {_fmt_money(technical.get('sma_150'))} / {_fmt_money(technical.get('sma_200'))}"],
             ["Stage 2", "YES" if technical.get("stage_2") else "NO"],
             ["VCP", "YES" if technical.get("vcp") else "NO"],
-            ["Signal Score", f"{_fmt_num(technical.get('signal_score'), 1)} / 100"],
+            ["Signal points", f"{_fmt_num(technical.get('signal_score'), 1)} / 100 (composite, not a probability)"],
             ["Sector ETF", _safe_str(technical.get("sector_etf"), "Unknown")],
         ],
         col_widths=[3.0, 2.0],

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "card_id": "cap37-capped-replay",
+  "status": "proposed",
+  "theory_name": "capped stage2_pts52w_cap37 five-era replay",
+  "question": "Does the capped bare book still clear the promotion floors on the five-era audit?",
+  "single_change": {
+    "field": "bare_run_id",
+    "baseline": "stage2_only_aug",
+    "candidate": "stage2_pts52w_cap37"
+  },
+  "floors": {
+    "pf_mean": 1.2,
+    "worst_era_pf": 1.0,
+    "min_trades": 1000
+  },
+  "decision": "clears_floors",
+  "kind": "artifact",
+  "command": [
+    "python",
+    "scripts/phase2_edge_audit.py",
+    "--bare-run-id",
+    "stage2_pts52w_cap37",
+    "--control-run-id",
+    "control_legacy_aug",
+    "--out-prefix",
+    "phase2_edge_audit_cap37_capped"
+  ],
+  "artifact": "validation_artifacts/phase2_edge_audit_cap37_capped.json",
+  "metrics": {
+    "pf_mean": "bare.pf_mean",
+    "worst_era_pf": "bare.worst_era_pf",
+    "n_trades": "bare.n_total",
+    "verdict": "verdict"
+  }
+}

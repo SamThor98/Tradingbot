@@ -57,6 +57,18 @@ def test_render_contract_payload_shape() -> None:
     assert REQUIRED_COMPARE_KEYS.issubset(compare.keys())
 
 
+def test_sec_panel_does_not_fabricate_management_rows() -> None:
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1].joinpath("webapp/static/panels/sec.js").read_text(encoding="utf-8")
+    assert "sbc_musd: 220" not in src
+    assert "— Dilution and SBC figures were not returned" in src
+    assert "— Say-Do timeline was not returned" in src
+    assert "— Integrity score was not returned" in src
+    assert "sectionIsSynthetic" in src
+    assert "dilution_heatmap" in src
+
+
 def test_render_contract_management_dashboard_fidelity() -> None:
     payload = _fixture_payload()
     md = payload["management_dashboard"]

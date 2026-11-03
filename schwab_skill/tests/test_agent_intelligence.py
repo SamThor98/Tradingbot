@@ -6,6 +6,8 @@ from agent_intelligence import (
     apply_meta_policy_to_signal,
     compute_uncertainty_score,
     compute_vote_disagreement,
+    log_counterfactual_event,
+    meta_policy_counterfactual_reason,
     resolve_dynamic_weights,
 )
 
@@ -65,6 +67,33 @@ def test_meta_policy_shadow_keeps_signal(tmp_path) -> None:
     assert out["meta_policy"]["mode"] == "shadow"
     assert out["meta_policy"].get("shadow_action") in {"allow", "downsize", "suppress"}
     assert float(out["signal_score"]) == 62.0
+
+
+def test_meta_policy_counterfactual_reason_shadow_and_live() -> None:
+    assert meta_policy_counterfactual_reason(keep=False, meta={"shadow_action": "suppress"}) == (
+        "meta_policy_suppressed"
+    )
+    assert meta_policy_counterfactual_reason(keep=True, meta={"shadow_action": "suppress"}) == (
+        "meta_policy_would_suppress"
+    )
+    assert meta_policy_counterfactual_reason(keep=True, meta={"shadow_action": "downsize"}) == (
+        "meta_policy_would_downsize"
+    )
+    assert meta_policy_counterfactual_reason(keep=True, meta={"shadow_action": "allow"}) is None
+    assert meta_policy_counterfactual_reason(keep=False, meta={"decision": "suppress"}) == (
+        "meta_policy_suppressed"
+    )
+
+
+def test_log_counterfactual_event_writes_reason(tmp_path) -> None:
+    (tmp_path / ".env").write_text("COUNTERFACTUAL_LOGGING_ENABLED=true\n")
+    signal = {"ticker": "MSFT", "signal_score": 70.0, "mirofish_conviction": 10.0}
+    assert log_counterfactual_event(signal=signal, reason="meta_policy_would_suppress", skill_dir=tmp_path) is True
+    lines = (tmp_path / ".counterfactual_log.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["ticker"] == "MSFT"
+    assert payload["reason"] == "meta_policy_would_suppress"
 
 
 def test_compute_uncertainty_uses_components() -> None:

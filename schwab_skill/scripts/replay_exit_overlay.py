@@ -193,11 +193,15 @@ def _replay_exit_on_df(
     profile: ExitProfile,
     stop_pct: float,
     skill_dir: Path,
+    entry_idx: int = 0,
+    skip_vcp_invalidation: bool = False,
 ) -> tuple[float, pd.Timestamp, str]:
-    work = add_indicators(df.copy())
+    work = df if "sma_50" in df.columns else add_indicators(df.copy())
     if work.empty:
         raise ValueError("empty bar window")
-    entry_idx = 0
+    entry_idx = int(entry_idx)
+    if entry_idx < 0 or entry_idx >= len(work):
+        raise ValueError("entry_idx outside bar window")
     entry_price = float(work["close"].iloc[entry_idx])
     highest_close = entry_price
     last_idx = min(entry_idx + profile.hold_days, len(work) - 1)
@@ -216,6 +220,7 @@ def _replay_exit_on_df(
             defer_soft_exits=profile.defer_soft_exits,
             window=work.iloc[: j + 1],
             skill_dir=skill_dir,
+            skip_vcp_invalidation=skip_vcp_invalidation,
         )
         if reason:
             return px, work.index[j], reason

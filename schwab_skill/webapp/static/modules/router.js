@@ -58,6 +58,10 @@ export function isSupabaseAuthCallbackHash(hash = "") {
 export const SECTION_ALIASES = Object.freeze({
   backtest: "backtestSection",
   backtests: "backtestSection",
+  lab: "backtestSummaryLanding",
+  leaderboard: "backtestLeaderboard",
+  btmonitor: "backtestLiveMonitor",
+  "backtest-monitor": "backtestLiveMonitor",
   pending: "pendingSection",
   queue: "pendingSection",
   approvals: "pendingSection",
@@ -66,9 +70,15 @@ export const SECTION_ALIASES = Object.freeze({
   candidates: "scanSection",
   scanstudio: "scanStudioPanel",
   "scan-studio": "scanStudioPanel",
+  desk: "operatorAgentsSection",
+  "operator-desk": "operatorAgentsSection",
+  grok: "grokReviewSection",
+  "grok-review": "grokReviewSection",
   peadcanary: "peadCanarySection",
   canary: "peadCanarySection",
   "pead-canary": "peadCanarySection",
+  lessons: "settledLessonsSection",
+  "settled-lessons": "settledLessonsSection",
   workflow: "workflowPrimary",
   connect: "onboardingSection",
   onboarding: "onboardingSection",
@@ -85,6 +95,20 @@ export const SECTION_ALIASES = Object.freeze({
   cockpit: "cockpitWorkspaceIntro",
   sec: "secCompareSection",
   seccompare: "secCompareSection",
+  "event-risk": "eventProbabilitySection",
+  eventrisk: "eventProbabilitySection",
+  "event-probability": "eventProbabilitySection",
+  liquid: "liquidPositioningSection",
+  "liquid-positioning": "liquidPositioningSection",
+  positioning: "liquidPositioningSection",
+  pricing: "pricingModelSection",
+  "pricing-model": "pricingModelSection",
+  companyfacts: "pricingModelSection",
+  sharadar: "sharadarBundleSection",
+  "sharadar-bundle": "sharadarBundleSection",
+  pit: "sharadarBundleSection",
+  "sharadar-compare": "sharadarCompareSection",
+  "bundle-compare": "sharadarCompareSection",
   calibration: "calibrationSection",
   shadow: "shadowScoreboardSection",
   shadowscoreboard: "shadowScoreboardSection",
@@ -93,6 +117,8 @@ export const SECTION_ALIASES = Object.freeze({
   decide: "systemDecisionPanel",
   promote: "systemDecisionPanel",
   decision: "systemDecisionPanel",
+  bookwidth: "decisionBookWidth",
+  "book-width": "decisionBookWidth",
   ready: "systemSummaryLanding",
   review: "reviewLoopSection",
   reviewloop: "reviewLoopSection",
@@ -122,6 +148,33 @@ function openAncestorDetails(el) {
   }
 }
 
+/** Open the target when it is a disclosure, plus one direct child disclosure. */
+function openRouteDetails(el) {
+  if (!el) return;
+  if (el.tagName === "DETAILS") el.open = true;
+  const nested = typeof el.querySelector === "function" ? el.querySelector(":scope > details") : null;
+  if (nested) nested.open = true;
+  openAncestorDetails(el);
+}
+
+function scrollRouteTarget(el, behavior) {
+  const rect = typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null;
+  if (!rect || typeof window.scrollTo !== "function") {
+    if (typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior, block: "start" });
+    }
+    return;
+  }
+  const top = rect.top + (window.scrollY || window.pageYOffset || 0) - 76;
+  window.scrollTo({ top: Math.max(0, top), behavior });
+}
+
+function routeTargetMisaligned(el) {
+  const rect = typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null;
+  if (!rect) return false;
+  return rect.top < 48 || rect.top > 160;
+}
+
 /**
  * Resolve the current ``location.hash`` to an element and scroll to it.
  * No-op when:
@@ -148,14 +201,21 @@ export function handleRouteHash() {
   window.dispatchEvent(new CustomEvent("route_hash_applied", { detail: { id } }));
   // The deep-link target itself may be a collapsed <details> (e.g. the
   // demoted sectors/movers disclosures) — open it before scrolling.
-  if (el.tagName === "DETAILS") el.open = true;
-  openAncestorDetails(el);
+  openRouteDetails(el);
+  const reduced =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 0));
   raf(() => {
-    if (typeof el.scrollIntoView === "function") {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    scrollRouteTarget(el, reduced ? "auto" : "smooth");
   });
+  // Layout above the target can grow after the first frame (feed, studio, lessons).
+  const later = window.setTimeout || setTimeout;
+  later(() => {
+    if (el.isConnected === false) return;
+    if (!routeTargetMisaligned(el)) return;
+    scrollRouteTarget(el, "auto");
+  }, 480);
 }
 
 /**

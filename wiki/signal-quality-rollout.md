@@ -1,7 +1,7 @@
 ---
 source: Brain/Runbooks/Signal Quality Rollout.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-10-08
 tags: [runbook, quality]
 ---
 
@@ -20,11 +20,14 @@ tags: [runbook, quality]
 
 ## Related Pages
 
+- [[vcp-invalidation-exit]] — Stage 2l grace replay; VCP skip is not live
+- [[purged-net-rank]] — Stage 2l embargoed rank; not promoted
 - [[quality-gates]] — modes and thresholds
 - [[signal-scanner]] — where gates are applied
 - [[validation]] — validation pipeline
 - [[multi-sleeve-trading-system-constitution]] — S0 live stack as core sleeve in target multi-sleeve system
+- [[thirty-day-signal-cut-plan]] — active cycle through 2026-11-07; parked stages stay parked
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-09-26*

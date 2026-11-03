@@ -27,6 +27,7 @@ from .security import decrypt_secret, encrypt_secret
 LOG = logging.getLogger(__name__)
 
 _LLM_KEY_ENV_ALIASES = (
+    "XAI_API_KEY",
     "MIROFISH_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_KEY",
@@ -39,8 +40,12 @@ _ENV_OPTIONAL_FOR_TENANT = (
     "MAX_SECTOR_ACCOUNT_FRACTION",
     "HYPOTHESIS_LEDGER_ENABLED",
     "HYPOTHESIS_SELF_STUDY_MERGE",
+    "EXPERIMENT_COLLECTOR_ENABLED",
+    "SELF_STUDY_MODE",
+    "SELF_STUDY_ENABLED",
     # MiroFish/LLM keys + routing options used by engine_analysis._call_llm().
     "MIROFISH_API_KEY",
+    "XAI_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_KEY",
     "LLM_BASE_URL",
@@ -212,7 +217,7 @@ def scan_runtime_prerequisite_errors(
     """
     errors: list[str] = []
     if require_llm_key and not any((os.getenv(k) or "").strip() for k in _LLM_KEY_ENV_ALIASES):
-        errors.append("LLM key missing: set MIROFISH_API_KEY, OPENAI_API_KEY, or OPENAI_KEY on the worker.")
+        errors.append("LLM key missing: set XAI_API_KEY, MIROFISH_API_KEY, or OPENAI_API_KEY on the worker.")
 
     advisory_enabled = (os.getenv("ADVISORY_MODEL_ENABLED") or "1").strip().lower() in ("1", "true", "yes", "on")
     if advisory_enabled:

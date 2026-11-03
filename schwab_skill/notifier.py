@@ -43,6 +43,8 @@ ALERT_KINDS = {
     "scan_complete": ("🔍", "Scan Complete", 0x3498DB),
     "scan_data_issues": ("⚠️", "Scan Data Issues", 0xF39C12),
     "self_study": ("📚", "Self-Study", 0x9B59B6),
+    "experiment_brief": ("📋", "Experiment Brief", 0x9B59B6),
+    "operator_desk": ("🧭", "Operator Desk", 0x9B59B6),
     "trailing_stop_failed": ("🛑", "Trailing Stop Failed", 0xE74C3C),
     "sector_filter_fallback": ("📊", "Sector Filter Fallback", 0xF39C12),
     "info": ("ℹ️", "Info", 0x3498DB),

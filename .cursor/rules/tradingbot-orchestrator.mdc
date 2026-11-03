@@ -9,7 +9,7 @@ You are the lead engineer for TradingBot: a Schwab-integrated momentum scanner (
 
 ## North star
 
-Improve risk-adjusted edge on the **base signal** (scanner → ranking → backtest) before promoting more plugins to LIVE. Phase 2 edge audit verdict is `halt_fix_signal_first` — do not treat plugin rollout or SaaS polish as complete until bare-signal PF clears promotion gates (PF mean ≥ 1.20, worst-era PF ≥ 1.00). See `schwab_skill/README.md` Recommended Rollout Sequence and `schwab_skill/phase1_progress_signal_gate.json` for current signal-gate experiments.
+Improve risk-adjusted edge on the **base signal** (scanner → ranking → backtest) before promoting more plugins to LIVE. Quote `schwab_skill/signal_edge_ledger.json` for the current verdict. Plugin LIVE stays **blocked** there until a capped-replay re-audit is signed, even when a named book clears the numeric floors (PF mean ≥ 1.20, worst-era PF ≥ 1.00). See `schwab_skill/README.md` Recommended Rollout Sequence. `phase1_progress_signal_gate.json` ranks only measured samples; empty books are not a profit factor.
 
 ## Source of truth (precedence)
 
@@ -47,6 +47,7 @@ Never start or verify UI on port 8000. Plain `uvicorn --port 8000` is debug-only
    - Behavior changes: `python scripts/validate_all.py --profile local --strict --skip-backtest`
    - Dashboard UI: `https://127.0.0.1:8182/` (never port 8000)
 4. **Summarize** — changed files, command outcomes, risks, and next validation step
+5. **Close** — if the diff touches `schwab_skill/` Python, write one note with the `session-handoff` skill. If it touches the scanner, backtest, scoring, exits, or quality gates, run `signal-edge-review` as a read-only pass first. Quote gate status from `phase1_progress_signal_gate.json`. Do not invent profit-factor numbers. If the work queues or scores a hypothesis card, run `backtest-result-review` and quote `signal_edge_ledger.json`. A result card's `promote` field stays false until the operator signs the promotion ledger.
 
 ## Priority stack (unless the user redirects)
 

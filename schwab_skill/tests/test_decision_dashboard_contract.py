@@ -42,6 +42,7 @@ DECISION_DOM_IDS = (
     "decisionSignalEdgeSummary",
     "decisionGateTiles",
     "decisionEraPfChart",
+    "decisionBookWidth",
     "decisionReliabilityState",
     "decisionPromotionState",
 )
@@ -67,6 +68,7 @@ def test_decision_dashboard_wires_panel_state(decision_dashboard_js: str) -> Non
         "summarizeDecisionGates",
         "renderDecisionGateTiles",
         "renderDecisionPfChart",
+        "renderDecisionBookWidth",
         "renderDecisionSummaryStrip",
     ):
         assert token in decision_dashboard_js, f"decisionDashboard.js missing: {token}"
@@ -76,6 +78,7 @@ def test_decision_charts_exports(decision_charts_js: str) -> None:
     for token in (
         "export function renderDecisionGateTiles",
         "export function renderDecisionPfChart",
+        "export function renderDecisionBookWidth",
         "export function renderDecisionSummaryStrip",
         "export function summarizeDecisionGates",
         "buildGateTileStates",
@@ -83,6 +86,36 @@ def test_decision_charts_exports(decision_charts_js: str) -> None:
         "decision-pf-chart",
     ):
         assert token in decision_charts_js, f"decisionCharts.js missing: {token}"
+
+
+def test_decision_pf_tile_names_stack_scenario(decision_charts_js: str) -> None:
+    assert "stackPfProvenance" in decision_charts_js
+    assert "exit_grace_breakout_buffer_0.010" in decision_charts_js
+    assert "fallback: hold_21_40d_pf" in decision_charts_js
+    assert "validation + SLO + ablation" in decision_charts_js
+    assert "cap37_unsorted_vs_live.json" in decision_charts_js
+    assert "stack.pf_mean ?? signalEdge.hold_21_40d_pf" not in decision_charts_js
+
+
+def test_sse_refreshes_scan_health_and_decision_gate(app_js: str) -> None:
+    assert "function handleDashboardSseMessage" in app_js
+    assert "Live updates are off. Use Refresh." in app_js
+    completed = app_js.split('if (event === "scan_completed")', 1)[1].split('if (event === "scan_failed")', 1)[0]
+    assert "refreshStatus();" in completed
+    assert "refreshDecisionDashboard();" in completed
+    assert "refreshPending();" not in completed
+    failed = app_js.split('if (event === "scan_failed")', 1)[1].split('if (event === "trade_created")', 1)[0]
+    assert "refreshScanFailure" in failed
+    assert "refreshStatus();" not in failed
+    assert "state.lastScanAt = new Date()" not in app_js
+    assert "const nowIso = new Date()" not in app_js
+    assert "artifact date missing" in app_js
+
+
+def test_decision_freshness_uses_artifact_time(app_js: str) -> None:
+    assert "artifact date missing" in app_js
+    assert "stackArtifact.generated_at" in app_js
+    assert "state.lastDecisionDashboardAt = new Date()" not in app_js
 
 
 def test_app_js_refreshes_decision_dashboard(app_js: str) -> None:

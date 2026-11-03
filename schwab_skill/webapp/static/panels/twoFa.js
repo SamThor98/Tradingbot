@@ -20,6 +20,11 @@ import { logEvent, updateActionCenter } from "../modules/logger.js";
 export function renderTwoFaPanel() {
   const wrap = document.getElementById("twoFaPanel");
   if (!wrap) return;
+  if (!state.publicConfig?.saas_mode) {
+    wrap.setAttribute("data-async-state", "success");
+    wrap.innerHTML = `<p class="muted small">This local desk confirms live orders by typing the ticker. Authenticator codes are a hosted-account control and do not block approvals here.</p>`;
+    return;
+  }
   // Security surface: a failed status fetch must be visible, not silent.
   if (state.twoFaStatusError) {
     wrap.setAttribute("data-async-state", "error");
@@ -119,7 +124,7 @@ export async function submitEnableLiveTrading({
     typed_phrase: phrase,
   });
   if (!out.ok) {
-    const msg = typeof out.error === "string" ? out.error : JSON.stringify(out.error || "Request failed");
+    const msg = out.user_message || (typeof out.error === "string" ? out.error : "Request failed — retry");
     logEvent({ kind: "system", severity: "error", message: `Enable live trading failed: ${msg}` });
     updateActionCenter({ title: "Enable live trading", message: msg, severity: "error" });
     return;

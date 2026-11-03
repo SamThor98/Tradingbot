@@ -7,6 +7,8 @@
 
 import { api } from "../modules/api.js";
 import { safeText, formatMoney, formatCount, formatDecimal } from "../modules/format.js";
+import { definitionListHtml } from "../modules/typedView.js";
+import { humanizeFieldLabel } from "../modules/humanize.js";
 
 const BOOK_SEGMENTS = ["calendar", "tax", "journal"];
 let activeSegment = "calendar";
@@ -16,6 +18,13 @@ let journalSymbol = null;
 
 function $(id) {
   return document.getElementById(id);
+}
+
+function definitionListFromTemplate(template) {
+  const rows = Object.entries(template || {})
+    .filter(([, v]) => v == null || typeof v !== "object")
+    .map(([k, v]) => ({ label: humanizeFieldLabel(k), value: v == null || v === "" ? "—" : String(v) }));
+  return rows.length ? definitionListHtml(rows) : "";
 }
 
 function moneyTone(n) {
@@ -208,7 +217,7 @@ async function exportYtdExcel() {
         msg =
           "Export API not found (404). Restart/redeploy the dashboard so Book export routes are loaded, then hard-refresh the page.";
       } else if (typeof msg === "object" && msg) {
-        msg = msg.error || msg.detail || JSON.stringify(msg);
+        msg = msg.error || msg.detail || "Export failed — retry";
       }
       setStatus(String(msg));
       const statusEl = $("bookExportStatus");
@@ -498,7 +507,7 @@ async function loadJournalDetail(symbol) {
       <article class="book-note">
         <header><strong>${safeText(n.note_date)}</strong> · ${safeText(n.mode)} · ${safeText(n.note_type)}</header>
         <p>${safeText(n.body || "(no body)")}</p>
-        ${n.mode === "full" && n.template ? `<pre class="book-note-template">${safeText(JSON.stringify(n.template, null, 0))}</pre>` : ""}
+        ${n.mode === "full" && n.template && typeof n.template === "object" ? definitionListFromTemplate(n.template) : ""}
       </article>`,
     )
     .join("");

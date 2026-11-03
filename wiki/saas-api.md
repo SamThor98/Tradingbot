@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/SaaS API.md
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-08-24
 tags: [architecture, saas, api]
 ---
 
@@ -31,7 +31,9 @@ tags: [architecture, saas, api]
 
 ## Tenant Dashboard Router
 
-Includes [[tenant-dashboard-endpoints]] for per-user functionality: OAuth callbacks, portfolio, pending trades, reports.
+Includes [[tenant-dashboard-endpoints]] for the same operator dashboard as local: OAuth, portfolio, book, Intel (`/api/position-intel`), SEC analyze/compare, pending trades, decision cards (`brief` + rank v2 via shared `decision_card_service`).
+
+Hosted write gates (plugin-mode edits, in-process ablation, SSE) stay off; see [[saas-endpoints]].
 
 ## Related Pages
 
@@ -42,4 +44,4 @@ Includes [[tenant-dashboard-endpoints]] for per-user functionality: OAuth callba
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-08-24*

@@ -118,6 +118,7 @@ def test_app_js_wires_scan_transparency_modules(app_js: str) -> None:
         'from "./panels/scanDiagnostics.js"',
         'from "./panels/scanTable.js"',
         'from "./modules/scanSignals.js"',
+        'from "./modules/scanBrief.js"',
         'from "./modules/filterReasons.js"',
         'from "./modules/signalProvenance.js"',
         'from "./modules/operationsStatus.js"',
@@ -165,8 +166,11 @@ def test_scan_table_panel_owns_row_rendering(scan_table_js: str, app_js: str) ->
         "buildRowWhyText",
         "buildQualifiedReasonText",
         "scan-row-why",
+        "scan-ticker-prov",
     ):
         assert token in scan_table_js, f"scanTable.js missing: {token}"
+    assert "renderSignalProvenanceChip(" in scan_table_js
+    assert "void renderSignalProvenanceChip" not in scan_table_js
     for forbidden in (
         "function renderScanRows(",
         "function bindScanSortHandlers(",
@@ -212,6 +216,21 @@ def test_scan_diagnostics_integrity_banner(scan_diag_js: str) -> None:
         "data_quality",
     ):
         assert token in scan_diag_js, f"scanDiagnostics.js missing: {token}"
+
+
+def test_extension_rank_and_family_filter(index_html: str, scan_table_js: str) -> None:
+    assert 'id="scanFamilyFilter"' in index_html
+    assert 'id="todayCanActStrip"' in index_html
+    assert 'id="systemCanActStrip"' in index_html
+    assert "export function rowMatchesScanFamily" in scan_table_js
+    assert "52w " in scan_table_js
+    assert "assignDisplayRanks" in scan_table_js
+    assert "trust_score" in scan_table_js
+    assert "getTrustScore" in scan_table_js
+    assert "pead_extension_drop_would_drop" in scan_table_js
+    assert "extended, shadow drop" in scan_table_js
+    for token in ("stage2", "pead", "pullback"):
+        assert f'data-scan-family-filter="{token}"' in index_html
 
 
 def test_operations_screen_staging_guard(operations_js: str) -> None:
@@ -272,6 +291,22 @@ def test_pending_board_provenance_and_status(pending_board_js: str) -> None:
         'board.dataset.state',
     ):
         assert token in pending_board_js, f"pendingBoard.js missing: {token}"
+
+
+def test_scan_and_pending_as_of_are_payload_times(scan_diag_js: str) -> None:
+    assert "new Date().toISOString()" not in scan_diag_js
+    assert "scan time missing" in scan_diag_js
+    pending = (STATIC / "panels" / "pendingBoard.js").read_text(encoding="utf-8")
+    assert "pendingAsOfFrom" in pending
+    assert "state.lastPendingAt = new Date()" not in pending
+    fresh = (STATIC / "modules" / "freshness.js").read_text(encoding="utf-8")
+    assert "export function scanAsOfFrom" in fresh
+    assert "export function pendingAsOfFrom" in fresh
+
+
+def test_scan_funnel_does_not_invent_watchlist_size(scan_diag_js: str) -> None:
+    assert "watchRaw > 0 ? watchRaw : 1500" not in scan_diag_js
+    assert "Universe size was not reported" in scan_diag_js
 
 
 def test_scan_diagnostics_uses_operations_status(scan_diag_js: str) -> None:

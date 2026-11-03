@@ -36,7 +36,7 @@ never disagree — both read the same keys (`provider`, `used_fallback`,
 
 | Source | Detection | Response |
 |--------|-----------|----------|
-| Schwab DNS/timeout | `schwab_circuit` (5-min unstable) | fast-fail; `place_order` returns circuit error; `circuit_breaker_state` gauge set |
+| Schwab DNS/timeout | `schwab_circuit` (3 consecutive; 5-min unstable; OAuth bypass) | market-data/orders fast-fail; OAuth still exchanges; `circuit_breaker_state` gauge set |
 | Rolling error rate >2% | `data_provider` breaker | route history to yfinance until recovery probe |
 | Quote stale | age > `DATA_QUOTE_MAX_AGE_SEC` | `quote_fresh=False` pre-trade blocker |
 | Bars stale | age > `SCAN_STAGE_A_MAX_BAR_AGE_DAYS` | Stage A rejects candidate |

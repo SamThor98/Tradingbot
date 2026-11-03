@@ -1,7 +1,7 @@
 ---
 source: Brain/Architecture/WebApp Dashboard.md
 created: 2026-04-13
-updated: 2026-07-16
+updated: 2026-09-14
 tags: [architecture, webapp, dashboard, ux]
 ---
 
@@ -11,14 +11,17 @@ tags: [architecture, webapp, dashboard, ux]
 
 ## Navigation (locked 2026-06-26)
 
-Four top-level tabs in `index.html` / `app.js`:
+Five top-level tabs in `index.html` / `app.js`:
 
 | Tab | Mode | Focus |
 |-----|------|-------|
 | Today | `operations` | Scan workflow + pending queue |
-| Research | `research` | Quick check, backtest, diligence, portfolio (Positions / Risk / Book) |
-| System | `diagnostics` | Health, validation, calibration |
-| Settings | `settings` | Schwab connect, live-order controls, risk presets |
+| Research | `research` | Portfolio book and one-ticker check (Brief/Deep) |
+| Intel | `intel` | Position conviction, volatility, options |
+| System | `diagnostics` | Health, validation, calibration, settings |
+| Backtest | `backtest` | Leaderboard, one-click 5y/8y queue, next steps, related evidence |
+
+Research sub-tabs are exclusive (Portfolio → Quick check). Cards stack full-width so hidden tab siblings do not leave a vacant grid column. Backtest lives on its own tab (Ctrl+5). Results surface net profit factor against the mean PF ≥ 1.20 promotion bar; a single window is not LIVE-ready. Settings stay merged into System; old `?screen=settings` links still work.
 
 See [[frontend-route-contract]] and [[section-migration-map]] for deep links and section ids.
 
@@ -53,14 +56,15 @@ All API routes return `ApiResponse(ok, data, error)` via `_ok()` / `_err()` help
 
 ## Related Pages
 
+- [[local-ops-box]] — dedicated host that keeps this UI up on 8182
 - [[frontend-route-contract]] — frozen deep-link and screen contract
 - [[section-migration-map]] — locked section layout
 - [[portfolio-book]] — Book sub-tab (calendar, tax, journal)
 - [[local-dashboard-endpoints]] — full endpoint reference
 - [[scan-catalog]] — Scan studio timeframes, descriptions, universes
-- [[tenant-dashboard-endpoints]] — SaaS per-tenant routes
+- [[tenant-dashboard-endpoints]] — SaaS per-tenant routes (same dashboard, JWT + Celery)
 - [[system-overview]] — architecture context
 
 ---
 
-*Last compiled: 2026-07-16*
+*Last compiled: 2026-09-08*

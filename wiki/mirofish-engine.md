@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/engine_analysis.py, schwab_skill/agent_intelligence.py
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-10-15
 tags: [intelligence, simulation, agents]
 ---
 
@@ -52,6 +52,7 @@ contains:
 - [[meta-policy]] — How MiroFish output is folded into the final score
 - [[feature-store]] — Where reliability buckets live
 - [[signal-scanner]] — Stage B integration point
+- [[grok-agent-orchestration]] — Separate research agent; does not replace MiroFish routing
 
 ---
 *Last compiled: 2026-04-17*

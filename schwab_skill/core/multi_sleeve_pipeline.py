@@ -56,6 +56,8 @@ def build_multi_sleeve_diagnostics(
         s0_score_field=score_field,
         s1_score_field="edge_score",
         s1_paper_only=not s1_live,
+        optimizer_mode=mode,
+        drawdown_from_peak=drawdown_from_peak,
     )
     return {
         "mode": mode,

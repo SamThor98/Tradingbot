@@ -10,10 +10,12 @@ import {
   humanizeRolloutMode,
   humanizeScanStageLabel,
   humanizeEnvParam,
+  humanizeProvenanceLine,
 } from "../../webapp/static/modules/humanize.js";
 
 test("humanizeKey uses curated labels before generic prettifying", () => {
   assert.equal(humanizeKey("stage_2"), "In uptrend");
+  assert.equal(humanizeKey("df_empty"), "No price data");
   assert.equal(humanizeKey("vcp_detected"), "Volatility pattern");
   assert.equal(humanizeKey("SIGNAL_UNIVERSE_MODE"), "Universe mode");
 });
@@ -31,6 +33,8 @@ test("humanizeApiSource maps known endpoints and prettifies unknown /api paths",
   assert.equal(humanizeApiSource("/api/status"), "connection status");
   assert.equal(humanizeApiSource("/api/pending-trades"), "pending trades");
   assert.equal(humanizeApiSource("/api/shadow/scoreboard"), "Shadow · Scoreboard");
+  assert.equal(humanizeApiSource("/api/health/deep metrics"), "quote health");
+  assert.equal(humanizeApiSource("validation_status.generated_at"), "validation run");
   assert.equal(humanizeApiSource("something-else"), "something-else");
   assert.equal(humanizeApiSource(""), "");
 });
@@ -51,4 +55,12 @@ test("humanizeScanStageLabel prefers stage map, then fallback, then prettify", (
 test("humanizeEnvParam labels known tunables", () => {
   assert.equal(humanizeEnvParam("REGIME_V2_MODE"), "Market regime filter");
   assert.equal(humanizeEnvParam("SOME_NEW_FLAG"), "SOME NEW FLAG".replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+});
+
+test("humanizeProvenanceLine never shows data_quality= assignment syntax", () => {
+  assert.equal(
+    humanizeProvenanceLine("Sharadar daily · as-of 2026-09-21 · live · data_quality=ok"),
+    "Sharadar daily · as-of 2026-09-21 · live · Data quality: ok",
+  );
+  assert.equal(humanizeProvenanceLine(""), "");
 });

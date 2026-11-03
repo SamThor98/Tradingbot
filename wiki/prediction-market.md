@@ -10,6 +10,13 @@ tags: [scanner, prediction-market, polymarket, overlay]
 > Stage B context overlay that lifts or dampens signals based on
 > prediction-market consensus probabilities.
 
+**Not to be confused with [[event-probability-layer]].** This page describes the
+`PRED_MARKET_*` overlay, which searches markets by ticker and mutates
+`signal_score`, sizing, and advisory confidence. The event-probability layer is a
+separate `EVENT_PROB_*` system that fetches events by market id and prices them
+into a scenario DCF for the research dashboard without touching scan output.
+Promoting one does not promote the other.
+
 ## Architecture
 
 The provider abstraction (`PredictionMarketProvider` protocol) decouples the
@@ -56,6 +63,7 @@ for the full procedure.
 ## Related Pages
 
 - [[signal-scanner]] — Stage B overlay integration point
+- [[event-probability-layer]] — Separate research valuation layer; same data source, different purpose
 - [[agent-intelligence]] — Meta-policy consumes PM confidence
 - [[promotion-playbook]] — Promotion gates for `PRED_MARKET_MODE=live`
 

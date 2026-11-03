@@ -38,3 +38,16 @@ python scripts/validate_prob_rank_promotion.py
 ```
 
 See `docs/PROBABILISTIC_RANKING_RESEARCH_ARCHITECTURE.md` (Phase F).
+
+Point-in-time research (does **not** replace the Schwab-only runner):
+
+```bash
+python scripts/replay_pit_universe_era.py --asof 2016-06-01 --era late_bull
+python scripts/run_factor_analytics.py --run-id stage2_only_aug --cap 37
+python scripts/run_param_sweep.py --trades frozen_trades.parquet
+# *** NOT PROMOTION-ELIGIBLE *** re-run survivors via run_multi_era_backtest_schwab_only.py
+python scripts/retrain_barrier_label_challenger.py --dataset research_store/datasets/<dataset_id>.parquet
+python scripts/build_research_warehouse.py
+```
+
+Deferred PIT fundamentals stay disabled until coverage ≥ `PIT_FUNDAMENTAL_COVERAGE_MIN` (never invent zeros).

@@ -36,7 +36,7 @@ Artifacts land in `schwab_skill/validation_artifacts/validate_all_*.json` — ci
 
 ## Promotion criteria (plugins, advisory model, strategy params)
 
-**Blocked until base signal clears Phase 2 gate** (`halt_fix_signal_first` — PF mean ≥ 1.20, worst-era PF ≥ 1.00). Do not promote REGIME_V2 / EXIT_MANAGER / CORRELATION_GUARD to LIVE while blocked.
+**Plugin LIVE stays blocked while `schwab_skill/signal_edge_ledger.json` says `plugin_live: blocked`.** Numeric floors remain PF mean ≥ 1.20 and worst-era PF ≥ 1.00. Do not promote REGIME_V2 / EXIT_MANAGER / CORRELATION_GUARD to LIVE from an uncapped equity-curve return.
 
 When promotion is explicitly requested and gates pass:
 

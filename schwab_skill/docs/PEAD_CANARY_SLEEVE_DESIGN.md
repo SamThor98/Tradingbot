@@ -75,6 +75,9 @@ Per session, surface (CLI / compare artifact / shadow ledger):
 |---|---|
 | Capacity top-5 tickers | `canary_sleeve.tickers` on compare report (from `capacity_top_n` shadow rows) |
 | Edge scores | `canary_sleeve.names[].edge_score` |
+| Extension flag | `close_vs_sma200_pct` ≥ 0.2028 (`pead_extension_drop_would_drop`). Recorded only |
+| Large surprise | fractional `pead_surprise_pct` > 0.15 (`pead_surprise_large`). Recorded only |
+| Forward slices | hypothesis ledger S1 at T+5: all / not_extended / high_surprise. R7 still uses the full sleeve |
 | Overlap with Stage2 | `overlap_with_stage2` + `entry_family=both` |
 | Leak check | compare invariant `executable_still_stage2_only` |
 | Soft-cap truncated count | `pead_primary_shadow_truncated` |

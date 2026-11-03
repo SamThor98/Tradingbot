@@ -1,11 +1,62 @@
 /* Research screen controller.
  *
  * Owns one-time wiring (init) and screen-prime data loading (prime) for the
- * Research screen: quick check, backtest hub + strategy chat, dossiers/reports,
- * SEC compare, recovery/learning tools, portfolio and performance. Dependencies are injected via ctx from app.js so behavior is
- * identical to the previous inline wireEvents/maybePrimeScreenData code.
- * Rollout flag: screen_controllers (see wiki [[section-migration-map]]).
+ * Research screen. Prime is tab-scoped: Portfolio loads the book; Quick check
+ * waits for a ticker. Backtest lives on its own screen.
  */
+
+import { getActiveResearchTab } from "../modules/researchTabs.js";
+import {
+  RESEARCH_TICKER_RAIL_IDS,
+  syncResearchTickerRail,
+} from "../modules/researchTickerFlow.js";
+import {
+  applyEventProbabilityTickerStale,
+  initEventProbabilityPanel,
+  loadEventProbability,
+} from "../panels/eventProbability.js";
+import { initLiquidPositioningPanel } from "../panels/liquidPositioning.js";
+import {
+  applyPricingModelTickerStale,
+  initPricingModelPanel,
+  loadPricingModel,
+} from "../panels/pricingModel.js";
+import {
+  applySharadarBundleTickerStale,
+  initSharadarBundlePanel,
+  loadSharadarBundle,
+} from "../panels/sharadarFundamentals.js";
+import { initSharadarComparePanel } from "../panels/sharadarCompare.js";
+import { applyQuickCheckTickerStale } from "../panels/quickCheck.js";
+import { applyDossierTickerStale, loadResearchDossierPreflight, syncDossierExportEnabled } from "../panels/dossier.js";
+import { applyReportTickerStale } from "../panels/report.js";
+import { applySecCompareTickerStale } from "../panels/sec.js";
+
+const TICKER_RAIL_IDS = RESEARCH_TICKER_RAIL_IDS;
+const PREFLIGHT_DEBOUNCE_MS = 400;
+
+let _preflightTimer = 0;
+
+function scheduleDossierPreflight() {
+  if (typeof window === "undefined") return;
+  if (_preflightTimer) window.clearTimeout(_preflightTimer);
+  _preflightTimer = window.setTimeout(() => {
+    _preflightTimer = 0;
+    void loadResearchDossierPreflight();
+  }, PREFLIGHT_DEBOUNCE_MS);
+}
+
+function onResearchTickerChange(ticker) {
+  const sym = String(ticker || "").trim().toUpperCase();
+  applyQuickCheckTickerStale(sym);
+  applyEventProbabilityTickerStale(sym);
+  applyPricingModelTickerStale(sym);
+  applySharadarBundleTickerStale(sym);
+  applyDossierTickerStale(sym);
+  applyReportTickerStale(sym);
+  applySecCompareTickerStale(sym);
+  scheduleDossierPreflight();
+}
 
 export function createResearchController(ctx) {
   const {
@@ -14,30 +65,17 @@ export function createResearchController(ctx) {
     api,
     safeText,
     updateActionCenter,
-    restoreBacktestFormFromStorage,
-    setDefaultBacktestDates,
-    syncBtUniverseRow,
-    wireBacktestFormPersistence,
-    renderStrategyChatMessages,
-    switchBacktestHubTab,
-    applyBacktestPresetYears,
-    sendStrategyChat,
-    queueUserBacktest,
-    refreshBacktestRuns,
-    resetBacktestFormToDefaults,
     quickCheck,
     runReport,
     runResearchDossier,
     downloadResearchDossier,
     downloadResearchFundamentalWorkbook,
-    loadResearchDossierPreflight,
     runSecCompare,
     applySecCompareMode,
     resetSecCompareProfileOverride,
     renderSecCompareVisual,
     wireSecCompareActions,
     openTradeDrawer,
-    applyReportViewMode,
     mapRecovery,
     refreshPerformance,
     wirePortfolioSubtabs,
@@ -46,43 +84,43 @@ export function createResearchController(ctx) {
     runLazyApi,
   } = ctx;
 
+  function wireTickerRail() {
+    TICKER_RAIL_IDS.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.tickerRailWired) return;
+      el.dataset.tickerRailWired = "1";
+      el.addEventListener("input", () => {
+        syncResearchTickerRail(el.value, { sourceId: id });
+      });
+      el.addEventListener("change", () => {
+        syncResearchTickerRail(el.value, { sourceId: id });
+      });
+    });
+    const tickerInput = document.getElementById("tickerInput");
+    if (tickerInput && !tickerInput.dataset.enterWired) {
+      tickerInput.dataset.enterWired = "1";
+      tickerInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          void quickCheck();
+        }
+      });
+    }
+  }
+
+  function primeTab(tabKey) {
+    const key = tabKey || getActiveResearchTab();
+    if (key === "portfolio") {
+      void runLazyApi("portfolio");
+      ctx.updateResearchSummaryLanding?.();
+    }
+  }
+
   function init() {
-    restoreBacktestFormFromStorage();
-    setDefaultBacktestDates();
-    syncBtUniverseRow();
-    wireBacktestFormPersistence();
-    renderStrategyChatMessages();
-    document.getElementById("btHubTabForm")?.addEventListener("click", () => switchBacktestHubTab("form"));
-    document.getElementById("btHubTabChat")?.addEventListener("click", () => switchBacktestHubTab("chat"));
-    document.getElementById("btUniverse")?.addEventListener("change", syncBtUniverseRow);
-    document.querySelectorAll(".bt-preset").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const y = btn.getAttribute("data-years");
-        if (y) applyBacktestPresetYears(y);
-      });
-    });
-    document.querySelectorAll(".sc-chip").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const t = btn.getAttribute("data-text") || "";
-        const input = document.getElementById("scInput");
-        if (input) input.value = t;
-        input?.focus();
-      });
-    });
-    document.getElementById("scInput")?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendStrategyChat();
-      }
-    });
-    document.getElementById("btQueueBtn")?.addEventListener("click", queueUserBacktest);
-    document.getElementById("btRefreshListBtn")?.addEventListener("click", refreshBacktestRuns);
-    document.getElementById("btResetFormBtn")?.addEventListener("click", resetBacktestFormToDefaults);
-    document.getElementById("scSendBtn")?.addEventListener("click", sendStrategyChat);
+    wireTickerRail();
     bindEvent("checkBtn", "click", quickCheck);
     bindEvent("reportBtn", "click", runReport);
     bindEvent("dossierBtn", "click", runResearchDossier);
-    bindEvent("reportTickerInput", "change", loadResearchDossierPreflight);
     bindEvent("dossierDownloadJsonBtn", "click", () => downloadResearchDossier("json"));
     bindEvent("dossierDownloadMdBtn", "click", () => downloadResearchDossier("md"));
     bindEvent("dossierDownloadPdfBtn", "click", () => downloadResearchDossier("pdf"));
@@ -111,7 +149,7 @@ export function createResearchController(ctx) {
         }
         updateActionCenter({
           title: "Report Template Loaded",
-          message: `${template} preset applied to Run Report controls. Click Run Report (advanced) or Generate Dossier when ready.`,
+          message: `${template} preset applied to advanced Run Report. Use Generate full report for the operator package.`,
           severity: "info",
         });
       });
@@ -133,6 +171,7 @@ export function createResearchController(ctx) {
         document.getElementById("secCompareMode").value = mode;
         document.getElementById("secCompareTickerA").value = a;
         document.getElementById("secCompareTickerB").value = b;
+        syncResearchTickerRail(a, { sourceId: "secCompareTickerA" });
         applySecCompareMode();
         if (e.shiftKey) {
           void runSecCompare();
@@ -145,14 +184,40 @@ export function createResearchController(ctx) {
         });
       });
     });
-    bindEvent("toggleReportViewBtn", "click", () => {
-      state.reportRawView = !state.reportRawView;
-      applyReportViewMode();
-    });
     bindEvent("recoveryBtn", "click", mapRecovery);
     bindEvent("performanceRefreshBtn", "click", refreshPerformance);
     // Positions | Risk sub-tabs; the Risk tab lazy-loads the risk dashboard.
     wirePortfolioSubtabs();
+    document.getElementById("cockpitMergedPanel")?.addEventListener("toggle", () => {
+      const el = document.getElementById("cockpitMergedPanel");
+      if (el?.open) void ctx.primeCockpitPanel?.();
+    });
+    if (typeof window !== "undefined") {
+      window.addEventListener("research_tab_change", (e) => {
+        primeTab(e.detail?.tab);
+      });
+      window.addEventListener("research_open_ticker", (e) => {
+        const ticker = e.detail?.ticker;
+        if (ticker) ctx.openResearchForTicker?.(ticker);
+      });
+      window.addEventListener("research_ticker_change", (e) => {
+        onResearchTickerChange(e.detail?.ticker);
+      });
+      window.addEventListener("research_quick_check_complete", (e) => {
+        const ticker = e.detail?.ticker;
+        if (ticker) {
+          void loadEventProbability(ticker);
+          void loadPricingModel(ticker);
+          void loadSharadarBundle(ticker);
+        }
+      });
+    }
+    initEventProbabilityPanel();
+    initLiquidPositioningPanel();
+    initPricingModelPanel();
+    initSharadarBundlePanel();
+    initSharadarComparePanel();
+    syncDossierExportEnabled();
     document.getElementById("evolveBtn")?.addEventListener("click", async () => {
       const btn = document.getElementById("evolveBtn");
       const panel = document.getElementById("learningPanel");
@@ -190,14 +255,7 @@ export function createResearchController(ctx) {
   }
 
   function prime() {
-    void runLazyApi("backtest");
-    void runLazyApi("portfolio");
-    void runLazyApi("performance");
-    void ctx.primeCockpitPanel?.();
-    void runLazyApi("sectors");
-    void runLazyApi("movers");
-    void refreshBacktestRuns().then(() => ctx.updateResearchSummaryLanding?.());
-    ctx.updateResearchSummaryLanding?.();
+    primeTab(getActiveResearchTab());
   }
 
   return { id: "research", init, prime };

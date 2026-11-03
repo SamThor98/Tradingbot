@@ -1,4 +1,4 @@
-﻿# Dependencies & virtual envs
+# Dependencies & virtual envs
 **/node_modules/
 **/.venv/
 **/venv/
@@ -20,6 +20,10 @@
 **/mirofish_sims/
 **/artifacts/
 **/validation_artifacts/
+**/research_store/datasets/
+**/research_store/models/
+**/research_store/panels/
+**/.companyfacts/
 
 # Local DB / offline stacks (from .gitignore)
 **/.neo4j/
@@ -41,6 +45,9 @@
 **/.sector_map_cache.json
 **/.sec_cache.json
 **/.sec_filing_cache.json
+**/.earnings_cache.*.tmp
+**/*sec_filing_cache.json.*.tmp
+**/*sec_filing_archive.json.*.tmp
 **/guardrail_trades.json
 **/execution_safety_metrics.json
 

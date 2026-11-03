@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends
 from ..calibration_snapshot import build_calibration_snapshot
 from ..recovery_map import map_failure as _map_failure
 from ..route_helpers import require_api_key_if_set as _require_api_key_if_set
-from ..schemas import ApiResponse
+from ..schemas import ApiResponse, SettledLessonDecisionRequest
 
 router = APIRouter(tags=["learning"], dependencies=[Depends(_require_api_key_if_set)])
 
@@ -274,6 +274,31 @@ def performance() -> ApiResponse:
 @router.get("/api/calibration/summary", response_model=ApiResponse)
 def api_calibration_summary() -> ApiResponse:
     return _ok(build_calibration_snapshot(SKILL_DIR))
+
+
+@router.get("/api/settled-lessons", response_model=ApiResponse)
+def api_settled_lessons() -> ApiResponse:
+    try:
+        from ..settled_lessons import build_settled_lessons
+
+        return _ok(build_settled_lessons(SKILL_DIR))
+    except Exception as exc:
+        return _err_response("settled_lessons", exc)
+
+
+@router.post("/api/settled-lessons/decision", response_model=ApiResponse)
+def api_settled_lesson_decision(
+    body: SettledLessonDecisionRequest,
+    _auth: dict[str, str] = Depends(_require_api_key_if_set),
+) -> ApiResponse:
+    try:
+        from ..settled_lessons import SettledLessonRejected, record_settled_lesson_decision
+
+        return _ok(record_settled_lesson_decision(SKILL_DIR, body.action))
+    except SettledLessonRejected as exc:
+        return ApiResponse(ok=False, error=str(exc), data=exc.snapshot)
+    except Exception as exc:
+        return _err_response("settled_lesson_decision", exc)
 
 
 @router.get("/api/challenger/latest", response_model=ApiResponse)

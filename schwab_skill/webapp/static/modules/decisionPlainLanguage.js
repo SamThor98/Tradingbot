@@ -1,7 +1,7 @@
 import { safeText } from "./format.js";
 
 const REASON_LABELS = Object.freeze({
-  composite_score: "Signal score",
+  composite_score: "Signal points",
   reliability: "Reliability",
   confidence: "Confidence",
   strategy: "Strategy",

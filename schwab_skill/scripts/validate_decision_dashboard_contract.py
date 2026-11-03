@@ -44,6 +44,7 @@ def main() -> int:
             "decisionDashboardSummaryStrip",
             "decisionGateTiles",
             "decisionEraPfChart",
+            "decisionBookWidth",
             "decisionSignalEdgeBoard",
         ):
             if token not in html:

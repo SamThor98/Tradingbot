@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "card_id": "weekly-vcp-score-46",
+  "status": "proposed",
+  "theory_name": "card weekly_vcp sp1500 quality_min_signal_score=46 5y",
+  "question": "Does a 46 signal-score floor change the 5y weekly VCP book on S&P 1500?",
+  "single_change": {
+    "field": "quality_min_signal_score",
+    "baseline": 0,
+    "candidate": 46
+  },
+  "floors": {
+    "pf_mean": 1.2,
+    "worst_era_pf": 1.0,
+    "min_trades": 30
+  },
+  "decision": "clears_floors",
+  "kind": "queue_spec",
+  "spec": {
+    "schema_version": 1,
+    "theory_name": "card weekly_vcp sp1500 quality_min_signal_score=46 5y",
+    "universe_mode": "watchlist",
+    "universe_preset": "sp1500",
+    "tickers": [],
+    "scan_timeframe": "weekly",
+    "strategy_ids": ["weekly_vcp"],
+    "start_date": "2021-10-09",
+    "end_date": "2026-10-09",
+    "overrides": {
+      "skip_mirofish": true,
+      "forensic_enabled": false,
+      "quality_min_signal_score": 46
+    }
+  }
+}

@@ -1,29 +1,60 @@
 /**
- * Research workspace sub-tabs — Portfolio → Quick check → Backtest.
+ * Research workspace sub-tabs — Portfolio → Quick check.
  * Diligence (dossier / SEC) lives under Quick check Brief/Deep.
+ * Backtest lives on its own top-level screen (Ctrl+5).
+ *
+ * Parked sections stay in the DOM for frozen ?section= aliases but are hidden
+ * from the default workspace. Deep links call revealParkedSection().
  */
 
 export const DEFAULT_RESEARCH_TAB = "portfolio";
 
 const TAB_SECTIONS = Object.freeze({
-  portfolio: ["portfolioSection", "performanceSection", "cockpitMergedPanel", "cockpitSection"],
+  portfolio: [
+    "researchSummaryLanding",
+    "researchPortfolioPrimary",
+    "portfolioSection",
+    "researchPortfolioSecondary",
+    "performanceSection",
+    "cockpitMergedPanel",
+    "cockpitSection",
+  ],
   check: [
+    "researchCheckPanel",
     "quickCheckSection",
-    "sectorsSection",
-    "moversSection",
-    "researchAdvancedTools",
+    "eventProbabilitySection",
+    "liquidPositioningSection",
+    "pricingModelSection",
+    "sharadarBundleSection",
     "reportSectionCard",
     "secCompareSection",
+    "sharadarCompareSection",
   ],
-  backtest: ["backtestSection"],
 });
 
 /** Sections only visible when Quick check is in Deep mode. */
-const CHECK_DEEP_SECTIONS = Object.freeze(["reportSectionCard", "secCompareSection"]);
+const CHECK_DEEP_SECTIONS = Object.freeze(["reportSectionCard", "secCompareSection", "sharadarCompareSection"]);
+
+/**
+ * Market color, recovery, and learning are not ticker diligence.
+ * Hidden unless a frozen deep link asks for them.
+ */
+const PARKED_SECTIONS = Object.freeze([
+  "researchAdvancedTools",
+  "sectorsSection",
+  "moversSection",
+]);
+
+const PARKED_REVEAL = Object.freeze({
+  researchAdvancedTools: "researchAdvancedTools",
+  recoverySection: "researchAdvancedTools",
+  learningSection: "researchAdvancedTools",
+  sectorsSection: "sectorsSection",
+  moversSection: "moversSection",
+});
 
 /** Legacy stored tab keys from older layouts. */
 const TAB_ALIASES = Object.freeze({
-  validate: "backtest",
   advanced: "check",
   diligence: "check",
 });
@@ -37,6 +68,9 @@ const SECTION_TO_TAB = Object.freeze({
   }, {}),
   recoverySection: "check",
   learningSection: "check",
+  researchAdvancedTools: "check",
+  sectorsSection: "check",
+  moversSection: "check",
   // Portfolio sub-tab panels live inside portfolioSection.
   portfolioPanelRisk: "portfolio",
   portfolioPanelPositions: "portfolio",
@@ -47,7 +81,7 @@ const SECTION_TO_TAB = Object.freeze({
 });
 
 /** Sections that should open Quick check in Deep mode. */
-const DEEP_SECTION_IDS = new Set(["reportSectionCard", "secCompareSection"]);
+const DEEP_SECTION_IDS = new Set(["reportSectionCard", "secCompareSection", "sharadarCompareSection"]);
 
 const DENSITY_KEY = "tradingbot.ui.research_density";
 const CHECK_MODE_KEY = "tradingbot.ui.research_check_mode";
@@ -157,6 +191,33 @@ export function applyResearchDensity(density, { persist = true } = {}) {
   }
 }
 
+function hideParkedSections() {
+  PARKED_SECTIONS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("research-tab-hidden");
+  });
+}
+
+function revealParkedSection(sectionId) {
+  const parkedId = PARKED_REVEAL[sectionId];
+  if (!parkedId) return;
+  const el = document.getElementById(parkedId);
+  if (!el) return;
+  el.classList.remove("research-tab-hidden");
+  if (el.tagName === "DETAILS") el.open = true;
+}
+
+/** Keep a ?section= / #id parked target visible after tab init re-hides it. */
+function revealParkedFromUrl() {
+  try {
+    const id = String(window.location.hash || "").replace(/^#/, "");
+    if (id && PARKED_REVEAL[id]) revealParkedSection(id);
+  } catch {
+    /* ignore */
+  }
+}
+
 function setResearchTab(tab, { checkMode } = {}) {
   const key = normalizeResearchTab(tab);
   document.querySelectorAll("[data-research-tab-btn]").forEach((btn) => {
@@ -174,6 +235,8 @@ function setResearchTab(tab, { checkMode } = {}) {
       el.classList.toggle("research-tab-hidden", tabKey !== key);
     });
   });
+  hideParkedSections();
+  revealParkedFromUrl();
   const mode = checkMode != null ? normalizeCheckMode(checkMode) : readStoredCheckMode();
   applyCheckModeVisibility(key, mode);
   if (typeof window !== "undefined") {
@@ -244,6 +307,11 @@ export function applyResearchTab(tab) {
   setResearchTab(key);
 }
 
+export function getActiveResearchTab() {
+  const btn = document.querySelector("[data-research-tab-btn].active");
+  return normalizeResearchTab(btn?.getAttribute("data-research-tab-btn"));
+}
+
 export function activateResearchTabForSection(sectionId) {
   const tab = researchTabForSection(sectionId);
   if (!tab) return;
@@ -253,4 +321,5 @@ export function activateResearchTabForSection(sectionId) {
     return;
   }
   applyResearchTab(tab);
+  if (PARKED_REVEAL[sectionId]) revealParkedSection(sectionId);
 }

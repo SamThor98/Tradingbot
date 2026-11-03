@@ -16,18 +16,17 @@ export const state = {
    *  `latestSignals` so operators can see filtered candidates with their
    *  disposition; trade-staging still uses the kept subset only. */
   latestShortlistSignals: [],
-  /** Last watchlist size from scan diagnostics. Defaults to SP1500 (the
-   *  canonical universe) so the hero KPI is meaningful before the first
-   *  scan reports diagnostics. Real per-scan values overwrite this in
-   *  `renderDiagnostics`; an explicit ticker override will show the
-   *  smaller count. */
-  lastWatchlistSize: 1500,
+  /** Last watchlist size from scan diagnostics. Null until a scan reports
+   *  watchlist_size. Do not assume 1500. */
+  lastWatchlistSize: null,
   /** ISO timestamp of the most recent scan response that populated
    *  `latestSignals` / `lastWatchlistSize`. Used for freshness labels. */
   lastScanAt: null,
   /** Most recent integer pending-trades count from /api/pending-trades.
    *  `null` means we have not loaded yet — render "—". */
   lastPendingCount: null,
+  /** Last pending-trades fetch error. Empty string after a successful load. */
+  lastPendingError: "",
   /** ISO timestamp from the most recent successful pending-trades fetch. */
   lastPendingAt: null,
   /** ISO timestamp of the last health/status response (for ribbon freshness). */
@@ -58,6 +57,11 @@ export const state = {
   reportRawView: false,
   lastReportData: null,
   lastResearchDossier: null,
+  /** Last successful Quick check symbol (shown data, not the input rail). */
+  lastQuickCheckTicker: null,
+  lastQuickCheckQuality: null,
+  lastQuickCheckAt: null,
+  lastQuickCheckProvider: null,
   activeReportTab: "summary",
   secCompareResult: null,
   secManagementDashboard: null,
@@ -68,6 +72,7 @@ export const state = {
   savedUiSettings: null,
   performance: null,
   lastPortfolioData: null,
+  lastPortfolioAt: null,
   lastPortfolioRiskData: null,
   lastPortfolioRiskDashboard: null,
   calibration: null,
@@ -88,14 +93,29 @@ export const state = {
    *  is intentionally session-scoped — it survives re-renders within the
    *  same session but is not persisted to localStorage. */
   scanSort: { field: null, dir: "desc" },
+  /** Uppercase ticker -> 1-based place in the current scan list.
+   *  Tradeable rows follow signal points. Research rows follow the
+   *  historical blend, because their sort score is pinned. */
+  scanDisplayRankByTicker: {},
   /** Active funnel-stage filter from diagnostics drill-down (null = show all). */
   scanFunnelFilter: null,
   /** Triage severity filter for the scan candidates table:
    *  pass | review | blocked | info (default pass = kept / tradeable). */
   scanStatusFilter: "pass",
+  /** Entry-family filter for the scan table: all | stage2 | pead | pullback. */
+  scanFamilyFilter: "all",
+  /** Last GET /api/decision-dashboard payload, for the can-I-act strips. */
+  lastDecisionDashboard: null,
   systemLane: "ready",
   /** Last full diagnostics dict from the most recent scan (for funnel re-render). */
   lastScanDiagnostics: null,
+  /** Last successful GET /api/position-intel snapshot for landing chips. */
+  lastIntelAt: null,
+  lastIntelNotes: [],
+  lastIntelSummary: null,
+  lastIntelError: null,
+  lastIntelCacheHit: false,
+  lastIntelCacheAgeSec: null,
   /** Scan studio catalog from GET /api/scan-catalog (timeframes, strategies, universes). */
   scanCatalog: null,
   /** Operator scan-studio prefs (timeframe, universe, strategy_ids). */
@@ -119,7 +139,8 @@ export const BACKTEST_PREFS_KEY = "tradingbot.backtest.preferences";
 /** Pre-v2 key. Sessions stored every runnable sleeve in the tab; v2
  *  migrates universe/tickers but resets strategy_ids to the tab primary. */
 export const LEGACY_SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio";
-/** Bump when default selection semantics change so stale "select all"
- *  sessions do not override one-primary-per-timeframe. */
-export const SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio.v2";
+/** Pre-v3 keys. v3 resets to Daily Stage 2 / VCP (own scanner) so leftover
+ *  monthly/paper checks do not become the boot default. */
+export const SCAN_STUDIO_PREFS_V2_KEY = "tradingbot.scan.studio.v2";
+export const SCAN_STUDIO_PREFS_KEY = "tradingbot.scan.studio.v3";
 export const NOTIF_STORAGE_KEY = "tradingbot.notifications";

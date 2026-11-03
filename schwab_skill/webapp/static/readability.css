@@ -12,29 +12,32 @@
 ============================================================ */
 
 body[data-theme="editorial"] {
-  /* Old Logan Capital canonical palette — cream / forest / gold */
-  --ol-bg: #f5f1e8;
-  --ol-surface: #fffefb;
-  --ol-surface-soft: #ebe5d6;
-  --ol-border: rgba(26, 26, 26, 0.12);
-  --ol-border-strong: rgba(26, 26, 26, 0.22);
-  --ol-text: #1a1a1a;
-  --ol-text-soft: #2a2a2a;
-  --ol-muted: #5a5a5a;
-  --ol-muted-soft: #6e6862;
-  --ol-accent: #1a3a2e; /* forest green — primary accent */
-  --ol-accent-2: #2d5a4a; /* forest light */
-  --ol-accent-hover: #0f241b;
-  --ol-accent-pressed: #142820;
-  --ol-on-accent: #f5f1e8;
-  --ol-accent-border: rgba(26, 58, 46, 0.35);
-  --ol-topbar-border: rgba(26, 58, 46, 0.18);
-  --ol-gold: #c9a962; /* secondary accent — borders/fills only; 2.0:1 on cream, never body text */
-  --ol-accent-soft: rgba(26, 58, 46, 0.12);
-  --ol-ok: #2d5a4a;
+  /* Sharp desk — matches Figma frame Today — Sharp desk (172:284) */
+  --ol-bg: #e9ebef;
+  --ol-surface: #ffffff;
+  --ol-surface-soft: #f6f7f9;
+  --ol-border: #d5d8de;
+  --ol-border-strong: #c5cad3;
+  --ol-text: #111418;
+  --ol-text-soft: #1c2128;
+  --ol-muted: #5e6772;
+  --ol-muted-soft: #6d7682;
+  --ol-accent: #14352c;
+  --ol-accent-2: #1d4a3e;
+  --ol-accent-hover: #0e2820;
+  --ol-accent-pressed: #0a1f1a;
+  --ol-on-accent: #f4f6f5;
+  --ol-accent-border: rgba(20, 53, 44, 0.4);
+  --ol-topbar-border: #d5d8de;
+  --ol-gold: #8a7340;
+  --ol-accent-soft: rgba(20, 53, 44, 0.08);
+  --ol-ok: #1d4a3e;
   --ol-warn: #8a5c1f;
-  --ol-bad: #c94949; /* fills/borders/large text */
-  --ol-bad-text: #a83636; /* AA-safe red for small text on cream/tinted chips */
+  --ol-bad: #9f2d2d;
+  --ol-bad-text: #8d2424;
+  --ol-font-display: "Inter", "DM Sans", system-ui, sans-serif;
+  --ol-glass: #ffffff;
+  --ol-shadow: none;
   /* Neutralize legacy overhaul dark-first aliases so leftover ink-* rules
      cannot paint navy under dark body text (dark-on-dark). */
   --ink: var(--ol-bg);
@@ -54,6 +57,11 @@ body[data-theme="editorial"] {
   --ol-space-5: 20px;
   --ol-space-6: 24px;
   --ol-space-7: 32px;
+  /* Radii from Figma Primitives (radius/card 18, radius/pill 999) */
+  --ol-radius-card: 4px;
+  --ol-radius-control: 2px;
+  --ol-radius-pill: 2px;
+  --ol-shadow-gold: 0 1px 0 color-mix(in srgb, var(--ol-gold) 26%, transparent);
   /* Type scale */
   --ol-text-display: 2.25rem;
   --ol-text-title: 1.125rem;
@@ -62,7 +70,7 @@ body[data-theme="editorial"] {
   --ol-text-micro: 0.8125rem; /* 13px readability floor for supporting text */
   background: var(--ol-bg) !important;
   color: var(--ol-text) !important;
-  font-family: "DM Sans", "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  font-family: "Inter", "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif !important;
   font-size: 16px;
   line-height: 1.55;
 }
@@ -575,13 +583,15 @@ body[data-theme="editorial"] .operations-status-strip[data-state="loading"] .ope
   color: var(--ol-warn);
 }
 
-body[data-theme="editorial"] .operations-status-strip[data-state="error"] {
+body[data-theme="editorial"] .operations-status-strip[data-state="error"],
+body[data-theme="editorial"] .operations-status-strip[data-state="hold"] {
   border-color: rgba(201, 73, 73, 0.44);
   border-left-color: var(--ol-bad);
   background: rgba(201, 73, 73, 0.1);
 }
 
-body[data-theme="editorial"] .operations-status-strip[data-state="error"] .operations-status-pill {
+body[data-theme="editorial"] .operations-status-strip[data-state="error"] .operations-status-pill,
+body[data-theme="editorial"] .operations-status-strip[data-state="hold"] .operations-status-pill {
   border-color: rgba(201, 73, 73, 0.44);
   background: rgba(201, 73, 73, 0.14);
   color: var(--ol-bad);
@@ -843,7 +853,8 @@ body[data-theme="editorial"] .research-panel-snapshot {
   background: var(--ol-surface-soft);
 }
 
-body[data-theme="editorial"] .research-panel-snapshot:empty {
+body[data-theme="editorial"] .research-panel-snapshot:empty,
+body[data-theme="editorial"] .research-panel-snapshot[data-state="empty"]:empty {
   display: none;
 }
 
@@ -1881,6 +1892,16 @@ body[data-theme="editorial"] .sec-compare-grid {
   align-items: end;
 }
 
+body[data-theme="editorial"] #btComposerCatalog.backtest-form-grid,
+body[data-theme="editorial"] #btComposerCatalog .bt-composer-step {
+  align-items: stretch;
+}
+
+body[data-theme="editorial"] .bt-tunables-grid {
+  border-color: var(--ol-border);
+  background: var(--ol-surface-soft);
+}
+
 body[data-theme="editorial"] .advanced-details,
 body[data-theme="editorial"] #reportAdvancedOptions,
 body[data-theme="editorial"] #secCompareProfilePanel,
@@ -2246,22 +2267,43 @@ body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-ticker,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-ticker {
   width: auto !important;
-  min-width: 14rem !important;
+  min-width: 8rem !important;
   max-width: none !important;
 }
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(6),
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(6),
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-rank,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-rank {
-  width: 4rem !important;
+  width: 6.25rem !important;
   text-align: right !important;
   font-family: inherit !important;
+}
+/* Inline rank rationale needs room; tooltip mode stays compact. */
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] th:nth-child(6),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] td:nth-child(6),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] .scan-col-rank,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] .scan-triage-col-rank {
+  width: 11rem !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(7),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(7),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-analog,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-analog {
+  width: 7.5rem !important;
+  text-align: right !important;
+  font-family: inherit !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] th:nth-child(7),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] td:nth-child(7),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] .scan-col-analog,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage[data-rank-explain="inline"] .scan-triage-col-analog {
+  width: 11rem !important;
 }
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-actions-cell,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-th-actions,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-actions,
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(8),
-body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(8) {
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(9),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(9) {
   width: 13.75rem !important;
   min-width: 13.75rem !important;
   max-width: 13.75rem !important;
@@ -2286,6 +2328,13 @@ body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-r
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-ticker,
 body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-stop {
   white-space: normal !important;
+}
+/* Beat the blanket `.mono-nums` ink colour so below-average volume reads muted. */
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-vol--weak {
+  color: var(--ol-muted, #6b6257) !important;
+}
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-vol--strong {
+  font-weight: 700 !important;
 }
 body[data-theme="editorial"] .scan-results-layout {
   display: flex !important;
@@ -2345,13 +2394,14 @@ body[data-theme="editorial"] details[open] > .panel-disclosure-summary::after {
   transform: translateY(-50%) rotate(270deg);
 }
 
-body[data-theme="editorial"] .prov-chip {
-  background: var(--ol-surface-soft) !important;
-  color: var(--ol-text-soft) !important;
-  border-color: rgba(26, 58, 46, 0.24) !important;
-  font-size: 0.82rem !important;
-  font-weight: 650;
-  letter-spacing: 0;
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-ticker-prov .prov-chip {
+  font-size: 0.65rem !important;
+  padding: 1px 6px !important;
+  font-weight: 600;
+}
+
+body[data-theme="editorial"] #intelFresh[data-freshness="stale"] {
+  color: var(--ol-warn) !important;
 }
 
 body[data-theme="editorial"] .prov-chip.prov-high {
@@ -2478,11 +2528,39 @@ body[data-theme="editorial"] #scanDetailPanel .scan-brief-card {
 body[data-theme="editorial"] .scan-brief-content,
 body[data-theme="editorial"] .scan-brief-setup,
 body[data-theme="editorial"] .scan-brief-header strong,
+body[data-theme="editorial"] .scan-brief-why,
 body[data-theme="editorial"] .scan-brief-detail,
 body[data-theme="editorial"] .scan-brief-detail > summary,
 body[data-theme="editorial"] .scan-brief-detail p,
-body[data-theme="editorial"] .scan-brief-sections li {
+body[data-theme="editorial"] .scan-brief-sections li,
+body[data-theme="editorial"] .scan-brief-risks {
   color: var(--ol-text-soft, #3c352f) !important;
+}
+
+body[data-theme="editorial"] .scan-brief-kicker,
+body[data-theme="editorial"] .scan-brief-note-label {
+  color: var(--ol-muted, #5a5a5a) !important;
+}
+
+body[data-theme="editorial"] .scan-brief-facts .decision-gate-value,
+body[data-theme="editorial"] .scan-brief-plan .decision-gate-value {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-theme="editorial"] .scan-brief-risks--bad {
+  background: color-mix(in srgb, var(--ol-bad, #c94949) 8%, var(--ol-surface, #fffefb)) !important;
+  border-color: color-mix(in srgb, var(--ol-bad, #c94949) 35%, var(--ol-border, #d8cdb8)) !important;
+}
+
+body[data-theme="editorial"] .scan-brief-risks--warn {
+  background: color-mix(in srgb, var(--ol-warn, #8a5c1f) 8%, var(--ol-surface, #fffefb)) !important;
+  border-color: color-mix(in srgb, var(--ol-warn, #8a5c1f) 35%, var(--ol-border, #d8cdb8)) !important;
+}
+
+body[data-theme="editorial"] .scan-brief-risks--good {
+  background: #fbf7ef !important;
+  border-color: var(--ol-border, #d8cdb8) !important;
 }
 
 body[data-theme="editorial"] .scan-brief-detail {
@@ -2767,24 +2845,29 @@ body[data-theme="editorial"] .sector-bar-fill--loss {
   }
 
   body[data-theme="editorial"] .layout-quick-tools.research-check-panel {
-    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr) !important;
+    grid-template-columns: minmax(0, 1fr) !important;
     gap: 1rem !important;
   }
 
-  body[data-theme="editorial"].ui-screen-research .layout-2 {
-    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr) !important;
+  body[data-theme="editorial"].ui-screen-research .layout-2,
+  body[data-theme="editorial"].ui-screen-research .layout-2:has(> :only-child),
+  body[data-theme="editorial"].ui-screen-research .layout-quick-tools.research-check-panel,
+  body[data-theme="editorial"].ui-screen-research .research-backtest-wrap {
+    grid-template-columns: minmax(0, 1fr) !important;
     align-items: start !important;
   }
 
-  body[data-theme="editorial"].ui-screen-research .layout-2:has(> :only-child) {
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
-
   body[data-theme="editorial"].ui-screen-research #performanceSection,
-  body[data-theme="editorial"].ui-screen-research #cockpitMergedPanel {
+  body[data-theme="editorial"].ui-screen-research #cockpitMergedPanel,
+  body[data-theme="editorial"].ui-screen-research #portfolioSection,
+  body[data-theme="editorial"].ui-screen-research #quickCheckSection,
+  body[data-theme="editorial"].ui-screen-backtest #backtestSection,
+  body[data-theme="editorial"].ui-screen-backtest .backtest-surface {
     align-self: start !important;
     min-height: 0 !important;
     height: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
   }
 
   body[data-theme="editorial"] .ir-dossier-preview {
@@ -3434,8 +3517,51 @@ body[data-theme="editorial"] .decision-pf-value {
   color: var(--ol-text) !important;
 }
 
+body[data-theme="editorial"] .decision-gate-tile--bad .decision-gate-value {
+  color: var(--ol-bad-text) !important;
+}
+
+body[data-theme="editorial"] .decision-gate-tile--good .decision-gate-value {
+  color: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] .decision-gate-tile--warn .decision-gate-value {
+  color: var(--ol-warn) !important;
+}
+
 .decision-era-pf-chart {
   margin-top: 0.25rem;
+}
+
+.decision-book-width {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--panel-border);
+}
+
+.decision-book-pills {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.decision-book-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+}
+
+body[data-theme="editorial"] .decision-book-width {
+  border-top-color: var(--ol-border) !important;
+}
+
+body[data-theme="editorial"] .decision-book-arm--live {
+  border-color: rgba(176, 133, 42, 0.65) !important;
+  box-shadow: inset 3px 0 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .decision-book-arm--candidate {
+  border-color: rgba(45, 90, 74, 0.42) !important;
+  box-shadow: inset 3px 0 0 var(--ol-ok);
 }
 
 .decision-pf-chart {
@@ -4195,9 +4321,57 @@ body[data-theme="editorial"] .scan-studio-title {
 
 body[data-theme="editorial"] .scan-studio-lede,
 body[data-theme="editorial"] .scan-studio-tf-desc,
-body[data-theme="editorial"] .scan-studio-group-hint {
+body[data-theme="editorial"] .scan-studio-group-hint,
+body[data-theme="editorial"] .scan-studio-strategy-how,
+body[data-theme="editorial"] .scan-studio-legend,
+body[data-theme="editorial"] .scan-studio-uni-desc {
   color: var(--ol-muted) !important;
   font-size: var(--ol-text-caption) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-setup {
+  background: color-mix(in srgb, var(--ol-accent) 7%, var(--ol-surface));
+  border: 1px solid color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border));
+  box-shadow: inset 3px 0 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .scan-studio-setup-item dt {
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+body[data-theme="editorial"] .scan-studio-setup-item dd {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-step {
+  border-top-color: color-mix(in srgb, var(--ol-gold) 35%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .scan-studio-step-title {
+  color: var(--ol-text) !important;
+  font-family: "Fraunces", Georgia, serif !important;
+}
+
+body[data-theme="editorial"] .scan-studio-uni {
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-uni.is-selected,
+body[data-theme="editorial"] .scan-studio-uni:has(:checked) {
+  background: color-mix(in srgb, var(--ol-accent) 8%, var(--ol-surface)) !important;
+  border-color: color-mix(in srgb, var(--ol-accent) 42%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .scan-studio-uni-name {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-uni input,
+body[data-theme="editorial"] .scan-studio-strategy-input {
+  accent-color: var(--ol-accent);
 }
 
 body[data-theme="editorial"] .scan-studio-tf-row {
@@ -4232,8 +4406,13 @@ body[data-theme="editorial"] .scan-studio-group--paper {
   border-top: 1px dashed color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border));
 }
 
-body[data-theme="editorial"] .scan-studio-horizon + .scan-studio-horizon {
-  border-top: 1px dashed color-mix(in srgb, var(--ol-gold) 40%, var(--ol-border));
+body[data-theme="editorial"] .scan-studio-horizon-summary {
+  color: var(--ol-text);
+}
+
+body[data-theme="editorial"] .scan-studio-horizon-sel {
+  color: var(--ol-ok);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
 }
 
 body[data-theme="editorial"] .scan-studio-horizon-title {
@@ -4248,7 +4427,9 @@ body[data-theme="editorial"] .scan-studio-strategy {
 }
 
 body[data-theme="editorial"] .scan-studio-strategy--yours.is-selected,
-body[data-theme="editorial"] .scan-studio-strategy--primary.is-selected {
+body[data-theme="editorial"] .scan-studio-strategy--primary.is-selected,
+body[data-theme="editorial"] .scan-studio-strategy--yours:has(:checked),
+body[data-theme="editorial"] .scan-studio-strategy--primary:has(:checked) {
   background: color-mix(in srgb, var(--ol-accent) 8%, var(--ol-surface)) !important;
   border-color: color-mix(in srgb, var(--ol-accent) 42%, transparent) !important;
   box-shadow: inset 3px 0 0 var(--ol-gold);
@@ -4258,17 +4439,25 @@ body[data-theme="editorial"] .scan-studio-strategy--paper {
   background: color-mix(in srgb, var(--ol-bg) 70%, var(--ol-surface)) !important;
 }
 
-body[data-theme="editorial"] .scan-studio-strategy--paper.is-selected {
+body[data-theme="editorial"] .scan-studio-strategy--paper.is-selected,
+body[data-theme="editorial"] .scan-studio-strategy--paper:has(:checked) {
   background: color-mix(in srgb, var(--ol-gold) 12%, var(--ol-surface)) !important;
   border-color: color-mix(in srgb, var(--ol-gold) 55%, var(--ol-border)) !important;
 }
 
-body[data-theme="editorial"] .scan-studio-check {
-  background: var(--ol-surface);
-  border-color: var(--ol-border-strong);
+body[data-theme="editorial"] .scan-studio-selected-flag {
+  background: var(--ol-accent);
+  color: var(--ol-on-accent);
+  border-color: var(--ol-accent);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
 }
 
 body[data-theme="editorial"] .scan-studio-strategy:has(:focus-visible) {
+  outline: 2px solid var(--ol-accent);
+  outline-offset: 2px;
+}
+
+body[data-theme="editorial"] .scan-studio-uni:has(:focus-visible) {
   outline: 2px solid var(--ol-accent);
   outline-offset: 2px;
 }
@@ -4289,9 +4478,33 @@ body[data-theme="editorial"] .scan-studio-evidence {
   font-size: var(--ol-text-micro) !important;
 }
 
+body[data-theme="editorial"] .scan-studio-style-chip {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--ol-gold) 16%, var(--ol-surface));
+  color: var(--ol-accent);
+  border-color: color-mix(in srgb, var(--ol-gold) 70%, transparent);
+}
+
+body[data-theme="editorial"] .scan-studio-profile {
+  background: color-mix(in srgb, var(--ol-bg) 65%, var(--ol-surface));
+  border: 1px dashed color-mix(in srgb, var(--ol-gold) 45%, var(--ol-border));
+}
+
+body[data-theme="editorial"] .scan-studio-profile dt {
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+body[data-theme="editorial"] .scan-studio-profile dd {
+  color: var(--ol-text) !important;
+  font-size: var(--ol-text-caption) !important;
+}
+
 body[data-theme="editorial"] .scan-studio-status,
 body[data-theme="editorial"] .scan-studio-origin,
-body[data-theme="editorial"] .scan-studio-primary-chip {
+body[data-theme="editorial"] .scan-studio-primary-chip,
+body[data-theme="editorial"] .scan-studio-style-chip {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   letter-spacing: 0.06em;
   background: var(--ol-bg);
@@ -4770,6 +4983,11 @@ body[data-theme="editorial"] #portfolioRiskMount .panel-disclosure {
   margin-top: 8px;
 }
 body[data-theme="editorial"] .portfolio-analytics-sparkline { color: var(--ol-accent); }
+body[data-theme="editorial"] .sharadar-sparkline { color: var(--ol-accent); }
+body[data-theme="editorial"] .sharadar-action-chip,
+body[data-theme="editorial"] .sharadar-brief-chip {
+  border-color: var(--ol-border);
+}
 
 /* Loading skeleton + staged progress */
 body[data-theme="editorial"] .risk-progress-steps {
@@ -5470,6 +5688,20 @@ body[data-theme="editorial"] .operations-status-pill {
   border: 1px solid color-mix(in srgb, var(--ol-ok) 35%, transparent) !important;
 }
 
+body[data-theme="editorial"] .operations-status-strip[data-state="hold"] .operations-status-pill,
+body[data-theme="editorial"] .operations-status-strip[data-state="error"] .operations-status-pill {
+  background: color-mix(in srgb, var(--ol-bad) 14%, var(--ol-surface)) !important;
+  color: var(--ol-bad-text) !important;
+  border-color: color-mix(in srgb, var(--ol-bad) 44%, transparent) !important;
+}
+
+body[data-theme="editorial"] .operations-status-strip[data-state="partial"] .operations-status-pill,
+body[data-theme="editorial"] .operations-status-strip[data-state="loading"] .operations-status-pill {
+  background: color-mix(in srgb, var(--ol-gold) 22%, var(--ol-surface)) !important;
+  color: var(--ol-warn) !important;
+  border-color: color-mix(in srgb, var(--ol-gold) 50%, transparent) !important;
+}
+
 /* Solid accent fills must keep light text (never inherit body ink) */
 body[data-theme="editorial"] .btn.primary,
 body[data-theme="editorial"] .btn.good,
@@ -5735,6 +5967,7 @@ body[data-theme="editorial"] .tab-landing-chip {
   color: var(--ol-text);
   font-size: 0.78rem;
   font-weight: 600;
+  cursor: help;
 }
 
 body[data-theme="editorial"] .tab-landing-chip-dot {
@@ -5810,6 +6043,14 @@ body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active {
 
 body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active .research-tab-hint {
   color: color-mix(in srgb, var(--ol-on-accent, #fff) 82%, transparent) !important;
+}
+
+body[data-theme="editorial"] .bt-pf-gate {
+  border: 1px solid var(--ol-border);
+  background: var(--ol-surface-soft);
+}
+body[data-theme="editorial"] .bt-pf-gate-note {
+  color: var(--ol-muted);
 }
 
 body[data-theme="editorial"] .system-two-zone {
@@ -6009,6 +6250,40 @@ body[data-theme="editorial"] .system-next-decision__why {
   font-size: 0.85rem;
 }
 
+body[data-theme="editorial"] .system-next-decision__status {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+body[data-theme="editorial"] .system-next-decision[data-market="live"] .system-next-decision__status {
+  color: var(--ol-ok);
+}
+
+body[data-theme="editorial"] .system-next-decision[data-market="down"] .system-next-decision__status {
+  color: var(--ol-bad);
+}
+
+body[data-theme="editorial"] .system-next-decision__steps {
+  margin: 0.1rem 0 0.15rem;
+  padding-left: 1.25rem;
+  list-style: decimal;
+  font-size: 0.85rem;
+  color: var(--ol-text);
+}
+
+body[data-theme="editorial"] .system-next-decision__steps li {
+  margin: 0.35rem 0;
+}
+
+body[data-theme="editorial"] .system-next-decision code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--ol-gold) 22%, var(--ol-surface));
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+}
+
 body[data-theme="editorial"] #systemSummaryLanding[data-system-state="healthy"] #systemZoneVerdict {
   color: var(--ol-ok);
 }
@@ -6047,6 +6322,4277 @@ body[data-system-lane="decide"] .system-decision-nested > .section-head {
 body[data-system-lane="ready"] #healthRibbon {
   margin-top: 0.25rem;
 }
+
+/* ============================================================
+   Quiet chrome — one story, one spine
+   Subtract duplicate briefing layers so the operator sees:
+   topbar → status numbers → Scan / Evaluate / Approve → work.
+   Loaded last so these rules win over overhaul.css leftovers.
+============================================================ */
+
+/* --- Topbar: text tabs, no numbered manifesto --- */
+body[data-theme="editorial"] .app-topbar-tabs {
+  background: transparent !important;
+  border: none !important;
+  gap: 2px !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .tab-num,
+body[data-theme="editorial"] .app-topbar-tabs .tab-subtitle {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  padding: 10px 14px !important;
+  min-height: 0 !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-copy {
+  flex-direction: row !important;
+  gap: 0 !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-label {
+  font-size: 0.92rem !important;
+  font-weight: 600 !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: transparent !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-label {
+  font-weight: 700 !important;
+  color: var(--ol-accent) !important;
+}
+
+/* --- Landing hero: keep one h1 for a11y, drop the rest --- */
+body[data-theme="editorial"] .tab-landing-frame.mode-header {
+  display: block !important;
+  padding: 0 !important;
+  margin: 0 0 8px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  gap: 0 !important;
+}
+
+body[data-theme="editorial"] .tab-landing-row,
+body[data-theme="editorial"] .tab-landing-actions,
+body[data-theme="editorial"] .tab-landing-subtitle,
+body[data-theme="editorial"] #screenContextHint,
+body[data-theme="editorial"] .tab-landing-anchors.mode-header-anchors,
+body.ui-pro[data-theme="editorial"] .mode-header-anchors {
+  display: none !important;
+}
+
+/* Trust chips stay visible: source, freshness, and blockers per tab. */
+body[data-theme="editorial"] #screenContextChips {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+body[data-theme="editorial"] .tab-landing-identity {
+  min-width: 0 !important;
+  flex: none !important;
+}
+
+/* KPI tiles live in the workflow snapshot — hide this duplicate landing card. */
+body[data-theme="editorial"] #todaySummaryLanding,
+body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .today-summary-actions {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .today-summary-grid {
+  margin-bottom: 0 !important;
+  gap: 8px 24px !important;
+}
+
+body[data-theme="editorial"] .today-summary-value {
+  font-size: 1.35rem !important;
+  font-weight: 650 !important;
+}
+
+/* Next-action copy only when something is actually wrong */
+body[data-theme="editorial"] #actionCenter,
+body.ui-pro[data-theme="editorial"] #actionCenter,
+body[data-theme="editorial"] #actionCenter.priority-feed,
+body.ui-pro[data-theme="editorial"] #actionCenter.priority-feed {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #actionCenter.warn,
+body[data-theme="editorial"] #actionCenter.error,
+body.ui-pro[data-theme="editorial"] #actionCenter.warn,
+body.ui-pro[data-theme="editorial"] #actionCenter.error {
+  display: flex !important;
+  background: var(--ol-surface) !important;
+}
+
+/* Priority feed is a duplicate briefing layer. Status lives in the
+   1-2-3 strip, scan integrity banner, and System command strip. */
+body[data-theme="editorial"] #actionCenter.priority-feed,
+body.ui-pro[data-theme="editorial"] #actionCenter.priority-feed,
+body[data-theme="editorial"] #actionCenter.priority-feed.info,
+body[data-theme="editorial"] #actionCenter.priority-feed.success,
+body[data-theme="editorial"] #actionCenter.priority-feed.warn,
+body[data-theme="editorial"] #actionCenter.priority-feed.error,
+body.ui-pro[data-theme="editorial"] #actionCenter.priority-feed.warn,
+body.ui-pro[data-theme="editorial"] #actionCenter.priority-feed.error {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #actionCenter::after {
+  display: none !important;
+}
+
+/* Kill switch must remain visible when armed (overhaul hid it). */
+body[data-theme="editorial"] #platformKillSwitchBanner:not(.hidden) {
+  display: block !important;
+}
+
+/* --- Workflow spine: 1-2-3 is the progression, not a heading --- */
+body[data-theme="editorial"] .workflow-primary-heading,
+body[data-theme="editorial"] #workflowSnapshot,
+body[data-theme="editorial"] .operations-status-strip[data-state="empty"],
+body[data-theme="editorial"] .operations-panel-snapshot[data-state="empty"],
+body[data-theme="editorial"] .operations-panel-snapshot[data-state="success"] {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #workflowPrimary {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .workflow-progress {
+  margin: 0 0 16px !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .scan-studio-head,
+body[data-theme="editorial"] .scan-studio-lede,
+body[data-theme="editorial"] .scan-studio-step-head .muted,
+body[data-theme="editorial"] #scanUniverseHint,
+body[data-theme="editorial"] .scan-studio-tf-desc,
+body[data-theme="editorial"] .scan-studio-uni-desc,
+body[data-theme="editorial"] .scan-studio-legend,
+body[data-theme="editorial"] .scan-studio-selected-flag,
+body[data-theme="editorial"] .scan-studio-primary-chip,
+body[data-theme="editorial"] .scan-studio-style-chip,
+body[data-theme="editorial"] .scan-studio-origin,
+body[data-theme="editorial"] .scan-studio-strategy-how,
+body[data-theme="editorial"] .scan-studio-profile,
+body[data-theme="editorial"] .scan-studio-evidence,
+body[data-theme="editorial"] .scan-studio-group-hint,
+body[data-theme="editorial"] .scan-studio-horizon-desc,
+body[data-theme="editorial"] .scan-studio-horizon.is-active .scan-studio-horizon-head,
+body[data-theme="editorial"] .scan-studio-horizon.is-active .scan-studio-group-head {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .scan-studio {
+  margin-bottom: 16px !important;
+  box-shadow: none !important;
+  padding: 12px 16px 16px !important;
+  gap: 10px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-title {
+  font-size: 1.05rem !important;
+  margin: 0 0 12px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-steps {
+  gap: 10px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-step {
+  border-top: none !important;
+  padding-top: 0 !important;
+  gap: 8px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-horizon.is-active .scan-studio-group,
+body[data-theme="editorial"] .scan-studio-horizon.is-active .scan-studio-group--paper {
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+body[data-theme="editorial"] .scan-studio-horizon:not(.is-active) {
+  display: block !important;
+  margin-top: 8px !important;
+}
+
+/* --- Kanban: one title per lane, no nested bars --- */
+body[data-theme="editorial"] .operate-kanban {
+  background: transparent !important;
+  border: none !important;
+  gap: 16px !important;
+}
+
+body[data-theme="editorial"] .kanban-lane {
+  min-height: 0 !important;
+}
+
+body[data-theme="editorial"] .card--primary-task::before {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-step {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-head {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 0 8px !important;
+  margin-bottom: 8px !important;
+  gap: 6px !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-summary[data-state="empty"] {
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .scan-mode-helper {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #peadCanarySection[data-state="empty"] {
+  display: none !important;
+}
+
+/* --- Research: text tabs, not three manifesto cards --- */
+body[data-theme="editorial"] .research-mode-chips.research-tab-nav {
+  display: flex !important;
+  grid-template-columns: none !important;
+  gap: 4px !important;
+  padding: 0 0 12px !important;
+  width: auto !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] .research-tab-hint {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-btn {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0 !important;
+  padding: 8px 14px !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--ol-muted) !important;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active {
+  background: transparent !important;
+  color: var(--ol-accent) !important;
+  border-bottom-color: var(--ol-gold) !important;
+}
+
+body[data-theme="editorial"] .research-mode-chips .research-tab-label {
+  font-size: 0.92rem !important;
+  font-weight: 600 !important;
+}
+
+body[data-theme="editorial"] #researchSummaryLanding {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 0 12px !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .research-summary-actions {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .research-status-strip[data-state="empty"],
+body[data-theme="editorial"] .research-panel-snapshot[data-state="empty"],
+body[data-theme="editorial"] .research-panel-snapshot[data-state="success"] {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #portfolioSection .research-status-strip {
+  display: none !important;
+}
+
+/* --- System: command strip is the briefing; drop duplicate jumps --- */
+body[data-theme="editorial"] .system-summary-actions {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .system-lane-nav {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--ol-border) !important;
+  border-radius: 0 !important;
+  padding: 0 0 8px !important;
+  margin-bottom: 16px !important;
+}
+
+body[data-theme="editorial"] .system-lane-nav__btn {
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  color: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .system-lane-nav__btn.is-active {
+  background: transparent !important;
+  color: var(--ol-accent) !important;
+  box-shadow: inset 0 -2px 0 var(--ol-gold);
+}
+
+body[data-theme="editorial"] .system-status-strip[data-state="empty"],
+body[data-theme="editorial"] #healthStatusStrip,
+body[data-theme="editorial"] #healthRibbonSummary,
+body[data-theme="editorial"] #healthSnapshot,
+body[data-theme="editorial"] #systemStatusCompact {
+  display: none !important;
+}
+
+/* ============================================================
+   Figma polish — Old Logan radii + Calibration KPI tiles
+   Source: Today Kanban v2 / Today — Quiet Rounded (FMWpss3fGm0yzbjiyP3wSx)
+   Keep quiet-chrome hides; only round, space, and surface treatment.
+============================================================ */
+
+body[data-theme="editorial"] .app-topbar-actions .btn,
+body[data-theme="editorial"] .app-topbar-actions button,
+body[data-theme="editorial"] #refreshBtn {
+  border-radius: var(--ol-radius-control) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .btn.primary,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary,
+body[data-theme="editorial"] .btn.primary {
+  border-radius: var(--ol-radius-pill) !important;
+}
+
+body[data-theme="editorial"] .pill,
+body[data-theme="editorial"] .chip,
+body[data-theme="editorial"] .health-badge {
+  border-radius: var(--ol-radius-pill) !important;
+}
+
+/* KPI tiles — Calibration Stats: forest outline, Fraunces value */
+body[data-theme="editorial"] #todaySummaryLanding,
+body[data-theme="editorial"] #settledLessonsSection,
+body[data-theme="editorial"] #researchSummaryLanding,
+body[data-theme="editorial"] #systemSummaryLanding {
+  padding-bottom: 16px !important;
+}
+
+body[data-theme="editorial"] .settled-lessons-kicker {
+  color: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .today-summary-grid,
+body[data-theme="editorial"] .research-summary-grid,
+body[data-theme="editorial"] .system-summary-grid {
+  gap: 12px !important;
+}
+
+body[data-theme="editorial"] .today-summary-kpi,
+body[data-theme="editorial"] .research-summary-kpi,
+body[data-theme="editorial"] .system-summary-kpi {
+  background: var(--ol-surface) !important;
+  border: 1px solid color-mix(in srgb, var(--ol-accent) 28%, transparent) !important;
+  border-radius: var(--ol-radius-card) !important;
+  padding: 16px 18px 14px !important;
+  gap: 6px !important;
+  min-height: 88px;
+  justify-content: space-between;
+  box-shadow: var(--ol-shadow-gold);
+}
+
+body[data-theme="editorial"] .today-summary-label,
+body[data-theme="editorial"] .research-summary-label,
+body[data-theme="editorial"] .system-summary-label {
+  background: transparent !important;
+  border: none !important;
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.6875rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase;
+}
+
+body[data-theme="editorial"] .today-summary-value,
+body[data-theme="editorial"] .research-summary-value,
+body[data-theme="editorial"] .system-summary-value {
+  font-family: "Fraunces", Georgia, serif !important;
+  font-size: 1.85rem !important;
+  font-weight: 600 !important;
+  line-height: 1.12 !important;
+  color: var(--ol-text) !important;
+  letter-spacing: -0.02em;
+}
+
+/* Stepper — one 18px surface, gold underline on the active step */
+body[data-theme="editorial"] .workflow-progress {
+  margin: 0 0 20px !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-list {
+  overflow: hidden;
+  border: 1px solid var(--ol-border);
+  border-radius: var(--ol-radius-card);
+  background: var(--ol-surface);
+  box-shadow: var(--ol-shadow-gold);
+}
+
+body[data-theme="editorial"] .workflow-progress-step {
+  border: none !important;
+  border-right: 1px solid var(--ol-border) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 14px 16px !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step:last-child {
+  border-right: none !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step:not(:last-child)::after {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step[data-state="active"] {
+  background: color-mix(in srgb, var(--ol-accent) 8%, var(--ol-surface)) !important;
+  box-shadow: inset 0 -3px 0 var(--ol-gold) !important;
+  color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step[data-state="active"] .workflow-progress-index {
+  background: var(--ol-accent) !important;
+  border-color: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step[data-state="done"] {
+  background: color-mix(in srgb, var(--ol-ok) 8%, var(--ol-surface)) !important;
+  color: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step[data-state="loading"] {
+  background: color-mix(in srgb, var(--ol-gold) 16%, var(--ol-surface)) !important;
+  color: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] .workflow-progress-step[data-state="blocked"] {
+  background: color-mix(in srgb, var(--ol-bad) 10%, var(--ol-surface)) !important;
+  color: var(--ol-bad) !important;
+}
+
+/* Scan studio — 18px card, chip-like universe, pill horizon */
+body[data-theme="editorial"] .scan-studio {
+  margin-bottom: 20px !important;
+  padding: 20px !important;
+  gap: 16px !important;
+  border-radius: var(--ol-radius-card) !important;
+  box-shadow: var(--ol-shadow-gold) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-universe {
+  border-top: none !important;
+  padding-top: 0 !important;
+}
+
+body[data-theme="editorial"] .scan-studio-universe-row {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-uni {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 10px 14px !important;
+  border-radius: var(--ol-radius-control) !important;
+}
+
+body[data-theme="editorial"] .scan-studio-tf-row {
+  padding: 4px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-tf {
+  border-radius: var(--ol-radius-pill) !important;
+  padding: 8px 16px !important;
+}
+
+body[data-theme="editorial"] .scan-studio-tf-count {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .scan-studio-strategy-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .scan-studio-strategy {
+  border-radius: var(--ol-radius-control) !important;
+  padding: 12px 14px !important;
+}
+
+/* Kanban lanes sit on cream as rounded surfaces */
+body[data-theme="editorial"] .operate-kanban .kanban-lane,
+body[data-theme="editorial"].ui-screen-operations .operate-kanban .kanban-lane {
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: var(--ol-radius-card) !important;
+  padding: 16px 18px 18px !important;
+  box-shadow: var(--ol-shadow-gold);
+}
+
+body[data-theme="editorial"] .card,
+body[data-theme="editorial"] .panel-disclosure,
+body[data-theme="editorial"] .task-card,
+body[data-theme="editorial"] .health-tile,
+body[data-theme="editorial"] #decisionDashboardCard,
+body[data-theme="editorial"] #statusDetailsPanel,
+body[data-theme="editorial"] #onboardingSection,
+body[data-theme="editorial"] #settingsSection {
+  border-radius: var(--ol-radius-card) !important;
+}
+
+body[data-theme="editorial"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea,
+body[data-theme="editorial"] .btn:not(.primary) {
+  border-radius: var(--ol-radius-control) !important;
+}
+
+/* Backtest workspace: library | briefing */
+body[data-theme="editorial"].ui-screen-backtest #backtestWorkspace {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  gap: var(--ol-space-4);
+  align-items: start;
+}
+body[data-theme="editorial"].ui-screen-backtest #backtestQueuePanel,
+body[data-theme="editorial"].ui-screen-backtest #backtestResultPanel {
+  margin: 0;
+}
+body[data-theme="editorial"] .bt-queue-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ol-space-2);
+  align-items: start;
+}
+body[data-theme="editorial"] .bt-queue-item.is-selected {
+  border-color: var(--ol-accent) !important;
+  background: var(--ol-accent-soft) !important;
+}
+body[data-theme="editorial"] .bt-queue-now {
+  background: var(--ol-surface-soft, #f4f1ea);
+  border-color: var(--ol-border);
+}
+body[data-theme="editorial"] .bt-monitor-details {
+  background: var(--ol-surface-soft, #f4f1ea);
+}
+body[data-theme="editorial"] .bt-board-row.is-selected {
+  background: var(--ol-accent-soft) !important;
+}
+body[data-theme="editorial"] .bt-filter-btn.is-active {
+  background: var(--ol-accent);
+  color: var(--ol-bg);
+}
+body[data-theme="editorial"] .bt-drivers ul,
+body[data-theme="editorial"] .bt-count-row ul,
+body[data-theme="editorial"] .bt-next-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ol-space-3);
+}
+body[data-theme="editorial"] .bt-drivers li,
+body[data-theme="editorial"] .bt-count-row li {
+  padding: var(--ol-space-3) 0;
+  border-bottom: 1px solid var(--ol-border);
+}
+body[data-theme="editorial"] .bt-count-row li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ol-space-3);
+}
+body[data-theme="editorial"] .bt-outcome[data-tone="ok"],
+body[data-theme="editorial"] .bt-drivers li[data-tone="ok"] { color: var(--ol-ok); }
+body[data-theme="editorial"] .bt-outcome[data-tone="warn"],
+body[data-theme="editorial"] .bt-drivers li[data-tone="warn"],
+body[data-theme="editorial"] .bt-data-quality[data-tone="warn"] { color: var(--ol-warn); }
+body[data-theme="editorial"] .bt-outcome[data-tone="bad"],
+body[data-theme="editorial"] .bt-drivers li[data-tone="bad"] { color: var(--ol-bad-text); }
+body[data-theme="editorial"] .bt-briefing-tile {
+  background: var(--ol-surface-soft, #f4f1ea);
+  border-color: var(--ol-border);
+}
+body[data-theme="editorial"] .bt-test-further {
+  border-radius: var(--ol-radius-control);
+}
+body[data-theme="editorial"] .bt-vs-card {
+  margin: var(--ol-space-4) 0;
+  padding: var(--ol-space-3) var(--ol-space-4);
+  background: var(--ol-surface-soft);
+  border-radius: var(--ol-radius-control);
+}
+body[data-theme="editorial"] .bt-requeue-row { margin-top: var(--ol-space-3); }
+@media (max-width: 960px) {
+  body[data-theme="editorial"].ui-screen-backtest #backtestWorkspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Closed <details> must not paint children (author display:flex wins over UA hide). */
+body[data-theme="editorial"] details:not([open]) {
+  overflow: hidden !important;
+}
+body[data-theme="editorial"] details:not([open]) > *:not(summary) {
+  display: none !important;
+}
+
+/* ============================================================
+   2026-09-21 professional facelift — gaps, typed views, chart chrome
+   ============================================================ */
+body[data-theme="editorial"] #sectorsSection.research-tab-hidden,
+body[data-theme="editorial"] #moversSection.research-tab-hidden,
+body[data-theme="editorial"] .workspace-intro.hidden,
+body[data-theme="editorial"] .workspace-intro--deprecated {
+  display: none !important;
+  min-height: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+body[data-theme="editorial"] .ol-dl {
+  display: grid;
+  gap: var(--ol-space-2);
+  margin: 0;
+}
+body[data-theme="editorial"] .ol-dl-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr);
+  gap: var(--ol-space-2) var(--ol-space-3);
+  align-items: baseline;
+  padding: var(--ol-space-2) 0;
+  border-bottom: 1px solid var(--ol-border);
+}
+body[data-theme="editorial"] .ol-dl-row dt {
+  color: var(--ol-muted);
+  font-size: var(--ol-text-caption);
+}
+body[data-theme="editorial"] .ol-dl-row dd {
+  margin: 0;
+  color: var(--ol-text);
+  font-variant-numeric: tabular-nums;
+}
+body[data-theme="editorial"] .ol-dl-basis {
+  display: block;
+  margin-top: 2px;
+}
+body[data-theme="editorial"] .ol-check-table {
+  width: 100%;
+  font-size: 0.9rem;
+}
+body[data-theme="editorial"] .ol-check-table th,
+body[data-theme="editorial"] .ol-check-table td {
+  padding: var(--ol-space-2) var(--ol-space-3);
+  text-align: left;
+}
+body[data-theme="editorial"] .ol-tool-summary {
+  list-style: none;
+  margin: var(--ol-space-2) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--ol-space-2);
+}
+
+body[data-theme="editorial"] .decision-pf-axis {
+  margin: 0 0 var(--ol-space-2);
+  font-size: var(--ol-text-caption);
+}
+body[data-theme="editorial"] .decision-pf-bar-track {
+  position: relative;
+  background: var(--ol-surface-soft);
+  height: 12px;
+  min-height: 12px;
+}
+body[data-theme="editorial"] .decision-pf-bar-fill {
+  height: 100%;
+  min-height: 12px;
+}
+body[data-theme="editorial"] .decision-pf-bar-fill:not(.ol-skeleton) {
+  background: var(--ol-ok);
+}
+
+body[data-theme="editorial"] .risk-corr-cell[data-corr-bucket="missing"] {
+  background: var(--ol-surface-soft);
+  color: var(--ol-muted);
+  border: 1px dashed var(--ol-border-strong);
+}
+
+body[data-theme="editorial"] .scan-detail-chart-canvas,
+body[data-theme="editorial"] .cockpit-spy-chart-canvas,
+body[data-theme="editorial"] .bt-equity-chart:has(canvas),
+body[data-theme="editorial"] .bt-drawdown-chart:has(canvas),
+body[data-theme="editorial"] .ticker-chart-container:not(.hidden):has(canvas) {
+  background: var(--ol-surface);
+  border: 1px solid var(--ol-accent-border);
+  min-height: 120px;
+}
+body[data-theme="editorial"] .scan-detail-chart-canvas {
+  min-height: 240px;
+}
+
+body[data-theme="editorial"] .card > .muted:only-child,
+body[data-theme="editorial"] .report-empty:only-child {
+  padding: var(--ol-space-4);
+  border: 1px solid var(--ol-border);
+  background: var(--ol-surface);
+  border-radius: var(--ol-radius-control);
+}
+
+body[data-theme="editorial"] .details-raw,
+body[data-theme="editorial"] .tool-json-details,
+body[data-theme="editorial"] .calibration-raw-wrap,
+body[data-theme="editorial"] .bt-related-json,
+body[data-theme="editorial"] pre.code-block:not(#twoFaSetupOutput) {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .mono-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (max-width: 430px) {
+  body[data-theme="editorial"] .ol-dl-row,
+  body[data-theme="editorial"] .decision-gate-tiles,
+  body[data-theme="editorial"] .sharadar-kpis,
+  body[data-theme="editorial"] .pricing-model-kpis,
+  body[data-theme="editorial"] .event-risk-kpis {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.debate-grade-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--ol-accent-border, rgba(26, 58, 46, 0.35));
+  border-radius: 10px;
+  background: var(--ol-surface, #fffefb);
+  color: var(--ol-text, #1a1a1a);
+}
+
+.debate-grade-label,
+.debate-grade-business,
+.debate-grade-disagree {
+  margin: 0 0 8px;
+  color: var(--ol-muted, #5a5a5a);
+  font-size: 0.82rem;
+}
+
+.debate-grade-letter {
+  margin: 0 0 6px;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: var(--ol-accent, #1a3a2e);
+}
+
+.debate-grade-letter[data-letter="D"],
+.debate-grade-letter[data-letter="F"] {
+  color: var(--ol-bad, #c94949);
+}
+
+.debate-grade-letter[data-letter="C"] {
+  color: var(--ol-warn, #8a5c1f);
+}
+
+.debate-grade-chair {
+  margin: 0 0 10px;
+}
+
+.debate-grade-pillars {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.debate-grade-pillar {
+  display: grid;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+
+.debate-grade-bar {
+  display: block;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ol-accent, #1a3a2e) 16%, var(--ol-surface, #fffefb));
+  position: relative;
+}
+
+.debate-grade-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--debate-fill, 0%);
+  border-radius: inherit;
+  background: var(--ol-accent, #1a3a2e);
+}
+
+.debate-grade-bar b {
+  position: absolute;
+  right: 0;
+  top: -1.1rem;
+  font-weight: 600;
+  color: var(--ol-text, #1a1a1a);
+}
+
+.debate-grade-seats {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+}
+
+/* ============================================================
+   Wave 1 chrome — one top bar, one next-action row.
+   Wins over the max-width:1280 two-row tab grid above.
+============================================================ */
+html:has(body[data-theme="editorial"]) {
+  background: var(--ol-bg, #f5f1e8);
+}
+
+body[data-theme="editorial"] .skip-link {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+  border-color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .eyebrow,
+body[data-theme="editorial"] .workspace-eyebrow,
+body[data-theme="editorial"] .field-label,
+body[data-theme="editorial"] .stat-label,
+body[data-theme="editorial"] .health-label {
+  color: var(--ol-muted) !important;
+  font-size: var(--ol-text-micro) !important;
+  letter-spacing: 0.08em !important;
+}
+
+body[data-theme="editorial"] .workspace-menu-btn {
+  display: none;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: var(--ol-radius-control);
+  border: 1px solid var(--ol-border-strong);
+  background: var(--ol-surface);
+  color: var(--ol-text);
+  font: 600 0.92rem/1.2 "DM Sans", system-ui, sans-serif;
+}
+
+body[data-theme="editorial"] .app-topbar-actions {
+  flex-wrap: nowrap !important;
+  flex-shrink: 0;
+}
+
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  flex-shrink: 0;
+  background: var(--ol-accent) !important;
+  border-color: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+}
+
+body[data-theme="editorial"] #connectSchwabBanner,
+body[data-theme="editorial"] #platformKillSwitchBanner {
+  order: -1;
+}
+
+body[data-theme="editorial"] #connectSchwabBanner:not(.hidden),
+body[data-theme="editorial"] #platformKillSwitchBanner:not(.hidden) {
+  border-width: 2px !important;
+  background: var(--ol-surface) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #connectSchwabBanner:not(.hidden) {
+  border-color: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] #platformKillSwitchBanner:not(.hidden) {
+  border-color: var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] #screenContextCard.tab-landing-frame {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 8px 16px;
+  width: 100%;
+  min-height: 0 !important;
+  padding: 8px 0 4px !important;
+}
+
+body[data-theme="editorial"] .mode-header::before {
+  content: none !important;
+  display: none !important;
+}
+
+body[data-theme="editorial"] .tab-landing-row {
+  display: flex !important;
+  align-items: center;
+  order: 2;
+  margin: 0;
+  min-width: 0;
+}
+
+body[data-theme="editorial"] .tab-landing-actions {
+  display: flex !important;
+}
+
+body[data-theme="editorial"] .tab-landing-secondary {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .tab-landing-actions:not(:has(#screenContextCta:not(.hidden))) {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #screenContextCta.btn.primary {
+  background: transparent !important;
+  color: var(--ol-accent) !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  border-radius: 0 !important;
+  font-size: var(--ol-text-micro) !important;
+  font-weight: 650 !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+body[data-theme="editorial"] #screenContextChips {
+  order: 1;
+  flex: 1 1 auto !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  height: auto !important;
+  min-height: 0 !important;
+  width: auto !important;
+  margin: 0 !important;
+}
+
+body[data-theme="editorial"] .tab-landing-chip {
+  font-size: var(--ol-text-micro) !important;
+}
+
+body[data-theme="editorial"] .tab-landing-freshness {
+  margin: 0;
+  color: var(--ol-muted);
+  font-size: var(--ol-text-micro);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    transition: color 150ms ease, background-color 150ms ease;
+  }
+}
+
+@media (min-width: 768px) {
+  body[data-theme="editorial"] .app-topbar {
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+    grid-template-areas: "brand tabs actions" !important;
+    align-items: center !important;
+    row-gap: 0 !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-brand {
+    grid-area: brand;
+    min-width: 0;
+  }
+
+  body[data-theme="editorial"] .app-topbar-actions {
+    grid-area: actions;
+    justify-self: end;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs {
+    grid-area: tabs;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    width: auto !important;
+    min-width: 0;
+    justify-content: center;
+    grid-template-columns: none !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 767px) {
+  body[data-theme="editorial"] .app-topbar {
+    display: grid !important;
+    grid-template-columns: auto auto minmax(0, 1fr) !important;
+    grid-template-areas: "brand menu actions" !important;
+    align-items: center !important;
+    position: sticky;
+  }
+
+  body[data-theme="editorial"] .workspace-menu-btn {
+    display: inline-flex !important;
+    grid-area: menu;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs {
+    display: none !important;
+    position: absolute !important;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100% !important;
+    padding: 8px;
+    background: var(--ol-surface) !important;
+    border-bottom: 1px solid var(--ol-border-strong);
+    box-shadow: 0 12px 24px rgba(26, 26, 26, 0.08);
+    grid-template-columns: none !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs.is-open {
+    display: flex !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs.is-open .screen-switch-btn[aria-selected="true"]::after {
+    right: auto !important;
+    width: 2.5rem;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Wave 2 — Today. Counts and blockers above the fold; studio and lessons fold away. */
+
+body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding {
+  display: block !important;
+  margin: 0 0 12px !important;
+  padding: 12px 16px !important;
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border-strong) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] #todaySummaryLanding .today-summary-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px 20px !important;
+  margin: 0 !important;
+}
+
+body[data-theme="editorial"] .today-summary-label {
+  color: var(--ol-muted) !important;
+  font-size: var(--ol-text-micro) !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+body[data-theme="editorial"] .today-summary-value {
+  color: var(--ol-text) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  body[data-theme="editorial"] #todaySummaryLanding .today-summary-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Warn and error stay visible. Info and success stay hidden so a ready line
+   does not repeat the top-bar freshness chip. Legacy action center (no
+   .priority-feed) already follows that split. */
+body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px !important;
+  background: var(--ol-surface) !important;
+  color: var(--ol-text) !important;
+  border: 2px solid var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed.error,
+body.ui-pro[data-theme="editorial"] #actionCenter.priority-feed.error {
+  border-color: var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .action-center-icon {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-item {
+  background: var(--ol-bg) !important;
+  border-color: var(--ol-border) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-item.severity-error {
+  border-left: 3px solid var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-item.severity-warn {
+  border-left: 3px solid var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-item-text,
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-heading {
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed.warn .priority-feed-item.severity-info,
+body[data-theme="editorial"] #actionCenter.priority-feed.warn .priority-feed-item.severity-success,
+body[data-theme="editorial"] #actionCenter.priority-feed.error .priority-feed-item.severity-info,
+body[data-theme="editorial"] #actionCenter.priority-feed.error .priority-feed-item.severity-success {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #todaySummaryLanding .today-summary-kpi {
+  padding: 0 !important;
+  gap: 2px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  min-height: 0 !important;
+}
+
+body[data-theme="editorial"] #workflowStatusStrip {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #workflowProgress {
+  margin-bottom: 8px !important;
+}
+
+body.ui-screen-operations[data-theme="editorial"] #dashboardToday {
+  display: contents !important;
+}
+
+body[data-theme="editorial"] #settledLessonsSection {
+  order: 40;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-heading {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+body[data-theme="editorial"] #actionCenter.priority-feed .priority-feed-item {
+  padding: 8px 10px !important;
+}
+
+body[data-theme="editorial"] #scanSection .kanban-lane-head p {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #scanSection .section-title {
+  align-items: center !important;
+  gap: 8px 16px !important;
+  margin-bottom: 8px !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-title-meta {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px !important;
+}
+
+body[data-theme="editorial"] #scanMeta,
+body[data-theme="editorial"] #scanFresh {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #scanContextFold {
+  margin: 8px 0 !important;
+}
+
+body[data-theme="editorial"] .today-fold {
+  margin: 0 0 12px;
+  padding: 0;
+  background: var(--ol-surface);
+  border: 1px solid var(--ol-border-strong);
+  border-radius: 4px;
+}
+
+body[data-theme="editorial"] #settledLessonsSection {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+body[data-theme="editorial"] .today-fold > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ol-text);
+  font-family: "Fraunces", "Iowan Old Style", Georgia, serif;
+  font-size: 1.05rem;
+  font-weight: 560;
+}
+
+body[data-theme="editorial"] .today-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-theme="editorial"] #settledLessonsMeta,
+body[data-theme="editorial"] .today-fold-hint {
+  flex: 1 1 auto;
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: var(--ol-text-micro) !important;
+  font-weight: 450;
+  text-align: right;
+}
+
+body[data-theme="editorial"] #settledLessonsFold > :not(summary),
+body[data-theme="editorial"] #scanStudioFold > :not(summary) {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+body[data-theme="editorial"] #settledLessonsFold > :last-child {
+  padding-bottom: 12px;
+}
+
+body[data-theme="editorial"] #scanStudioFold .scan-studio {
+  margin: 0 0 12px !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] #pendingSection,
+body[data-theme="editorial"] #scanSection,
+body[data-theme="editorial"] #scanDetailPanel,
+body[data-theme="editorial"] #settledLessonsSection,
+body[data-theme="editorial"] #scanStudioPanel,
+body[data-theme="editorial"] #workflowPrimary {
+  scroll-margin-top: 4.5rem;
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane:not([data-workflow-focus="true"]) {
+  background: var(--ol-bg) !important;
+  border: 1px solid var(--ol-border) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane[data-workflow-focus="true"] {
+  background: var(--ol-surface) !important;
+  border: 2px solid var(--ol-accent) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--ol-surface) !important;
+}
+
+body[data-theme="editorial"] #scanSection table tbody tr:hover td {
+  background: rgba(26, 58, 46, 0.06) !important;
+}
+
+body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: rgba(26, 58, 46, 0.14) !important;
+  box-shadow: inset 3px 0 0 var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] #scanSection table tbody tr.is-active:hover td {
+  background: rgba(26, 58, 46, 0.18) !important;
+}
+
+body[data-theme="editorial"] #scanDetailAdvancedStats:not([open]) {
+  margin-top: 8px;
+}
+
+body[data-theme="editorial"] .approve-order-facts,
+body[data-theme="editorial"] #approveSummary strong {
+  color: var(--ol-text);
+  font-weight: 650;
+}
+
+/* Waves 3–6 — System, Research, Intel, Backtest, and the light page. */
+
+body[data-theme="editorial"] #systemSummaryLanding .system-summary-grid,
+body[data-theme="editorial"] #healthSnapshot {
+  display: none !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-tile {
+  cursor: pointer;
+  background: var(--ol-surface) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-left-width: 3px !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-tile[data-state="good"] {
+  border-left-color: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-tile[data-state="warn"] {
+  border-left-color: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-tile[data-state="bad"] {
+  border-left-color: var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] #healthRibbon .health-badge,
+body[data-theme="editorial"] .health-badge.bg-slate-900 {
+  background: transparent !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .research-check-mode-bar:not([hidden]) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+body[data-theme="editorial"] .research-check-mode-control {
+  display: inline-flex;
+  border: 1px solid var(--ol-border-strong);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--ol-surface);
+}
+
+body[data-theme="editorial"] .research-check-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ol-muted);
+  padding: 6px 12px;
+  font-size: var(--ol-text-micro);
+}
+
+body[data-theme="editorial"] .research-check-mode-btn.active {
+  background: var(--ol-accent);
+  color: var(--ol-on-accent, #fffefb);
+}
+
+body[data-theme="editorial"] .intel-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  background: var(--ol-surface) !important;
+  color: var(--ol-text) !important;
+  border: 1px solid var(--ol-border) !important;
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+body[data-theme="editorial"] .intel-summary-label {
+  color: var(--ol-muted) !important;
+  font-size: var(--ol-text-micro);
+}
+
+body[data-theme="editorial"] .intel-table-wrap td.num,
+body[data-theme="editorial"] .intel-table-wrap th.num {
+  text-align: right;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-theme="editorial"] #secSayDoTimeline,
+body[data-theme="editorial"] #secIntegrityScorecard,
+body[data-theme="editorial"] #secDilutionHeatmap,
+body[data-theme="editorial"] #secRedFlagsPanel,
+body[data-theme="editorial"] .bg-slate-950\/55 {
+  background: var(--ol-surface) !important;
+  background-image: none !important;
+  color: var(--ol-text) !important;
+  border-color: var(--ol-border-strong) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+body[data-theme="editorial"] #backtestQueueList {
+  max-height: min(28rem, 50vh);
+  overflow: auto;
+}
+
+body[data-theme="editorial"] #backtestLeaderboard {
+  margin-top: 8px;
+  order: 0 !important;
+}
+
+body.ui-screen-backtest[data-theme="editorial"] #mainContent > .site-footer {
+  order: 20 !important;
+}
+
+body[data-theme="editorial"].ui-screen-backtest .site-footer {
+  margin-top: 16px;
+}
+
+/* System: warning, then the health ribbon, then the command strip. */
+body.ui-screen-diagnostics[data-theme="editorial"] #mainContent > * {
+  order: 5;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #screenContextCard {
+  order: 0;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #connectSchwabBanner,
+body.ui-screen-diagnostics[data-theme="editorial"] #platformKillSwitchBanner {
+  order: -1;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #systemAlertBanner {
+  order: 1;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #healthRibbon {
+  order: 2;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #systemLaneNav {
+  order: 3;
+}
+
+body.ui-screen-diagnostics[data-theme="editorial"] #systemSummaryLanding {
+  order: 4;
+}
+
+/* ============================================================
+   Decision marks — tone color, funnel, PF gate, weight, top bar.
+   Loaded last so these beat the flat td / .mono-nums ink rules.
+   ============================================================ */
+
+body[data-theme="editorial"] table tbody td[data-tone="ok"],
+body[data-theme="editorial"] .mono-nums[data-tone="ok"],
+body[data-theme="editorial"] .intel-good,
+body[data-theme="editorial"] .mono-nums.intel-good,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-vol--strong {
+  color: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] table tbody td[data-tone="warn"],
+body[data-theme="editorial"] .mono-nums[data-tone="warn"] {
+  color: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] table tbody td[data-tone="bad"],
+body[data-theme="editorial"] .mono-nums[data-tone="bad"],
+body[data-theme="editorial"] .intel-bad,
+body[data-theme="editorial"] .mono-nums.intel-bad {
+  color: var(--ol-bad-text) !important;
+}
+
+body[data-theme="editorial"] .intel-bar-fill--good,
+body[data-theme="editorial"] .intel-dot--good {
+  background: var(--ol-ok) !important;
+}
+
+body[data-theme="editorial"] .intel-bar-fill--bad,
+body[data-theme="editorial"] .intel-dot--bad {
+  background: var(--ol-bad) !important;
+}
+
+body[data-theme="editorial"] .scan-stage-pill {
+  color: var(--ol-accent) !important;
+  border-color: rgba(26, 58, 46, 0.35) !important;
+  background: rgba(26, 58, 46, 0.08) !important;
+  font-size: 0.8125rem !important;
+}
+
+body[data-theme="editorial"] .intel-dq-list {
+  max-height: 9rem;
+  overflow: auto;
+}
+
+body[data-theme="editorial"] #systemZoneVerdict[data-tone="warn"] {
+  color: var(--ol-warn) !important;
+}
+
+body[data-theme="editorial"] #systemZoneVerdict[data-tone="bad"] {
+  color: var(--ol-bad-text) !important;
+}
+
+body[data-theme="editorial"] #systemZoneVerdict[data-tone="ok"] {
+  color: var(--ol-ok) !important;
+}
+
+/* Research portfolio shells are display:grid even when empty, which
+   left a blank band on Backtest and the other screens. */
+body:not(.ui-screen-research) #mainContent > section.layout-2 {
+  display: none !important;
+}
+
+body[data-theme="editorial"] .scan-funnel-mark {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+body[data-theme="editorial"] .scan-funnel-mark-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(201, 73, 73, 0.22);
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .scan-funnel-mark-kept {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ol-ok);
+}
+
+body[data-theme="editorial"] .scan-funnel-mark-caption {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ol-text-soft);
+}
+
+body[data-theme="editorial"] .scan-stop-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[data-theme="editorial"] .scan-stop-track {
+  flex: 0 0 2.5rem;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(26, 58, 46, 0.12);
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .scan-stop-risk {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ol-warn);
+}
+
+body[data-theme="editorial"] .ol-weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 7rem;
+}
+
+body[data-theme="editorial"] .ol-weight-track {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(26, 58, 46, 0.12);
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .ol-weight-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ol-accent);
+}
+
+body[data-theme="editorial"] .ol-pf-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body[data-theme="editorial"] .ol-pf-track {
+  position: relative;
+  flex: 0 0 3.25rem;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(26, 58, 46, 0.12);
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] .ol-pf-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .ol-pf-fill[data-tone="ok"] { background: var(--ol-ok); }
+body[data-theme="editorial"] .ol-pf-fill[data-tone="warn"] { background: var(--ol-warn); }
+body[data-theme="editorial"] .ol-pf-fill[data-tone="bad"] { background: var(--ol-bad); }
+
+body[data-theme="editorial"] .ol-pf-gate {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--ol-text);
+}
+
+@media (max-width: 1180px) and (min-width: 768px) {
+  body[data-theme="editorial"] .app-topbar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-areas:
+      "brand actions"
+      "tabs tabs" !important;
+    row-gap: 8px !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-brand { grid-area: brand; }
+  body[data-theme="editorial"] .app-topbar-actions { grid-area: actions; }
+
+  body[data-theme="editorial"] .app-topbar-tabs {
+    grid-area: tabs;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+    justify-content: stretch !important;
+  }
+
+  body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-subtitle {
+    display: none !important;
+  }
+}
+
+.operator-desk-brief {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 0.75rem 0 0;
+}
+
+.grok-review-output-title {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.grok-review-result {
+  margin-top: 0.35rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ol-border-strong);
+  border-radius: 4px;
+  background: var(--ol-bg);
+  color: var(--ol-text);
+}
+
+.grok-review-verdict {
+  margin: 0 0 0.4rem;
+  font-weight: 650;
+}
+
+.grok-review-findings,
+.grok-review-citations {
+  margin: 0.25rem 0 0.5rem 1.1rem;
+}
+
+.grok-review-text {
+  margin: 0.4rem 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+#grokReviewPrompt {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+/* ============================================================
+   New-age surface — glass chrome, aurora field, data-sheet tables.
+   Loaded last so it beats cream/Fraunces leftovers. Column widths
+   for scan triage stay in the width-invariant block above.
+============================================================ */
+body[data-theme="editorial"] {
+  --radius-card: 20px;
+  --radius-pill: 999px;
+  background:
+    radial-gradient(980px 520px at -8% -12%, rgba(20, 184, 166, 0.28), transparent 62%),
+    radial-gradient(860px 480px at 108% -8%, rgba(99, 102, 241, 0.18), transparent 58%),
+    radial-gradient(720px 460px at 72% 112%, rgba(196, 163, 90, 0.16), transparent 55%),
+    var(--ol-bg) !important;
+}
+
+body[data-theme="editorial"] .bg-grid {
+  opacity: 0.45;
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+body[data-theme="editorial"] .bg1 {
+  background: #14b8a6;
+  opacity: 0.22;
+}
+body[data-theme="editorial"] .bg2 {
+  background: #818cf8;
+  opacity: 0.18;
+}
+body[data-theme="editorial"] .bg3 {
+  background: #c4a35a;
+  opacity: 0.14;
+}
+
+html body[data-theme="editorial"] :is(
+  h1,
+  h2,
+  h3,
+  h4,
+  .mode-header-title,
+  .section-title h2,
+  .section-title h3,
+  .kanban-lane-head strong,
+  .ops-disclosure-title,
+  .brand-text,
+  .brand-mark,
+  .today-summary-value,
+  .research-summary-value,
+  .system-summary-value,
+  .app-topbar-brand .brand-mark,
+  .app-topbar-brand .brand-text
+) {
+  font-family: var(--ol-font-display) !important;
+  letter-spacing: -0.03em !important;
+}
+
+body[data-theme="editorial"] .workspace-eyebrow,
+body[data-theme="editorial"] .field-label,
+body[data-theme="editorial"] .stat-label,
+body[data-theme="editorial"] .health-label {
+  color: var(--ol-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.72rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase;
+}
+
+body[data-theme="editorial"] .app-topbar {
+  background: var(--ol-glass) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.7) !important;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, 0.06) !important;
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  border-radius: 12px !important;
+  background: linear-gradient(160deg, #14b8a6, var(--ol-accent)) !important;
+  box-shadow: 0 8px 18px rgba(11, 110, 92, 0.28);
+}
+
+body[data-theme="editorial"] .app-topbar-tabs {
+  background: rgba(255, 255, 255, 0.55) !important;
+  border: 1px solid rgba(16, 24, 40, 0.08) !important;
+  border-radius: 999px !important;
+  padding: 4px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  border-radius: 999px !important;
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: linear-gradient(180deg, #14967f, var(--ol-accent)) !important;
+  color: var(--ol-on-accent) !important;
+  box-shadow: 0 8px 18px rgba(11, 110, 92, 0.28) !important;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .btn,
+body[data-theme="editorial"] .app-topbar-actions button,
+body[data-theme="editorial"] .app-topbar-actions select,
+body[data-theme="editorial"] #displayModeSelect,
+body[data-theme="editorial"] #refreshBtn,
+body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn,
+body[data-theme="editorial"] .app-topbar-actions .btn.secondary.small {
+  background: rgba(255, 255, 255, 0.86) !important;
+  color: var(--ol-text) !important;
+  border: 1px solid rgba(16, 24, 40, 0.1) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+body[data-theme="editorial"] .app-topbar-actions .btn.primary,
+body[data-theme="editorial"] .app-topbar-actions button.btn.primary,
+body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary,
+body[data-theme="editorial"] .btn.primary {
+  background: linear-gradient(180deg, #14967f, var(--ol-accent)) !important;
+  border-color: transparent !important;
+  color: var(--ol-on-accent) !important;
+  box-shadow: 0 10px 22px rgba(11, 110, 92, 0.28) !important;
+}
+
+body[data-theme="editorial"] #refreshBtn:hover,
+body[data-theme="editorial"] .app-topbar-actions .btn.secondary.small:hover,
+body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn:hover,
+body[data-theme="editorial"] .btn.secondary:hover {
+  background: #ffffff !important;
+  border-color: var(--ol-accent-border) !important;
+  color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] .card,
+body[data-theme="editorial"] .operate-kanban,
+body[data-theme="editorial"] .operate-kanban .kanban-lane,
+body[data-theme="editorial"] .mode-header,
+body[data-theme="editorial"] .panel-disclosure,
+body[data-theme="editorial"] #workflowPrimary,
+body[data-theme="editorial"] .health-tile,
+body[data-theme="editorial"] .stats .stat,
+body[data-theme="editorial"] .task-card,
+body[data-theme="editorial"] .today-summary-kpi,
+body[data-theme="editorial"] .research-summary-kpi,
+body[data-theme="editorial"] .system-summary-kpi {
+  background: var(--ol-glass) !important;
+  border: 1px solid rgba(255, 255, 255, 0.72) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--ol-shadow) !important;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  border-left: 3px solid #14b8a6 !important;
+}
+
+body[data-theme="editorial"] .kanban-lane-step {
+  border-radius: 999px !important;
+  background: linear-gradient(180deg, #14967f, var(--ol-accent)) !important;
+}
+
+body[data-theme="editorial"] input,
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea,
+body[data-theme="editorial"] code,
+body[data-theme="editorial"] pre,
+body[data-theme="editorial"] .code-block {
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--ol-text) !important;
+  border: 1px solid rgba(16, 24, 40, 0.1) !important;
+  border-radius: 12px !important;
+}
+
+body[data-theme="editorial"] .btn,
+body[data-theme="editorial"] input,
+body[data-theme="editorial"] select,
+body[data-theme="editorial"] textarea {
+  border-radius: 12px !important;
+}
+
+body[data-theme="editorial"] .btn.primary,
+body[data-theme="editorial"] .pill,
+body[data-theme="editorial"] .chip,
+body[data-theme="editorial"] .health-badge {
+  border-radius: 999px !important;
+}
+
+/* Data sheets: one rounded scroll surface, sticky header, airy rows. */
+body[data-theme="editorial"] .table-wrap {
+  padding: 0 !important;
+  border: 1px solid rgba(16, 24, 40, 0.08) !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.62) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  overflow: auto;
+}
+
+body[data-theme="editorial"] .table-wrap table,
+body[data-theme="editorial"] table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  background: transparent !important;
+}
+
+body[data-theme="editorial"] table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(242, 246, 251, 0.94) !important;
+  color: #3e4c63 !important;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  padding: 11px 12px !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+body[data-theme="editorial"] table tbody td {
+  padding: 13px 12px !important;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.06) !important;
+  background: transparent !important;
+  vertical-align: middle;
+}
+
+body[data-theme="editorial"] table tbody tr:last-child td {
+  border-bottom-color: transparent !important;
+}
+
+body[data-theme="editorial"] table tbody tr:nth-child(even) td {
+  background: rgba(11, 110, 92, 0.035) !important;
+}
+
+body[data-theme="editorial"] table tbody tr:hover td,
+body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: rgba(11, 110, 92, 0.09) !important;
+}
+
+body[data-theme="editorial"] #scanSection table tbody tr.is-active td:first-child {
+  box-shadow: inset 3px 0 0 #14b8a6;
+}
+
+body[data-theme="editorial"] #scanSection .table-wrap,
+body[data-theme="editorial"] #scanSection .qualified-table-wrap,
+body[data-theme="editorial"] #scanSection .near-miss-table-wrap {
+  border-radius: 16px !important;
+  border: 1px solid rgba(16, 24, 40, 0.08) !important;
+  background: rgba(255, 255, 255, 0.55) !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table th,
+body[data-theme="editorial"] #scanSection .scan-candidates-table td {
+  padding: 10px 8px !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table thead th:first-child,
+body[data-theme="editorial"] #scanSection .scan-candidates-table tbody td:first-child {
+  padding-left: 14px !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-strategy-label {
+  flex-wrap: nowrap !important;
+  overflow: hidden !important;
+  min-width: 0;
+  gap: 4px !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-strategy-pill {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: rgba(11, 110, 92, 0.08) !important;
+  border-color: rgba(11, 110, 92, 0.18) !important;
+  color: var(--ol-text);
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-strategy-more {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-ticker-subline {
+  flex-wrap: nowrap !important;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-triage-col-strategy,
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(3),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:nth-child(3),
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-col-strategy {
+  width: 12rem !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-analog-cell {
+  max-width: 100%;
+  justify-content: flex-end;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-analog-stack {
+  max-width: 100%;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-analog-score {
+  white-space: nowrap;
+}
+
+body[data-theme="editorial"] .operations-panel-snapshot,
+body[data-theme="editorial"] .operations-panel-snapshot__kpi {
+  background: rgba(255, 255, 255, 0.72) !important;
+  border-color: rgba(16, 24, 40, 0.08) !important;
+  border-radius: 16px !important;
+}
+
+body[data-theme="editorial"] .operations-panel-snapshot__kpi-value {
+  font-family: var(--ol-font-display) !important;
+  letter-spacing: -0.03em;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .scan-row-action {
+  border-radius: 999px !important;
+  border: 1px solid rgba(16, 24, 40, 0.1) !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .scan-row-action--primary {
+  background: rgba(11, 110, 92, 0.12) !important;
+  border-color: var(--ol-accent) !important;
+  color: var(--ol-accent) !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table .scan-ticker {
+  font-family: var(--ol-font-display) !important;
+  font-size: 0.98rem !important;
+  font-weight: 650 !important;
+  letter-spacing: -0.03em !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] #scanSection .scan-candidates-table .scan-actions-cell .btn,
+body[data-theme="editorial"] #scanSection .scan-candidates-table .btn.small {
+  border-radius: 999px !important;
+  padding: 5px 9px !important;
+}
+
+body[data-theme="editorial"] .scan-status-filter {
+  border-radius: 999px !important;
+  padding: 3px !important;
+  gap: 2px !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+  border: 1px solid rgba(16, 24, 40, 0.08) !important;
+}
+
+body[data-theme="editorial"] .scan-status-filter__btn {
+  border-radius: 999px !important;
+}
+
+body[data-theme="editorial"] .scan-status-filter__btn.is-active {
+  background: var(--ol-accent) !important;
+  color: var(--ol-on-accent) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="editorial"] .scan-near-miss-panel,
+body[data-theme="editorial"] #nearMissPanel {
+  border: 1px solid rgba(16, 24, 40, 0.08) !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.55) !important;
+  color: var(--ol-text) !important;
+}
+
+body[data-theme="editorial"] .scan-near-miss-panel > summary,
+body[data-theme="editorial"] #nearMissPanel > summary,
+body[data-theme="editorial"] .scan-near-miss-panel .muted,
+body[data-theme="editorial"] #nearMissPanel .muted,
+body[data-theme="editorial"] .scan-near-miss-copy {
+  color: var(--ol-text-soft) !important;
+}
+
+body[data-theme="editorial"] .mobile-primary-dock {
+  background: var(--ol-glass) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.7) !important;
+}
+
+body[data-theme="editorial"] .sortable-th:hover {
+  color: var(--ol-accent) !important;
+  background: rgba(11, 110, 92, 0.08) !important;
+}
+
+/* ============================================================
+   Sharp desk — beats the glass/pill layer above.
+   Reference: Figma "Today — Sharp desk" node 172:284.
+   Flat ink, 2px controls, 4px cards, hairline rules.
+============================================================ */
+html body[data-theme="editorial"] {
+  --radius-card: 4px;
+  --radius-pill: 2px;
+  background: #e9ebef !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+}
+
+html body[data-theme="editorial"] .bg-blur {
+  opacity: 0 !important;
+}
+
+html body[data-theme="editorial"] .bg-grid {
+  opacity: 0.55;
+  background-image:
+    linear-gradient(rgba(17, 20, 24, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17, 20, 24, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+html body[data-theme="editorial"] :is(
+  h1, h2, h3, h4,
+  .mode-header-title,
+  .section-title h2,
+  .section-title h3,
+  .kanban-lane-head strong,
+  .ops-disclosure-title,
+  .brand-text,
+  .brand-mark,
+  .today-summary-value,
+  .research-summary-value,
+  .system-summary-value,
+  .app-topbar-brand .brand-mark,
+  .app-topbar-brand .brand-text,
+  .operations-panel-snapshot__kpi-value
+) {
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  letter-spacing: -0.02em !important;
+}
+
+html body[data-theme="editorial"] .workspace-eyebrow {
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: #5e6772 !important;
+}
+
+html body[data-theme="editorial"] .field-label,
+html body[data-theme="editorial"] .stat-label,
+html body[data-theme="editorial"] .health-label {
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: #5e6772 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar {
+  background: #ffffff !important;
+  border-bottom: 1px solid #d5d8de !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 2px !important;
+  background: #14352c !important;
+  box-shadow: none !important;
+  font-size: 0.75rem !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  border-radius: 0 !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  background: transparent !important;
+  color: #5e6772 !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: transparent !important;
+  color: #111418 !important;
+  border-bottom: 2px solid #14352c !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-num {
+  color: #14352c !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-actions .btn,
+html body[data-theme="editorial"] .app-topbar-actions button,
+html body[data-theme="editorial"] .app-topbar-actions select,
+html body[data-theme="editorial"] #displayModeSelect,
+html body[data-theme="editorial"] #refreshBtn,
+html body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn,
+html body[data-theme="editorial"] .app-topbar-actions .btn.secondary.small,
+html body[data-theme="editorial"] .btn,
+html body[data-theme="editorial"] input,
+html body[data-theme="editorial"] select,
+html body[data-theme="editorial"] textarea {
+  border-radius: 2px !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .btn.primary,
+html body[data-theme="editorial"] .app-topbar-actions .btn.primary,
+html body[data-theme="editorial"] .app-topbar-actions button.btn.primary,
+html body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  background: #14352c !important;
+  border-color: #14352c !important;
+  color: #f4f6f5 !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .card,
+html body[data-theme="editorial"] .operate-kanban,
+html body[data-theme="editorial"] .operate-kanban .kanban-lane,
+html body[data-theme="editorial"] .mode-header,
+html body[data-theme="editorial"] .panel-disclosure,
+html body[data-theme="editorial"] #workflowPrimary,
+html body[data-theme="editorial"] .health-tile,
+html body[data-theme="editorial"] .stats .stat,
+html body[data-theme="editorial"] .task-card,
+html body[data-theme="editorial"] .today-summary-kpi,
+html body[data-theme="editorial"] .research-summary-kpi,
+html body[data-theme="editorial"] .system-summary-kpi,
+html body[data-theme="editorial"] .operations-panel-snapshot,
+html body[data-theme="editorial"] .operations-panel-snapshot__kpi {
+  background: #ffffff !important;
+  border: 1px solid #d5d8de !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  border-left: 2px solid #14352c !important;
+}
+
+html body[data-theme="editorial"] .kanban-lane-step {
+  border-radius: 2px !important;
+  background: #14352c !important;
+}
+
+html body[data-theme="editorial"] .pill,
+html body[data-theme="editorial"] .chip,
+html body[data-theme="editorial"] .health-badge,
+html body[data-theme="editorial"] .scan-status-filter,
+html body[data-theme="editorial"] .scan-status-filter__btn,
+html body[data-theme="editorial"] .scan-row-action,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-strategy-pill,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-strategy-more {
+  border-radius: 2px !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .scan-status-filter {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+html body[data-theme="editorial"] .scan-status-filter__btn.is-active {
+  background: #14352c !important;
+  color: #f4f6f5 !important;
+}
+
+html body[data-theme="editorial"] .table-wrap,
+html body[data-theme="editorial"] #scanSection .table-wrap,
+html body[data-theme="editorial"] #scanSection .qualified-table-wrap,
+html body[data-theme="editorial"] #scanSection .near-miss-table-wrap,
+html body[data-theme="editorial"] .scan-near-miss-panel,
+html body[data-theme="editorial"] #nearMissPanel {
+  border-radius: 4px !important;
+  border: 1px solid #d5d8de !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] table thead th {
+  background: #f6f7f9 !important;
+  color: #5e6772 !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  border-bottom: 1px solid #d5d8de !important;
+}
+
+html body[data-theme="editorial"] table tbody td {
+  border-bottom: 1px solid #e6e8ec !important;
+}
+
+html body[data-theme="editorial"] table tbody tr:nth-child(even) td {
+  background: #f7f8fa !important;
+}
+
+html body[data-theme="editorial"] table tbody tr:hover td,
+html body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: #eef1f4 !important;
+}
+
+html body[data-theme="editorial"] #scanSection table tbody tr.is-active td:first-child {
+  box-shadow: inset 2px 0 0 #14352c;
+}
+
+html body[data-theme="editorial"] .mobile-primary-dock {
+  background: #ffffff !important;
+  backdrop-filter: none !important;
+  border-top: 1px solid #d5d8de !important;
+}
+
+html body[data-theme="editorial"] .sortable-th:hover {
+  color: #111418 !important;
+  background: #eef1f4 !important;
+}
+
+html body[data-theme="editorial"] :is(em, i, .muted, small, .scan-row--empty td) {
+  font-style: normal !important;
+}
+
+html body[data-theme="editorial"] .shadow-workbench-teaser,
+html body[data-theme="editorial"] .scan-delta-strip-inner,
+html body[data-theme="editorial"] .delta-chip,
+html body[data-theme="editorial"] .shadow-plugin-card {
+  border-radius: 2px !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .shadow-workbench-teaser,
+html body[data-theme="editorial"] .shadow-plugin-card {
+  border: 1px solid #d5d8de !important;
+  background: #ffffff !important;
+}
+
+html body[data-theme="editorial"] .shadow-workbench-teaser-inner strong,
+html body[data-theme="editorial"] .shadow-tier-title {
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  color: #111418 !important;
+}
+
+/* Analog column: the number is the cell. Detail stays on the hover tip. */
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-analog,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage th:nth-child(7) {
+  overflow: visible !important;
+  text-align: right !important;
+  color: #111418 !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-analog-num {
+  display: inline-block;
+  min-width: 3.2rem;
+  color: #111418 !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.84rem !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0 !important;
+  line-height: 1.2;
+  text-align: right;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-analog-num--thin {
+  color: #8a5c1f !important;
+}
+
+html body[data-theme="editorial"] .scan-analog-why,
+html body[data-theme="editorial"] .scan-rank-why {
+  color: #5e6772 !important;
+  border-color: #d5d8de !important;
+  background: #ffffff !important;
+}
+
+/* Scan header: title and mode on one line, chips on the next, left aligned. */
+html body[data-theme="editorial"] #scanSection .section-title {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px 12px !important;
+  margin-bottom: 10px !important;
+}
+
+html body[data-theme="editorial"] #scanSection .section-title h2 {
+  margin: 0 !important;
+  margin-right: auto !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-title-meta {
+  display: contents !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-mode-wrap {
+  margin-left: auto;
+}
+
+html body[data-theme="editorial"] #scanSection #scanGateModesChip,
+html body[data-theme="editorial"] #scanSection #scanTopStrategy,
+html body[data-theme="editorial"] #scanSection #scanBlockersChip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  white-space: normal;
+}
+
+html body[data-theme="editorial"] #scanSection #scanGateModesChip {
+  flex-basis: 100%;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table th,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table td {
+  padding: 8px 10px !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-ticker-stack {
+  gap: 1px !important;
+}
+
+html body[data-theme="editorial"] #scanIntegrityBanner {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 8px 0 10px !important;
+  line-height: 1.4 !important;
+}
+
+/* ============================================================
+   Phone layout. Keep this last so it beats the 1280/767 top-bar
+   grids and the scan-triage column widths. Desktop rules stay.
+============================================================ */
+@media (max-width: 767px) {
+  html:has(body[data-theme="editorial"]) {
+    scroll-padding-top: calc(64px + env(safe-area-inset-top, 0px));
+    scroll-padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  html body[data-theme="editorial"] {
+    overflow-x: clip;
+  }
+
+  html body[data-theme="editorial"] .app-topbar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-areas: "brand actions" !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+    row-gap: 0 !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 60 !important;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px)) !important;
+  }
+
+  html body[data-theme="editorial"] .workspace-menu-btn,
+  html body[data-theme="editorial"] .app-topbar-tabs,
+  html body[data-theme="editorial"] .app-topbar-actions .topbar-detail {
+    display: none !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-brand {
+    grid-area: brand;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-brand .brand-text {
+    display: inline !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100% !important;
+    font-size: 0.98rem !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions {
+    grid-area: actions;
+    justify-self: end;
+    flex-wrap: nowrap !important;
+    min-width: max-content;
+    gap: 4px !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions #refreshBtn,
+  html body[data-theme="editorial"] .app-topbar-actions #scanBtn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px !important;
+    white-space: nowrap;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions #scanBtn {
+    padding: 8px 10px !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions #refreshBtn {
+    width: 44px !important;
+    min-width: 44px !important;
+    padding: 0 !important;
+    font-size: 0 !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2314352c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-2.2-5.9'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 18px 18px !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions #refreshBtn::after {
+    content: none !important;
+  }
+
+  html body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  html body[data-theme="editorial"] .notif-panel {
+    position: fixed !important;
+    top: calc(64px + env(safe-area-inset-top, 0px)) !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-height: min(70dvh, 480px) !important;
+  }
+
+  html body[data-theme="editorial"] main.container {
+    width: min(100%, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px) !important;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  html body[data-theme="editorial"] .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-operations .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-research .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-intel .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-diagnostics .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-settings .mobile-primary-dock,
+  html body[data-theme="editorial"].ui-screen-backtest .mobile-primary-dock {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    gap: 4px !important;
+    margin: 0 !important;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+    border-radius: 0 !important;
+    border: 0 !important;
+    border-top: 1px solid #d5d8de !important;
+    background: #ffffff !important;
+    box-shadow: 0 -8px 24px rgba(17, 20, 24, 0.08) !important;
+    z-index: 70 !important;
+    backdrop-filter: none !important;
+  }
+
+  html body[data-theme="editorial"] .mobile-dock-tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #5e6772;
+    font: 600 0.72rem/1.15 "Inter", "DM Sans", system-ui, sans-serif;
+    min-height: 48px;
+    min-width: 0;
+    padding: 6px 2px;
+    border-radius: 8px;
+  }
+
+  html body[data-theme="editorial"] .mobile-dock-tab.is-active {
+    background: #14352c;
+    color: #f4f6f5;
+  }
+
+  html body[data-theme="editorial"] .scroll-top-btn {
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  html body[data-theme="editorial"] input,
+  html body[data-theme="editorial"] select,
+  html body[data-theme="editorial"] textarea {
+    font-size: 16px !important;
+  }
+
+  html body[data-theme="editorial"] .inline-form {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  html body[data-theme="editorial"] .inline-form input,
+  html body[data-theme="editorial"] .inline-form select,
+  html body[data-theme="editorial"] .inline-form textarea,
+  html body[data-theme="editorial"] .inline-form .btn {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 44px;
+  }
+
+  html body[data-theme="editorial"] :is(
+    .backtest-form-grid,
+    .advanced-grid,
+    .sec-compare-grid,
+    .report-split-grid,
+    .report-claim-grid,
+    .report-scenario-kpis,
+    .stats
+  ) {
+    grid-template-columns: 1fr !important;
+  }
+
+  html body[data-theme="editorial"] .tab-bar,
+  html body[data-theme="editorial"] .portfolio-subtabs,
+  html body[data-theme="editorial"] .trade-drawer-tabs {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    gap: 6px;
+  }
+
+  html body[data-theme="editorial"] .tab-bar .tab-btn,
+  html body[data-theme="editorial"] .trade-drawer-tab {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+
+  html body[data-theme="editorial"] .portfolio-subtabs .muted {
+    margin-left: 0 !important;
+  }
+
+  html body[data-theme="editorial"] .table-wrap:not(.qualified-table-wrap):not(.near-miss-table-wrap) {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  html body[data-theme="editorial"] .table-wrap:not(.qualified-table-wrap):not(.near-miss-table-wrap) th:first-child,
+  html body[data-theme="editorial"] .table-wrap:not(.qualified-table-wrap):not(.near-miss-table-wrap) td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #ffffff;
+  }
+
+  html body[data-theme="editorial"] .panel-disclosure-summary,
+  html body[data-theme="editorial"] .scan-near-miss-panel > summary,
+  html body[data-theme="editorial"] .activity-drawer-toggle {
+    min-height: 44px;
+  }
+
+  html body[data-theme="editorial"] .activity-drawer-toggle {
+    width: 100%;
+    max-width: none;
+  }
+
+  html body[data-theme="editorial"] dialog.modal {
+    width: min(560px, calc(100vw - 20px)) !important;
+    max-height: calc(100dvh - 24px) !important;
+  }
+
+  html body[data-theme="editorial"] .trade-drawer {
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: min(92dvh, 100%) !important;
+    border-radius: 16px 16px 0 0 !important;
+    transform: translateY(110%) !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  html body[data-theme="editorial"] .trade-drawer.open {
+    transform: translateY(0) !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-list-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-list-filters {
+    align-items: stretch !important;
+    width: 100% !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-status-filter {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    width: 100% !important;
+    max-width: 100%;
+    justify-content: flex-start !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-status-filter__btn {
+    flex: 0 0 auto;
+    min-height: 40px !important;
+    padding: 8px 12px !important;
+    font-size: 0.8rem !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-vol:nth-child(n),
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-rank:nth-child(n),
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-analog:nth-child(n) {
+    display: none !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-stop-cell {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    width: 100%;
+    gap: 6px;
+  }
+
+  html body[data-theme="editorial"] #scanShowMoreBtn:not(.hidden) {
+    width: 100%;
+    min-height: 44px;
+    margin-top: 8px;
+  }
+
+  html body[data-theme="editorial"] #scanSection .qualified-table-wrap,
+  html body[data-theme="editorial"] #scanSection .near-miss-table-wrap,
+  html body[data-theme="editorial"] .operate-kanban #scanSection .table-wrap {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    flex: 0 0 auto !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  html body[data-theme="editorial"] .operate-kanban {
+    overflow: visible !important;
+    height: auto !important;
+    align-items: start !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection,
+  html body[data-theme="editorial"] #scanSection .scan-results-layout,
+  html body[data-theme="editorial"] #scanSection .scan-list-pane {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .qualified-table-wrap > .scan-candidates-table--triage {
+    flex: 0 0 auto !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage colgroup,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead {
+    display: none !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage :is(
+    col,
+    .scan-triage-col-ticker,
+    .scan-triage-col-gate,
+    .scan-triage-col-strategy,
+    .scan-triage-col-vol,
+    .scan-triage-col-price,
+    .scan-triage-col-rank,
+    .scan-triage-col-analog,
+    .scan-triage-col-stop,
+    .scan-triage-col-actions
+  ) {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tbody {
+    display: flex !important;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tr {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    width: 100% !important;
+    padding: 12px;
+    border: 1px solid #d5d8de;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tr.scan-row--empty {
+    display: block !important;
+    background: transparent !important;
+    border: 0 !important;
+    padding: 8px 0 !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tr.is-active {
+    background: #eef1f4 !important;
+    box-shadow: inset 3px 0 0 #14352c;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage :is(th, td):nth-child(n) {
+    display: block !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: left !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-ticker,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-gate,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-strategy,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-stop,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-actions-cell {
+    grid-column: 1 / -1;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td:not(.scan-col-ticker):not(.scan-actions-cell)::before {
+    display: block;
+    margin-bottom: 2px;
+    color: #5e6772;
+    font: 600 0.65rem/1.2 "Inter", "DM Sans", system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-gate::before { content: "Gate"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-strategy::before { content: "Strategy"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-vol::before { content: "Volume"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-price::before { content: "Price"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-rank::before { content: "Rank"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-analog::before { content: "Analog"; }
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage td.scan-col-stop::before { content: "Stop"; }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-company-name,
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-ticker-meta {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-row-actions {
+    display: flex !important;
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+  }
+
+  html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-row-action {
+    flex: 1 1 30%;
+    min-height: 44px !important;
+    font-size: 0.85rem !important;
+  }
+}
+
+@media (max-width: 380px) {
+  html body[data-theme="editorial"] .app-topbar-brand .brand-text {
+    display: none !important;
+  }
+}
+
+body[data-theme="editorial"] .scan-brief-facts,
+body[data-theme="editorial"] .scan-brief-plan {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+body[data-theme="editorial"] .scan-evidence {
+  margin: 0 0 0.85rem;
+}
+body[data-theme="editorial"] .scan-evidence .decision-gate-value {
+  font-variant-numeric: tabular-nums;
+}
+body[data-theme="editorial"] .pill--nowrap {
+  white-space: nowrap;
+}
+body[data-theme="editorial"] .btn,
+body[data-theme="editorial"] button,
+body[data-theme="editorial"] [role="tab"] {
+  scroll-margin-top: 88px;
+}
+
+#grokReviewSection .grok-review-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+#grokReviewSection .grok-review-form label,
+#grokReviewSection .grok-review-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--ol-muted);
+  font-size: 0.82rem;
+}
+
+#grokReviewSection .grok-review-form select,
+#grokReviewSection .grok-review-form input,
+#grokReviewPrompt {
+  width: 100%;
+  margin: 0;
+}
+
+#grokReviewSection .grok-review-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  #grokReviewSection .grok-review-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+#grokReviewResult {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 72ch;
+  padding: 1rem 1.05rem 0.9rem;
+  line-height: 1.45;
+}
+
+#grokReviewResult .grok-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+
+#grokReviewResult .grok-review-pill {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--ol-surface);
+  color: var(--ol-text);
+  border: 1px solid var(--ol-border-strong);
+}
+
+#grokReviewResult .grok-review-pill--revise,
+#grokReviewResult .grok-review-pill--incomplete {
+  color: var(--ol-warn);
+  border-color: var(--ol-warn);
+}
+
+#grokReviewResult .grok-review-pill--reject,
+#grokReviewResult .grok-review-pill--error {
+  color: var(--ol-bad);
+  border-color: var(--ol-bad);
+}
+
+#grokReviewResult .grok-review-pill--proceed {
+  color: var(--ol-ok);
+  border-color: var(--ol-ok);
+}
+
+#grokReviewResult .grok-review-summary,
+#grokReviewResult .grok-review-evidence,
+#grokReviewResult .grok-review-error,
+#grokReviewResult .grok-review-meta,
+#grokReviewResult .grok-review-claim {
+  margin: 0;
+}
+
+#grokReviewResult .grok-review-summary {
+  font-size: 1.02rem;
+}
+
+#grokReviewResult .grok-review-block h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ol-muted);
+}
+
+#grokReviewResult .grok-review-finding {
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--ol-border-strong);
+}
+
+#grokReviewResult .grok-review-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+#grokReviewResult .grok-review-claim {
+  font-weight: 650;
+}
+
+#grokReviewResult .grok-review-evidence,
+#grokReviewResult .grok-review-confidence,
+#grokReviewResult .grok-review-meta {
+  color: var(--ol-muted);
+}
+
+#grokReviewResult .grok-review-confidence,
+#grokReviewResult .grok-review-meta {
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+#grokReviewResult .grok-review-risks,
+#grokReviewResult .grok-review-citations {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+#grokReviewResult .grok-review-risks li + li,
+#grokReviewResult .grok-review-citations li + li {
+  margin-top: 0.35rem;
+}
+
+#grokReviewResult .grok-review-error {
+  color: var(--ol-bad);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: var(--ol-text);
+  background: var(--ol-surface);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter th {
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ol-muted);
+  background: var(--ol-bg);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter td {
+  padding: 0.4rem;
+  vertical-align: middle;
+  border-top: 1px solid var(--ol-border);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter th:nth-child(1),
+body[data-theme="editorial"] #pendingBoard .pending-blotter td:nth-child(1) {
+  width: auto;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter th:nth-child(7),
+body[data-theme="editorial"] #pendingBoard .pending-blotter td:nth-child(7) {
+  width: 11rem;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter th:nth-child(10),
+body[data-theme="editorial"] #pendingBoard .pending-blotter td:nth-child(10) {
+  width: 16rem;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter th:nth-child(11),
+body[data-theme="editorial"] #pendingBoard .pending-blotter td:nth-child(11) {
+  width: 13.75rem;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter .pending-blotter-status {
+  white-space: normal;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter .pending-blotter-actions {
+  white-space: normal;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter .pending-blotter-actions .btn {
+  margin: 0.1rem 0.15rem 0.1rem 0;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter tr.pending-blotter-row[data-tone="bad"] {
+  box-shadow: inset 3px 0 0 var(--ol-bad);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter tr.pending-blotter-row[data-tone="ok"] {
+  box-shadow: inset 3px 0 0 var(--ol-ok);
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter tr.pending-blotter-note td {
+  padding-top: 0;
+  padding-bottom: 0.55rem;
+  color: var(--ol-muted);
+  font-size: 0.72rem;
+  border-top: 0;
+}
+
+body[data-theme="editorial"] #pendingBoard .pending-blotter .pending-blotter-note-line {
+  margin: 0 0 0.2rem;
+}
+
+body[data-theme="editorial"] .ticket-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+body[data-theme="editorial"] .ticket-fact {
+  flex: 1 1 6.25rem;
+  min-width: 6.25rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  background: var(--ol-surface);
+  border: 1px solid var(--ol-muted);
+}
+
+body[data-theme="editorial"] .ticket-fact--wide {
+  flex: 2 1 14rem;
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="ok"] {
+  border-color: var(--ol-ok);
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="warn"] {
+  border-color: var(--ol-warn);
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="bad"] {
+  border-color: var(--ol-bad);
+}
+
+body[data-theme="editorial"] .ticket-fact-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ol-muted);
+}
+
+body[data-theme="editorial"] .ticket-fact-value {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  color: var(--ol-text);
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="ok"] .ticket-fact-value {
+  color: var(--ol-ok);
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="warn"] .ticket-fact-value {
+  color: var(--ol-warn);
+}
+
+body[data-theme="editorial"] .ticket-fact[data-tone="bad"] .ticket-fact-value {
+  color: var(--ol-bad);
+}
+
+body[data-theme="editorial"] .ticket-fact-sub {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  color: var(--ol-muted);
+}
+
+#portfolioAmbiguityBanner {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+}
+
+#portfolioAmbiguityBanner.hidden {
+  display: none;
+}
+
+.portfolio-ambiguity-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* today-decision-desk
+   Today is the shortlist. Counts sit in one bar, the brief opens beside
+   the selected name, and the queue opens under the table. Setup tools
+   stay on the page after the decision. */
+body.ui-screen-operations #screenContextCard .tab-landing-row,
+body.ui-screen-operations .today-summary-actions,
+body.ui-screen-operations #pendingSummaryStrip,
+body.ui-screen-operations #workflowSnapshot,
+body.ui-screen-operations #actionCenter:not(.warn):not(.error),
+body.ui-screen-operations .mode-header-anchors a[href="#scanStudioPanel"],
+body.ui-screen-operations .mode-header-anchors a[href="#operatorAgentsSection"],
+body.ui-screen-operations .mode-header-anchors a[href="#grokReviewSection"],
+body.ui-screen-operations .mode-header-anchors a[href="#scanDetailPanel"],
+body.ui-screen-operations #scanModeHelperText,
+body.ui-screen-operations #scanSection[data-state="empty"] .scan-list-filters,
+body.ui-screen-operations #scanSection[data-state="empty"] #scanTopStrategy,
+body.ui-screen-operations #scanDetailSnapshot,
+body.ui-screen-diagnostics .system-summary-actions {
+  display: none !important;
+}
+
+body.ui-screen-operations #workflowStatusStrip[data-state="empty"],
+body.ui-screen-operations #workflowStatusStrip[data-state="success"],
+body.ui-screen-operations #scanStatusStrip[data-state="empty"],
+body.ui-screen-operations #scanStatusStrip[data-state="success"],
+body.ui-screen-operations #scanDetailStatusStrip[data-state="empty"],
+body.ui-screen-operations #scanDetailStatusStrip[data-state="success"],
+body.ui-screen-operations #pendingStatusStrip[data-state="empty"],
+body.ui-screen-operations #pendingStatusStrip[data-state="success"] {
+  display: none !important;
+}
+
+body.ui-screen-operations #screenContextCard {
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+body.ui-screen-operations .today-summary-landing {
+  padding: 6px 12px;
+  margin: 0;
+}
+
+body.ui-screen-operations .today-summary-grid {
+  grid-template-columns: repeat(3, max-content);
+  justify-content: start;
+  gap: 4px 28px;
+  margin: 0;
+}
+
+body.ui-screen-operations .today-summary-kpi {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+
+body.ui-screen-operations .today-summary-value {
+  font-size: 1.15rem;
+}
+
+body.ui-screen-operations #todayPendingKpi,
+body.ui-screen-operations #pendingLaneToggle,
+body.ui-screen-operations .workflow-progress-step {
+  cursor: pointer;
+}
+
+body.ui-screen-operations #todayPendingKpi:focus-visible,
+body.ui-screen-operations #pendingLaneToggle:focus-visible,
+body.ui-screen-operations .workflow-progress-step:focus-visible {
+  outline: 2px solid var(--ol-accent);
+  outline-offset: 2px;
+}
+
+body.ui-screen-operations .operate-kanban .kanban-lane {
+  min-height: 0 !important;
+}
+
+body.ui-screen-operations #scanDetailPanel[data-state="empty"] {
+  display: none !important;
+}
+
+body.ui-screen-operations #scanSection:has(#scanIntegrityBanner:not(.hidden)) #scanStatusStrip {
+  display: none !important;
+}
+
+html body.ui-screen-operations #scanSection > .section-title {
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px 12px !important;
+  margin-bottom: 8px !important;
+  padding: 0 !important;
+}
+
+html body.ui-screen-operations #scanSection .section-title h2 {
+  margin-right: 0 !important;
+  flex: 0 0 auto;
+}
+
+html body.ui-screen-operations #scanSection #scanGateModesChip {
+  flex-basis: auto !important;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+
+html body.ui-screen-operations #scanSection > .kanban-lane-head.visually-hidden,
+html body.ui-screen-operations #scanDetailPanel > .kanban-lane-head.visually-hidden {
+  position: absolute !important;
+}
+
+body.ui-screen-operations #pendingSection:not(.is-open):not(:target):not([data-workflow-focus="true"]) > :not(.kanban-lane-head),
+body.ui-screen-operations #pendingSection.is-collapsed:not(.is-open):not(:target) > :not(.kanban-lane-head) {
+  display: none !important;
+}
+
+body.ui-screen-operations #pendingSection:not(.is-open):not(:target):not([data-workflow-focus="true"]),
+body.ui-screen-operations #pendingSection.is-collapsed:not(.is-open):not(:target) {
+  min-height: 0 !important;
+  padding-bottom: 8px;
+}
+
+body.ui-screen-operations .scan-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 0;
+  background: var(--ol-surface);
+}
+
+body.ui-screen-operations .scan-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+body.ui-screen-operations #todayTools {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ol-border);
+}
+
+body.ui-screen-operations #settledLessonsSection {
+  margin-top: 8px;
+}
+
+@media (min-width: 1100px) {
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban:has(#scanDetailPanel:not([data-state="empty"])) {
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 440px) !important;
+    align-items: start;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban:has(#scanDetailPanel:not([data-state="empty"])) #scanSection {
+    grid-column: 1 !important;
+    grid-row: 1;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban:has(#scanDetailPanel:not([data-state="empty"])) #scanDetailPanel {
+    display: flex !important;
+    flex-direction: column;
+    grid-column: 2 !important;
+    grid-row: 1;
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px) !important;
+    overflow: auto !important;
+  }
+
+  body[data-theme="editorial"].ui-screen-operations .operate-kanban:has(#scanDetailPanel:not([data-state="empty"])) #pendingSection {
+    grid-column: 1 / -1 !important;
+    grid-row: 2;
+  }
+}
+
+body[data-theme="editorial"] .system-lane-nav__btn[data-system-lane="decide"] {
+  margin-left: 0.75rem;
+}
+
+body[data-theme="editorial"] a.research-tab-link--quiet {
+  margin-left: auto;
+  background: transparent;
+  border-color: transparent;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+/* ============================================================
+   Sharp desk lock — Figma "Today — Sharp desk" (172:284).
+   Loaded last. Flat ink, 28px forest tab mark, text rows.
+============================================================ */
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  border-bottom-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  color: #5e6772 !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn .tab-label {
+  color: inherit !important;
+  font-weight: inherit !important;
+  font-size: 13px !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"],
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-label {
+  color: #111418 !important;
+  -webkit-text-fill-color: #111418 !important;
+  font-weight: 600 !important;
+  background: transparent !important;
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"]::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: 0 !important;
+  width: 28px !important;
+  height: 2px !important;
+  transform: translateX(-50%) !important;
+  border-radius: 0 !important;
+  background: #14352c !important;
+}
+
+html body[data-theme="editorial"] .tab-landing-chip,
+html body[data-theme="editorial"] .app-topbar-actions .btn,
+html body[data-theme="editorial"] .app-topbar-actions select,
+html body[data-theme="editorial"] #displayModeSelect,
+html body[data-theme="editorial"] #refreshBtn,
+html body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary {
+  border-radius: 2px !important;
+  box-shadow: none !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding {
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] .today-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  width: 100% !important;
+}
+
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body[data-theme="editorial"] #actionCenter.priority-feed.error {
+  background: #ffffff !important;
+  border: 1px solid #d5d8de !important;
+  border-left: 3px solid #8a5c1f !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body[data-theme="editorial"] #actionCenter.priority-feed.error {
+  border-left-color: #9f2d2d !important;
+}
+
+html body[data-theme="editorial"] #actionCenter .priority-feed-item {
+  background: transparent !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-list {
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step[data-state="active"] {
+  box-shadow: inset 0 -2px 0 #14352c !important;
+}
+
+html body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active,
+html body[data-theme="editorial"] .system-lane-nav__btn.is-active {
+  color: #111418 !important;
+  border-bottom-color: #14352c !important;
+  box-shadow: inset 0 -2px 0 #14352c !important;
+  background: transparent !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead th {
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  color: #5e6772 !important;
+  background: #f6f7f9 !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tbody td {
+  color: #111418 !important;
+  font-size: 12px !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-ticker {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  font-family: "Inter", "DM Sans", system-ui, sans-serif !important;
+}
+
+html body[data-theme="editorial"] #scanSection :is(
+  .scan-gate-chip,
+  .scan-strategy-pill,
+  .scan-strategy-more,
+  .scan-stage-pill,
+  .scan-grade-chip,
+  .prov-chip
+) {
+  display: inline !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: #111418 !important;
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-stage-pill,
+html body[data-theme="editorial"] #scanSection .prov-chip,
+html body[data-theme="editorial"] #scanSection .scan-company-name,
+html body[data-theme="editorial"] #scanSection .scan-ticker-meta,
+html body[data-theme="editorial"] #scanSection .scan-row-why {
+  color: #5e6772 !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-strategy-pill {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 11rem;
+  vertical-align: bottom;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-analog-num,
+html body[data-theme="editorial"] #scanSection .scan-analog-num--thin {
+  color: #111418 !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-stop-track {
+  display: none !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-row-actions {
+  display: inline-flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 12px !important;
+  width: 100% !important;
+  flex-wrap: nowrap !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-row-action,
+html body[data-theme="editorial"] #scanSection .scan-row-action--primary {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  color: #111418 !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-row-action--primary {
+  font-weight: 600 !important;
+  color: #14352c !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-row-action:hover:not(:disabled) {
+  background: transparent !important;
+  color: #14352c !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+html body[data-theme="editorial"] #scanSection #scanGateModesChip,
+html body[data-theme="editorial"] #scanSection #scanTopStrategy,
+html body[data-theme="editorial"] #scanBlockersChip {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: #5e6772 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  max-width: 36rem;
+}
+
+html body[data-theme="editorial"] .scan-funnel-mark-track {
+  height: 4px !important;
+  border-radius: 2px !important;
+  background: #e6e8ec !important;
+}
+
+html body[data-theme="editorial"] .scan-funnel-mark-kept {
+  background: #14352c !important;
+  border-radius: 2px !important;
+}
+
+html body[data-theme="editorial"] #scanIntegrityBanner {
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  background: #ffffff !important;
+  border: 1px solid #d5d8de !important;
+  border-left: 3px solid #8a5c1f !important;
+  border-radius: 4px !important;
+  color: #111418 !important;
+  box-shadow: none !important;
+  padding: 10px 12px !important;
+}
+
+html body[data-theme="editorial"] .decision-summary-pill {
+  border-radius: 2px !important;
+  font-weight: 500 !important;
+  background: #ffffff !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] #scanSection #scanGateModesChip,
+html body.ui-screen-operations[data-theme="editorial"] #scanSection #scanTopStrategy {
+  flex-basis: 100% !important;
+  max-width: none !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+) {
+  background: #ffffff !important;
+  border: 1px solid #d5d8de !important;
+  border-left-width: 3px !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+)[data-state="success"] {
+  border-left-color: #1d4a3e !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+)[data-state="partial"],
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+)[data-state="loading"] {
+  border-left-color: #8a5c1f !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+)[data-state="error"],
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+)[data-state="hold"] {
+  border-left-color: #9f2d2d !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .operations-status-pill,
+  .research-status-pill,
+  .system-status-pill
+) {
+  border-radius: 2px !important;
+  background: #f6f7f9 !important;
+  box-shadow: none !important;
+}
+
+/* ============================================================
+   Current desk — same Old Logan ink and forest, newer surface.
+   No second palette. Beats the flat Sharp desk lock above.
+============================================================ */
+html body[data-theme="editorial"] {
+  --ol-radius-card: 16px;
+  --ol-radius-control: 10px;
+  --ol-shadow: 0 1px 1px rgba(17, 20, 24, 0.04), 0 18px 40px rgba(17, 20, 24, 0.06);
+  background:
+    radial-gradient(880px 420px at -8% -12%, rgba(20, 53, 44, 0.09), transparent 62%),
+    radial-gradient(720px 380px at 108% -8%, rgba(20, 53, 44, 0.05), transparent 58%),
+    #e9ebef !important;
+}
+
+html body[data-theme="editorial"] .bg-blur {
+  opacity: 0 !important;
+}
+
+html body[data-theme="editorial"] .bg-grid {
+  opacity: 0.4;
+  background-size: 48px 48px;
+}
+
+html body[data-theme="editorial"] .app-topbar {
+  position: sticky !important;
+  top: 0;
+  z-index: 40;
+  background: rgba(255, 255, 255, 0.82) !important;
+  border-bottom: 1px solid rgba(17, 20, 24, 0.08) !important;
+  box-shadow: 0 10px 30px rgba(17, 20, 24, 0.04) !important;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+html body[data-theme="editorial"] .app-topbar-brand .brand-mark {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 8px !important;
+  background: #14352c !important;
+  box-shadow: 0 6px 16px rgba(20, 53, 44, 0.22) !important;
+  font-size: 0.78rem !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-brand .brand-text {
+  letter-spacing: -0.03em !important;
+  font-weight: 600 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs {
+  background: rgba(233, 235, 239, 0.9) !important;
+  border: 1px solid rgba(17, 20, 24, 0.06) !important;
+  border-radius: 14px !important;
+  padding: 4px !important;
+  gap: 2px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+  border-radius: 10px !important;
+  padding: 7px 14px !important;
+  color: #5e6772 !important;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:hover {
+  background: rgba(255, 255, 255, 0.7) !important;
+  color: #111418 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] {
+  background: #14352c !important;
+  color: #f4f6f5 !important;
+  box-shadow: 0 6px 16px rgba(20, 53, 44, 0.22) !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"] .tab-label {
+  background: transparent !important;
+  color: #f4f6f5 !important;
+  -webkit-text-fill-color: #f4f6f5 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn[aria-selected="true"]::after {
+  display: none !important;
+  content: none !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-actions .btn,
+html body[data-theme="editorial"] .app-topbar-actions select,
+html body[data-theme="editorial"] #displayModeSelect,
+html body[data-theme="editorial"] #refreshBtn,
+html body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn {
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  border: 1px solid rgba(17, 20, 24, 0.1) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset !important;
+}
+
+html body[data-theme="editorial"] .app-topbar #scanBtn.btn.primary,
+html body[data-theme="editorial"] .btn.primary {
+  border-radius: 10px !important;
+  background: #14352c !important;
+  border-color: #14352c !important;
+  color: #f4f6f5 !important;
+  box-shadow: 0 8px 18px rgba(20, 53, 44, 0.2) !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .card,
+  .health-tile,
+  .today-summary-kpi,
+  .research-summary-kpi,
+  .system-summary-kpi,
+  .panel-disclosure,
+  .task-card,
+  .stats .stat
+) {
+  background: #ffffff !important;
+  border: 1px solid rgba(17, 20, 24, 0.08) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 1px 1px rgba(17, 20, 24, 0.03), 0 12px 32px rgba(17, 20, 24, 0.05) !important;
+}
+
+html body[data-theme="editorial"] .operate-kanban .kanban-lane {
+  border-left: 1px solid rgba(17, 20, 24, 0.08) !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding,
+html body[data-theme="editorial"] .workflow-progress-list,
+html body[data-theme="editorial"] #scanIntegrityBanner,
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+) {
+  border-radius: 14px !important;
+  box-shadow: 0 1px 1px rgba(17, 20, 24, 0.03) !important;
+}
+
+html body[data-theme="editorial"] .tab-landing-chip,
+html body[data-theme="editorial"] .decision-summary-pill,
+html body[data-theme="editorial"] :is(
+  .operations-status-pill,
+  .research-status-pill,
+  .system-status-pill
+) {
+  border-radius: 999px !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .today-summary-value,
+  .research-summary-value,
+  .system-summary-value
+) {
+  letter-spacing: -0.04em !important;
+  font-weight: 600 !important;
+}
+
+html body[data-theme="editorial"] #scanSection .table-wrap,
+html body[data-theme="editorial"] #scanSection .qualified-table-wrap {
+  border-radius: 14px !important;
+  border: 1px solid rgba(17, 20, 24, 0.08) !important;
+  overflow: hidden;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead th {
+  background: #f4f6f8 !important;
+  letter-spacing: 0.08em !important;
+}
+
+html body[data-theme="editorial"] .scan-status-filter {
+  border-radius: 12px !important;
+  padding: 3px !important;
+  background: #f4f6f8 !important;
+  border: 1px solid rgba(17, 20, 24, 0.06) !important;
+}
+
+html body[data-theme="editorial"] .scan-status-filter__btn {
+  border-radius: 9px !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step[data-state="active"] {
+  background: rgba(20, 53, 44, 0.06) !important;
+  box-shadow: inset 0 -2px 0 #14352c !important;
+}
+
+html body[data-theme="editorial"] .research-mode-chips .research-tab-btn,
+html body[data-theme="editorial"] .system-lane-nav__btn {
+  border-radius: 10px !important;
+}
+
+html body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active,
+html body[data-theme="editorial"] .system-lane-nav__btn.is-active {
+  background: #14352c !important;
+  color: #f4f6f5 !important;
+  border-bottom-color: transparent !important;
+  box-shadow: 0 6px 16px rgba(20, 53, 44, 0.18) !important;
+}
+
+html body[data-theme="editorial"] .research-mode-chips .research-tab-btn.active .research-tab-label {
+  color: #f4f6f5 !important;
+  -webkit-text-fill-color: #f4f6f5 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn {
+    transition: none !important;
+  }
+}
+
+/* More forest, same ink. Errors and warnings keep their own colors. */
+html body[data-theme="editorial"] {
+  background:
+    radial-gradient(920px 460px at -6% -8%, rgba(20, 53, 44, 0.2), transparent 58%),
+    radial-gradient(760px 420px at 104% 0%, rgba(20, 53, 44, 0.12), transparent 56%),
+    #e4eee8 !important;
+}
+
+html body[data-theme="editorial"] .bg-grid {
+  opacity: 0.55;
+  background-image:
+    linear-gradient(rgba(20, 53, 44, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 53, 44, 0.06) 1px, transparent 1px);
+}
+
+html body[data-theme="editorial"] .app-topbar {
+  background: rgba(244, 249, 246, 0.9) !important;
+  border-bottom: 2px solid #14352c !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-brand .brand-text {
+  color: #14352c !important;
+  -webkit-text-fill-color: #14352c !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs {
+  background: rgba(20, 53, 44, 0.1) !important;
+  border-color: rgba(20, 53, 44, 0.14) !important;
+}
+
+html body[data-theme="editorial"] .app-topbar-tabs .screen-switch-btn:hover {
+  background: rgba(20, 53, 44, 0.12) !important;
+  color: #14352c !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .card,
+  .health-tile,
+  .today-summary-kpi,
+  .research-summary-kpi,
+  .system-summary-kpi,
+  .panel-disclosure,
+  .task-card,
+  .stats .stat
+) {
+  background: #e7f3eb !important;
+  border-color: rgba(20, 53, 44, 0.2) !important;
+}
+
+html body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding,
+html body[data-theme="editorial"] .workflow-progress-list {
+  background: #e7f3eb !important;
+  border-color: rgba(20, 53, 44, 0.2) !important;
+}
+
+html body[data-theme="editorial"] :is(
+  .today-summary-value,
+  .research-summary-value,
+  .system-summary-value,
+  .section-title h2,
+  .section-title h3,
+  .scan-list-title
+) {
+  color: #14352c !important;
+  -webkit-text-fill-color: #14352c !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage .scan-ticker {
+  color: #14352c !important;
+}
+
+html body[data-theme="editorial"] #scanSection .table-wrap,
+html body[data-theme="editorial"] #scanSection .qualified-table-wrap {
+  border-color: rgba(20, 53, 44, 0.18) !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead th {
+  background: rgba(20, 53, 44, 0.1) !important;
+  color: #14352c !important;
+}
+
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tbody tr:hover td {
+  background: rgba(20, 53, 44, 0.05) !important;
+}
+
+html body[data-theme="editorial"] .scan-status-filter {
+  background: rgba(20, 53, 44, 0.08) !important;
+  border-color: rgba(20, 53, 44, 0.14) !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step[data-state="active"] {
+  background: rgba(20, 53, 44, 0.12) !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step[data-state="active"] .workflow-progress-index {
+  background: #14352c !important;
+  border-color: #14352c !important;
+  color: #f4f6f5 !important;
+}
+
+html body[data-theme="editorial"] .tab-landing-chip--healthy {
+  background: rgba(20, 53, 44, 0.08) !important;
+  border-color: #14352c !important;
+  color: #14352c !important;
+}
+
+/* One forest ramp. Page, cards, and sheets are the same green at three depths.
+   Pure white was a second color and broke the sage. */
+html body[data-theme="editorial"] {
+  --ol-bg: #e4efe8;
+  --ol-surface: #d5e4dc;
+  --ol-surface-soft: #cfe0d6;
+  --ol-border: #b7cfc2;
+  --ol-border-strong: #a9c4b4;
+  background: #e4efe8 !important;
+}
+
+html body[data-theme="editorial"] .app-topbar,
+html body[data-theme="editorial"] .app-topbar-actions .btn,
+html body[data-theme="editorial"] .app-topbar-actions select,
+html body[data-theme="editorial"] #displayModeSelect,
+html body[data-theme="editorial"] #refreshBtn,
+html body[data-theme="editorial"] .app-topbar-actions .btn.icon-btn,
+html body[data-theme="editorial"] :is(
+  .card,
+  .health-tile,
+  .today-summary-kpi,
+  .research-summary-kpi,
+  .system-summary-kpi,
+  .panel-disclosure,
+  .task-card,
+  .stats .stat
+),
+html body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding,
+html body[data-theme="editorial"] .workflow-progress-list,
+html body[data-theme="editorial"] #scanIntegrityBanner,
+html body[data-theme="editorial"] :is(
+  .operations-status-strip,
+  .research-status-strip,
+  .system-status-strip
+),
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body[data-theme="editorial"] #actionCenter.priority-feed.error {
+  background: #d5e4dc !important;
+  border-color: #b7cfc2 !important;
+}
+
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body[data-theme="editorial"] #actionCenter.priority-feed.warn,
+html body[data-theme="editorial"] #scanIntegrityBanner {
+  border-left-color: #8a5c1f !important;
+}
+
+html body.ui-pro.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter.priority-feed.error,
+html body[data-theme="editorial"] #actionCenter.priority-feed.error {
+  border-left-color: #9f2d2d !important;
+}
+
+html body[data-theme="editorial"] table,
+html body[data-theme="editorial"] .table-wrap,
+html body[data-theme="editorial"] #scanSection .qualified-table-wrap,
+html body[data-theme="editorial"] input,
+html body[data-theme="editorial"] select,
+html body[data-theme="editorial"] textarea {
+  background: #e4efe8 !important;
+  border-color: #b7cfc2 !important;
+}
+
+html body[data-theme="editorial"] table thead th,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage thead th {
+  background: #c3d8cc !important;
+  color: #14352c !important;
+  border-bottom-color: #a9c4b4 !important;
+}
+
+html body[data-theme="editorial"] table tbody td {
+  background: #e4efe8 !important;
+  border-bottom-color: #c5d6cc !important;
+}
+
+html body[data-theme="editorial"] table tbody tr:nth-child(even) td {
+  background: #d5e4dc !important;
+}
+
+html body[data-theme="editorial"] table tbody tr:hover td,
+html body[data-theme="editorial"] #scanSection .scan-candidates-table--triage tbody tr:hover td,
+html body[data-theme="editorial"] #scanSection table tbody tr.is-active td {
+  background: #cfe0d6 !important;
+}
+
+html body[data-theme="editorial"] .tab-landing-chip,
+html body[data-theme="editorial"] .decision-summary-pill,
+html body[data-theme="editorial"] :is(
+  .operations-status-pill,
+  .research-status-pill,
+  .system-status-pill
+) {
+  background: #e4efe8 !important;
+  border-color: #a9c4b4 !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step {
+  background: transparent !important;
+}
+
+html body[data-theme="editorial"] .workflow-progress-step[data-state="active"] {
+  background: rgba(20, 53, 44, 0.14) !important;
+}
+
+/* Morning note, then the list. Beats the earlier Today-card display:block. */
+html body.ui-screen-operations[data-theme="editorial"] #todaySummaryLanding,
+html body.ui-screen-operations[data-theme="editorial"] #pendingSummaryStrip,
+html body.ui-screen-operations[data-theme="editorial"] #actionCenter,
+html body.ui-screen-operations[data-theme="editorial"] #workflowPrimaryHeading,
+html body.ui-screen-operations[data-theme="editorial"] #workflowStatusStrip,
+html body.ui-screen-operations[data-theme="editorial"] #workflowSnapshot,
+html body.ui-screen-operations[data-theme="editorial"] #workflowProgress,
+html body.ui-screen-operations[data-theme="editorial"] .today-stack-retired {
+  display: none !important;
+}
+
+html body.ui-screen-operations #morningNote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0 0 12px;
+  padding: 2px 2px 8px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+html body.ui-screen-operations #morningNote p {
+  margin: 0;
+  color: var(--ol-text);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+html body.ui-screen-operations #scanDetailTicker {
+  margin: 0 0 0.35rem;
+  font-size: 1.35rem;
+}
+
+html body.ui-screen-operations .scan-detail-trade {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0 0 0.75rem;
+}
+
+html body.ui-screen-operations .scan-detail-trade p {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+html body.ui-screen-operations .scan-detail-actions {
+  position: static;
+}
+
+
+
 
 
 
