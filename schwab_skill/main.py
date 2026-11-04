@@ -24,6 +24,24 @@ SKILL_DIR = Path(__file__).resolve().parent
 TZ_NY = ZoneInfo("America/New_York")
 
 
+def _as_log_count(value: object) -> int | str:
+    """Count for a log line. Numeric strings such as ``'2'`` become ints.
+
+    ``%d`` raises ``TypeError`` when the count is a ``str``. Callers log with
+    ``%s`` so a non-numeric value is still recorded.
+    """
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lstrip("-").isdigit():
+            return int(text)
+        return value
+    return str(value)
+
+
 def daily_heartbeat(skill_dir: Path | str | None = None) -> None:
     """
     Check both Schwab API connections, get account value, send status via notifier.
@@ -557,7 +575,7 @@ def run_scheduler() -> None:
             try:
                 from signal_scanner import run_scan_and_notify
                 n = run_scan_and_notify(skill_dir=SKILL_DIR)
-                log.info("Signal scan: %d signals found, Discord notifications sent.", n)
+                log.info("Signal scan: %s signals found, Discord notifications sent.", _as_log_count(n))
             except Exception as e:
                 log.warning("Signal scan failed: %s", e)
 
@@ -572,8 +590,9 @@ def run_scheduler() -> None:
             try:
                 from hold_reminder import check_hold_period_and_alert
                 n = check_hold_period_and_alert(skill_dir=SKILL_DIR)
-                if n > 0:
-                    log.info("Hold reminder: %d alerts sent.", n)
+                hold_count = _as_log_count(n)
+                if isinstance(hold_count, int) and hold_count > 0:
+                    log.info("Hold reminder: %s alerts sent.", hold_count)
             except Exception as e:
                 log.warning("Hold reminder failed: %s", e)
 
