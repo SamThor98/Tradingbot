@@ -71,7 +71,6 @@ def daily_heartbeat(skill_dir: Path | str | None = None) -> None:
     account_value = None
     try:
         from execution import get_account_status
-
         result = get_account_status(auth=auth, skill_dir=skill_dir)
         if isinstance(result, dict):
             accounts = result.get("accounts", [])
@@ -127,42 +126,35 @@ def build_morning_brief(skill_dir: Path | str | None = None) -> None:
 
     try:
         from market_data import get_daily_history
-
         spy_df = get_daily_history("SPY", days=5, auth=auth, skill_dir=skill_dir)
         if not spy_df.empty and len(spy_df) >= 2:
             spy_price = float(spy_df["close"].iloc[-1])
             spy_prev = float(spy_df["close"].iloc[-2])
             spy_chg = (spy_price - spy_prev) / spy_prev * 100
-            embed["fields"].append(
-                {
-                    "name": "Market",
-                    "value": f"SPY: **${spy_price:,.2f}** ({spy_chg:+.1f}% 1d)",
-                    "inline": True,
-                }
-            )
+            embed["fields"].append({
+                "name": "Market",
+                "value": f"SPY: **${spy_price:,.2f}** ({spy_chg:+.1f}% 1d)",
+                "inline": True,
+            })
     except Exception as e:
         log.warning("Morning brief SPY: %s", e)
 
     try:
         from sector_strength import get_sector_heatmap
-
         heatmap = get_sector_heatmap(auth, skill_dir)
         winning_rows = [r for r in heatmap.get("rows", []) if r["winning"]]
         if winning_rows:
             names = ", ".join(f"**{r['etf']}**" for r in winning_rows[:5])
-            embed["fields"].append(
-                {
-                    "name": "Winning Sectors",
-                    "value": names,
-                    "inline": True,
-                }
-            )
+            embed["fields"].append({
+                "name": "Winning Sectors",
+                "value": names,
+                "inline": True,
+            })
     except Exception as e:
         log.warning("Morning brief sectors: %s", e)
 
     try:
         from execution import get_account_status
-
         if auth:
             acct = get_account_status(auth=auth, skill_dir=skill_dir)
             if isinstance(acct, dict):
@@ -181,19 +173,16 @@ def build_morning_brief(skill_dir: Path | str | None = None) -> None:
                     if eq and total_val == 0:
                         total_val = float(eq)
                 if pos_count > 0:
-                    embed["fields"].append(
-                        {
-                            "name": "Portfolio Snapshot",
-                            "value": f"{pos_count} positions | ${total_val:,.0f} | Day P/L: ${day_pl:+,.0f}",
-                            "inline": False,
-                        }
-                    )
+                    embed["fields"].append({
+                        "name": "Portfolio Snapshot",
+                        "value": f"{pos_count} positions | ${total_val:,.0f} | Day P/L: ${day_pl:+,.0f}",
+                        "inline": False,
+                    })
     except Exception as e:
         log.warning("Morning brief portfolio: %s", e)
 
     try:
         from execution import get_execution_safety_summary
-
         safety = get_execution_safety_summary(skill_dir=skill_dir, days=1)
         ev = safety.get("events", {})
         guardrail_blocks = ev.get("guardrail_blocked_order", 0)
@@ -202,17 +191,15 @@ def build_morning_brief(skill_dir: Path | str | None = None) -> None:
         stop_fail = ev.get("stop_protection_failed", 0)
         shadow_count = ev.get("action_shadow", 0)
         live_count = ev.get("action_live", 0)
-        embed["fields"].append(
-            {
-                "name": "Execution Safety - 24h",
-                "value": (
-                    f"Blocks: {guardrail_blocks} | Exit bypass: {exits_allowed}\n"
-                    f"Stops ok/fail: {stop_ok}/{stop_fail}\n"
-                    f"Shadow/Live: {shadow_count}/{live_count}"
-                ),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Execution Safety - 24h",
+            "value": (
+                f"Blocks: {guardrail_blocks} | Exit bypass: {exits_allowed}\n"
+                f"Stops ok/fail: {stop_ok}/{stop_fail}\n"
+                f"Shadow/Live: {shadow_count}/{live_count}"
+            ),
+            "inline": False,
+        })
     except Exception as e:
         log.warning("Morning brief execution safety: %s", e)
 
@@ -255,22 +242,16 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
                 for ticker, entries in data.items():
                     if isinstance(entries, list):
                         signals_this_week += sum(
-                            1
-                            for e in entries
+                            1 for e in entries
                             if isinstance(e, dict) and (e.get("timestamp", "") or e.get("date", "")) >= cutoff
                         )
-                    elif (
-                        isinstance(entries, dict)
-                        and (entries.get("timestamp", "") or entries.get("date", "")) >= cutoff
-                    ):
+                    elif isinstance(entries, dict) and (entries.get("timestamp", "") or entries.get("date", "")) >= cutoff:
                         signals_this_week += 1
-        embed["fields"].append(
-            {
-                "name": "Signals",
-                "value": f"**{signals_this_week}** generated this week",
-                "inline": True,
-            }
-        )
+        embed["fields"].append({
+            "name": "Signals",
+            "value": f"**{signals_this_week}** generated this week",
+            "inline": True,
+        })
     except Exception as e:
         log.warning("Weekly digest signals: %s", e)
 
@@ -283,13 +264,11 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
                 week_trades = [o for o in outcomes if (o.get("date", "") or "") >= cutoff]
                 buys = sum(1 for o in week_trades if (o.get("side", "").upper()) == "BUY")
                 sells = sum(1 for o in week_trades if (o.get("side", "").upper()) == "SELL")
-                embed["fields"].append(
-                    {
-                        "name": "Fills",
-                        "value": f"**{buys}** buy(s), **{sells}** sell(s)",
-                        "inline": True,
-                    }
-                )
+                embed["fields"].append({
+                    "name": "Fills",
+                    "value": f"**{buys}** buy(s), **{sells}** sell(s)",
+                    "inline": True,
+                })
     except Exception as e:
         log.warning("Weekly digest outcomes: %s", e)
 
@@ -331,19 +310,16 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
                 insights.append(f"Min conviction: {suggested}")
 
             if insights:
-                embed["fields"].append(
-                    {
-                        "name": "Self-Study",
-                        "value": "\n".join(insights),
-                        "inline": False,
-                    }
-                )
+                embed["fields"].append({
+                    "name": "Self-Study",
+                    "value": "\n".join(insights),
+                    "inline": False,
+                })
     except Exception as e:
         log.warning("Weekly digest self-study: %s", e)
 
     try:
         from execution import get_execution_safety_summary
-
         safety = get_execution_safety_summary(skill_dir=skill_dir, days=7)
         ev = safety.get("events", {})
         lines = [
@@ -356,19 +332,16 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
         if top_reasons:
             first = top_reasons[0]
             lines.append(f"Top failure reason: {first.get('reason')} ({first.get('count')})")
-        embed["fields"].append(
-            {
-                "name": "Execution Safety - 7d",
-                "value": "\n".join(lines),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Execution Safety - 7d",
+            "value": "\n".join(lines),
+            "inline": False,
+        })
     except Exception as e:
         log.warning("Weekly digest execution safety: %s", e)
 
     try:
         from signal_scanner import get_signal_quality_summary
-
         quality = get_signal_quality_summary(skill_dir=skill_dir, days=7)
         d = quality.get("diagnostics", {})
         lines = [
@@ -379,13 +352,11 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
             f"Entry-timing shadow: {d.get('entry_shadow_would_filter_any', 0)}",
             f"Weak breakout vol: {d.get('low_breakout_volume', 0)} | Weak MiroFish: {d.get('weak_mirofish_alignment', 0)}",
         ]
-        embed["fields"].append(
-            {
-                "name": "Signal Quality - 7d",
-                "value": "\n".join(lines),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Signal Quality - 7d",
+            "value": "\n".join(lines),
+            "inline": False,
+        })
     except Exception as e:
         log.warning("Weekly digest signal quality: %s", e)
 
@@ -399,13 +370,11 @@ def build_weekly_digest(skill_dir: Path | str | None = None) -> None:
             f"High-risk tags: {d.get('sec_high_risk_tag_count', 0)} | Data failures: {d.get('sec_data_failures', 0)}",
             f"Hint shadow/live: {d.get('sec_score_hint_shadow_adjustments', 0)}/{d.get('sec_score_hint_applied_count', 0)}",
         ]
-        embed["fields"].append(
-            {
-                "name": "SEC Enrichment - 7d",
-                "value": "\n".join(sec_lines),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "SEC Enrichment - 7d",
+            "value": "\n".join(sec_lines),
+            "inline": False,
+        })
     except Exception as e:
         log.warning("Weekly digest SEC diagnostics: %s", e)
 
@@ -437,7 +406,9 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
         from core.outcome_backfill import run_local_backfill
 
         backfill = run_local_backfill(skill_dir)
-        log.info("FP report backfill: resolved=%s/%s", backfill.get("resolved"), backfill.get("total"))
+        log.info(
+            "FP report backfill: resolved=%s/%s", backfill.get("resolved"), backfill.get("total")
+        )
     except Exception as e:
         log.warning("FP report backfill failed: %s", e)
 
@@ -480,29 +451,25 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "footer": {"text": "Decision-packet learning loop - proposals are advisory only"},
     }
-    embed["fields"].append(
-        {
-            "name": "Coverage",
-            "value": (
-                f"**{report.get('resolved_packets', 0)}**/{report.get('total_packets', 0)} packets resolved "
-                f"({report.get('coverage_pct', 0)}%)"
-            ),
-            "inline": False,
-        }
-    )
+    embed["fields"].append({
+        "name": "Coverage",
+        "value": (
+            f"**{report.get('resolved_packets', 0)}**/{report.get('total_packets', 0)} packets resolved "
+            f"({report.get('coverage_pct', 0)}%)"
+        ),
+        "inline": False,
+    })
 
     fp_lines = [
         f"{regime}: {stats.get('fp_rate')} ({stats.get('losses')}/{stats.get('resolved')})"
         for regime, stats in (report.get("false_positives_by_regime") or {}).items()
     ]
     if fp_lines:
-        embed["fields"].append(
-            {
-                "name": "False positives by regime",
-                "value": "\n".join(fp_lines[:6]),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "False positives by regime",
+            "value": "\n".join(fp_lines[:6]),
+            "inline": False,
+        })
 
     decay_lines = [
         f"{setup}: decay={stats.get('edge_decay')} (n={stats.get('resolved')})"
@@ -510,13 +477,11 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
         if stats.get("edge_decay") is not None
     ]
     if decay_lines:
-        embed["fields"].append(
-            {
-                "name": "Edge decay by setup",
-                "value": "\n".join(decay_lines[:6]),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Edge decay by setup",
+            "value": "\n".join(decay_lines[:6]),
+            "inline": False,
+        })
 
     drag_lines = [
         f"{cond}: {stats.get('avg_slippage_bps')} bps (n={stats.get('samples')})"
@@ -524,33 +489,27 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
         if stats.get("avg_slippage_bps") is not None
     ]
     if drag_lines:
-        embed["fields"].append(
-            {
-                "name": "Execution drag by condition",
-                "value": "\n".join(drag_lines[:6]),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Execution drag by condition",
+            "value": "\n".join(drag_lines[:6]),
+            "inline": False,
+        })
 
     top_proposals = (proposals.get("proposals") or [])[:3]
     if top_proposals:
-        embed["fields"].append(
-            {
-                "name": f"Tuning proposals ({proposals.get('count', 0)})",
-                "value": "\n".join(
-                    f"{p.get('target')} -> {p.get('direction')} [{p.get('scope')}]" for p in top_proposals
-                ),
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": f"Tuning proposals ({proposals.get('count', 0)})",
+            "value": "\n".join(
+                f"{p.get('target')} -> {p.get('direction')} [{p.get('scope')}]" for p in top_proposals
+            ),
+            "inline": False,
+        })
     else:
-        embed["fields"].append(
-            {
-                "name": "Tuning proposals",
-                "value": "None (insufficient resolved samples or all metrics within bounds)",
-                "inline": False,
-            }
-        )
+        embed["fields"].append({
+            "name": "Tuning proposals",
+            "value": "None (insufficient resolved samples or all metrics within bounds)",
+            "inline": False,
+        })
 
     send_embed_alert(embed, env_path=env_path)
     log.info("Weekly false-positive report sent (proposals=%s)", proposals.get("count", 0))
@@ -565,7 +524,6 @@ def run_scheduler() -> None:
 
     try:
         from discord_confirm import start_confirm_bot
-
         start_confirm_bot(SKILL_DIR / ".env")
     except Exception as e:
         log.warning("Discord confirm bot failed to start: %s (signals will use webhook)", e)
@@ -616,7 +574,6 @@ def run_scheduler() -> None:
             _last_signal_minute = key
             try:
                 from signal_scanner import run_scan_and_notify
-
                 n = run_scan_and_notify(skill_dir=SKILL_DIR)
                 log.info("Signal scan: %s signals found, Discord notifications sent.", _as_log_count(n))
             except Exception as e:
@@ -632,7 +589,6 @@ def run_scheduler() -> None:
             _last_hold_reminder_minute = key
             try:
                 from hold_reminder import check_hold_period_and_alert
-
                 n = check_hold_period_and_alert(skill_dir=SKILL_DIR)
                 hold_count = _as_log_count(n)
                 if isinstance(hold_count, int) and hold_count > 0:
@@ -803,10 +759,10 @@ def run_scheduler() -> None:
             _last_evolve_minute = key
             try:
                 from evolve_logic import LearningEngine
-
                 engine = LearningEngine(skill_dir=SKILL_DIR)
                 result = engine.run(apply=False)
-                log.info("Evolve logic: status=%s, updates=%d", result.get("status"), result.get("updates_count", 0))
+                log.info("Evolve logic: status=%s, updates=%d",
+                         result.get("status"), result.get("updates_count", 0))
                 if result.get("status") == "ok" and result.get("updates_count", 0) > 0:
                     send_alert(
                         f"Learning Engine found {result['updates_count']} threshold adjustment(s). "
@@ -827,7 +783,6 @@ def run_scheduler() -> None:
             _last_challenger_minute = key
             try:
                 from challenger_mode import ChallengerRunner
-
                 runner = ChallengerRunner(skill_dir=SKILL_DIR)
                 result = runner.run()
                 log.info("Challenger scan: status=%s", result.get("status"))
@@ -920,7 +875,8 @@ def run_scheduler() -> None:
                 )
             else:
                 send_alert(
-                    f"Book YTD Excel export FAILED: {result.get('error') or 'unknown'} (path={result.get('path')})",
+                    f"Book YTD Excel export FAILED: {result.get('error') or 'unknown'} "
+                    f"(path={result.get('path')})",
                     kind="self_study",
                     env_path=SKILL_DIR / ".env",
                 )
@@ -1121,7 +1077,6 @@ def run_scheduler() -> None:
         while True:
             schedule.run_pending()
             import time
-
             time.sleep(60)
     except KeyboardInterrupt:
         log.info("Shutdown requested")
