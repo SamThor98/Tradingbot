@@ -155,6 +155,11 @@ def test_dry_run_estimates_cost_without_calls_or_writes(tmp_path, monkeypatch) -
         created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
     )
     calls: list[str] = []
+
+    def _complete(_system: str, user: str) -> str:
+        calls.append(user)
+        return "STRONG SETUP"
+
     report = run_replay(
         tmp_path,
         tab="today",
@@ -163,7 +168,7 @@ def test_dry_run_estimates_cost_without_calls_or_writes(tmp_path, monkeypatch) -
         max_llm_calls=1,
         now=datetime(2026, 11, 3, tzinfo=timezone.utc),
         db_path=tmp_path / "missing.db",
-        complete=lambda _system, user: calls.append(user) or "STRONG SETUP",
+        complete=_complete,
         versions=[{"id": "live-1", "prompt_key": "verdict", "text": "rules", "status": "live"}],
     )
     assert report["estimated_llm_calls"] == 1
