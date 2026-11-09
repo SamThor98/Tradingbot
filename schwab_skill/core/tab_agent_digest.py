@@ -87,6 +87,7 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "max_drawdown": row.get("max_drawdown"),
                 "win_rate": row.get("win_rate"),
                 "n_longs": row.get("n_longs"),
+                "n_skips": row.get("n_skips"),
                 "edge_vs_baseline": row.get("edge_vs_baseline"),
                 "degenerate": row.get("degenerate"),
                 "decision_prompt": row.get("decision_prompt", True),
@@ -169,9 +170,11 @@ def _markdown(payload: dict[str, Any]) -> str:
                 marker = " not-scored"
             elif row.get("degenerate"):
                 marker = " no-variance"
+            skips = f" skips={row.get('n_skips')}" if row.get("n_skips") is not None else ""
             lines.append(
                 f"- {row.get('prompt_key')} {row.get('version_id')} "
-                f"n={row.get('n')} longs={row.get('n_longs')} win_rate={row.get('win_rate')} "
+                f"n={row.get('n')} longs={row.get('n_longs')}{skips} "
+                f"win_rate={row.get('win_rate')} "
                 f"live={row.get('n_live')} replay={row.get('n_replay')} "
                 f"{row.get('primary_metric')}={row.get('primary_score')} "
                 f"edge_vs_baseline={row.get('edge_vs_baseline')} "

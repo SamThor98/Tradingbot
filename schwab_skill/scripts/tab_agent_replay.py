@@ -110,8 +110,11 @@ def main(argv: list[str] | None = None) -> int:
         f"calls_under_cap={report['calls_under_cap']} "
         f"max_llm_calls={report['max_llm_calls']} "
         f"unfilled_cases={report.get('unfilled_cases')} "
+        f"unfilled_field_counts={json.dumps(report.get('unfilled_field_counts') or {}, sort_keys=True)} "
         f"history_fill={report.get('history_fill')}"
     )
+    if report.get("cost_note"):
+        print(report["cost_note"])
     print(report["caveat"])
     print(json.dumps(report, indent=2))
     return 0 if report.get("ok") else 1

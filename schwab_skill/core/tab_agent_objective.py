@@ -335,6 +335,7 @@ def evaluate_book(
     weights: list[float] | None = None,
     sources: list[str] | None = None,
     decisions: list[str] | None = None,
+    path_returns_pct: list[float] | None = None,
 ) -> dict[str, Any]:
     """Score one ordered book of per-trade percent returns.
 
@@ -343,8 +344,13 @@ def evaluate_book(
     below 1 pulls the mean toward the live rows.
 
     ``decisions`` marks ``long`` and ``cash``. Win rate is wins among taken longs
-    divided by the long count. Cash still scores 0% in the equity path. When
-    ``decisions`` is omitted, every row is treated as a taken long.
+    divided by the long count. Cash still scores 0% in the equity path when the
+    scored return is already 0. When ``decisions`` is omitted, every row is a
+    taken long.
+
+    ``path_returns_pct`` is the equity-curve series when it differs from the
+    scored series. Sortino still uses ``returns_pct``. The confidence book
+    passes cash (0) here for a skip and the separation penalty in ``returns_pct``.
     """
     raw_weights = list(weights) if weights is not None else [1.0] * len(returns_pct)
     raw_sources = list(sources) if sources is not None else ["live"] * len(returns_pct)
@@ -358,6 +364,12 @@ def evaluate_book(
         raw_sources.append("live")
     while len(raw_decisions) < len(returns_pct):
         raw_decisions.append("" if decisions is not None else "long")
+    if path_returns_pct is None:
+        raw_path = [float(value) for value in returns_pct]
+    else:
+        raw_path = [float(value) for value in path_returns_pct]
+    while len(raw_path) < len(returns_pct):
+        raw_path.append(0.0)
     triples = list(
         zip(
             dates or [""] * len(returns_pct),
@@ -365,6 +377,7 @@ def evaluate_book(
             raw_weights,
             raw_sources,
             raw_decisions,
+            raw_path,
             strict=False,
         )
     )
@@ -374,6 +387,7 @@ def evaluate_book(
     weights_sorted = [max(0.0, float(item[2])) for item in triples]
     sources_sorted = ["replay" if str(item[3]) == "replay" else "live" for item in triples]
     decisions_sorted = [str(item[4] or "") for item in triples]
+    path_fractions = [float(item[5]) / 100.0 for item in triples]
     n = len(fractions)
     n_replay = sum(1 for source in sources_sorted if source == "replay")
     n_live = n - n_replay
@@ -385,7 +399,7 @@ def evaluate_book(
         mean = sum(fractions) / n if n else 0.0
         sharpe = _ratio(mean, _stdev(fractions)) if n else None
         sortino = _ratio(mean, _downside_deviation(fractions)) if n else None
-        path = equity_path(fractions)
+        path = equity_path(path_fractions)
     else:
         weight_sum = sum(weights_sorted)
         mean = (
@@ -395,7 +409,7 @@ def evaluate_book(
         )
         sharpe = _ratio(mean, _weighted_stdev(fractions, weights_sorted)) if n else None
         sortino = _ratio(mean, _weighted_downside(fractions, weights_sorted)) if n else None
-        path = equity_path([value * weight for value, weight in zip(fractions, weights_sorted, strict=False)])
+        path = equity_path([value * weight for value, weight in zip(path_fractions, weights_sorted, strict=False)])
     primary = sortino if config.metric == "sortino" else sharpe
     dd = drawdown_stats(path, ordered_dates)
     return {

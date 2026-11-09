@@ -226,8 +226,11 @@ class SystemTabAgent(TabAgent):
             "calibration": calibration_report(packets),
             "join_note": (
                 "Only matured packets are samples. High confidence takes the labeled return. "
-                "Low confidence is the negative of that return: missed winners penalize, avoided "
-                "losers credit. Confidence between the cutoffs is not a sample. "
+                "Low confidence is scored as the negative of that return, so missed winners "
+                "penalize Sortino and avoided losers credit it. The equity curve stays in cash "
+                "on a skip: those penalties are not compounded as positions. "
+                "n counts scored samples. n_longs counts only the high-confidence takes. "
+                "Confidence between the cutoffs is not a sample. "
                 "No matured packets means the book is not scored."
             ),
         }
@@ -313,13 +316,19 @@ def _version_book(
 ) -> dict[str, Any]:
     """Score one wording on matured returns.
 
-    High confidence takes the realized percent. Low confidence takes its
-    negative, so skipping a winner costs the gain and skipping a loser keeps
-    the loss that was avoided. The open band between the cutoffs is abstain.
-    Pending packets are not samples. An empty matured book is not scored.
+    High confidence takes the realized percent on both the ratio and the equity
+    curve. Low confidence contributes the negative of that return to Sortino,
+    and cash (0) to the equity curve. A skip is not a position, so missed
+    winners cannot compound into a near-total drawdown. The open band between
+    the cutoffs is abstain. Pending packets are not samples. An empty matured
+    book is not scored.
+
+    ``n`` is every scored sample. ``n_longs`` is only the high-confidence
+    takes, so a book of skips has ``n_longs`` 0 while ``n`` is the skip count.
     """
     high, low = parse_thresholds(str(version.get("text") or ""), skill_dir)
     returns: list[float] = []
+    path_returns: list[float] = []
     dates: list[str] = []
     decisions: list[str] = []
     n_abstain = 0
@@ -338,10 +347,12 @@ def _version_book(
         if confidence >= high:
             dates.append(day)
             returns.append(realized)
+            path_returns.append(realized)
             decisions.append("long")
         elif confidence <= low:
             dates.append(day)
             returns.append(-float(realized))
+            path_returns.append(0.0)
             decisions.append("cash")
         else:
             n_abstain += 1
@@ -353,7 +364,13 @@ def _version_book(
         book["sortino"] = None
         book["sharpe"] = None
     else:
-        book = evaluate_book(returns, dates, config=config, decisions=decisions)
+        book = evaluate_book(
+            returns,
+            dates,
+            config=config,
+            decisions=decisions,
+            path_returns_pct=path_returns,
+        )
         book["scored"] = True
         book["not_scored_reason"] = None
     book.update(
@@ -365,6 +382,8 @@ def _version_book(
             "high_confidence_min": high,
             "low_confidence_max": low,
             "scoring": "confidence_separation",
+            "drawdown_basis": "cash_on_skip",
+            "n_skips": sum(1 for decision in decisions if decision == "cash"),
             "n_abstain": n_abstain,
             "n_immature": n_immature,
             "n_missing_confidence": n_missing_confidence,
