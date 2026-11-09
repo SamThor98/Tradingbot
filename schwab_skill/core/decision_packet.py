@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,8 +46,12 @@ def _real_store_path() -> Path:
 
 
 def _pytest_blocks_real_store(path: Path) -> bool:
-    """Test runs must not create or edit the on-disk operator store."""
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
+    """Test runs must not create or edit the on-disk operator store.
+
+    ``PYTEST_CURRENT_TEST`` is unset between tests. A scan job started during
+    a test can finish in that gap, so the pytest process itself is the guard.
+    """
+    if "pytest" not in sys.modules and not os.environ.get("PYTEST_CURRENT_TEST"):
         return False
     try:
         return path.resolve() == _real_store_path()
