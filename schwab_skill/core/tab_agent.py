@@ -445,6 +445,7 @@ def score_prompt_versions(
             config=config,
             weights=merged.weights,
             sources=merged.sources,
+            decisions=merged.decisions,
         )
         book.update(
             {

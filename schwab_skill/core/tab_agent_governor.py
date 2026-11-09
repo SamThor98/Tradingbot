@@ -100,6 +100,7 @@ def _brief(stats: dict[str, Any]) -> dict[str, Any]:
         "max_drawdown",
         "max_drawdown_duration_days",
         "win_rate",
+        "n_longs",
         "avg_realized_return_pct",
     )
     return {key: stats.get(key) for key in keys}
@@ -107,43 +108,17 @@ def _brief(stats: dict[str, Any]) -> dict[str, Any]:
 
 def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
     """Promote shadow winners and roll back degraded promotions. Analysis prompts only."""
-    from core.tab_agent import STATUS_LIVE, STATUS_SHADOW
+    from core.tab_agent import STATUS_SHADOW
 
     score = agent.score(skill_dir)
     actions: list[dict[str, Any]] = []
     reg = agent.registry(skill_dir)
     config = load_objective(skill_dir)
 
-    for version in list(reg.versions(agent.tab_id)):
-        if version.get("status") != STATUS_LIVE or not version.get("predecessor_id") or not version.get("promoted_at"):
-            continue
-        window = agent.score(skill_dir, since_ts=str(version.get("promoted_at")))
-        current = _stats_for(window, str(version.get("id")))
-        frozen = version.get("predecessor_stats") if isinstance(version.get("predecessor_stats"), dict) else {}
-        if not frozen or int(current.get("n") or 0) < config.min_samples:
-            continue
-        label = compare_books(current, frozen, config=config)
-        if label not in DEGRADED:
-            continue
-        predecessor_id = str(version.get("predecessor_id"))
-        reg.rollback(agent.tab_id, predecessor_id)
-        actions.append(
-            write_change_report(
-                skill_dir,
-                {
-                    "tab_id": agent.tab_id,
-                    "action": "auto_rollback",
-                    "prompt_key": version.get("prompt_key"),
-                    "version_id": predecessor_id,
-                    "replaced_version_id": version.get("id"),
-                    "why": f"Post-promotion window is {label} versus the predecessor book.",
-                    "before": _brief(frozen),
-                    "after": _brief(current),
-                    "what_changed": "Restored the predecessor analysis prompt. No order, size, or execution setting was changed.",
-                    "sample_size": current.get("n"),
-                },
-            )
-        )
+    if getattr(agent, "tab_id", "") == "debate":
+        actions.extend(_rollback_debate_combination(agent, skill_dir, reg, config))
+    else:
+        actions.extend(_rollback_degraded(agent, skill_dir, reg, config))
 
     score = agent.score(skill_dir)
     by_id = {row.get("version_id"): row for row in score.get("versions") or []}
@@ -151,6 +126,9 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
 
     for comparison in score.get("comparisons") or []:
         if comparison.get("edge_vs_live") != "better_than_live":
+            continue
+        if comparison.get("combination"):
+            actions.extend(_promote_debate_combination(agent, skill_dir, reg, comparison, by_id, config, review_gate))
             continue
         version_id = str(comparison.get("version_id") or "")
         candidate = reg.get(agent.tab_id, version_id)
@@ -215,3 +193,162 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
             )
         )
     return {"tab_id": agent.tab_id, "actions": actions, "auto_promote": True}
+
+
+def _rollback_degraded(agent: Any, skill_dir: Path, reg: Any, config: Any) -> list[dict[str, Any]]:
+    """Roll back one promoted prompt when its own window degrades."""
+    from core.tab_agent import STATUS_LIVE
+
+    actions: list[dict[str, Any]] = []
+    for version in list(reg.versions(agent.tab_id)):
+        if version.get("status") != STATUS_LIVE or not version.get("predecessor_id") or not version.get("promoted_at"):
+            continue
+        window = agent.score(skill_dir, since_ts=str(version.get("promoted_at")))
+        current = _stats_for(window, str(version.get("id")))
+        frozen = version.get("predecessor_stats") if isinstance(version.get("predecessor_stats"), dict) else {}
+        if not frozen or int(current.get("n") or 0) < config.min_samples:
+            continue
+        label = compare_books(current, frozen, config=config)
+        if label not in DEGRADED:
+            continue
+        predecessor_id = str(version.get("predecessor_id"))
+        reg.rollback(agent.tab_id, predecessor_id)
+        actions.append(
+            write_change_report(
+                skill_dir,
+                {
+                    "tab_id": agent.tab_id,
+                    "action": "auto_rollback",
+                    "prompt_key": version.get("prompt_key"),
+                    "version_id": predecessor_id,
+                    "replaced_version_id": version.get("id"),
+                    "why": f"Post-promotion window is {label} versus the predecessor book.",
+                    "before": _brief(frozen),
+                    "after": _brief(current),
+                    "what_changed": "Restored the predecessor analysis prompt. No order, size, or execution setting was changed.",
+                    "sample_size": current.get("n"),
+                },
+            )
+        )
+    return actions
+
+
+def _rollback_debate_combination(agent: Any, skill_dir: Path, reg: Any, config: Any) -> list[dict[str, Any]]:
+    """Roll the whole debate combination back when the post-promotion window degrades."""
+    from core.tab_agent import STATUS_LIVE
+
+    lives = [
+        row
+        for row in reg.versions(agent.tab_id)
+        if row.get("status") == STATUS_LIVE and row.get("predecessor_id") and row.get("promoted_at")
+    ]
+    if not lives:
+        return []
+    start = max(str(row.get("promoted_at") or "") for row in lives)
+    window = agent.score(skill_dir, since_ts=start)
+    current = next((row for row in window.get("versions") or [] if row.get("status") == "live"), {})
+    frozen = next(
+        (row.get("predecessor_stats") for row in lives if isinstance(row.get("predecessor_stats"), dict)),
+        {},
+    )
+    if not isinstance(frozen, dict) or not frozen or int(current.get("n") or 0) < config.min_samples:
+        return []
+    label = compare_books(current, frozen, config=config)
+    if label not in DEGRADED:
+        return []
+    restored: list[str] = []
+    for row in lives:
+        predecessor_id = str(row.get("predecessor_id"))
+        reg.rollback(agent.tab_id, predecessor_id)
+        restored.append(predecessor_id)
+    return [
+        write_change_report(
+            skill_dir,
+            {
+                "tab_id": agent.tab_id,
+                "action": "auto_rollback",
+                "prompt_key": "combination",
+                "version_id": ",".join(restored),
+                "why": f"Post-promotion window is {label} versus the predecessor combination.",
+                "before": _brief(frozen),
+                "after": _brief(current),
+                "what_changed": "Restored the predecessor debate combination. No order, size, or execution setting was changed.",
+                "sample_size": current.get("n"),
+            },
+        )
+    ]
+
+
+def _promote_debate_combination(
+    agent: Any,
+    skill_dir: Path,
+    reg: Any,
+    comparison: dict[str, Any],
+    by_id: dict[Any, dict[str, Any]],
+    config: Any,
+    review_gate: Any,
+) -> list[dict[str, Any]]:
+    """Promote every shadow member of one debate combination together."""
+    from core.tab_agent import STATUS_SHADOW
+
+    members = [str(item) for item in (comparison.get("member_version_ids") or []) if str(item)]
+    rows = []
+    for member in members:
+        row = reg.get(agent.tab_id, member)
+        if row is not None and row.get("status") == STATUS_SHADOW:
+            rows.append(row)
+    if not rows:
+        return []
+    gates = [review_gate(skill_dir, agent.tab_id, row, wait_hours=config.review_wait_hours) for row in rows]
+    combo_id = str(comparison.get("version_id") or "")
+    baseline_id = str(comparison.get("baseline_version_id") or "")
+    if any(gate == "rejected" for gate in gates):
+        for row in rows:
+            reg.reject(agent.tab_id, str(row.get("id")))
+        return [
+            write_change_report(
+                skill_dir,
+                {
+                    "tab_id": agent.tab_id,
+                    "action": "review_reject",
+                    "prompt_key": "combination",
+                    "version_id": combo_id,
+                    "why": "External review rejected this debate combination. Metrics were not enough.",
+                    "before": _brief(by_id.get(combo_id) or {}),
+                    "after": {},
+                    "what_changed": "Shadow combination retired. No order, size, or execution setting was changed.",
+                    "sample_size": (by_id.get(combo_id) or {}).get("n"),
+                },
+            )
+        ]
+    if any(gate == "waiting" for gate in gates):
+        return []
+    frozen = _brief(by_id.get(baseline_id) or {})
+    for row in rows:
+        reg.promote(agent.tab_id, str(row.get("id")), predecessor_stats=frozen)
+    why = (
+        "The shadow debate combination beat live on the risk-adjusted objective inside the drawdown guardrail, "
+        "with a sufficient sample, and the reviewer "
+        + (
+            "approved it."
+            if all(gate == "approved" for gate in gates)
+            else f"left no verdict for {config.review_wait_hours}h."
+        )
+    )
+    return [
+        write_change_report(
+            skill_dir,
+            {
+                "tab_id": agent.tab_id,
+                "action": "auto_promote",
+                "prompt_key": "combination",
+                "version_id": combo_id,
+                "predecessor_id": baseline_id,
+                "why": why,
+                "before": frozen,
+                "after": _brief(by_id.get(combo_id) or {}),
+                "what_changed": "Promoted the shadow debate combination as one unit.",
+                "sample_size": (by_id.get(combo_id) or {}).get("n"),
+            },
+        )
+    ]

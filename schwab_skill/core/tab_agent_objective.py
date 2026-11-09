@@ -334,29 +334,52 @@ def evaluate_book(
     config: ObjectiveConfig,
     weights: list[float] | None = None,
     sources: list[str] | None = None,
+    decisions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Score one ordered book of per-trade percent returns.
 
     ``sources`` marks ``replay`` rows. They count toward ``n`` and ``min_samples``.
     Their equity and ratio contribution is ``weight`` (default 1, live). A weight
     below 1 pulls the mean toward the live rows.
+
+    ``decisions`` marks ``long`` and ``cash``. Win rate is wins among taken longs
+    divided by the long count. Cash still scores 0% in the equity path. When
+    ``decisions`` is omitted, every row is treated as a taken long.
     """
     raw_weights = list(weights) if weights is not None else [1.0] * len(returns_pct)
     raw_sources = list(sources) if sources is not None else ["live"] * len(returns_pct)
+    if decisions is None:
+        raw_decisions = ["long"] * len(returns_pct)
+    else:
+        raw_decisions = [str(item or "") for item in decisions]
     while len(raw_weights) < len(returns_pct):
         raw_weights.append(1.0)
     while len(raw_sources) < len(returns_pct):
         raw_sources.append("live")
-    triples = list(zip(dates or [""] * len(returns_pct), returns_pct, raw_weights, raw_sources, strict=False))
+    while len(raw_decisions) < len(returns_pct):
+        raw_decisions.append("" if decisions is not None else "long")
+    triples = list(
+        zip(
+            dates or [""] * len(returns_pct),
+            returns_pct,
+            raw_weights,
+            raw_sources,
+            raw_decisions,
+            strict=False,
+        )
+    )
     triples.sort(key=lambda item: (item[0] or "",))
     ordered_dates = [item[0] for item in triples]
     fractions = [float(item[1]) / 100.0 for item in triples]
     weights_sorted = [max(0.0, float(item[2])) for item in triples]
     sources_sorted = ["replay" if str(item[3]) == "replay" else "live" for item in triples]
+    decisions_sorted = [str(item[4] or "") for item in triples]
     n = len(fractions)
     n_replay = sum(1 for source in sources_sorted if source == "replay")
     n_live = n - n_replay
-    wins = sum(1 for value in fractions if value > 0.005)
+    long_fractions = [value for value, decision in zip(fractions, decisions_sorted, strict=False) if decision == "long"]
+    n_longs = len(long_fractions)
+    wins = sum(1 for value in long_fractions if value > 0.005)
     uniform = weights is None or all(abs(weight - 1.0) <= 1e-9 for weight in weights_sorted)
     if uniform or n == 0:
         mean = sum(fractions) / n if n else 0.0
@@ -389,7 +412,8 @@ def evaluate_book(
         "max_drawdown": dd["max_drawdown"],
         "max_drawdown_duration_days": dd["max_drawdown_duration_days"],
         "max_drawdown_duration_trades": dd["max_drawdown_duration_trades"],
-        "win_rate": round(wins / n, 4) if n else None,
+        "n_longs": n_longs,
+        "win_rate": round(wins / n_longs, 4) if n_longs else None,
         "avg_realized_return_pct": round(mean * 100.0, 4) if n else None,
         "horizon_days": config.horizon_days,
     }

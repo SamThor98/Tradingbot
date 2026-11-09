@@ -255,7 +255,14 @@ def _version_book(
         since_ts=since_ts,
         live_decisions=decisions,
     )
-    book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
+    book = evaluate_book(
+        merged.returns,
+        merged.dates,
+        config=config,
+        weights=merged.weights,
+        sources=merged.sources,
+        decisions=merged.decisions,
+    )
     book.update(decision_flags(merged.decisions))
     book.update(
         {

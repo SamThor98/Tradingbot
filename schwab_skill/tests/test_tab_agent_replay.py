@@ -17,6 +17,7 @@ from core.tab_agent_objective import ObjectiveConfig, compare_books, evaluate_bo
 from core.tab_agent_replay import (
     append_sample,
     collect_cases,
+    fill_case_from_history,
     load_samples,
     parse_decision,
     pit_payload,
@@ -378,8 +379,24 @@ def test_low_win_rate_with_a_positive_average_is_one_large_winner() -> None:
     dates = [f"2026-01-{index + 1:02d}" for index in range(16)]
     book = evaluate_book(returns, dates, config=ObjectiveConfig(min_samples=5))
     assert book["win_rate"] == 0.0625
+    assert book["n_longs"] == 16
     assert book["avg_realized_return_pct"] == 5.24
     assert book["max_drawdown"] == 0.0
+
+
+def test_win_rate_is_taken_longs_only() -> None:
+    """Cash rows stay in the equity path and stay out of the win rate."""
+    returns = [10.0, -4.0, 0.0, 0.0, 8.0]
+    decisions = ["long", "long", "cash", "cash", "long"]
+    book = evaluate_book(
+        returns,
+        [f"2026-01-{index + 1:02d}" for index in range(5)],
+        config=ObjectiveConfig(min_samples=1),
+        decisions=decisions,
+    )
+    assert book["n"] == 5
+    assert book["n_longs"] == 3
+    assert book["win_rate"] == 0.6667
 
 
 def _rising_frame() -> pd.DataFrame:
@@ -569,14 +586,16 @@ def test_debate_round2_is_stored_from_the_median(tmp_path) -> None:
         versions=versions,
         progress_every=0,
     )
-    assert report["stored"] == 3
+    assert report["stored"] == 1
     assert report["llm_calls"] == 2
     assert "Second round" in users[1]
     rows = load_samples(tmp_path)
-    assert {row["prompt_key"] for row in rows} == {"system", "round1", "round2"}
-    assert {row["decision"] for row in rows} == {"long"}
-    assert {row["debate_score"] for row in rows} == {90.0}
-    assert all(float(row["realized_return_pct"]) > 0 for row in rows)
+    assert len(rows) == 1
+    assert rows[0]["prompt_key"] == "combination"
+    assert rows[0]["prompt_versions"] == {"system": "sys", "round1": "r1", "round2": "r2"}
+    assert rows[0]["decision"] == "long"
+    assert rows[0]["debate_score"] == 90.0
+    assert float(rows[0]["realized_return_pct"]) > 0
 
 
 def test_progress_printer_and_resume_skips_stored_cases(tmp_path, capsys) -> None:
@@ -655,11 +674,13 @@ def test_debate_zero_template_retries_into_a_long(tmp_path) -> None:
         versions=versions,
         progress_every=0,
     )
-    assert report["stored"] == 3
+    assert report["stored"] == 1
     rows = load_samples(tmp_path)
-    assert {row["decision"] for row in rows} == {"long"}
-    assert {row["debate_score"] for row in rows} == {80.0}
-    assert all(float(row["realized_return_pct"]) > 0 for row in rows)
+    assert len(rows) == 1
+    assert rows[0]["prompt_key"] == "combination"
+    assert rows[0]["decision"] == "long"
+    assert rows[0]["debate_score"] == 80.0
+    assert float(rows[0]["realized_return_pct"]) > 0
 
 
 def test_mean_reversion_fade_sign_is_the_decision() -> None:
@@ -770,3 +791,121 @@ def test_rescore_drops_zero_debate_and_derives_a_stop(tmp_path) -> None:
     assert trend["exit_model"] == "scale_out"
     assert trend["stop_source"] in {"atr", "base_pct"}
     assert trend["realized_return_pct"] > 0
+
+
+def test_collect_cases_fills_thin_packets_from_the_stored_scan(tmp_path) -> None:
+    created = datetime(2026, 6, 1, 15, tzinfo=timezone.utc)
+    decision_packet.overwrite_packets(
+        tmp_path,
+        [
+            {
+                "packet_id": "thin",
+                "ticker": "AAA",
+                "created_at": created.isoformat(),
+                "entry_price": 100.0,
+                "rank_score": 70,
+                "setup_type": "breakout",
+                "refs": {"stop_pct": 0.08},
+            }
+        ],
+    )
+    db = tmp_path / "webapp.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE scan_results (ticker TEXT, payload_json TEXT, created_at TEXT, user_id TEXT)")
+    conn.execute(
+        "INSERT INTO scan_results (ticker, payload_json, created_at, user_id) VALUES (?, ?, ?, ?)",
+        (
+            "AAA",
+            json.dumps(
+                {
+                    "ticker": "AAA",
+                    "stage_2": True,
+                    "vcp": True,
+                    "sma_50": 90,
+                    "sma_200": 80,
+                    "sector": "Tech",
+                    "rs_rating": 91,
+                    "avg_dollar_volume": 50_000_000,
+                    "qual_trend": 80,
+                    "qual_setup": 70,
+                    "qual_asymmetry": 60,
+                    "qual_crowding": 55,
+                    "qual_business": 50,
+                    "qual_raw": 65,
+                }
+            ),
+            created.isoformat(),
+            "local",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    cases = collect_cases(
+        tmp_path,
+        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        horizon_days=20,
+        db_path=db,
+    )
+    assert len(cases) == 1
+    payload = pit_payload(cases[0]["signal"], cases[0]["as_of"])
+    assert payload["stage_2"] is True
+    assert payload["vcp"] is True
+    assert payload["sma_50"] == 90
+    assert payload["sma_200"] == 80
+    assert payload["sector"] == "Tech"
+    assert payload["rs_rating"] == 91
+    assert payload["avg_dollar_volume"] == 50_000_000
+    assert payload["qual_raw"] == 65
+    assert payload["qual_business"] == 50
+
+
+def test_history_fill_stops_at_the_case_date():
+    end = pd.Timestamp("2026-06-01")
+    before = pd.bdate_range(end=end, periods=60)
+    after = pd.bdate_range(start=end + pd.offsets.BDay(1), periods=10)
+    close = [100.0] * len(before) + [10_000.0] * len(after)
+    volume = [1_000_000.0] * len(before) + [50_000_000.0] * len(after)
+    index = list(before) + list(after)
+    frame = pd.DataFrame(
+        {"open": close, "high": close, "low": close, "close": close, "volume": volume},
+        index=index,
+    )
+    case = {
+        "ticker": "AAA",
+        "as_of": "2026-06-01",
+        "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+        "entry_price": 100.0,
+        "stop_pct": 0.08,
+        "signal": {"ticker": "AAA"},
+    }
+    missing = fill_case_from_history(case, frame, None)
+    assert case["signal"]["sma_50"] == 100.0
+    assert case["signal"]["avg_dollar_volume"] == 100_000_000.0
+    assert "sma_200" in missing
+    assert "sector" in missing
+    assert "relative_strength" in missing
+
+
+def test_unfilled_case_is_counted_and_still_replayed(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    report = run_replay(
+        tmp_path,
+        tab="today",
+        since="2026-01-01",
+        max_llm_calls=4,
+        now=datetime(2026, 11, 3, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=lambda _system, _user: '{"decision":"long","verdict":"STRONG SETUP"}',
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=[{"id": "live-1", "prompt_key": "verdict_rules", "text": "rules", "status": "live"}],
+        progress_every=0,
+    )
+    assert report["history_fill"] is True
+    assert report["unfilled_cases"] == 1
+    assert "sector" in report["unfilled_field_counts"]
+    assert report["stored"] == 1
