@@ -166,6 +166,9 @@ def tab_status(skill_dir: Path | str, tab_id: str) -> dict[str, Any]:
         "exit_fallback": score.get("exit_fallback"),
         "prompts": prompts,
         "pending_reviews": pending_reviews,
+        "quality_threshold": score.get("quality_threshold"),
+        "quality_shadow_threshold": score.get("quality_shadow_threshold"),
+        "quality_sweep": score.get("quality_sweep"),
     }
 
 

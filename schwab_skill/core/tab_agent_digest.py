@@ -94,6 +94,7 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "scored": row.get("scored", True),
                 "not_scored_reason": row.get("not_scored_reason"),
                 "prompt_versions": row.get("prompt_versions"),
+                "quality_threshold": row.get("quality_threshold"),
             }
             for row in versions
             if row.get("status") == "live"
@@ -121,6 +122,8 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "baseline": score.get("baseline"),
                 "exit_fallback": score.get("exit_fallback"),
                 "calibration": score.get("calibration") if isinstance(score.get("calibration"), dict) else None,
+                "quality_threshold": score.get("quality_threshold"),
+                "quality_sweep": score.get("quality_sweep"),
             }
         )
     return {
@@ -161,6 +164,21 @@ def _markdown(payload: dict[str, Any]) -> str:
                 f"Exit fallback rate={fallback.get('exit_fallback_rate')} "
                 f"derived_stop_rate={fallback.get('derived_stop_rate')}"
             )
+        if tab.get("quality_threshold") is not None:
+            lines.append(f"Quality threshold: {tab.get('quality_threshold')}")
+            sweep = tab.get("quality_sweep") if isinstance(tab.get("quality_sweep"), dict) else {}
+            chosen = sweep.get("chosen_threshold")
+            if chosen is not None:
+                lines.append(
+                    f"Sweep chose {chosen} ({sweep.get('reason')}), "
+                    f"tune before {sweep.get('split_date')}, holdout cases={sweep.get('holdout_cases')}"
+                )
+            for row in (sweep.get("rows") or [])[:9]:
+                lines.append(
+                    f"- bar {row.get('threshold')} sortino={row.get('sortino')} "
+                    f"longs={row.get('n_longs')} maxDD={row.get('max_drawdown')} "
+                    f"holdout={row.get('holdout_sortino')} eligible={row.get('eligible')}"
+                )
         lines.append("Live versions:")
         for row in tab.get("live") or []:
             marker = ""

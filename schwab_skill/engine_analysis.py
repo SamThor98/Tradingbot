@@ -44,7 +44,7 @@ def _load_env() -> dict:
             continue
         if "=" in line:
             k, _, v = line.partition("=")
-            vals[k.strip()] = v.strip().strip('"\'')
+            vals[k.strip()] = v.strip().strip("\"'")
     return vals
 
 
@@ -89,10 +89,7 @@ def _seed_sections(df, ticker: str, skill_dir: Path | None = None) -> dict[str, 
     last = df.iloc[-30:] if len(df) >= 30 else df
     if close_s is None or vol_s is None:
         end_px = float(last["close"].iloc[-1]) if "close" in last.columns else 0.0
-        text = (
-            f"Ticker: {ticker}\nLatest close: ${end_px:.2f}\n"
-            "Stage 2 breakout detected (limited features available)."
-        )
+        text = f"Ticker: {ticker}\nLatest close: ${end_px:.2f}\nStage 2 breakout detected (limited features available)."
         return {"institutional_trend": text, "mean_reversion": text}
 
     close_30 = last["close"].astype(float)
@@ -109,7 +106,9 @@ def _seed_sections(df, ticker: str, skill_dir: Path | None = None) -> dict[str, 
     # SMA / avg volume features (use precomputed columns when present; else rolling fallback).
     sma_50 = float(df["sma_50"].iloc[-1]) if "sma_50" in df.columns and len(df["sma_50"].dropna()) else None
     sma_200 = float(df["sma_200"].iloc[-1]) if "sma_200" in df.columns and len(df["sma_200"].dropna()) else None
-    avg_vol_50 = float(df["avg_vol_50"].iloc[-1]) if "avg_vol_50" in df.columns and len(df["avg_vol_50"].dropna()) else None
+    avg_vol_50 = (
+        float(df["avg_vol_50"].iloc[-1]) if "avg_vol_50" in df.columns and len(df["avg_vol_50"].dropna()) else None
+    )
 
     if sma_50 is None and "close" in df.columns:
         sma_50 = float(df["close"].astype(float).rolling(50, min_periods=1).mean().iloc[-1])
@@ -200,7 +199,7 @@ def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
 _LLM_CIRCUIT: dict[str, float] = {"consecutive_failures": 0.0, "open_until": 0.0}
 
 
-def _call_llm(prompt: str, system: str, env: dict) -> str:
+def _call_llm(prompt: str, system: str, env: dict, max_tokens: int = 200) -> str:
     """Call LLM (OpenAI/Qwen) following env config."""
     api_key = (
         env.get("MIROFISH_API_KEY")
@@ -244,7 +243,7 @@ def _call_llm(prompt: str, system: str, env: dict) -> str:
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
+            max_tokens=max(1, int(max_tokens)),
         )
         _LLM_CIRCUIT["consecutive_failures"] = 0.0
         return (resp.choices[0].message.content or "").strip()
@@ -315,7 +314,12 @@ def compute_seed_fingerprint(seed_df, ticker: str, skill_dir: Path | None = None
     df = _normalize_ohlcv_df(seed_df)
     vcp_days = int(get_vcp_days(skill_dir))
     if df.empty:
-        payload: dict[str, str | int | float | None] = {"ticker": ticker.upper(), "last_close_date": None, "vcp_days": vcp_days, "ratios": None}
+        payload: dict[str, str | int | float | None] = {
+            "ticker": ticker.upper(),
+            "last_close_date": None,
+            "vcp_days": vcp_days,
+            "ratios": None,
+        }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     vcp_days_eff = max(1, min(vcp_days, len(df)))
@@ -332,12 +336,20 @@ def compute_seed_fingerprint(seed_df, ticker: str, skill_dir: Path | None = None
     if "sma_50" in df.columns and len(df["sma_50"].dropna()) > 0:
         sma_50 = float(df["sma_50"].iloc[-1])
     else:
-        sma_50 = float(df["close"].astype(float).rolling(50, min_periods=1).mean().iloc[-1]) if "close" in df.columns else 0.0
+        sma_50 = (
+            float(df["close"].astype(float).rolling(50, min_periods=1).mean().iloc[-1])
+            if "close" in df.columns
+            else 0.0
+        )
 
     if "sma_200" in df.columns and len(df["sma_200"].dropna()) > 0:
         sma_200 = float(df["sma_200"].iloc[-1])
     else:
-        sma_200 = float(df["close"].astype(float).rolling(200, min_periods=1).mean().iloc[-1]) if "close" in df.columns else 0.0
+        sma_200 = (
+            float(df["close"].astype(float).rolling(200, min_periods=1).mean().iloc[-1])
+            if "close" in df.columns
+            else 0.0
+        )
 
     close_sma_50_ratio = (close / sma_50) if sma_50 and sma_50 > 0 else None
     close_sma_200_ratio = (close / sma_200) if sma_200 and sma_200 > 0 else None
@@ -346,7 +358,9 @@ def compute_seed_fingerprint(seed_df, ticker: str, skill_dir: Path | None = None
     if "avg_vol_50" in df.columns and len(df["avg_vol_50"].dropna()) > 0:
         avg_vol_series = df["avg_vol_50"].astype(float)
     else:
-        avg_vol_series = df["volume"].astype(float).rolling(50, min_periods=1).mean() if "volume" in df.columns else None
+        avg_vol_series = (
+            df["volume"].astype(float).rolling(50, min_periods=1).mean() if "volume" in df.columns else None
+        )
 
     if avg_vol_series is not None and "volume" in df.columns:
         last_vcp = df.iloc[-vcp_days_eff:].copy()
@@ -381,6 +395,7 @@ def _parse_agent_response(text: str) -> dict[str, Any]:
     If parsing fails, fall back to legacy 'CONVICTION: N' parsing.
     Always returns a valid numeric `conviction_score` in [-100, 100].
     """
+
     def _clamp_int(v: Any, lo: int, hi: int, default: int = 0) -> int:
         try:
             return max(lo, min(hi, int(round(float(v)))))
@@ -589,7 +604,9 @@ def _shadow_persona_votes(sections: dict[str, str], systems: dict[str, str], env
         except Exception as exc:
             LOG.debug("Shadow persona %s failed: %s", name, exc)
             continue
-        votes.append({"name": name, "role": "shadow", "continuation_probability": parsed.get("continuation_probability")})
+        votes.append(
+            {"name": name, "role": "shadow", "continuation_probability": parsed.get("continuation_probability")}
+        )
     return votes
 
 
@@ -600,8 +617,8 @@ AGENT_SYSTEMS = {
         "You favor stocks with strong momentum, above all key SMAs, and volume confirmation. "
         "Return EXACTLY one strict JSON object (no markdown, no extra text). "
         "JSON must match schema: "
-        "{\"conviction_score\": int, \"bull_trap_probability\": number, \"continuation_probability\": number, "
-        "\"key_drivers\": [string, ...], \"vcp_alignment\": number, \"sma_alignment\": number, \"horizon\": \"1-2 weeks\"}. "
+        '{"conviction_score": int, "bull_trap_probability": number, "continuation_probability": number, '
+        '"key_drivers": [string, ...], "vcp_alignment": number, "sma_alignment": number, "horizon": "1-2 weeks"}. '
         "Scenario A is continuation next 1-2 weeks; Scenario B is bull trap/reversal next 1-2 weeks."
     ),
     "mean_reversion": (
@@ -609,8 +626,8 @@ AGENT_SYSTEMS = {
         "You are skeptical of breakouts that may be exhaustion moves. "
         "Return EXACTLY one strict JSON object (no markdown, no extra text). "
         "JSON must match schema: "
-        "{\"fade_score\": int, \"exhaustion_probability\": number, \"extension_alignment\": number, "
-        "\"key_drivers\": [string, ...], \"horizon\": \"1-2 weeks\"}. "
+        '{"fade_score": int, "exhaustion_probability": number, "extension_alignment": number, '
+        '"key_drivers": [string, ...], "horizon": "1-2 weeks"}. '
         "fade_score is -100 to 100 where positive means the move is more likely to fade. "
         "exhaustion_probability is 0 to 1. extension_alignment is -1 to 1 where positive means extended above the average."
     ),
@@ -619,8 +636,8 @@ AGENT_SYSTEMS = {
         "You chase momentum when news is positive, panic when it turns. "
         "Return EXACTLY one strict JSON object (no markdown, no extra text). "
         "JSON must match schema: "
-        "{\"conviction_score\": int, \"bull_trap_probability\": number, \"continuation_probability\": number, "
-        "\"key_drivers\": [string, ...], \"vcp_alignment\": number, \"sma_alignment\": number, \"horizon\": \"1-2 weeks\"}. "
+        '{"conviction_score": int, "bull_trap_probability": number, "continuation_probability": number, '
+        '"key_drivers": [string, ...], "vcp_alignment": number, "sma_alignment": number, "horizon": "1-2 weeks"}. '
         "Scenario A is continuation next 1-2 weeks; Scenario B is bull trap/reversal next 1-2 weeks."
     ),
 }
@@ -654,9 +671,11 @@ class MarketSimulation:
         else:
             try:
                 from market_data import get_daily_history
+
                 auth = self.auth
                 if auth is None:
                     from schwab_auth import DualSchwabAuth
+
                     auth = DualSchwabAuth(skill_dir=self.skill_dir)
                 df = get_daily_history(self.ticker, days=30, auth=auth, skill_dir=self.skill_dir)
                 if df.empty:
@@ -718,7 +737,11 @@ class MarketSimulation:
         fetched = self._fetch_seed_data()
         seed = fetched[0]
         seed_df = fetched[1] if len(fetched) > 1 else None
-        sections = fetched[2] if len(fetched) > 2 and isinstance(fetched[2], dict) else _sections_from_legacy_seed(str(seed or ""))
+        sections = (
+            fetched[2]
+            if len(fetched) > 2 and isinstance(fetched[2], dict)
+            else _sections_from_legacy_seed(str(seed or ""))
+        )
         seed_fingerprint = compute_seed_fingerprint(seed_df, self.ticker, self.skill_dir) if seed_df is not None else ""
 
         def _unavailable(reason: str, summary: str) -> dict[str, Any]:
@@ -809,21 +832,23 @@ class MarketSimulation:
             if not reason and key_drivers:
                 reason = " | ".join(key_drivers[:3])
 
-            agent_votes.append({
-                "name": a.get("name"),
-                "evidence": evidence_for.get(str(a.get("name") or ""), "trend"),
-                # Backward compatible fields (Discord embed / viewer).
-                "score": agent_score_int,
-                "reason": reason[:200] if reason else "",
-                # Strict JSON schema fields (for robustness/scoring).
-                "conviction_score": agent_score_int,
-                "bull_trap_probability": float(a.get("bull_trap_probability", 0.5)),
-                "continuation_probability": float(a.get("continuation_probability", 0.5)),
-                "key_drivers": key_drivers,
-                "vcp_alignment": vcp_alignment,
-                "sma_alignment": sma_alignment,
-                "horizon": a.get("horizon") or "1-2 weeks",
-            })
+            agent_votes.append(
+                {
+                    "name": a.get("name"),
+                    "evidence": evidence_for.get(str(a.get("name") or ""), "trend"),
+                    # Backward compatible fields (Discord embed / viewer).
+                    "score": agent_score_int,
+                    "reason": reason[:200] if reason else "",
+                    # Strict JSON schema fields (for robustness/scoring).
+                    "conviction_score": agent_score_int,
+                    "bull_trap_probability": float(a.get("bull_trap_probability", 0.5)),
+                    "continuation_probability": float(a.get("continuation_probability", 0.5)),
+                    "key_drivers": key_drivers,
+                    "vcp_alignment": vcp_alignment,
+                    "sma_alignment": sma_alignment,
+                    "horizon": a.get("horizon") or "1-2 weeks",
+                }
+            )
 
         def _get_agent(name: str) -> dict[str, Any] | None:
             for a in parsed_agents:
@@ -1036,10 +1061,9 @@ def _persist_simulation(sim_id: str, result: dict[str, Any], skill_dir: Path | N
 def _get_cache_path(skill_dir: Path | None) -> Path:
     # Prefer an explicit shared cache dir so SaaS temp tenant dirs do not
     # discard MiroFish results between scans.
-    shared = (
-        (os.environ.get("MIROFISH_CACHE_DIR") or "").strip()
-        or (os.environ.get("SAAS_SHARED_CACHE_DIR") or "").strip()
-    )
+    shared = (os.environ.get("MIROFISH_CACHE_DIR") or "").strip() or (
+        os.environ.get("SAAS_SHARED_CACHE_DIR") or ""
+    ).strip()
     if shared:
         base = Path(shared)
         try:
@@ -1062,6 +1086,7 @@ def cache_conviction(ticker: str, result: dict, skill_dir: Path | None = None) -
     if result is None or result.get("conviction_score") is None:
         return
     import time
+
     cache_path = _get_cache_path(skill_dir)
     data: dict[str, Any] = {}
     if cache_path.exists():
@@ -1125,6 +1150,7 @@ def get_cached_conviction(
 ) -> dict | None:
     """Get cached conviction if fresh. Returns None if missing or stale."""
     import time
+
     cache_path = _get_cache_path(skill_dir)
     if not cache_path.exists():
         return None

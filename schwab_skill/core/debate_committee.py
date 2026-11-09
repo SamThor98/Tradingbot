@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import statistics
 import zlib
 from datetime import datetime, timezone
@@ -48,8 +49,20 @@ def _in_sample(ticker: str) -> bool:
     return (zlib.crc32(name.encode("utf-8")) % SAMPLE_BUCKETS) < SAMPLE_KEEP_BELOW
 
 
-def _parse_round(text: str) -> dict[str, Any] | None:
+_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+
+
+def unwrap_model_json(text: str) -> str:
+    """Prefer a fenced JSON block. Surrounding prose stays out of the parse."""
     raw = str(text or "")
+    fences = [piece.strip() for piece in _FENCE_RE.findall(raw) if piece.strip()]
+    if fences:
+        return "\n".join(fences)
+    return raw
+
+
+def _parse_round(text: str) -> dict[str, Any] | None:
+    raw = unwrap_model_json(text)
     start = raw.find("{")
     end = raw.rfind("}")
     if start < 0 or end <= start:
