@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -31,8 +32,26 @@ _MAX_PACKETS = 8000
 SKILL_DIR = Path(__file__).resolve().parent.parent
 
 
+class RealStoreWriteBlocked(RuntimeError):
+    """Pytest tried to persist the operator's decision-packet store."""
+
+
 def _store_path(skill_dir: Path | None) -> Path:
     return Path(skill_dir or SKILL_DIR) / _STORE_FILE
+
+
+def _real_store_path() -> Path:
+    return (SKILL_DIR / _STORE_FILE).resolve()
+
+
+def _pytest_blocks_real_store(path: Path) -> bool:
+    """Test runs must not create or edit the on-disk operator store."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    try:
+        return path.resolve() == _real_store_path()
+    except OSError:
+        return False
 
 
 def _load_raw(path: Path) -> dict[str, Any]:
@@ -48,10 +67,14 @@ def _load_raw(path: Path) -> dict[str, Any]:
 
 
 def _save_raw(path: Path, data: dict[str, Any]) -> None:
+    if _pytest_blocks_real_store(path):
+        raise RealStoreWriteBlocked(f"Refusing to write the real decision-packet store during pytest: {path}")
     try:
         from _io_utils import atomic_write_json
 
         atomic_write_json(path, data, indent=2)
+    except RealStoreWriteBlocked:
+        raise
     except Exception as exc:  # pragma: no cover
         LOG.warning("Could not persist decision packets to %s: %s", path, exc)
 

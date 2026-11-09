@@ -39,3 +39,15 @@ def _pristine_process_env() -> Iterator[None]:
         del os.environ[key]
     os.environ.update(_PRISTINE_ENVIRON)
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def real_decision_packet_store_is_untouched() -> Iterator[None]:
+    """A pytest run must leave the operator decision-packet store byte-for-byte."""
+    from core.decision_packet import _STORE_FILE, SKILL_DIR
+
+    path = SKILL_DIR / _STORE_FILE
+    before = path.read_bytes() if path.exists() else None
+    yield
+    after = path.read_bytes() if path.exists() else None
+    assert after == before, "pytest wrote schwab_skill/decision_packets.json"
