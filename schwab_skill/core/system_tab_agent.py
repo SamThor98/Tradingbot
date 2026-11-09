@@ -2,8 +2,11 @@
 
 Brier score and reliability bins are reported in the daily digest. The
 wording prompt may move the high and low confidence cutoffs only inside
-configured bounds. Packets at or above the high cutoff use the labeled
-return. Packets at or below the low cutoff score as cash. No orders.
+configured bounds. Only matured packets are samples. High confidence takes
+the labeled return. Low confidence is scored on the return it missed: a
+skipped winner is a penalty and a skipped loser is a credit. The band
+between the cutoffs is not a sample. A book with no matured packets is not
+scored. No orders.
 """
 
 from __future__ import annotations
@@ -28,16 +31,20 @@ _MIN_BIN = 5
 BUILTIN_WORDING = (
     "State confidence as a probability between 0 and 1. "
     "Do not invent a probability the checklist does not support. "
-    "Long-only. A low-confidence name is cash, not a short. "
+    "Long-only. A low-confidence name is a skip, not a short. "
     "HIGH_CONFIDENCE_MIN=0.70 means the book takes the labeled long return. "
-    "LOW_CONFIDENCE_MAX=0.40 means the book stays in cash. "
+    "LOW_CONFIDENCE_MAX=0.40 means the book skips the name and is scored on the "
+    "return it missed: a missed winner is a penalty and an avoided loser is a credit. "
+    "Confidence between the cutoffs is not a sample. Only matured outcomes count. "
     "Do not penalize market cap. A catalyst is only a tiebreaker."
 )
 
 IMPROVER_SYSTEM = (
     "You revise the confidence-wording prompt. "
     "Keep HIGH_CONFIDENCE_MIN=<number> and LOW_CONFIDENCE_MAX=<number> inside the stated bounds. "
-    "The objective is a higher Sortino of the confidence-gated book and a lower Brier score. "
+    "The objective is a higher Sortino of the confidence book and a lower Brier score. "
+    "High confidence takes the matured return. Low confidence is penalized for missed "
+    "winners and credited for avoided losers. Do not score a skip as zero. "
     "Long-only. Never suggest a short or an option. You do not place orders. "
     "Return JSON with keys text and rationale. rationale must say when the sample is too small."
 )
@@ -182,7 +189,7 @@ class SystemTabAgent(TabAgent):
         if since_ts:
             packets = [row for row in packets if str(row.get("created_at") or "") >= since_ts]
         versions = reg.versions(self.tab_id)
-        stats = [_version_book(version, packets, config) for version in versions]
+        stats = [_version_book(version, packets, config, skill_dir) for version in versions]
         by_id = {row["version_id"]: row for row in stats}
         comparisons = []
         for row in stats:
@@ -217,7 +224,12 @@ class SystemTabAgent(TabAgent):
             "versions": stats,
             "comparisons": comparisons,
             "calibration": calibration_report(packets),
-            "join_note": "High stated confidence takes the labeled return. Low confidence is cash.",
+            "join_note": (
+                "Only matured packets are samples. High confidence takes the labeled return. "
+                "Low confidence is the negative of that return: missed winners penalize, avoided "
+                "losers credit. Confidence between the cutoffs is not a sample. "
+                "No matured packets means the book is not scored."
+            ),
         }
 
     def propose(
@@ -293,25 +305,57 @@ def _default_llm(system: str, user: str) -> str:
     return _call_llm(user, system, _load_env())
 
 
-def _version_book(version: dict[str, Any], packets: list[dict[str, Any]], config: Any) -> dict[str, Any]:
-    high, low = parse_thresholds(str(version.get("text") or ""), None)
+def _version_book(
+    version: dict[str, Any],
+    packets: list[dict[str, Any]],
+    config: Any,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Score one wording on matured returns.
+
+    High confidence takes the realized percent. Low confidence takes its
+    negative, so skipping a winner costs the gain and skipping a loser keeps
+    the loss that was avoided. The open band between the cutoffs is abstain.
+    Pending packets are not samples. An empty matured book is not scored.
+    """
+    high, low = parse_thresholds(str(version.get("text") or ""), skill_dir)
     returns: list[float] = []
     dates: list[str] = []
+    decisions: list[str] = []
+    n_abstain = 0
+    n_immature = 0
+    n_missing_confidence = 0
     for packet in packets:
         confidence = _confidence(packet)
         if confidence is None:
+            n_missing_confidence += 1
+            continue
+        realized = _labeled_return(packet, config.horizon_days)
+        if realized is None:
+            n_immature += 1
             continue
         day = str(packet.get("created_at") or "")[:10]
         if confidence >= high:
-            ret = _labeled_return(packet, config.horizon_days)
-            if ret is None:
-                continue
             dates.append(day)
-            returns.append(ret)
+            returns.append(realized)
+            decisions.append("long")
         elif confidence <= low:
             dates.append(day)
-            returns.append(0.0)
-    book = evaluate_book(returns, dates, config=config)
+            returns.append(-float(realized))
+            decisions.append("cash")
+        else:
+            n_abstain += 1
+    if not returns:
+        book = evaluate_book([], [], config=config, decisions=[])
+        book["scored"] = False
+        book["not_scored_reason"] = "no_matured_packets"
+        book["primary_score"] = None
+        book["sortino"] = None
+        book["sharpe"] = None
+    else:
+        book = evaluate_book(returns, dates, config=config, decisions=decisions)
+        book["scored"] = True
+        book["not_scored_reason"] = None
     book.update(
         {
             "version_id": version.get("id"),
@@ -320,6 +364,10 @@ def _version_book(version: dict[str, Any], packets: list[dict[str, Any]], config
             "parent": version.get("parent"),
             "high_confidence_min": high,
             "low_confidence_max": low,
+            "scoring": "confidence_separation",
+            "n_abstain": n_abstain,
+            "n_immature": n_immature,
+            "n_missing_confidence": n_missing_confidence,
         }
     )
     return book

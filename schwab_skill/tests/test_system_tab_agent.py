@@ -40,22 +40,67 @@ def test_thresholds_stay_inside_bounds() -> None:
     assert low == 0.15
 
 
-def test_low_confidence_is_cash_and_high_confidence_uses_the_return(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_low_confidence_is_scored_on_the_missed_return(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
     overwrite_packets(
         tmp_path,
         [
             _packet("AAPL", 0.85, "win", 8.0, "2026-06-02"),
             _packet("MSFT", 0.20, "win", 20.0, "2026-06-03"),
+            _packet("IBM", 0.15, "loss", -10.0, "2026-06-04"),
+            _packet("MID", 0.55, "win", 50.0, "2026-06-05"),
+            _packet("NEW", 0.10, "pending", 0.0, "2026-06-06"),
         ],
     )
     agent = SystemTabAgent()
     live = agent.registry(tmp_path).live_version("system", "confidence_wording")
     book = next(row for row in agent.score(tmp_path)["versions"] if row["version_id"] == live["id"])
-    assert book["n"] == 2
-    assert book["avg_realized_return_pct"] == 4.0
+    # High takes +8. Low miss of +20 scores -20. Low avoid of -10 scores +10.
+    # The middle band and the pending packet are not samples.
+    assert book["scored"] is True
+    assert book["n"] == 3
+    assert book["n_longs"] == 1
+    assert book["win_rate"] == 1.0
+    assert book["n_abstain"] == 1
+    assert book["n_immature"] == 1
+    assert book["avg_realized_return_pct"] == -0.6667
     assert book["high_confidence_min"] == 0.70
     assert book["low_confidence_max"] == 0.40
+    assert book["scoring"] == "confidence_separation"
+
+
+def test_no_matured_packets_are_not_scored(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
+    overwrite_packets(tmp_path, [_packet("AAPL", 0.10, "pending", 0.0, "2026-06-02")])
+    agent = SystemTabAgent()
+    live = agent.registry(tmp_path).live_version("system", "confidence_wording")
+    book = next(row for row in agent.score(tmp_path)["versions"] if row["version_id"] == live["id"])
+    assert book["scored"] is False
+    assert book["not_scored_reason"] == "no_matured_packets"
+    assert book["n"] == 0
+    assert book["primary_score"] is None
+    assert book["sortino"] is None
+    payload = write_daily_digest(tmp_path)
+    system = next(tab for tab in payload["tabs"] if tab["tab_id"] == "system")
+    assert system["live"][0]["scored"] is False
+    text = (tmp_path / ".tab_agent_digest" / f"{payload['day']}.md").read_text(encoding="utf-8")
+    assert "not-scored" in text
+
+
+def test_confidence_thresholds_use_the_skill_dir(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import get_tab_agent_confidence_high_min
+
+    seen: list[object] = []
+    real = get_tab_agent_confidence_high_min
+
+    def _wrap(skill_dir: object = None) -> float:
+        seen.append(skill_dir)
+        return real(skill_dir)
+
+    monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
+    monkeypatch.setattr("config.get_tab_agent_confidence_high_min", _wrap)
+    SystemTabAgent().score(tmp_path)
+    assert tmp_path in seen
 
 
 def test_overconfident_losses_are_flagged_in_the_digest(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

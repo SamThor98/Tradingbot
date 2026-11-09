@@ -108,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         f"estimated_llm_calls={report['estimated_llm_calls']} "
         f"estimated_cost_usd={report['estimated_cost_usd']} "
         f"calls_under_cap={report['calls_under_cap']} "
-        f"max_llm_calls={report['max_llm_calls']}"
+        f"max_llm_calls={report['max_llm_calls']} "
+        f"unfilled_cases={report.get('unfilled_cases')} "
+        f"history_fill={report.get('history_fill')}"
     )
     print(report["caveat"])
     print(json.dumps(report, indent=2))

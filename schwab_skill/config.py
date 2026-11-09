@@ -2866,7 +2866,7 @@ def get_tab_agent_confidence_high_bounds(skill_dir: Path | None = None) -> tuple
 
 
 def get_tab_agent_confidence_low_max(skill_dir: Path | None = None) -> float:
-    """Stated confidence at or below this stays in cash."""
+    """Stated confidence at or below this is a skip, scored on the return it missed."""
     low, high = get_tab_agent_confidence_low_bounds(skill_dir)
     val = _get_float("TAB_AGENT_CONFIDENCE_LOW_MAX", 0.40, skill_dir)
     return max(low, min(high, val))

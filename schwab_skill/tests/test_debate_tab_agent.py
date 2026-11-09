@@ -56,6 +56,9 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
     agent = DebateTabAgent()
     reg = agent.registry(tmp_path)
     system = reg.live_version("debate", "system")
+    round1 = reg.live_version("debate", "round1")
+    round2 = reg.live_version("debate", "round2")
+    versions = {"system": system["id"], "round1": round1["id"], "round2": round2["id"]}
     day = "2026-06-02"
     packet = {
         "packet_id": "pkt1",
@@ -78,7 +81,7 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
             "as_of": day,
             "ticker": "AAPL",
             "debate_score": 40,
-            "prompt_versions": {"system": system["id"], "round1": "builtin", "round2": "builtin"},
+            "prompt_versions": versions,
             "side": "long",
         },
         {
@@ -86,7 +89,7 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
             "as_of": "2026-06-03",
             "ticker": "MSFT",
             "debate_score": 80,
-            "prompt_versions": {"system": system["id"], "round1": "builtin", "round2": "builtin"},
+            "prompt_versions": versions,
             "side": "short",
         },
     ]
@@ -108,16 +111,38 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
                     "as_of": "2026-06-04",
                     "ticker": "NVDA",
                     "debate_score": 80,
-                    "prompt_versions": {"system": system["id"]},
+                    "prompt_versions": versions,
                     "side": "long",
                 }
             )
             + "\n"
         )
     score = agent.score(tmp_path)
-    book = next(row for row in score["versions"] if row["version_id"] == system["id"])
+    live_rows = [row for row in score["versions"] if row.get("status") == "live"]
+    assert len(live_rows) == 1
+    book = live_rows[0]
+    assert book["prompt_key"] == "combination"
+    assert str(book["version_id"]).startswith("combo:")
+    assert book["prompt_versions"] == versions
     assert book["n"] == 2
+    assert book["n_longs"] == 1
+    assert book["win_rate"] == 1.0
     assert book["avg_realized_return_pct"] == 4.0
+    status = agent.status(tmp_path)
+    assert len(status["prompts"]) == 1
+    assert status["prompts"][0]["prompt_key"] == "combination"
+    assert status["prompts"][0]["live"]["id"] == book["version_id"]
+    from core.tab_agent_digest import write_daily_digest
+
+    payload = write_daily_digest(tmp_path)
+    debate = next(tab for tab in payload["tabs"] if tab["tab_id"] == "debate")
+    assert len(debate["live"]) == 1
+    assert debate["live"][0]["prompt_key"] == "combination"
+    assert debate["live"][0]["n_longs"] == 1
+    assert debate["live"][0]["win_rate"] == 1.0
+    text = (tmp_path / ".tab_agent_digest" / f"{payload['day']}.md").read_text(encoding="utf-8")
+    assert "longs=1" in text
+    assert "win_rate=1.0" in text
 
     created = agent.propose(
         tmp_path,
@@ -138,3 +163,61 @@ def test_cash_pass_scores_zero_and_proposal_writes_a_review(tmp_path, monkeypatc
     assert policy["quality_threshold"] == 90.0
     assert policy["max_names"] == 0
     assert "never recommend a short" in system["text"].lower()
+
+
+def test_legacy_debate_copies_score_as_one_combination(tmp_path) -> None:
+    from core.tab_agent_replay import append_sample
+
+    agent = DebateTabAgent()
+    reg = agent.registry(tmp_path)
+    ids = {key: reg.live_version("debate", key)["id"] for key in ("system", "round1", "round2")}
+    for key, version_id in ids.items():
+        append_sample(
+            tmp_path,
+            {
+                "source": "replay",
+                "tab_id": "debate",
+                "prompt_key": key,
+                "version_id": version_id,
+                "ticker": "AAA",
+                "as_of": "2026-06-01",
+                "decision": "long",
+                "realized_return_pct": 8.0,
+                "scored": True,
+            },
+        )
+    book = next(row for row in agent.score(tmp_path)["versions"] if row["status"] == "live")
+    assert book["n"] == 1
+    assert book["n_replay"] == 1
+    assert book["avg_realized_return_pct"] == 8.0
+
+
+def test_shadow_debate_combination_promotes_together(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("core.debate_tab_agent.compare_books", lambda *_a, **_k: "better_than_live")
+    monkeypatch.setattr("core.tab_agent_review.review_gate", lambda *_a, **_k: "approved")
+    from core.tab_agent_governor import govern_agent
+
+    agent = DebateTabAgent()
+    reg = agent.registry(tmp_path)
+    before = {}
+    for key in ("system", "round1"):
+        live = reg.live_version("debate", key)
+        before[key] = live["id"]
+        reg.add_version(
+            "debate",
+            prompt_key=key,
+            text=str(live["text"]) + " Stay in cash when the regime is weak.",
+            parent=str(live["id"]),
+            rationale="Revise the combination together.",
+            status="shadow",
+        )
+    status = agent.status(tmp_path)
+    assert len(status["prompts"]) == 1
+    assert status["prompts"][0]["shadow"]["prompt_versions"]["system"] != before["system"]
+    result = govern_agent(agent, tmp_path)
+    assert any(
+        row.get("action") == "auto_promote" and row.get("prompt_key") == "combination" for row in result["actions"]
+    )
+    assert "Stay in cash" in reg.live_version("debate", "system")["text"]
+    assert "Stay in cash" in reg.live_version("debate", "round1")["text"]
+    assert "Stay in cash" not in reg.live_version("debate", "round2")["text"]

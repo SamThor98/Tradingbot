@@ -20,6 +20,20 @@ LOG = logging.getLogger(__name__)
 # A high committee score is the positive call. A low score is the pass.
 ENDORSE_AT = 60.0
 PASS_BELOW = 50.0
+DEBATE_PROMPT_KEYS = ("system", "round1", "round2")
+
+
+def combination_id(prompt_versions: Any) -> str:
+    """Stable id for one debate. The key is the set of prompt versions."""
+    versions = prompt_versions if isinstance(prompt_versions, dict) else {}
+    parts = [f"{key}={str(versions.get(key) or 'builtin')}" for key in DEBATE_PROMPT_KEYS]
+    return "combo:" + "|".join(parts)
+
+
+def combination_members(prompt_versions: Any) -> dict[str, str]:
+    versions = prompt_versions if isinstance(prompt_versions, dict) else {}
+    return {key: str(versions.get(key) or "builtin") for key in DEBATE_PROMPT_KEYS}
+
 
 IMPROVER_SYSTEM = (
     "You revise one debate-committee analysis prompt. "
@@ -104,32 +118,48 @@ class DebateTabAgent(TabAgent):
         config = load_objective(skill_dir)
         events = _filter_since(load_debate_log(skill_dir), since_ts)
         packets = load_packets(skill_dir)
-        versions = reg.versions(self.tab_id)
+        live_ids, shadow_ids, has_shadow = _live_and_shadow_ids(reg)
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            members = combination_members(event.get("prompt_versions"))
+            grouped.setdefault(combination_id(members), []).append(event)
+        live_key = combination_id(live_ids)
         stats = [
-            _version_book(version, events, packets, config, skill_dir=skill_dir, since_ts=since_ts)
-            for version in versions
+            _combination_book(
+                live_key,
+                "live",
+                live_ids,
+                grouped.get(live_key, []),
+                packets,
+                config,
+                skill_dir=skill_dir,
+                since_ts=since_ts,
+            )
         ]
-        by_id = {row["version_id"]: row for row in stats}
         comparisons = []
-        for row in stats:
-            if row.get("status") == "live":
-                continue
-            baseline = by_id.get(str(row.get("parent") or ""))
-            if baseline is None:
-                baseline = next(
-                    (
-                        item
-                        for item in stats
-                        if item.get("prompt_key") == row.get("prompt_key") and item.get("status") == "live"
-                    ),
-                    None,
-                )
+        shadow_key = combination_id(shadow_ids)
+        if has_shadow and shadow_key != live_key:
+            members = [shadow_ids[key] for key in DEBATE_PROMPT_KEYS if shadow_ids[key] != live_ids[key]]
+            shadow_book = _combination_book(
+                shadow_key,
+                "shadow",
+                shadow_ids,
+                grouped.get(shadow_key, []),
+                packets,
+                config,
+                skill_dir=skill_dir,
+                since_ts=since_ts,
+                parent=live_key,
+            )
+            stats.append(shadow_book)
             comparisons.append(
                 {
-                    "version_id": row["version_id"],
-                    "prompt_key": row.get("prompt_key"),
-                    "baseline_version_id": None if baseline is None else baseline.get("version_id"),
-                    "edge_vs_live": compare_books(row, baseline, config=config),
+                    "version_id": shadow_key,
+                    "prompt_key": "combination",
+                    "combination": True,
+                    "member_version_ids": members,
+                    "baseline_version_id": live_key,
+                    "edge_vs_live": compare_books(shadow_book, stats[0], config=config),
                     "auto_promote": False,
                 }
             )
@@ -146,14 +176,51 @@ class DebateTabAgent(TabAgent):
                 "versions": stats,
                 "comparisons": comparisons,
                 "join_note": (
+                    "One debate combination is the system, round-1, and round-2 prompts together, "
+                    "keyed by that set of versions. "
                     "Committee rows join a decision packet on packet_id when present, otherwise ticker plus as_of date. "
-                    "Scores at or above 60 are the endorsed book. Scores below 50 are the pass counterfactual."
+                    "Scores at or above the quality bar are the endorsed book. Scores below 50 are the pass counterfactual."
                 ),
             },
             skill_dir,
             self.tab_id,
             config,
         )
+
+    def status(self, skill_dir: Path) -> dict[str, Any]:
+        """One Debate row for the live combination, plus its shadow combination."""
+        reg = self.registry(skill_dir)
+        live_ids, shadow_ids, has_shadow = _live_and_shadow_ids(reg)
+        live_key = combination_id(live_ids)
+        shadow_key = combination_id(shadow_ids)
+        shadow = None
+        if has_shadow and shadow_key != live_key:
+            shadow = {
+                "id": shadow_key,
+                "prompt_key": "combination",
+                "status": "shadow",
+                "prompt_versions": shadow_ids,
+            }
+        return {
+            "tab_id": self.tab_id,
+            "metric": self.metric_name,
+            "objective": load_objective(skill_dir).as_dict(),
+            "prompts": [
+                {
+                    "prompt_key": "combination",
+                    "combination": True,
+                    "live": {
+                        "id": live_key,
+                        "prompt_key": "combination",
+                        "status": "live",
+                        "prompt_versions": live_ids,
+                    },
+                    "pending": [],
+                    "shadow": shadow,
+                    "retired": [],
+                }
+            ],
+        }
 
     def propose(
         self,
@@ -183,7 +250,14 @@ class DebateTabAgent(TabAgent):
             if any(row.get("status") in {STATUS_PENDING, "shadow"} for row in reg.versions(self.tab_id, key)):
                 skipped.append({"prompt_key": key, "reason": "candidate_exists"})
                 continue
-            stat = next((row for row in score.get("versions") or [] if row.get("version_id") == live.get("id")), {})
+            stat = next(
+                (
+                    row
+                    for row in score.get("versions") or []
+                    if row.get("status") == "live" and row.get("prompt_key") == "combination"
+                ),
+                {},
+            )
             user = (
                 f"Prompt key: {key}\n"
                 f"Objective: {score.get('winner_rule')}\n"
@@ -279,27 +353,44 @@ def _joined_return(event: dict[str, Any], packets: list[dict[str, Any]], *, hori
         return None
 
 
-def _version_book(
-    version: dict[str, Any],
+def _live_and_shadow_ids(reg: Any) -> tuple[dict[str, str], dict[str, str], bool]:
+    live_ids: dict[str, str] = {}
+    shadow_ids: dict[str, str] = {}
+    has_shadow = False
+    for key in DEBATE_PROMPT_KEYS:
+        live = reg.live_version("debate", key)
+        live_id = str(live["id"]) if live else "builtin"
+        live_ids[key] = live_id
+        shadow = next((row for row in reg.versions("debate", key) if row.get("status") == "shadow"), None)
+        if shadow is not None:
+            shadow_ids[key] = str(shadow["id"])
+            has_shadow = True
+        else:
+            shadow_ids[key] = live_id
+    return live_ids, shadow_ids, has_shadow
+
+
+def _combination_book(
+    combo_id: str,
+    status: str,
+    prompt_versions: dict[str, str],
     events: list[dict[str, Any]],
     packets: list[dict[str, Any]],
     config: Any,
     *,
     skill_dir: Path | None = None,
     since_ts: str | None = None,
+    parent: str | None = None,
 ) -> dict[str, Any]:
-    key = str(version.get("prompt_key") or "")
-    vid = str(version.get("id") or "")
+    """Score every call of one prompt-version set as a single book."""
     endorsed: list[float] = []
     endorsed_dates: list[str] = []
     decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
     seen: set[tuple[str, str]] = set()
+    bar = float(config.quality_threshold)
     for event in events:
-        versions = event.get("prompt_versions") if isinstance(event.get("prompt_versions"), dict) else {}
-        if str(versions.get(key) or "") != vid:
-            continue
         ticker = str(event.get("ticker") or "").upper()
         day = str(event.get("as_of") or "")[:10]
         if not ticker or len(day) < 10 or (ticker, day) in seen:
@@ -315,7 +406,6 @@ def _version_book(
         side = str(event.get("side") or "long").lower()
         if side in {"short", "option", "put", "call", "inverse"}:
             continue
-        bar = float(config.quality_threshold)
         if score >= bar:
             endorsed.append(ret)
             endorsed_dates.append(day)
@@ -327,26 +417,35 @@ def _version_book(
             decisions.append("cash")
             passes.append(ret)
             passes_dates.append(day)
-    from core.tab_agent_replay import attach_replay, decision_flags
+    from core.tab_agent_replay import attach_replay_combination, decision_flags
 
-    merged = attach_replay(
+    merged = attach_replay_combination(
         endorsed,
         endorsed_dates,
         skill_dir=skill_dir,
-        tab_id="debate",
-        version_id=vid,
+        combination_id=combo_id,
+        member_ids=set(prompt_versions.values()),
         weight=config.replay_weight,
         since_ts=since_ts,
         live_decisions=decisions,
     )
-    book = evaluate_book(merged.returns, merged.dates, config=config, weights=merged.weights, sources=merged.sources)
+    book = evaluate_book(
+        merged.returns,
+        merged.dates,
+        config=config,
+        weights=merged.weights,
+        sources=merged.sources,
+        decisions=merged.decisions,
+    )
     book.update(decision_flags(merged.decisions))
     book.update(
         {
-            "version_id": vid,
-            "prompt_key": key,
-            "status": version.get("status"),
-            "parent": version.get("parent"),
+            "version_id": combo_id,
+            "prompt_key": "combination",
+            "combination": True,
+            "prompt_versions": dict(prompt_versions),
+            "status": status,
+            "parent": parent,
             "pass_book": evaluate_book(passes, passes_dates, config=config),
         }
     )
