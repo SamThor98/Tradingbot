@@ -235,6 +235,10 @@ def attach_replay_combination(
     for sample in load_samples(skill_dir):
         if sample.get("scored") is False or str(sample.get("tab_id") or "") != "debate":
             continue
+        # Rows with a median are re-labeled at the active quality bar instead of
+        # replaying the decision stored for the old bar.
+        if sample.get("debate_score") is not None:
+            continue
         as_of = str(sample.get("as_of") or "")[:10]
         ticker = str(sample.get("ticker") or "")
         if not ticker or len(as_of) < 10 or (cutoff and as_of < cutoff):
@@ -324,6 +328,13 @@ _DEBATE_CONTRACT = (
     "An all-zero card is invalid and will be discarded. "
     "Also include chair. Do not copy an example score."
 )
+_DEBATE_COMPACT_RETRY = (
+    "The previous reply was truncated or was not JSON. "
+    "Reply with one compact JSON object and no markdown fence. "
+    "seats is five objects with name and integer score only. claim may be empty. Include chair. "
+    "Do not decide cash unless the scores say so."
+)
+DEBATE_MAX_TOKENS = 800
 _FADE_CONTRACT = (
     "Reply with one JSON object using your schema. Include fade_score from -100 to 100. "
     "Positive fade_score means the move is more likely to fade, so the trade is cash. "
@@ -396,7 +407,9 @@ def committee_median(text: str) -> float | None:
 
 
 def _json_objects(text: str) -> list[dict[str, Any]]:
-    raw = str(text or "")
+    from core.debate_committee import unwrap_model_json
+
+    raw = unwrap_model_json(text)
     found: list[dict[str, Any]] = []
     start: int | None = None
     depth = 0
@@ -1285,7 +1298,12 @@ def run_replay(
         report["skipped_non_decision"] = len(cases) * sum(
             1 for row in ordered if not is_decision_prompt(tab_id, str(row.get("prompt_key") or ""))
         )
-    caller = complete or _default_complete
+    if complete is not None:
+        caller = complete
+    elif tab_id == "debate":
+        caller = _debate_complete
+    else:
+        caller = _default_complete
     provider = history_provider or _default_history(root)
     state = {"used": 0, "stop": False}
     every = max(0, int(progress_every))
@@ -1667,7 +1685,7 @@ def _run_debate_case(
             raw1 = _call_model(
                 caller,
                 system,
-                user1 + "\n\nThe previous reply did not parse. " + _DEBATE_CONTRACT,
+                user1 + "\n\n" + _DEBATE_COMPACT_RETRY,
                 report=report,
                 state=state,
                 cap=cap,
@@ -1713,7 +1731,7 @@ def _run_debate_case(
             raw2 = _call_model(
                 caller,
                 system,
-                user2 + "\n\nThe previous reply did not parse. " + _DEBATE_CONTRACT,
+                user2 + "\n\n" + _DEBATE_COMPACT_RETRY,
                 report=report,
                 state=state,
                 cap=cap,
@@ -1823,6 +1841,13 @@ def _default_complete(system: str, user: str) -> str:
     from engine_analysis import _call_llm, _load_env
 
     return _call_llm(user, system, _load_env())
+
+
+def _debate_complete(system: str, user: str) -> str:
+    """Debate cards are longer than a one-line verdict. 200 tokens truncates the JSON."""
+    from engine_analysis import _call_llm, _load_env
+
+    return _call_llm(user, system, _load_env(), max_tokens=DEBATE_MAX_TOKENS)
 
 
 def _default_history(skill_dir: Path) -> Callable[[str], Any]:

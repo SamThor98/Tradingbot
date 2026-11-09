@@ -57,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Relabel stored replay rows. Does not call the model.",
     )
     parser.add_argument(
+        "--tune-threshold",
+        action="store_true",
+        help="Re-score stored debate medians across quality bars. Does not call the model.",
+    )
+    parser.add_argument(
         "--prompt-key",
         action="append",
         default=[],
@@ -69,6 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Print calls, cost, and parse failures every N cases. 0 silences the ticker.",
     )
     args = parser.parse_args(argv)
+    if args.tune_threshold:
+        from core.debate_quality import tune_debate_threshold
+
+        report = tune_debate_threshold(args.skill_dir)
+        print(json.dumps(report, indent=2, default=str))
+        print("No model call. Review the shadow bar with python scripts/tab_agent.py status --tab debate")
+        return 0
+
     if not args.rescore and not args.since:
         parser.error("--since is required")
 

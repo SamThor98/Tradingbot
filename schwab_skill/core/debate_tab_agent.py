@@ -23,10 +23,19 @@ PASS_BELOW = 50.0
 DEBATE_PROMPT_KEYS = ("system", "round1", "round2")
 
 
-def combination_id(prompt_versions: Any) -> str:
-    """Stable id for one debate. The key is the set of prompt versions."""
+def combination_id(prompt_versions: Any, quality_threshold: float | None = None) -> str:
+    """Stable id for one debate.
+
+    The key is the set of prompt versions. A quality threshold is part of the
+    scored combination. Replay model calls omit it, because the seat scores do
+    not depend on the bar.
+    """
     versions = prompt_versions if isinstance(prompt_versions, dict) else {}
     parts = [f"{key}={str(versions.get(key) or 'builtin')}" for key in DEBATE_PROMPT_KEYS]
+    if quality_threshold is not None:
+        number = float(quality_threshold)
+        shown = str(int(number)) if number.is_integer() else f"{number:.1f}"
+        parts.append(f"q={shown}")
     return "combo:" + "|".join(parts)
 
 
@@ -101,8 +110,11 @@ class DebateTabAgent(TabAgent):
 
     def prompt_catalog(self) -> dict[str, str]:
         from core.debate_committee import prompt_catalog
+        from core.debate_quality import QUALITY_PROMPT_KEY, QUALITY_TEXT
 
-        return prompt_catalog()
+        catalog = dict(prompt_catalog())
+        catalog[QUALITY_PROMPT_KEY] = QUALITY_TEXT
+        return catalog
 
     def score(
         self,
@@ -118,51 +130,74 @@ class DebateTabAgent(TabAgent):
         config = load_objective(skill_dir)
         events = _filter_since(load_debate_log(skill_dir), since_ts)
         packets = load_packets(skill_dir)
+        from core.debate_quality import load_debate_cases, sweep_thresholds
+
         live_ids, shadow_ids, has_shadow = _live_and_shadow_ids(reg)
+        live_bar = _bar_for(reg, "live", config)
+        shadow_bar = _bar_for(reg, "shadow", config)
+        if not has_shadow:
+            shadow_bar = live_bar
         grouped: dict[str, list[dict[str, Any]]] = {}
         for event in events:
             members = combination_members(event.get("prompt_versions"))
             grouped.setdefault(combination_id(members), []).append(event)
-        live_key = combination_id(live_ids)
+        live_events = grouped.get(combination_id(live_ids), [])
+        live_key = combination_id(live_ids, live_bar)
         stats = [
             _combination_book(
                 live_key,
                 "live",
                 live_ids,
-                grouped.get(live_key, []),
+                live_events,
                 packets,
                 config,
                 skill_dir=skill_dir,
                 since_ts=since_ts,
+                threshold=live_bar,
             )
         ]
         comparisons = []
-        shadow_key = combination_id(shadow_ids)
-        if has_shadow and shadow_key != live_key:
+        shadow_key = combination_id(shadow_ids, shadow_bar)
+        quality_shadow = next(
+            (row for row in reg.versions(self.tab_id, "quality") if row.get("status") == "shadow"),
+            None,
+        )
+        threshold_differs = abs(float(shadow_bar) - float(live_bar)) > 1e-9
+        if (has_shadow or threshold_differs) and shadow_key != live_key:
             members = [shadow_ids[key] for key in DEBATE_PROMPT_KEYS if shadow_ids[key] != live_ids[key]]
+            if quality_shadow is not None and threshold_differs:
+                members.append(str(quality_shadow.get("id") or ""))
+            shadow_events = grouped.get(combination_id(shadow_ids), [])
             shadow_book = _combination_book(
                 shadow_key,
                 "shadow",
                 shadow_ids,
-                grouped.get(shadow_key, []),
+                shadow_events,
                 packets,
                 config,
                 skill_dir=skill_dir,
                 since_ts=since_ts,
                 parent=live_key,
+                threshold=shadow_bar,
             )
             stats.append(shadow_book)
+            if threshold_differs and not has_shadow:
+                edge = _threshold_edge(skill_dir, live_ids, live_bar, shadow_bar, config)
+            else:
+                edge = compare_books(shadow_book, stats[0], config=config)
             comparisons.append(
                 {
                     "version_id": shadow_key,
                     "prompt_key": "combination",
                     "combination": True,
-                    "member_version_ids": members,
+                    "member_version_ids": [item for item in members if item],
                     "baseline_version_id": live_key,
-                    "edge_vs_live": compare_books(shadow_book, stats[0], config=config),
+                    "edge_vs_live": edge,
                     "auto_promote": False,
                 }
             )
+        cases = load_debate_cases(skill_dir, live_ids)
+        sweep = sweep_thresholds(cases, config, live_threshold=live_bar)
         objective = config.as_dict()
         from core.tab_agent_replay import annotate_tab_score
 
@@ -175,11 +210,14 @@ class DebateTabAgent(TabAgent):
                 "winner_rule": objective["statement"],
                 "versions": stats,
                 "comparisons": comparisons,
+                "quality_threshold": live_bar,
+                "quality_shadow_threshold": None if not threshold_differs else shadow_bar,
+                "quality_sweep": sweep,
                 "join_note": (
-                    "One debate combination is the system, round-1, and round-2 prompts together, "
-                    "keyed by that set of versions. "
-                    "Committee rows join a decision packet on packet_id when present, otherwise ticker plus as_of date. "
-                    "Scores at or above the quality bar are the endorsed book. Scores below 50 are the pass counterfactual."
+                    "One debate combination is the system, round-1, and round-2 prompts plus the quality bar. "
+                    "A median seat score at or above the bar is a long. Below the bar is cash. "
+                    "The bar is tuned on earlier replay cases and accepted only when later cases still improve Sortino, "
+                    "with at least 30 taken longs and the drawdown inside the guard. No model call is required to re-score it."
                 ),
             },
             skill_dir,
@@ -191,10 +229,13 @@ class DebateTabAgent(TabAgent):
         """One Debate row for the live combination, plus its shadow combination."""
         reg = self.registry(skill_dir)
         live_ids, shadow_ids, has_shadow = _live_and_shadow_ids(reg)
-        live_key = combination_id(live_ids)
-        shadow_key = combination_id(shadow_ids)
+        config = load_objective(skill_dir)
+        live_bar = _bar_for(reg, "live", config)
+        shadow_bar = _bar_for(reg, "shadow", config)
+        live_key = combination_id(live_ids, live_bar)
+        shadow_key = combination_id(shadow_ids, shadow_bar)
         shadow = None
-        if has_shadow and shadow_key != live_key:
+        if shadow_key != live_key:
             shadow = {
                 "id": shadow_key,
                 "prompt_key": "combination",
@@ -222,6 +263,20 @@ class DebateTabAgent(TabAgent):
             ],
         }
 
+    def approve(self, skill_dir: Path, version_id: str) -> dict[str, Any]:
+        row = super().approve(skill_dir, version_id)
+        from core.debate_quality import sync_quality_policy
+
+        sync_quality_policy(skill_dir)
+        return row
+
+    def rollback(self, skill_dir: Path, version_id: str) -> dict[str, Any]:
+        row = super().rollback(skill_dir, version_id)
+        from core.debate_quality import sync_quality_policy
+
+        sync_quality_policy(skill_dir)
+        return row
+
     def propose(
         self,
         skill_dir: Path,
@@ -238,7 +293,7 @@ class DebateTabAgent(TabAgent):
         created: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
         catalog = self.prompt_catalog()
-        keys = [prompt_key] if prompt_key else list(catalog)
+        keys = [prompt_key] if prompt_key else [key for key in catalog if key != "quality"]
         for key in keys:
             if key not in catalog:
                 skipped.append({"prompt_key": str(key), "reason": "unknown_prompt"})
@@ -370,6 +425,38 @@ def _live_and_shadow_ids(reg: Any) -> tuple[dict[str, str], dict[str, str], bool
     return live_ids, shadow_ids, has_shadow
 
 
+def _bar_for(reg: Any, role: str, config: Any) -> float:
+    from core.debate_quality import clamp_threshold, threshold_from_text
+
+    if role == "shadow":
+        row = next((item for item in reg.versions("debate", "quality") if item.get("status") == "shadow"), None)
+    else:
+        row = reg.live_version("debate", "quality")
+    parsed = threshold_from_text(None if row is None else str(row.get("text") or ""))
+    if parsed is None:
+        parsed = float(config.quality_threshold)
+    return clamp_threshold(parsed)
+
+
+def _threshold_edge(
+    skill_dir: Path,
+    prompt_versions: dict[str, str],
+    live_bar: float,
+    shadow_bar: float,
+    config: Any,
+) -> str:
+    from core.debate_quality import load_debate_cases, sweep_thresholds
+
+    report = sweep_thresholds(load_debate_cases(skill_dir, prompt_versions), config, live_threshold=live_bar)
+    chosen = float(report.get("chosen_threshold") or live_bar)
+    if report.get("accepted") and abs(chosen - float(shadow_bar)) < 1e-6:
+        return "better_than_live"
+    reason = str(report.get("reason") or "no_separation")
+    if reason in {"drawdown_worse", "insufficient_sample"}:
+        return reason
+    return "no_separation"
+
+
 def _combination_book(
     combo_id: str,
     status: str,
@@ -381,6 +468,7 @@ def _combination_book(
     skill_dir: Path | None = None,
     since_ts: str | None = None,
     parent: str | None = None,
+    threshold: float | None = None,
 ) -> dict[str, Any]:
     """Score every call of one prompt-version set as a single book."""
     endorsed: list[float] = []
@@ -389,7 +477,7 @@ def _combination_book(
     passes: list[float] = []
     passes_dates: list[str] = []
     seen: set[tuple[str, str]] = set()
-    bar = float(config.quality_threshold)
+    bar = float(threshold if threshold is not None else config.quality_threshold)
     for event in events:
         ticker = str(event.get("ticker") or "").upper()
         day = str(event.get("as_of") or "")[:10]
@@ -410,40 +498,74 @@ def _combination_book(
             endorsed.append(ret)
             endorsed_dates.append(day)
             decisions.append("long")
-        elif score < PASS_BELOW:
-            # The decision was cash. Score 0, and keep the skipped long as a counterfactual.
+        else:
+            # Under the bar the book stays in cash and keeps the skipped long as a counterfactual.
             endorsed.append(0.0)
             endorsed_dates.append(day)
             decisions.append("cash")
             passes.append(ret)
             passes_dates.append(day)
-    from core.tab_agent_replay import attach_replay_combination, decision_flags
+    from core.debate_quality import load_debate_cases
+    from core.tab_agent_replay import decision_flags
 
-    merged = attach_replay_combination(
-        endorsed,
-        endorsed_dates,
+    replay_cases = [] if skill_dir is None else load_debate_cases(skill_dir, prompt_versions)
+    replay_returns: list[float] = []
+    replay_dates: list[str] = []
+    replay_decisions: list[str] = []
+    for case in replay_cases:
+        key = (str(case["ticker"]), str(case["as_of"])[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        if float(case["debate_score"]) >= bar:
+            replay_returns.append(float(case["counterfactual_return_pct"]))
+            replay_decisions.append("long")
+        else:
+            replay_returns.append(0.0)
+            replay_decisions.append("cash")
+            passes.append(float(case["counterfactual_return_pct"]))
+            passes_dates.append(str(case["as_of"]))
+        replay_dates.append(str(case["as_of"]))
+    from core.tab_agent_replay import attach_replay_combination
+
+    legacy = attach_replay_combination(
+        [],
+        [],
         skill_dir=skill_dir,
-        combination_id=combo_id,
+        combination_id=combination_id(prompt_versions),
         member_ids=set(prompt_versions.values()),
         weight=config.replay_weight,
         since_ts=since_ts,
-        live_decisions=decisions,
+        live_decisions=[],
     )
+    legacy_returns = list(legacy.returns)
+    legacy_dates = list(legacy.dates)
+    legacy_decisions = list(legacy.decisions or [])
+    weights = None
+    sources = None
+    if replay_returns or legacy_returns:
+        weights = (
+            [1.0] * len(endorsed)
+            + [float(config.replay_weight)] * len(replay_returns)
+            + [float(config.replay_weight)] * len(legacy_returns)
+        )
+        sources = ["live"] * len(endorsed) + ["replay"] * len(replay_returns) + ["replay"] * len(legacy_returns)
     book = evaluate_book(
-        merged.returns,
-        merged.dates,
+        endorsed + replay_returns + legacy_returns,
+        endorsed_dates + replay_dates + legacy_dates,
         config=config,
-        weights=merged.weights,
-        sources=merged.sources,
-        decisions=merged.decisions,
+        weights=weights,
+        sources=sources,
+        decisions=decisions + replay_decisions + legacy_decisions,
     )
-    book.update(decision_flags(merged.decisions))
+    book.update(decision_flags(decisions + replay_decisions + legacy_decisions))
     book.update(
         {
             "version_id": combo_id,
             "prompt_key": "combination",
             "combination": True,
             "prompt_versions": dict(prompt_versions),
+            "quality_threshold": bar,
             "status": status,
             "parent": parent,
             "pass_book": evaluate_book(passes, passes_dates, config=config),

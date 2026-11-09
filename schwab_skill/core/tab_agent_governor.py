@@ -117,6 +117,9 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
 
     if getattr(agent, "tab_id", "") == "debate":
         actions.extend(_rollback_debate_combination(agent, skill_dir, reg, config))
+        from core.debate_quality import sync_quality_policy
+
+        sync_quality_policy(skill_dir)
     else:
         actions.extend(_rollback_degraded(agent, skill_dir, reg, config))
 
@@ -129,6 +132,9 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
             continue
         if comparison.get("combination"):
             actions.extend(_promote_debate_combination(agent, skill_dir, reg, comparison, by_id, config, review_gate))
+            from core.debate_quality import sync_quality_policy
+
+            sync_quality_policy(skill_dir)
             continue
         version_id = str(comparison.get("version_id") or "")
         candidate = reg.get(agent.tab_id, version_id)

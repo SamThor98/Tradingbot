@@ -658,7 +658,7 @@ def test_debate_zero_template_retries_into_a_long(tmp_path) -> None:
     ]
 
     def _complete(_system: str, user: str) -> str:
-        if "did not parse" in user:
+        if "compact JSON" in user:
             return _seat_card(80)
         return _seat_card(0)
 
@@ -998,3 +998,80 @@ def test_replay_reuses_a_stored_call_until_the_payload_changes(tmp_path) -> None
     third = run_replay(tmp_path, **kwargs)
     assert third["llm_calls"] == 1
     assert calls["n"] == 2
+
+
+def _committee(score: int) -> str:
+    names = ("trend", "setup", "risk", "skeptic", "business")
+    seats = [{"name": name, "score": score, "claim": "ok"} for name in names]
+    return json.dumps({"seats": seats, "chair": "desk"})
+
+
+def test_debate_parse_accepts_a_fenced_card_and_not_a_truncated_one() -> None:
+    fenced = "Here is the committee:\n```json\n" + _committee(80) + "\n```\nNothing else is the verdict."
+    assert parse_decision(fenced, tab="debate", quality_threshold=60) == "long"
+    truncated = '{"seats":[{"name":"trend","score":12,"claim":"cut'
+    assert parse_decision(truncated, tab="debate", quality_threshold=60) is None
+
+
+def test_truncated_debate_retries_compact_json_and_does_not_store_cash(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AEO", "price": 20, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    users: list[str] = []
+
+    def _complete(_system: str, user: str) -> str:
+        users.append(user)
+        if "compact JSON" in user:
+            return _committee(80)
+        return '{"seats":[{"name":"trend","score":40,"claim":"trunc'
+
+    report = run_replay(
+        tmp_path,
+        tab="debate",
+        since="2026-01-01",
+        max_llm_calls=8,
+        now=datetime(2026, 11, 9, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=_complete,
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=[
+            {"id": "sys", "prompt_key": "system", "text": "Score.", "status": "live"},
+            {"id": "r1", "prompt_key": "round1", "text": "Round one.", "status": "live"},
+            {"id": "r2", "prompt_key": "round2", "text": "Round two.", "status": "live"},
+        ],
+        progress_every=0,
+    )
+    assert any("compact JSON" in user for user in users)
+    rows = load_samples(tmp_path)
+    assert report["stored"] == 1
+    assert rows[0]["decision"] == "long"
+    assert rows[0]["debate_score"] == 80.0
+
+
+def test_a_debate_that_never_parses_is_not_stored_as_cash(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AVGO", "price": 180, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    report = run_replay(
+        tmp_path,
+        tab="debate",
+        since="2026-01-01",
+        max_llm_calls=8,
+        now=datetime(2026, 11, 9, tzinfo=timezone.utc),
+        db_path=tmp_path / "missing.db",
+        complete=lambda _system, _user: '{"seats":[{"name":"trend","score":10',
+        history_provider=lambda _ticker: _rising_frame(),
+        versions=[
+            {"id": "sys", "prompt_key": "system", "text": "Score.", "status": "live"},
+            {"id": "r1", "prompt_key": "round1", "text": "Round one.", "status": "live"},
+            {"id": "r2", "prompt_key": "round2", "text": "Round two.", "status": "live"},
+        ],
+        progress_every=0,
+    )
+    assert report["stored"] == 0
+    assert report["skipped_unparsed"] >= 1
+    assert load_samples(tmp_path) == []
