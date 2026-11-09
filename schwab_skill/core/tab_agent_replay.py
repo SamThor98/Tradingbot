@@ -10,6 +10,7 @@ Analysis only. This module does not place or size orders.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -54,7 +55,11 @@ _PIT_FIELDS = (
     "spread_pct",
     "relative_volume",
     "rs_rating",
+    "relative_strength",
+    "sector_relative_strength",
+    "sector_winning",
     "sector",
+    "sector_etf",
     "industry",
 )
 _LEAK_FIELDS = {
@@ -677,8 +682,9 @@ def scale_out_return(
 
 
 # A case is filled when each group has one point-in-time value. Price history
-# can supply the technical groups. Sector, relative strength, and the business
-# pillar come from the stored scan.
+# supplies the technical groups and relative strength versus SPY. Sector comes
+# from the stored scan, the bundled sector-name map, or the on-disk sector
+# cache. The business pillar stays missing unless the scan recorded it.
 _FILL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("stage_2", ("stage_2", "stage2")),
     ("vcp", ("vcp", "vcp_present")),
@@ -779,13 +785,23 @@ def _bars_on_or_before(frame: Any, created: Any) -> Any | None:
     return prefix
 
 
-def fill_case_from_history(case: dict[str, Any], frame: Any, skill_dir: Path | None) -> list[str]:
-    """Fill technical and checklist fields from bars known on the case date.
+def fill_case_from_history(
+    case: dict[str, Any],
+    frame: Any,
+    skill_dir: Path | None,
+    benchmarks: Callable[[str], Any] | None = None,
+) -> list[str]:
+    """Fill technical, relative-strength, sector, and checklist fields.
 
-    Returns the field groups that are still missing. The case is kept either way.
+    Bars after the case date stay out. ``benchmarks`` returns a price frame for
+    SPY or a sector ETF. Sector lookup reads the stored map and does not call
+    the network. Returns the field groups that are still missing. The case is
+    kept either way.
     """
     signal = case.get("signal") if isinstance(case.get("signal"), dict) else {}
     case["signal"] = signal
+    if _blank(signal.get("ticker")) and not _blank(case.get("ticker")):
+        signal["ticker"] = case.get("ticker")
     if _blank(signal.get("price")) and not _blank(case.get("entry_price")):
         signal["price"] = case.get("entry_price")
     if _blank(signal.get("stop_pct")) and not _blank(case.get("stop_pct")):
@@ -795,8 +811,122 @@ def fill_case_from_history(case: dict[str, Any], frame: Any, skill_dir: Path | N
     prefix = _bars_on_or_before(frame, case.get("created_at"))
     if prefix is not None:
         _fill_technicals(signal, prefix, skill_dir)
-        _fill_qual_from_grade(signal)
+    _fill_sector(signal, skill_dir)
+    _fill_relative_strength(signal, frame, case.get("created_at"), benchmarks)
+    _fill_qual_from_grade(signal)
     return missing_pit_fields(signal)
+
+
+def _fill_sector(signal: dict[str, Any], skill_dir: Path | None) -> None:
+    """Sector ETF from the scan, the bundled name map, or the yfinance cache."""
+    if not _blank(signal.get("sector_etf")) or not _blank(signal.get("sector")):
+        if _blank(signal.get("sector_etf")) and not _blank(signal.get("sector")):
+            from sector_strength import SECTOR_TO_ETF
+
+            mapped = SECTOR_TO_ETF.get(str(signal.get("sector") or "").strip().lower())
+            if mapped:
+                signal["sector_etf"] = mapped
+        return
+    ticker = str(signal.get("ticker") or "").upper()
+    if not ticker:
+        return
+    from sector_strength import cached_ticker_sector_etf
+
+    etf = cached_ticker_sector_etf(ticker, skill_dir)
+    if etf:
+        signal["sector_etf"] = etf
+
+
+def _close_return(frame: Any, lookback: int) -> float | None:
+    """Simple return over ``lookback`` sessions ending at the last bar."""
+    if frame is None or getattr(frame, "empty", True) or len(frame) <= int(lookback):
+        return None
+    if "close" not in getattr(frame, "columns", []):
+        return None
+    try:
+        end = float(frame["close"].iloc[-1])
+        start = float(frame["close"].iloc[-1 - int(lookback)])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if start <= 0 or not math.isfinite(start) or not math.isfinite(end):
+        return None
+    return (end - start) / start
+
+
+def _fill_relative_strength(
+    signal: dict[str, Any],
+    frame: Any,
+    created: Any,
+    benchmarks: Callable[[str], Any] | None,
+) -> None:
+    """21-session outperformance versus SPY, the same window as the sector filter.
+
+    The stock, SPY, and the sector ETF are each cut on the case date. A later
+    bar cannot move the number. The value is percentage points, so 2.5 means
+    the name beat SPY by 2.5 points over those 21 sessions.
+    """
+    if benchmarks is None:
+        return
+    from sector_strength import LOOKBACK_DAYS
+
+    lookback = int(LOOKBACK_DAYS)
+    prefix = _bars_on_or_before(frame, created)
+    stock_ret = _close_return(prefix, lookback)
+    try:
+        spy = _bars_on_or_before(benchmarks("SPY"), created)
+    except Exception as exc:
+        LOG.debug("Replay SPY history failed: %s", exc)
+        spy = None
+    spy_ret = _close_return(spy, lookback)
+    if (
+        stock_ret is not None
+        and spy_ret is not None
+        and _blank(signal.get("relative_strength"))
+        and _blank(signal.get("rs_rating"))
+    ):
+        signal["relative_strength"] = round((stock_ret - spy_ret) * 100.0, 4)
+        signal["relative_strength_vs"] = "SPY"
+        signal["relative_strength_lookback_days"] = lookback
+    etf = str(signal.get("sector_etf") or "").upper()
+    if not etf or spy_ret is None or not _blank(signal.get("sector_relative_strength")):
+        return
+    try:
+        etf_frame = _bars_on_or_before(benchmarks(etf), created)
+    except Exception as exc:
+        LOG.debug("Replay sector ETF history failed for %s: %s", etf, exc)
+        return
+    etf_ret = _close_return(etf_frame, lookback)
+    if etf_ret is None:
+        return
+    signal["sector_relative_strength"] = round((etf_ret - spy_ret) * 100.0, 4)
+    if _blank(signal.get("sector_winning")):
+        signal["sector_winning"] = bool(etf_ret > spy_ret)
+
+
+def payload_hash(payload: dict[str, Any]) -> str:
+    """Stable id of the point-in-time card sent to the model."""
+    body = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def stamp_input_hash(case: dict[str, Any]) -> str:
+    payload = pit_payload(
+        case.get("signal") if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or "")
+    )
+    digest = payload_hash(payload)
+    case["input_hash"] = digest
+    case["_pit_payload"] = payload
+    return digest
+
+
+COST_NOTE = (
+    "A stored call is reused only when the prompt id and the point-in-time payload hash match. "
+    "Debate is two model calls for one combination, not three copies of one verdict. "
+    "Older rows were stored under each of system, round1, and round2 and have no payload hash, "
+    "so they do not count as this combination. Filling relative strength, sector, and checklist "
+    "fields changes the payload, so those cases are priced once. The next dry-run of the same "
+    "payloads should show them as already stored."
+)
 
 
 def _fill_technicals(signal: dict[str, Any], prefix: Any, skill_dir: Path | None) -> None:
@@ -1063,9 +1193,14 @@ def run_replay(
     )
     passes = _version_passes(tab_id, ordered)
     seen = {
-        (str(row.get("version_id")), str(row.get("ticker")), str(row.get("as_of"))[:10]) for row in load_samples(root)
+        (
+            str(row.get("version_id") or ""),
+            str(row.get("ticker") or ""),
+            str(row.get("as_of") or "")[:10],
+            str(row.get("input_hash") or ""),
+        )
+        for row in load_samples(root)
     }
-    estimated = _remaining_calls(cases, passes, seen)
     price = get_tab_agent_replay_usd_per_call(root)
     cap = max(0, int(max_llm_calls))
     calls_each = 2 if tab_id == "debate" else 1
@@ -1077,11 +1212,11 @@ def run_replay(
         "cases": len(cases),
         "versions": len(chosen),
         "calls_per_case": calls_each,
-        "estimated_llm_calls": estimated,
-        "estimated_cost_usd": round(estimated * price, 4),
+        "estimated_llm_calls": 0,
+        "estimated_cost_usd": 0.0,
         "usd_per_call": price,
         "max_llm_calls": cap,
-        "calls_under_cap": min(estimated, cap),
+        "calls_under_cap": 0,
         "llm_calls": 0,
         "stored": 0,
         "skipped_unlabeled": 0,
@@ -1091,15 +1226,16 @@ def run_replay(
         "parse_retries": 0,
         "skipped_short": 0,
         "skipped_non_decision": 0,
-        "truncated": estimated > cap,
+        "truncated": False,
         "source": "replay",
         "replay_weight": config.replay_weight,
         "min_live_samples": config.min_live_samples,
         "caveat": CAVEAT,
         "estimate_note": (
-            "The estimate skips rows already stored and assumes every remaining case can be labeled. "
+            "The estimate skips a stored row only when its prompt id and payload hash match this case. "
             "One parse retry per failed reply is extra and still stops at max_llm_calls."
         ),
+        "cost_note": COST_NOTE,
         "unfilled_cases": 0,
         "unfilled_field_counts": {},
         "unfilled_examples": [],
@@ -1111,9 +1247,32 @@ def run_replay(
     load_history = history_provider is not None or not dry_run or not os.environ.get("PYTEST_CURRENT_TEST")
     if load_history:
         provider = history_provider or _default_history(root)
+
+        def _benchmarks(symbol: str) -> Any:
+            key = str(symbol or "").upper()
+            if key not in history_cache:
+                try:
+                    history_cache[key] = provider(key)
+                except Exception as exc:
+                    LOG.warning("Replay benchmark history failed for %s: %s", key, exc)
+                    history_cache[key] = None
+            return history_cache.get(key)
+
         for case in cases:
             _remember_history(case, provider, history_cache)
-            fill_case_from_history(case, history_cache.get(str(case.get("ticker") or "")), root)
+            fill_case_from_history(
+                case,
+                history_cache.get(str(case.get("ticker") or "")),
+                root,
+                benchmarks=_benchmarks,
+            )
+    for case in cases:
+        stamp_input_hash(case)
+    estimated = _remaining_calls(cases, passes, seen)
+    report["estimated_llm_calls"] = estimated
+    report["estimated_cost_usd"] = round(estimated * price, 4)
+    report["calls_under_cap"] = min(estimated, cap)
+    report["truncated"] = estimated > cap
     report.update(tally_unfilled(cases))
     report["history_fill"] = bool(load_history)
     if dry_run:
@@ -1240,25 +1399,40 @@ def _debate_passes(versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _remaining_calls(
     cases: list[dict[str, Any]],
     passes: list[dict[str, Any]],
-    seen: set[tuple[str, str, str]],
+    seen: set[tuple[str, str, str, str]],
 ) -> int:
     total = 0
     for case in cases:
         ticker = str(case.get("ticker") or "")
         day = str(case.get("as_of") or "")[:10]
         for block in passes:
+            digest = str(case.get("input_hash") or "")
             combo = str(block.get("combination_id") or "")
             if combo:
-                if (combo, ticker, day) not in seen:
+                if (combo, ticker, day, digest) not in seen:
                     total += int(block["calls"])
                 continue
-            if any((str(row.get("id") or ""), ticker, day) not in seen for row in block["versions"]):
+            if any((str(row.get("id") or ""), ticker, day, digest) not in seen for row in block["versions"]):
                 total += int(block["calls"])
     return total
 
 
-def _sample_key(version: dict[str, Any], case: dict[str, Any]) -> tuple[str, str, str]:
-    return (str(version.get("id") or ""), str(case.get("ticker") or ""), str(case.get("as_of") or "")[:10])
+def _case_payload(case: dict[str, Any]) -> dict[str, Any]:
+    cached = case.get("_pit_payload")
+    if isinstance(cached, dict) and case.get("input_hash"):
+        return cached
+    stamp_input_hash(case)
+    payload = case.get("_pit_payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _sample_key(version: dict[str, Any], case: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(version.get("id") or ""),
+        str(case.get("ticker") or ""),
+        str(case.get("as_of") or "")[:10],
+        str(case.get("input_hash") or ""),
+    )
 
 
 def _store_sample(
@@ -1271,7 +1445,7 @@ def _store_sample(
     labeled: dict[str, Any],
     config: Any,
     clock: datetime,
-    seen: set[tuple[str, str, str]],
+    seen: set[tuple[str, str, str, str]],
     report: dict[str, Any],
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -1296,6 +1470,7 @@ def _store_sample(
         "stop_source": labeled.get("stop_source") or "stored",
         "scored": True,
         "weight": config.replay_weight,
+        "input_hash": str(case.get("input_hash") or ""),
         "created_at": clock.isoformat(),
     }
     if extra and extra.get("raw_reply"):
@@ -1398,13 +1573,13 @@ def _run_prompt_case(
     tab_id: str,
     config: Any,
     caller: Callable[[str, str], str],
-    seen: set[tuple[str, str, str]],
+    seen: set[tuple[str, str, str, str]],
     report: dict[str, Any],
     state: dict[str, Any],
     cap: int,
     clock: datetime,
 ) -> None:
-    payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
+    payload = _case_payload(case)
     for block in passes:
         for version in block["versions"]:
             if state["stop"]:
@@ -1459,7 +1634,7 @@ def _run_debate_case(
     *,
     config: Any,
     caller: Callable[[str, str], str],
-    seen: set[tuple[str, str, str]],
+    seen: set[tuple[str, str, str, str]],
     report: dict[str, Any],
     state: dict[str, Any],
     cap: int,
@@ -1467,12 +1642,12 @@ def _run_debate_case(
 ) -> None:
     from core.debate_committee import _ROUND1, _ROUND2, _SYSTEM, _cap_moves
 
-    payload = pit_payload(case["signal"] if isinstance(case.get("signal"), dict) else {}, str(case.get("as_of") or ""))
+    payload = _case_payload(case)
     threshold = float(config.quality_threshold)
     for block in passes:
         versions = list(block["versions"])
         combo = str(block.get("combination_id") or "")
-        if combo and (combo, str(case.get("ticker") or ""), str(case.get("as_of") or "")[:10]) in seen:
+        if combo and _sample_key({"id": combo}, case) in seen:
             report["skipped_duplicate"] += 1
             continue
         if state["stop"]:
@@ -1578,7 +1753,7 @@ def _store_debate_samples(
     labeled: dict[str, Any],
     config: Any,
     clock: datetime,
-    seen: set[tuple[str, str, str]],
+    seen: set[tuple[str, str, str, str]],
     report: dict[str, Any],
     threshold: float,
 ) -> None:

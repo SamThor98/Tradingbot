@@ -92,6 +92,8 @@ def _brief_version(
         "max_drawdown": row.get("max_drawdown"),
         "win_rate": row.get("win_rate"),
         "n_longs": row.get("n_longs"),
+        "n_skips": row.get("n_skips"),
+        "drawdown_basis": row.get("drawdown_basis"),
         "avg_realized_return_pct": row.get("avg_realized_return_pct"),
         "scored": row.get("scored", True),
         "not_scored_reason": row.get("not_scored_reason"),

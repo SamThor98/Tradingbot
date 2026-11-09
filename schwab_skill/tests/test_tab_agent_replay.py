@@ -908,4 +908,93 @@ def test_unfilled_case_is_counted_and_still_replayed(tmp_path) -> None:
     assert report["history_fill"] is True
     assert report["unfilled_cases"] == 1
     assert "sector" in report["unfilled_field_counts"]
+    assert isinstance(report["unfilled_field_counts"], dict)
+    assert "payload hash" in report["cost_note"]
     assert report["stored"] == 1
+
+
+def test_relative_strength_and_sector_are_point_in_time(tmp_path, monkeypatch):
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("replay sector lookup must use the cache, not a live fetch")
+
+    monkeypatch.setattr("sector_strength.get_ticker_sector_etf", _boom)
+    (tmp_path / ".sector_map_cache.json").write_text(
+        json.dumps({"sector_etf_by_ticker": {"AAA": "XLK"}}),
+        encoding="utf-8",
+    )
+    history = pd.bdate_range(end="2026-06-01", periods=40)
+    future = pd.bdate_range(start=history[-1] + pd.offsets.BDay(1), periods=10)
+    index = list(history) + list(future)
+    stock_close = [100.0] * len(index)
+    spy_close = [100.0] * len(history) + [400.0] * len(future)
+    etf_close = [100.0] * len(history)
+    etf_close[-1] = 110.0
+    etf_close = etf_close + [500.0] * len(future)
+
+    def _frame(closes: list[float]) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "open": closes,
+                "high": closes,
+                "low": closes,
+                "close": closes,
+                "volume": [1_000_000.0] * len(closes),
+            },
+            index=index,
+        )
+
+    frames = {"SPY": _frame(spy_close), "XLK": _frame(etf_close)}
+    case = {
+        "ticker": "AAA",
+        "as_of": "2026-06-01",
+        "created_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+        "entry_price": 100.0,
+        "stop_pct": 0.08,
+        "signal": {"ticker": "AAA", "entry_price": 100.0, "stop_pct": 0.08},
+    }
+    missing = fill_case_from_history(case, _frame(stock_close), tmp_path, benchmarks=frames.get)
+    assert case["signal"]["relative_strength"] == 0.0
+    assert case["signal"]["sector_etf"] == "XLK"
+    assert case["signal"]["sector_relative_strength"] == 10.0
+    assert case["signal"]["sector_winning"] is True
+    assert "relative_strength" not in missing
+    assert "sector" not in missing
+    assert "qual_business" in missing
+
+
+def test_replay_reuses_a_stored_call_until_the_payload_changes(tmp_path) -> None:
+    decision_packet.record_scan_packets(
+        tmp_path,
+        [{"ticker": "AAA", "price": 100, "stop_pct": 0.08}],
+        created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    calls = {"n": 0}
+
+    def _complete(_system: str, _user: str) -> str:
+        calls["n"] += 1
+        return '{"decision":"long","verdict":"STRONG SETUP"}'
+
+    kwargs = {
+        "tab": "today",
+        "since": "2026-01-01",
+        "max_llm_calls": 4,
+        "now": datetime(2026, 11, 3, tzinfo=timezone.utc),
+        "db_path": tmp_path / "missing.db",
+        "complete": _complete,
+        "history_provider": lambda _ticker: _rising_frame(),
+        "versions": [{"id": "live-1", "prompt_key": "verdict_rules", "text": "rules", "status": "live"}],
+        "progress_every": 0,
+    }
+    first = run_replay(tmp_path, **kwargs)
+    assert first["llm_calls"] == 1
+    assert load_samples(tmp_path)[0]["input_hash"]
+    second = run_replay(tmp_path, **kwargs)
+    assert second["llm_calls"] == 0
+    assert second["estimated_llm_calls"] == 0
+    assert second["skipped_duplicate"] == 1
+    stored = decision_packet.load_packets(tmp_path)
+    stored[0]["entry_price"] = 150.0
+    decision_packet.overwrite_packets(tmp_path, stored)
+    third = run_replay(tmp_path, **kwargs)
+    assert third["llm_calls"] == 1
+    assert calls["n"] == 2

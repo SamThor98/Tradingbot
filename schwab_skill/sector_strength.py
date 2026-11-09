@@ -242,6 +242,24 @@ def get_winning_sector_etfs(
     return winning
 
 
+def cached_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | None:
+    """Sector ETF from the on-disk yfinance cache only.
+
+    Does not call yfinance and does not write the cache. A replay can use a
+    mapping recorded by an earlier scan without labeling the name as of today.
+    """
+    tkr = ticker.upper().strip()
+    if tkr in SECTOR_ETFS:
+        return tkr
+    mapping = _load_sector_cache(skill_dir).get("sector_etf_by_ticker", {})
+    if not isinstance(mapping, dict):
+        return None
+    val = mapping.get(tkr)
+    if isinstance(val, str) and val.strip():
+        return val.strip().upper()
+    return None
+
+
 def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | None:
     """Resolve ticker to sector ETF (e.g. AAPL -> XLK). Returns None if unknown.
 

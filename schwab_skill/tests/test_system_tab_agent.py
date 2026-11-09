@@ -64,9 +64,54 @@ def test_low_confidence_is_scored_on_the_missed_return(tmp_path, monkeypatch: py
     assert book["n_abstain"] == 1
     assert book["n_immature"] == 1
     assert book["avg_realized_return_pct"] == -0.6667
+    assert book["n_skips"] == 2
+    assert book["max_drawdown"] == 0.0
     assert book["high_confidence_min"] == 0.70
     assert book["low_confidence_max"] == 0.40
     assert book["scoring"] == "confidence_separation"
+
+
+def test_skip_penalties_do_not_compound_into_the_drawdown(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Takes move the equity curve. Skips stay in cash, so a missed winner is not a position."""
+    monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
+    overwrite_packets(
+        tmp_path,
+        [
+            _packet("T1", 0.90, "win", 5.0, "2026-06-01"),
+            _packet("T2", 0.90, "win", 5.0, "2026-06-02"),
+            _packet("T3", 0.90, "loss", -6.0, "2026-06-03"),
+            _packet("T4", 0.90, "win", 4.0, "2026-06-04"),
+            _packet("S1", 0.20, "win", 25.0, "2026-06-05"),
+            _packet("S2", 0.20, "win", 25.0, "2026-06-06"),
+            _packet("S3", 0.20, "loss", -20.0, "2026-06-07"),
+            _packet("S4", 0.20, "loss", -20.0, "2026-06-08"),
+        ],
+    )
+    agent = SystemTabAgent()
+    live = agent.registry(tmp_path).live_version("system", "confidence_wording")
+    book = next(row for row in agent.score(tmp_path)["versions"] if row["version_id"] == live["id"])
+    assert book["n"] == 8
+    assert book["n_longs"] == 4
+    assert book["n_skips"] == 4
+    assert book["win_rate"] == 0.75
+    assert book["max_drawdown"] > -0.10
+    assert book["max_drawdown"] < 0
+    assert book["sortino"] is not None
+    assert book["drawdown_basis"] == "cash_on_skip"
+
+
+def test_all_skips_have_no_drawdown_and_no_longs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
+    overwrite_packets(tmp_path, [_packet(f"S{i}", 0.20, "win", 12.0, f"2026-06-{i + 1:02d}") for i in range(4)])
+    agent = SystemTabAgent()
+    live = agent.registry(tmp_path).live_version("system", "confidence_wording")
+    book = next(row for row in agent.score(tmp_path)["versions"] if row["version_id"] == live["id"])
+    assert book["n"] == 4
+    assert book["n_longs"] == 0
+    assert book["n_skips"] == 4
+    assert book["win_rate"] is None
+    assert book["max_drawdown"] == 0.0
+    assert book["sortino"] == -1.0
 
 
 def test_no_matured_packets_are_not_scored(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
