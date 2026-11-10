@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.tab_agent import STATUS_PENDING, TabAgent
+from core.tab_agent_contract import KEEP_CONTRACT, anchor_reminder, contract_skip
 from core.tab_agent_objective import OBJECTIVE_ID, compare_books, evaluate_book, load_objective
 
 LOG = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ IMPROVER_SYSTEM = (
     "You do not place orders. Return JSON with keys text and rationale. "
     "Optional keys: quality_threshold, min_avg_dollar_volume, max_spread_pct. "
     "rationale must say when the sample is too small."
-)
+) + KEEP_CONTRACT
 
 
 class ResearchTabAgent(TabAgent):
@@ -133,7 +134,8 @@ class ResearchTabAgent(TabAgent):
             user = (
                 f"Prompt key: {key}\nObjective: {score.get('winner_rule')}\n"
                 f"n={stat.get('n')} {stat.get('primary_metric')}={stat.get('primary_score')} "
-                f"max_drawdown={stat.get('max_drawdown')}\n\n"
+                f"max_drawdown={stat.get('max_drawdown')}\n"
+                f"{anchor_reminder(self.tab_id, key)}\n\n"
                 "Current prompt:\n" + str(live.get("text") or "")
             )
             try:
@@ -145,6 +147,10 @@ class ResearchTabAgent(TabAgent):
             parsed = parse_prompt_proposal(raw or "")
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
+                continue
+            blocked = contract_skip(self.tab_id, key, parsed["text"])
+            if blocked:
+                skipped.append(blocked)
                 continue
             if any(
                 parsed.get(field) is not None
