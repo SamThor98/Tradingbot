@@ -191,7 +191,7 @@ def _load_named_fetch(
     if not force_refresh:
         hit = _cache_fresh(_load_cached(name))
         if hit:
-            LOG.debug("Using cached %s universe (%d tickers)", name, len(hit))
+            LOG.debug("Using cached %s universe (%s tickers)", name, len(hit))
             return hit
     try:
         tickers = fetcher()
@@ -200,10 +200,10 @@ def _load_named_fetch(
         tickers = []
     if tickers:
         _save_cache(tickers, name)
-        LOG.info("Loaded %d tickers for universe %s", len(tickers), name)
+        LOG.info("Loaded %s tickers for universe %s", len(tickers), name)
         return tickers
     if fallback:
-        LOG.warning("Universe %s fetch empty; using fallback (%d names)", name, len(fallback))
+        LOG.warning("Universe %s fetch empty; using fallback (%s names)", name, len(fallback))
         return list(fallback)
     return []
 
@@ -223,7 +223,7 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
             cache_fresh_for_day = as_of == today
             legacy_fresh = as_of is None and (time.time() - ts) < CACHE_HOURS * 3600
             if cache_fresh_for_day or legacy_fresh:
-                LOG.debug("Using cached watchlist (%d tickers)", len(tickers))
+                LOG.debug("Using cached watchlist (%s tickers)", len(tickers))
                 return tickers
 
     LOG.info("Fetching S&P 500 + S&P 400 + S&P 600 (S&P 1500)...")
@@ -242,7 +242,7 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
             tickers = fn()
             if tickers:
                 fetched.append(tickers)
-                LOG.info("Fetched %d tickers from %s", len(tickers), label)
+                LOG.info("Fetched %s tickers from %s", len(tickers), label)
             else:
                 LOG.warning("Fetch returned 0 tickers for %s", label)
         except Exception as e:
@@ -259,7 +259,7 @@ def load_full_watchlist(force_refresh: bool = False) -> list[str]:
     if combined:
         _save_cache(combined)
         LOG.info(
-            "Loaded %d tickers (%d index fetches succeeded)",
+            "Loaded %s tickers (%s index fetches succeeded)",
             len(combined),
             len(fetched),
         )
