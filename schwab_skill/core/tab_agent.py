@@ -194,6 +194,7 @@ class PromptRegistry:
             raise TabAgentError(
                 f"Version {version_id} is {target.get('status')}; only pending or shadow can be approved."
             )
+        _require_contract(tab_id, target)
 
         def _apply(row: dict[str, Any], rows: list[dict[str, Any]]) -> None:
             for other in rows:
@@ -227,6 +228,7 @@ class PromptRegistry:
             return target
         if target.get("status") not in (STATUS_PENDING, STATUS_SHADOW):
             raise TabAgentError(f"Version {version_id} is {target.get('status')} and cannot be promoted.")
+        _require_contract(tab_id, target)
         return self._mutate(tab_id, version_id, _apply)
 
     def reject(self, tab_id: str, version_id: str) -> dict[str, Any]:
@@ -274,6 +276,15 @@ class PromptRegistry:
             row["status"] = STATUS_LIVE
 
         return self._mutate(tab_id, version_id, _apply)
+
+
+def _require_contract(tab_id: str, target: dict[str, Any]) -> None:
+    """Block a live swap that would replace a tool, schema, or role token."""
+    from core.tab_agent_contract import missing_anchors
+
+    missing = missing_anchors(tab_id, str(target.get("prompt_key") or ""), str(target.get("text") or ""))
+    if missing:
+        raise TabAgentError("Prompt cannot go live without: " + "; ".join(missing))
 
 
 def record_scan_prompt_use(

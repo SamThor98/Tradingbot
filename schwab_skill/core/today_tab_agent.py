@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.tab_agent import STATUS_PENDING, PromptRegistry, TabAgent, load_attributions, score_prompt_versions
+from core.tab_agent_contract import KEEP_CONTRACT, anchor_reminder, contract_skip, keeps_contract
 from core.tab_agent_objective import OBJECTIVE_ID
 
 LOG = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ IMPROVER_SYSTEM = (
     "You do not place orders or change size. Return one JSON object with keys text and rationale. "
     "Optional keys: min_avg_dollar_volume, max_spread_pct, quality_threshold. "
     "rationale must say when the sample is too small to prove an edge."
-)
+) + KEEP_CONTRACT
 
 
 def _mirofish_catalog() -> dict[str, str]:
@@ -60,17 +61,23 @@ def resolve_for_scan(skill_dir: Path | str) -> tuple[dict[str, str], dict[str, s
     bindings: list[dict[str, str]] = []
     for key, fallback in builtin.items():
         current = reg.live_version(agent.tab_id, key)
-        if current and str(current.get("text") or "").strip():
-            live[key] = str(current["text"])
+        current_text = str(current.get("text") or "").strip() if current else ""
+        if current and current_text and keeps_contract(agent.tab_id, key, current_text):
+            live[key] = current_text
             bindings.append({"prompt_key": key, "version_id": str(current["id"]), "role": "live"})
         else:
+            if current_text:
+                LOG.warning("Today prompt %s dropped its contract; using the built-in text", key)
             live[key] = fallback
         if not shadow_on:
             continue
         shadow_row = next((row for row in reg.versions(agent.tab_id, key) if row.get("status") == "shadow"), None)
-        if shadow_row and str(shadow_row.get("text") or "").strip():
-            shadow[key] = str(shadow_row["text"])
+        shadow_text = str(shadow_row.get("text") or "").strip() if shadow_row else ""
+        if shadow_row and shadow_text and keeps_contract(agent.tab_id, key, shadow_text):
+            shadow[key] = shadow_text
             bindings.append({"prompt_key": key, "version_id": str(shadow_row["id"]), "role": "shadow"})
+        elif shadow_text:
+            LOG.warning("Today shadow prompt %s dropped its contract; it will not be called", key)
     return live, shadow, bindings
 
 
@@ -82,8 +89,11 @@ def live_grok_role_text(skill_dir: Path | str, role: str) -> str | None:
         return None
     key = f"grok_{role}"
     current = TodayTabAgent().registry(Path(skill_dir)).live_version("today", key)
-    if current and str(current.get("text") or "").strip():
-        return str(current["text"])
+    text = str(current.get("text") or "").strip() if current else ""
+    if text and keeps_contract("today", key, text):
+        return text
+    if text:
+        LOG.warning("Grok role %s dropped its contract; using the built-in text", role)
     return None
 
 
@@ -168,7 +178,8 @@ class TodayTabAgent(TabAgent):
                 f"Samples: {stat.get('n', 0)} primary {stat.get('primary_metric')}={stat.get('primary_score')} "
                 f"max_drawdown={stat.get('max_drawdown')} duration_days={stat.get('max_drawdown_duration_days')}\n"
                 f"Secondary win_rate={stat.get('win_rate')} avg_return_pct={stat.get('avg_realized_return_pct')}\n"
-                "Revise the prompt to improve the risk-adjusted score without deepening drawdowns.\n\n"
+                "Revise the prompt to improve the risk-adjusted score without deepening drawdowns.\n"
+                f"{anchor_reminder(self.tab_id, key)}\n\n"
                 "Current prompt:\n" + str(live.get("text") or "")
             )
             try:
@@ -180,6 +191,10 @@ class TodayTabAgent(TabAgent):
             parsed = parse_prompt_proposal(raw or "")
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
+                continue
+            blocked = contract_skip(self.tab_id, key, parsed["text"])
+            if blocked:
+                skipped.append(blocked)
                 continue
             if any(parsed.get(field) is not None for field in ("min_avg_dollar_volume", "max_spread_pct", "quality_threshold")):
                 from core.tab_agent_objective import apply_policy_update

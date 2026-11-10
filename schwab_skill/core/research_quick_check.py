@@ -77,7 +77,13 @@ def _live_text(skill_dir: Path | None, key: str, fallback: str) -> tuple[str, st
         return fallback, "builtin"
     if not row or not str(row.get("text") or "").strip():
         return fallback, "builtin"
-    return str(row["text"]), str(row.get("id") or "builtin")
+    from core.tab_agent_contract import keeps_contract
+
+    text = str(row["text"])
+    if not keeps_contract("research", key, text):
+        LOG.warning("Research prompt %s dropped its contract; using the built-in text", key)
+        return fallback, "builtin"
+    return text, str(row.get("id") or "builtin")
 
 
 def _shadow_text(skill_dir: Path | None, key: str) -> tuple[str, str] | None:
@@ -96,6 +102,11 @@ def _shadow_text(skill_dir: Path | None, key: str) -> tuple[str, str] | None:
         return None
     shadow = next((row for row in rows if row.get("status") == "shadow" and str(row.get("text") or "").strip()), None)
     if shadow is None:
+        return None
+    from core.tab_agent_contract import keeps_contract
+
+    if not keeps_contract("research", key, str(shadow["text"])):
+        LOG.warning("Research shadow prompt %s dropped its contract; it will not be applied", key)
         return None
     return str(shadow["text"]), str(shadow.get("id") or "")
 

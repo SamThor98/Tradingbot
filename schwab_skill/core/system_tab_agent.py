@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.tab_agent import STATUS_PENDING, TabAgent
+from core.tab_agent_contract import KEEP_CONTRACT, anchor_reminder, contract_skip
 from core.tab_agent_objective import OBJECTIVE_ID, compare_books, evaluate_book, load_objective
 
 LOG = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ IMPROVER_SYSTEM = (
     "winners and credited for avoided losers. Do not score a skip as zero. "
     "Long-only. Never suggest a short or an option. You do not place orders. "
     "Return JSON with keys text and rationale. rationale must say when the sample is too small."
-)
+) + KEEP_CONTRACT
 
 
 def prompt_catalog() -> dict[str, str]:
@@ -267,7 +268,8 @@ class SystemTabAgent(TabAgent):
             user = (
                 f"Prompt key: {key}\nObjective: {score.get('winner_rule')}\n"
                 f"Calibration: {score.get('calibration')}\n"
-                f"n={stat.get('n')} {stat.get('primary_metric')}={stat.get('primary_score')}\n\n"
+                f"n={stat.get('n')} {stat.get('primary_metric')}={stat.get('primary_score')}\n"
+                f"{anchor_reminder(self.tab_id, key)}\n\n"
                 f"Current prompt:\n{live.get('text')}"
             )
             try:
@@ -279,6 +281,10 @@ class SystemTabAgent(TabAgent):
             parsed = parse_prompt_proposal(raw or "")
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
+                continue
+            blocked = contract_skip(self.tab_id, key, parsed["text"])
+            if blocked:
+                skipped.append(blocked)
                 continue
             row = reg.add_version(
                 self.tab_id,
