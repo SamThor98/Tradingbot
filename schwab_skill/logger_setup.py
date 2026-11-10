@@ -8,12 +8,17 @@ Optional request_id via contextvars (set from HTTP middleware or jobs).
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from contextvars import ContextVar
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from webapp.redaction import redact_sensitive_text
+
+# A numeric string is still a real number for %d / %f. Anything else stays text.
+_INT_TEXT = re.compile(r"[+-]?\d+")
+_FLOAT_TEXT = re.compile(r"[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?")
 
 LOG_FILE = "trading_bot.log"
 MAX_BYTES = 5 * 1024 * 1024  # 5MB
@@ -34,19 +39,67 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+def _coerce_numeric_text(value: object) -> object:
+    """Turn ``'64'`` into ``64`` so ``%d`` does not raise ``TypeError``.
+
+    ``%d format: a real number is required, not str`` is what the scheduler
+    logged when a count arrived as text. Non-numeric text is left alone so a
+    later ``%s`` still prints it.
+    """
+    if isinstance(value, bool) or not isinstance(value, str):
+        return value
+    text = value.strip()
+    if _INT_TEXT.fullmatch(text):
+        try:
+            return int(text)
+        except ValueError:
+            return value
+    if any(ch in text for ch in ".eE") and _FLOAT_TEXT.fullmatch(text):
+        try:
+            return float(text)
+        except ValueError:
+            return value
+    return value
+
+
+def _coerce_numeric_args(args: object) -> object:
+    if isinstance(args, dict):
+        return {key: _coerce_numeric_text(val) for key, val in args.items()}
+    if isinstance(args, tuple):
+        return tuple(_coerce_numeric_text(item) for item in args)
+    return _coerce_numeric_text(args)
+
+
+def _render_record_message(record: logging.LogRecord) -> str:
+    """Format the record. If ``%d`` was given a numeric string, coerce and retry."""
+    try:
+        return record.getMessage()
+    except TypeError:
+        record.args = _coerce_numeric_args(record.args)
+        try:
+            return record.getMessage()
+        except Exception:
+            return f"{record.msg} args={record.args!r}"
+
+
 class RedactionFilter(logging.Filter):
-    """Mask token-like payloads before they hit any sink."""
+    """Mask token-like payloads after the log line is formatted.
+
+    Formatting has to happen before secrets are stripped. The previous
+    version turned every argument into a string first, so any ``%d`` or
+    ``%f`` call (watchlist sizes, scan counts, bar counts) raised
+    ``TypeError: %d format: a real number is required, not str`` and the
+    line never landed.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if getattr(record, "_redacted", False):
+            return True
         try:
-            record.msg = redact_sensitive_text(str(record.msg))
-            if record.args:
-                if isinstance(record.args, dict):
-                    record.args = {k: redact_sensitive_text(str(v)) for k, v in record.args.items()}
-                elif isinstance(record.args, tuple):
-                    record.args = tuple(redact_sensitive_text(str(v)) for v in record.args)
-                else:
-                    record.args = (redact_sensitive_text(str(record.args)),)
+            rendered = _render_record_message(record)
+            record.msg = redact_sensitive_text(rendered)
+            record.args = ()
+            record._redacted = True
         except Exception:
             return True
         return True

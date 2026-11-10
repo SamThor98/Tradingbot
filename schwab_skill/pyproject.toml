@@ -12,7 +12,7 @@ exclude = ["artifacts", "validation_artifacts", "mirofish_sims", "__pycache__"]
 select = ["E", "F", "I"]
 ignore = ["E501"]
 # Imports after sys.path bootstrap in these entrypoints are intentional.
-extend-per-file-ignores = { "full_report.py" = ["E402"], "run_auth.py" = ["E402"], "run_dual_auth.py" = ["E402"], "scripts/**" = ["E402"] }
+extend-per-file-ignores = { "full_report.py" = ["E402"], "run_auth.py" = ["E402"], "run_dual_auth.py" = ["E402"], "main.py" = ["E402"], "scripts/**" = ["E402"] }
 
 [tool.mypy]
 python_version = "3.12"

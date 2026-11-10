@@ -281,7 +281,7 @@ def _maybe_prefilter_watchlist(skill_dir: Path, watchlist: list[str]) -> list[st
             pre_max = get_quality_watchlist_prefilter_max(skill_dir)
             before = len(watchlist)
             watchlist = prefilter_watchlist(watchlist, max_tickers=pre_max, include_etf_hints=True)
-            LOG.info("Watchlist quality prefilter applied: %d -> %d tickers", before, len(watchlist))
+            LOG.info("Watchlist quality prefilter applied: %s -> %s tickers", before, len(watchlist))
     except Exception as e:
         LOG.debug("Watchlist prefilter skipped: %s", e)
     return watchlist
@@ -298,7 +298,7 @@ def _apply_universe_focus(skill_dir: Path, watchlist: list[str]) -> list[str]:
         target = max(20, int(get_signal_universe_target_size(skill_dir)))
         before = len(watchlist)
         focused = prefilter_watchlist(watchlist, max_tickers=target, include_etf_hints=True)
-        LOG.info("Universe focus applied: %d -> %d tickers (mode=%s)", before, len(focused), mode)
+        LOG.info("Universe focus applied: %s -> %s tickers (mode=%s)", before, len(focused), mode)
         return focused
     except Exception as e:
         LOG.debug("Universe focus skipped: %s", e)
@@ -328,12 +328,12 @@ def _load_watchlist(skill_dir: Path, universe_preset: str | None = None) -> list
         focused = _apply_universe_focus(skill_dir, wl)
         if len(focused) == len(wl):
             LOG.info(
-                "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%d",
+                "Watchlist mode=sp1500_default (watchlist_loader: SP1500=S&P500+400+600) tickers=%s",
                 len(wl),
             )
         else:
             LOG.info(
-                "Watchlist mode=sp1500_focused (SIGNAL_UNIVERSE_MODE=focused) tickers=%d (from %d)",
+                "Watchlist mode=sp1500_focused (SIGNAL_UNIVERSE_MODE=focused) tickers=%s (from %s)",
                 len(focused),
                 len(wl),
             )
@@ -350,11 +350,15 @@ def _load_watchlist(skill_dir: Path, universe_preset: str | None = None) -> list
         except Exception:
             target = 250
         focused = prefilter_watchlist(wl, max_tickers=target, include_etf_hints=True)
-        LOG.info("Watchlist mode=sp1500_focused (universe_preset=focused) tickers=%d (from %d)", len(focused), len(wl))
+        LOG.info(
+            "Watchlist mode=sp1500_focused (universe_preset=focused) tickers=%s (from %s)",
+            len(focused),
+            len(wl),
+        )
         return focused
 
     wl = load_universe(preset)
-    LOG.info("Watchlist mode=universe_%s tickers=%d", preset, len(wl))
+    LOG.info("Watchlist mode=universe_%s tickers=%s", preset, len(wl))
     return wl
 
 

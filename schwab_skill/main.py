@@ -14,13 +14,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+SKILL_DIR = Path(__file__).resolve().parent
+
+# Open today's scheduler log before the rest of the imports so a startup
+# failure is captured. The wrapper no longer redirects stdout itself.
+if __name__ == "__main__":
+    from scheduler_daily_log import attach_scheduler_daily_logs
+
+    attach_scheduler_daily_logs(SKILL_DIR / "logs")
+
 import schedule
 
 from logger_setup import get_logger, setup_logging
 from notifier import send_alert
 from schwab_auth import DualSchwabAuth
 
-SKILL_DIR = Path(__file__).resolve().parent
 TZ_NY = ZoneInfo("America/New_York")
 
 
@@ -518,6 +526,9 @@ def build_false_positive_report(skill_dir: Path | str | None = None) -> dict | N
 
 def run_scheduler() -> None:
     """Run main loop with Morning Brief (9:25 AM ET), scan (9:30), hold reminders, self-study, and weekly digest."""
+    from scheduler_daily_log import attach_scheduler_daily_logs
+
+    attach_scheduler_daily_logs(SKILL_DIR / "logs")
     setup_logging()
     log = get_logger(__name__)
     log.info("Trading bot starting. Morning Brief at 9:25 AM ET, Weekly Digest Sun 6 PM ET.")
@@ -761,8 +772,11 @@ def run_scheduler() -> None:
                 from evolve_logic import LearningEngine
                 engine = LearningEngine(skill_dir=SKILL_DIR)
                 result = engine.run(apply=False)
-                log.info("Evolve logic: status=%s, updates=%d",
-                         result.get("status"), result.get("updates_count", 0))
+                log.info(
+                    "Evolve logic: status=%s, updates=%s",
+                    result.get("status"),
+                    _as_log_count(result.get("updates_count", 0)),
+                )
                 if result.get("status") == "ok" and result.get("updates_count", 0) > 0:
                     send_alert(
                         f"Learning Engine found {result['updates_count']} threshold adjustment(s). "
