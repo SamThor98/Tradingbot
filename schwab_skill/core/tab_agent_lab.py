@@ -137,6 +137,62 @@ class Budget:
         return round(self.tokens / 1000.0 * self.usd_per_1k, 4)
 
 
+class ModelFailureGuard:
+    """Stop a night once one exception is a majority of the generation's model calls.
+
+    The check runs as calls finish. Two identical hard failures with nothing
+    succeeding yet are already a majority, so a broken loader does not keep
+    going for the rest of the book.
+    """
+
+    _min_identical = 2
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.attempts = 0
+        self.failures: dict[str, int] = {}
+        self.aborted = False
+        self.reason = ""
+
+    def begin_generation(self) -> None:
+        with self._lock:
+            if self.aborted:
+                return
+            self.attempts = 0
+            self.failures.clear()
+
+    def note_success(self) -> None:
+        with self._lock:
+            self.attempts += 1
+
+    def note_failure(self, exc: Exception) -> None:
+        key = f"{type(exc).__name__}: {exc}"
+        trip = False
+        warn = False
+        count = 0
+        attempts = 0
+        with self._lock:
+            self.attempts += 1
+            count = self.failures.get(key, 0) + 1
+            self.failures[key] = count
+            attempts = self.attempts
+            if not self.aborted and count >= self._min_identical and count * 2 > attempts:
+                self.aborted = True
+                self.reason = key
+                trip = True
+            elif count == 1:
+                warn = True
+        if trip:
+            LOG.error(
+                "Lab stopping the night: %s of %s model calls in this generation failed with the same error: %s",
+                count,
+                attempts,
+                key,
+            )
+        elif warn:
+            LOG.warning("Lab model call failed: %s", exc)
+
+
 def in_lab_window(now: datetime) -> bool:
     """True from 18:00 inclusive until 07:00 exclusive, every day."""
     local = _chicago(now)
@@ -169,10 +225,12 @@ def call_with_backoff(
     *,
     sleeper: Callable[[float], None] | None = None,
     attempts: int = 6,
+    on_failure: Callable[[Exception], None] | None = None,
 ) -> str:
     """Call the model. Rate limits and transient API errors wait and retry.
 
     A hard failure returns an empty string so the night loop keeps going.
+    ``on_failure`` owns that log line when the caller is tallying the generation.
     """
     pause = sleeper or (lambda _seconds: None)
     delay = 1.0
@@ -181,7 +239,10 @@ def call_with_backoff(
             return str(fn() or "")
         except Exception as exc:
             if not _retryable(exc) or attempt >= attempts - 1:
-                LOG.warning("Lab model call failed: %s", exc)
+                if on_failure is not None:
+                    on_failure(exc)
+                else:
+                    LOG.warning("Lab model call failed: %s", exc)
                 return ""
             LOG.info("Lab model call retrying after %s seconds: %s", delay, exc)
             try:
@@ -307,7 +368,7 @@ def run_night(
     finalize: bool = True,
     hooks: tuple[Callable[..., str | None], Callable[..., str | None]] | None = None,
 ) -> dict[str, Any]:
-    """Run generations until the window, the generation cap, or the token cap stops the night."""
+    """Run generations until the window, a cap, or a broken model stops the night."""
     root = Path(skill_dir)
     cfg = config or LabConfig.load(root)
     now_fn = clock or (lambda: datetime.now(CHICAGO))
@@ -326,8 +387,9 @@ def run_night(
     cache = state.get("decision_cache") if isinstance(state.get("decision_cache"), dict) else {}
     state["decision_cache"] = cache
     lock = threading.Lock()
+    guard = ModelFailureGuard()
     if hooks is None:
-        propose, decide_inner = _hooks(root, cfg, use_llm=use_llm, budget=budget, sleeper=sleeper)
+        propose, decide_inner = _hooks(root, cfg, use_llm=use_llm, budget=budget, sleeper=sleeper, guard=guard)
     else:
         propose, decide_inner = hooks
     decide = _caching_decide(decide_inner, cache, lock)
@@ -346,7 +408,7 @@ def run_night(
     while in_lab_window(now_fn()) and not budget.exhausted:
         progressed = False
         for tab in cfg.tabs:
-            if not in_lab_window(now_fn()) or budget.exhausted:
+            if not in_lab_window(now_fn()) or budget.exhausted or guard.aborted:
                 break
             bucket = state["tabs"].setdefault(
                 tab, {"next_generation": 0, "completed": [], "candidates": [], "installed": False, "errors": []}
@@ -359,6 +421,9 @@ def run_night(
             if generation in set(bucket.get("completed") or []):
                 bucket["next_generation"] = generation + 1
                 continue
+            guard.begin_generation()
+            ran_generation = False
+            produced: list[dict[str, Any]] = []
             try:
                 live_texts = load_live_texts(root, tab)
                 if not any(live_texts.values()):
@@ -388,28 +453,38 @@ def run_night(
                             skill_dir=root,
                         ),
                     }
-                rng = random.Random(f"{night}:{tab}:{generation}")
-                produced = run_generation(
-                    tab=tab,
-                    generation=generation,
-                    count=cfg.candidates,
-                    live_texts=live_texts,
-                    parents=list(bucket.get("candidates") or []),
-                    train_cases=train,
-                    holdout_cases=holdout,
-                    config=objective_cfg,
-                    propose=propose,
-                    decide=decide,
-                    drift_weight=cfg.drift_weight,
-                    rng=rng,
-                    skill_dir=root,
-                    workers=cfg.concurrency,
-                )
+                if guard.aborted:
+                    _record_model_stop(bucket, guard)
+                else:
+                    rng = random.Random(f"{night}:{tab}:{generation}")
+                    produced = run_generation(
+                        tab=tab,
+                        generation=generation,
+                        count=cfg.candidates,
+                        live_texts=live_texts,
+                        parents=list(bucket.get("candidates") or []),
+                        train_cases=train,
+                        holdout_cases=holdout,
+                        config=objective_cfg,
+                        propose=propose,
+                        decide=decide,
+                        drift_weight=cfg.drift_weight,
+                        rng=rng,
+                        skill_dir=root,
+                        workers=cfg.concurrency,
+                    )
+                    ran_generation = True
             except Exception as exc:
                 LOG.warning("Lab generation failed for %s: %s", tab, exc)
                 bucket.setdefault("errors", []).append(str(exc))
                 save_state(root, state)
+                if guard.aborted:
+                    break
                 continue
+            if not ran_generation:
+                state["tokens"] = budget.tokens
+                save_state(root, state)
+                break
             for row in produced:
                 _log_candidate(row)
                 bucket.setdefault("candidates", []).append(_persistable_candidate(row))
@@ -423,6 +498,8 @@ def run_night(
                 bucket.setdefault("errors", []).append("no_candidates")
                 bucket["stalled"] = True
                 LOG.warning("Lab stopped %s after three generations with no usable prompt", tab)
+            if guard.aborted:
+                _record_model_stop(bucket, guard)
             state["tokens"] = budget.tokens
             save_state(root, state)
             progressed = True
@@ -433,15 +510,26 @@ def run_night(
                 len(produced),
                 budget.tokens,
             )
-        if not progressed:
+            if guard.aborted:
+                break
+        if guard.aborted or not progressed:
             break
 
     if not finalize:
         state["tokens"] = budget.tokens
         save_state(root, state)
-        return {"night_id": night, "finished": False, "orders_touched": False, "tokens": budget.tokens}
+        return {
+            "night_id": night,
+            "finished": False,
+            "orders_touched": False,
+            "tokens": budget.tokens,
+            "stopped_early": bool(guard.aborted),
+            "stop_reason": guard.reason if guard.aborted else "",
+        }
 
     report = finalize_night(root, state, config=cfg, objective=objective_cfg, promote=promote, budget=budget)
+    report["stopped_early"] = bool(guard.aborted)
+    report["stop_reason"] = guard.reason if guard.aborted else ""
     state["finished"] = True
     state["tokens"] = budget.tokens
     state["report"] = report
@@ -472,16 +560,20 @@ def _hooks(
     use_llm: bool,
     budget: Budget,
     sleeper: Callable[[float], None] | None,
+    guard: ModelFailureGuard | None = None,
 ) -> tuple[Callable[..., str | None], Callable[..., str | None]]:
     if not use_llm:
         return offline_propose, offline_decide
+
+    def _blocked() -> bool:
+        return budget.exhausted or (guard is not None and guard.aborted)
 
     def propose(**kwargs: Any) -> str | None:
         from core.tab_agent_contract import keeps_contract
         from core.tab_agent_lab_tournament import critic_user, generator_user
         from core.today_tab_agent import parse_prompt_proposal
 
-        if budget.exhausted:
+        if _blocked():
             return None
         user = generator_user(
             tab=str(kwargs["tab"]),
@@ -492,7 +584,13 @@ def _hooks(
             history=list(kwargs.get("history") or []),
         )
         draft = _model_call(
-            skill_dir, config, "You revise one analysis prompt. You do not place orders.", user, budget, sleeper
+            skill_dir,
+            config,
+            "You revise one analysis prompt. You do not place orders.",
+            user,
+            budget,
+            sleeper,
+            guard,
         )
         parsed = parse_prompt_proposal(draft)
         if parsed is None:
@@ -504,6 +602,7 @@ def _hooks(
             critic_user(parsed["text"], tab=str(kwargs["tab"]), prompt_key=str(kwargs["prompt_key"])),
             budget,
             sleeper,
+            guard,
         )
         revised = parse_prompt_proposal(critique) or parsed
         text = str(revised.get("text") or "")
@@ -519,7 +618,13 @@ def _hooks(
         )
         repaired = parse_prompt_proposal(
             _model_call(
-                skill_dir, config, "Restore the required tokens. You do not place orders.", reminder, budget, sleeper
+                skill_dir,
+                config,
+                "Restore the required tokens. You do not place orders.",
+                reminder,
+                budget,
+                sleeper,
+                guard,
             )
         )
         if repaired and keeps_contract(str(kwargs["tab"]), str(kwargs["prompt_key"]), str(repaired.get("text") or "")):
@@ -529,14 +634,20 @@ def _hooks(
     def decide(*, tab: str, texts: dict[str, str], case: LabCase) -> str | None:
         from core.tab_agent_replay import parse_decision
 
-        if budget.exhausted:
+        if _blocked():
             return None
         payload = case.as_dict()
         payload["instruction"] = "Decide long or cash from these fields only. Never a short or an option."
         if tab == "debate":
             system = texts.get("system") or ""
             first = _model_call(
-                skill_dir, config, system, (texts.get("round1") or "") + "\n" + json.dumps(payload), budget, sleeper
+                skill_dir,
+                config,
+                system,
+                (texts.get("round1") or "") + "\n" + json.dumps(payload),
+                budget,
+                sleeper,
+                guard,
             )
             second = _model_call(
                 skill_dir,
@@ -545,13 +656,21 @@ def _hooks(
                 (texts.get("round2") or "") + "\n" + first,
                 budget,
                 sleeper,
+                guard,
             )
             return parse_decision(second or first, tab="debate", quality_threshold=60.0, prompt_key="round2")
         key = next(iter(texts))
-        raw = _model_call(skill_dir, config, texts[key], json.dumps(payload), budget, sleeper)
+        raw = _model_call(skill_dir, config, texts[key], json.dumps(payload), budget, sleeper, guard)
         return parse_decision(raw, tab=tab, quality_threshold=60.0, prompt_key=key)
 
     return propose, decide
+
+
+def _record_model_stop(bucket: dict[str, Any], guard: ModelFailureGuard) -> None:
+    reason = guard.reason or "model_failure"
+    errors = bucket.setdefault("errors", [])
+    if reason not in errors:
+        errors.append(reason)
 
 
 def _model_call(
@@ -561,20 +680,38 @@ def _model_call(
     user: str,
     budget: Budget,
     sleeper: Callable[[float], None] | None,
+    guard: ModelFailureGuard | None = None,
 ) -> str:
-    if budget.exhausted:
+    if budget.exhausted or (guard is not None and guard.aborted):
         return ""
 
     def _once() -> str:
-        from engine_analysis import _call_llm, _load_env
+        import config as skill_config
+        from engine_analysis import _call_llm
 
-        env = dict(_load_env(skill_dir))
+        # Copy: config._load_env caches the parsed dict, and the lab may set the model.
+        env = dict(skill_config._load_env(skill_dir))
         if config.model:
             env["LLM_MODEL_NAME"] = config.model
         return _call_llm(user, system, env, max_tokens=700)
 
-    text = call_with_backoff(_once, sleeper=sleeper)
-    budget.charge(system, user, text)
+    failed = False
+
+    def _on_failure(exc: Exception) -> None:
+        nonlocal failed
+        failed = True
+        if guard is not None:
+            guard.note_failure(exc)
+        else:
+            LOG.warning("Lab model call failed: %s", exc)
+
+    text = call_with_backoff(_once, sleeper=sleeper, on_failure=_on_failure)
+    if failed:
+        return text
+    if guard is not None:
+        guard.note_success()
+    if text:
+        budget.charge(system, user, text)
     return text
 
 
@@ -726,8 +863,10 @@ def render_report_md(report: dict[str, Any]) -> str:
         f"Candidates tried: {report.get('candidates_tried')}",
         f"Tokens: {report.get('tokens')} spend_usd={report.get('spend_usd')} cap={report.get('token_cap')}",
         f"Orders touched: {report.get('orders_touched')}",
-        "",
     ]
+    if report.get("stopped_early"):
+        lines.append(f"Stopped early: {report.get('stop_reason')}")
+    lines.append("")
     if report.get("sample_floor_note"):
         lines.extend([str(report["sample_floor_note"]), ""])
     for tab, row in (report.get("tabs") or {}).items():

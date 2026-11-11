@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -11,7 +12,10 @@ import pytest
 from core.system_tab_agent import BUILTIN_WORDING
 from core.tab_agent_lab import (
     CHICAGO,
+    Budget,
     LabConfig,
+    ModelFailureGuard,
+    _model_call,
     call_with_backoff,
     in_lab_window,
     launch_lab_process,
@@ -484,6 +488,116 @@ def test_three_empty_generations_stop_the_tab(tmp_path: Path) -> None:
     assert report["tabs"]["today"]["shadow"]["installed"] is False
 
 
+def test_model_call_loads_skill_dotenv_and_charges_only_a_returned_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lab must call config._load_env(skill_dir) and pass that dict into _call_llm.
+
+    engine_analysis._load_env() takes no arguments. Calling it with skill_dir
+    raises TypeError before the client is built, so this fails closed on that
+    signature mismatch. Only the HTTP client is fake.
+    """
+    _reset_llm_circuit()
+    _write_lab_env(tmp_path)
+    for key in ("MIROFISH_API_KEY", "OPENAI_API_KEY", "OPENAI_KEY", "LLM_MODEL_NAME", "LLM_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    system = "system-prompt-for-the-lab-call"
+    user = "user-prompt-for-the-lab-call"
+    reply = "model-reply-that-actually-came-back"
+    constructed, created = _patch_openai(monkeypatch, content=reply)
+    budget = _budget()
+
+    text = _model_call(tmp_path, _config(), system, user, budget, sleeper=lambda _seconds: None)
+
+    assert text == reply
+    assert constructed[0]["api_key"] == "sk-lab-test-key"
+    assert created[0]["model"] == "gpt-4o-mini"
+    assert created[0]["max_tokens"] == 700
+    assert created[0]["messages"] == [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    assert budget.tokens == (len(system) + len(user) + len(reply)) // 4
+    assert budget.spend_usd == round(budget.tokens / 1000.0 * 0.01, 4)
+
+
+def test_failed_model_call_does_not_charge_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _write_lab_env(tmp_path)
+    monkeypatch.delenv("MIROFISH_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_KEY", raising=False)
+    constructed, created = _patch_openai(monkeypatch, error=RuntimeError("connection refused"))
+    budget = _budget()
+
+    text = _model_call(tmp_path, _config(), "system " * 30, "user " * 30, budget, sleeper=lambda _seconds: None)
+
+    assert text == ""
+    assert constructed and created
+    assert budget.tokens == 0
+    assert budget.spend_usd == 0.0
+
+
+def test_identical_exceptions_stop_the_night(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _seed(tmp_path)
+    _write_lab_env(tmp_path)
+    calls = {"n": 0}
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        calls["n"] += 1
+        raise TypeError("_load_env() takes 0 positional arguments but 1 was given")
+
+    monkeypatch.setattr("engine_analysis._call_llm", _boom)
+    with caplog.at_level(logging.WARNING, logger="core.tab_agent_lab"):
+        report = run_night(
+            tmp_path,
+            config=_config(generations=20),
+            clock=_evening_clock(),
+            promote=False,
+            use_llm=True,
+            cases=synthetic_cases("today"),
+            objective=_objective(),
+        )
+
+    assert calls["n"] == 2
+    assert report["tokens"] == 0
+    assert report["spend_usd"] == 0.0
+    assert report["stopped_early"] is True
+    assert "takes 0 positional arguments" in report["stop_reason"]
+    assert report["orders_touched"] is False
+    assert report["tabs"]["today"]["generations"] == 0
+    assert any("takes 0 positional arguments" in str(item) for item in report["tabs"]["today"]["errors"])
+    stops = [rec for rec in caplog.records if "stopping the night" in rec.getMessage()]
+    warnings = [rec for rec in caplog.records if rec.getMessage().startswith("Lab model call failed")]
+    assert len(stops) == 1
+    assert stops[0].levelno == logging.ERROR
+    assert len(warnings) == 1
+
+
+def test_model_failure_guard_stops_only_on_a_majority() -> None:
+    guard = ModelFailureGuard()
+    guard.begin_generation()
+    guard.note_failure(TypeError("same"))
+    guard.note_success()
+    guard.note_success()
+    guard.note_success()
+    assert guard.aborted is False
+
+    guard.begin_generation()
+    guard.note_failure(TypeError("same"))
+    guard.note_failure(RuntimeError("other"))
+    assert guard.aborted is False
+
+    guard.begin_generation()
+    guard.note_failure(TypeError("same"))
+    guard.note_failure(TypeError("same"))
+    assert guard.aborted is True
+    guard.begin_generation()
+    assert guard.aborted is True
+
+
 def test_backoff_retries_rate_limits_and_returns_empty_on_hard_failure() -> None:
     sleeps: list[float] = []
     attempts = {"n": 0}
@@ -563,6 +677,50 @@ def _seed(tmp_path: Path) -> None:
     from core.today_tab_agent import TodayTabAgent
 
     TodayTabAgent().registry(tmp_path)
+
+
+def _budget() -> Budget:
+    return Budget(0, 0.01)
+
+
+def _write_lab_env(skill_dir: Path) -> None:
+    from config import clear_env_cache
+
+    (skill_dir / ".env").write_text("MIROFISH_API_KEY=sk-lab-test-key\n", encoding="utf-8")
+    clear_env_cache()
+
+
+def _reset_llm_circuit() -> None:
+    from engine_analysis import _LLM_CIRCUIT
+
+    _LLM_CIRCUIT["consecutive_failures"] = 0.0
+    _LLM_CIRCUIT["open_until"] = 0.0
+
+
+def _patch_openai(
+    monkeypatch: pytest.MonkeyPatch, *, content: str | None = None, error: BaseException | None = None
+) -> tuple[list[dict], list[dict]]:
+    import openai
+
+    constructed: list[dict] = []
+    created: list[dict] = []
+
+    class _Completions:
+        def create(self, **kwargs: object) -> object:
+            created.append(dict(kwargs))
+            if error is not None:
+                raise error
+            message = type("Msg", (), {"content": content})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Resp", (), {"choices": [choice]})()
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            constructed.append(dict(kwargs))
+            self.chat = type("Chat", (), {"completions": _Completions()})()
+
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    return constructed, created
 
 
 def _evening_clock():
