@@ -22,6 +22,7 @@ from core.tab_agent_lab import (
 )
 from core.tab_agent_lab_score import (
     LabCase,
+    conservative_sortino,
     flipped_holdout_cases,
     holdout_gate,
     score_long_cash,
@@ -223,6 +224,9 @@ def test_train_and_holdout_winner_clears_the_gate() -> None:
     )
     assert winner is not None
     assert winner["gate"] == "winner"
+    assert winner["operator"] != "smooth_curve"
+    live_longs = _live_book(train)["n_longs"]
+    assert winner["train"]["n_longs"] >= 0.60 * live_longs
     ok, reason = holdout_gate(
         winner["train"],
         winner["sealed"],
@@ -234,6 +238,83 @@ def test_train_and_holdout_winner_clears_the_gate() -> None:
         drawdown_limit=0.20,
     )
     assert ok, reason
+
+
+def test_a_no_downside_streak_stays_finite() -> None:
+    score = conservative_sortino([5.0, 5.0, 5.0, 5.0])
+    assert score == pytest.approx(1.224745, abs=1e-4)
+    assert score < 8
+
+
+def test_trading_less_cannot_win() -> None:
+    """Four untouched winners must not beat a full live book, even with no losers."""
+    cases = [
+        LabCase(f"c{i}", f"2026-03-{(i % 27) + 1:02d}", f"T{i}", 4.0 if i % 2 == 0 else -3.0, signal_score=80.0)
+        for i in range(40)
+    ]
+    config = _objective()
+    live = score_long_cash(cases, ["long"] * 40, config=config)
+    thin_side = ["long" if i % 2 == 0 and i < 8 else "cash" for i in range(40)]
+    thin = score_long_cash(cases, thin_side, config=config)
+    cash = score_long_cash(cases, ["cash"] * 40, config=config)
+    assert thin["n_longs"] == 4
+    assert thin["primary_unbounded"] is True
+    assert thin["sortino_method"] == "shrunk"
+    assert thin["sortino_adj"] < 8
+    assert live["sortino_method"] == "sample"
+    ok, reason = holdout_gate(thin, thin, live, live, margin=0.05, min_train=8, min_holdout=8, drawdown_limit=0.20)
+    assert ok is False
+    assert reason == "train_too_few_trades"
+    ok, reason = holdout_gate(cash, cash, live, live, margin=0.05, min_train=8, min_holdout=8, drawdown_limit=0.20)
+    assert ok is False
+    assert reason == "train_too_few_trades"
+
+
+def test_skipping_down_to_half_the_live_book_cannot_win() -> None:
+    """A higher Sortino from sitting out the losers is not a win at 50% participation."""
+    cases = synthetic_cases("today")
+    train, holdout = split_walk_forward(cases, 6)
+    rows = run_generation(
+        tab="today",
+        generation=0,
+        count=4,
+        live_texts=TODAY,
+        parents=[],
+        train_cases=train,
+        holdout_cases=holdout,
+        config=_objective(),
+        propose=offline_propose,
+        decide=offline_decide,
+        drift_weight=0.15,
+        rng=None,
+    )
+    skipped = next(row for row in rows if row["operator"] == "smooth_curve")
+    assert skipped["train"]["primary_unbounded"] is True
+    assert skipped["train"]["sortino_method"] == "shrunk"
+    assert skipped["train"]["sortino_adj"] < 8
+    live_train = _live_book(train)
+    live_holdout = _live_book(holdout)
+    ok, reason = holdout_gate(
+        skipped["train"],
+        skipped["sealed"],
+        live_train,
+        live_holdout,
+        margin=0.05,
+        min_train=12,
+        min_holdout=8,
+        drawdown_limit=0.20,
+    )
+    assert ok is False
+    assert reason == "train_low_participation"
+    assert skipped["train"]["n_longs"] < 0.60 * live_train["n_longs"]
+
+
+def test_night_defaults_are_sized_for_max_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TAB_AGENT_LAB_CONCURRENCY", raising=False)
+    monkeypatch.delenv("TAB_AGENT_LAB_CANDIDATES", raising=False)
+    loaded = LabConfig.load(tmp_path)
+    assert loaded.concurrency == 6
+    assert loaded.candidates == 8
 
 
 def test_system_skip_is_scored_on_the_missed_return() -> None:

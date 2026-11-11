@@ -2856,12 +2856,12 @@ def get_tab_agent_lab_enabled(skill_dir: Path | None = None) -> bool:
 
 def get_tab_agent_lab_concurrency(skill_dir: Path | None = None) -> int:
     """How many candidates a generation may score at once."""
-    return max(1, min(8, _get_int("TAB_AGENT_LAB_CONCURRENCY", 2, skill_dir)))
+    return max(1, min(16, _get_int("TAB_AGENT_LAB_CONCURRENCY", 6, skill_dir)))
 
 
 def get_tab_agent_lab_candidates(skill_dir: Path | None = None) -> int:
     """Rival prompts created in one generation."""
-    return max(2, min(16, _get_int("TAB_AGENT_LAB_CANDIDATES", 4, skill_dir)))
+    return max(2, min(16, _get_int("TAB_AGENT_LAB_CANDIDATES", 8, skill_dir)))
 
 
 def get_tab_agent_lab_model(skill_dir: Path | None = None) -> str:
@@ -2894,6 +2894,17 @@ def get_tab_agent_lab_margin(skill_dir: Path | None = None) -> float:
 def get_tab_agent_lab_min_holdout_samples(skill_dir: Path | None = None) -> int:
     """Labeled holdout rows required before a candidate can be a winner."""
     return max(5, min(5000, _get_int("TAB_AGENT_LAB_MIN_HOLDOUT", 8, skill_dir)))
+
+
+def get_tab_agent_lab_min_participation(skill_dir: Path | None = None) -> float:
+    """Taken longs required as a fraction of the live book's longs, on each window."""
+    val = _get_float("TAB_AGENT_LAB_MIN_PARTICIPATION", 0.60, skill_dir)
+    return max(0.05, min(1.0, val))
+
+
+def get_tab_agent_lab_min_longs(skill_dir: Path | None = None) -> int:
+    """Minimum taken longs on a window. Cash rows do not count."""
+    return max(1, min(5000, _get_int("TAB_AGENT_LAB_MIN_LONGS", 8, skill_dir)))
 
 
 def get_tab_agent_lab_max_cases(skill_dir: Path | None = None) -> int:

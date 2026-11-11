@@ -30,7 +30,12 @@ DECISION_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 _CASH_RE = re.compile(r"LAB_CASH_BELOW\s*=\s*(\d+(?:\.\d+)?)")
-_UNBOUNDED = 25.0
+# Eight imaginary trades that lost 5%. Mixed into a book with no observed losers,
+# so a short winning streak cannot print an infinite Sortino.
+_PRIOR_DOWNSIDE = 0.05
+_PRIOR_TRADES = 8.0
+DEFAULT_MIN_PARTICIPATION = 0.60
+DEFAULT_MIN_LONGS = 8
 
 
 @dataclass(frozen=True)
@@ -107,12 +112,39 @@ def length_penalty(text: str, live_text: str, *, drift_weight: float) -> float:
     return round(float(drift_weight) * drift + float(drift_weight) * complexity, 6)
 
 
-def _with_penalty(book: dict[str, Any], penalty: float, path_returns: list[float]) -> dict[str, Any]:
+def conservative_sortino(returns_pct: list[float]) -> float | None:
+    """Sortino after mixing in a downside prior.
+
+    The sample downside deviation is blended with eight pseudo-trades at a 5%
+    loss. A book with no losers stays finite, and a handful of winners stays small.
+    """
+    if not returns_pct:
+        return None
+    fractions = [float(value) / 100.0 for value in returns_pct]
+    count = float(len(fractions))
+    mean = sum(fractions) / count
+    squares = sum(min(value, 0.0) ** 2 for value in fractions)
+    downside = math.sqrt(squares / count)
+    shrunk = math.sqrt((count * downside * downside + _PRIOR_TRADES * _PRIOR_DOWNSIDE**2) / (count + _PRIOR_TRADES))
+    if shrunk <= 1e-12:
+        return 0.0
+    return mean / shrunk
+
+
+def _with_penalty(
+    book: dict[str, Any],
+    penalty: float,
+    path_returns: list[float],
+    scored_returns: list[float],
+) -> dict[str, Any]:
     scored = dict(book)
     raw = scored.get("sortino")
     unbounded = bool(scored.get("primary_unbounded"))
+    method = "sample"
     if unbounded:
-        adjusted = round(_UNBOUNDED - penalty, 6)
+        shrunk = conservative_sortino(scored_returns)
+        adjusted = None if shrunk is None else round(shrunk - penalty, 6)
+        method = "shrunk"
     elif raw is None:
         adjusted = None
     else:
@@ -122,6 +154,7 @@ def _with_penalty(book: dict[str, Any], penalty: float, path_returns: list[float
         {
             "penalty": round(penalty, 6),
             "sortino_adj": adjusted,
+            "sortino_method": method,
             "smoothness": equity_smoothness(equity_path(fractions)),
             "primary_unbounded": unbounded,
         }
@@ -152,7 +185,7 @@ def score_long_cash(
     labels = [row[2] for row in rows]
     book = evaluate_book(returns, dates, config=config, decisions=labels)
     penalty = length_penalty(text, live_text, drift_weight=drift_weight)
-    return _with_penalty(book, penalty, returns)
+    return _with_penalty(book, penalty, returns, returns)
 
 
 def score_system_text(
@@ -191,7 +224,7 @@ def score_system_text(
     book["low_confidence_max"] = low
     book["scoring"] = "confidence_separation"
     penalty = length_penalty(text, live_text, drift_weight=drift_weight)
-    return _with_penalty(book, penalty, path)
+    return _with_penalty(book, penalty, path, returns)
 
 
 def beats(candidate: dict[str, Any], baseline: dict[str, Any], margin: float) -> bool:
@@ -201,6 +234,27 @@ def beats(candidate: dict[str, Any], baseline: dict[str, Any], margin: float) ->
     if left is None or right is None:
         return False
     return float(left) >= float(right) + float(margin)
+
+
+def participation_reason(
+    book: dict[str, Any],
+    live: dict[str, Any],
+    *,
+    rate: float = DEFAULT_MIN_PARTICIPATION,
+    min_longs: int = DEFAULT_MIN_LONGS,
+) -> str | None:
+    """Why a book traded too little to be a winner. None when it took a real share.
+
+    ``n_longs`` is the taken trades. Cash rows do not count. The book needs an
+    absolute minimum and, when live took trades, at least ``rate`` of that count.
+    """
+    longs = int(book.get("n_longs") or 0)
+    live_longs = int(live.get("n_longs") or 0)
+    if longs < int(min_longs):
+        return "too_few_trades"
+    if live_longs > 0 and longs < float(rate) * live_longs:
+        return "low_participation"
+    return None
 
 
 def holdout_gate(
@@ -213,12 +267,18 @@ def holdout_gate(
     min_train: int,
     min_holdout: int,
     drawdown_limit: float,
+    min_participation: float = DEFAULT_MIN_PARTICIPATION,
+    min_longs: int = DEFAULT_MIN_LONGS,
 ) -> tuple[bool, str]:
-    """A winner beats live on both windows, with enough rows and a tolerable drawdown."""
+    """A winner beats live on both windows, with enough trades and a tolerable drawdown."""
     if int(train.get("n") or 0) < int(min_train):
         return False, "insufficient_train_sample"
     if int(holdout.get("n") or 0) < int(min_holdout):
         return False, "insufficient_holdout_sample"
+    for label, book, live in (("train", train, live_train), ("holdout", holdout, live_holdout)):
+        reason = participation_reason(book, live, rate=min_participation, min_longs=min_longs)
+        if reason:
+            return False, f"{label}_{reason}"
     if not beats(train, live_train, margin):
         return False, "train_margin"
     if not beats(holdout, live_holdout, margin):

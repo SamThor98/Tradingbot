@@ -58,13 +58,15 @@ TABS = ("today", "debate", "research", "backtest", "system")
 @dataclass
 class LabConfig:
     enabled: bool = False
-    concurrency: int = 2
-    candidates: int = 4
+    concurrency: int = 6
+    candidates: int = 8
     model: str = ""
     token_cap: int = 0
     holdout_weeks: int = 6
     margin: float = 0.05
     min_holdout: int = 8
+    min_participation: float = 0.60
+    min_longs: int = 8
     max_cases: int = 180
     drift_weight: float = 0.15
     max_generations: int = 0
@@ -83,6 +85,8 @@ class LabConfig:
             get_tab_agent_lab_max_cases,
             get_tab_agent_lab_max_generations,
             get_tab_agent_lab_min_holdout_samples,
+            get_tab_agent_lab_min_longs,
+            get_tab_agent_lab_min_participation,
             get_tab_agent_lab_model,
             get_tab_agent_lab_tabs,
             get_tab_agent_lab_token_cap,
@@ -98,6 +102,8 @@ class LabConfig:
             holdout_weeks=get_tab_agent_lab_holdout_weeks(skill_dir),
             margin=get_tab_agent_lab_margin(skill_dir),
             min_holdout=get_tab_agent_lab_min_holdout_samples(skill_dir),
+            min_participation=get_tab_agent_lab_min_participation(skill_dir),
+            min_longs=get_tab_agent_lab_min_longs(skill_dir),
             max_cases=get_tab_agent_lab_max_cases(skill_dir),
             drift_weight=get_tab_agent_lab_drift_weight(skill_dir),
             max_generations=get_tab_agent_lab_max_generations(skill_dir),
@@ -599,6 +605,8 @@ def finalize_night(
             min_train=objective.min_samples,
             min_holdout=config.min_holdout,
             drawdown_limit=objective.drawdown_tolerance,
+            min_participation=config.min_participation,
+            min_longs=config.min_longs,
         )
         shadow: dict[str, Any] = {"installed": False, "version_ids": [], "orders_touched": False}
         if winner is not None and promote and not bucket.get("installed"):
@@ -686,7 +694,9 @@ def _public_score(row: dict[str, Any] | None, field: str) -> dict[str, Any] | No
         "prompt_key": row.get("prompt_key"),
         "sortino": book.get("sortino"),
         "sortino_adj": book.get("sortino_adj"),
+        "sortino_method": book.get("sortino_method"),
         "max_drawdown": book.get("max_drawdown"),
+        "n_longs": book.get("n_longs"),
         "smoothness": book.get("smoothness"),
         "n": book.get("n"),
         "win_rate": book.get("win_rate"),

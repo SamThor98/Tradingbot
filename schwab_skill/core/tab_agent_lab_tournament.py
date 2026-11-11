@@ -476,6 +476,7 @@ def _brief(book: dict[str, Any]) -> dict[str, Any]:
         "n_skips",
         "sortino",
         "sortino_adj",
+        "sortino_method",
         "primary_unbounded",
         "max_drawdown",
         "smoothness",
@@ -532,6 +533,8 @@ def select_winner(
     min_train: int,
     min_holdout: int,
     drawdown_limit: float,
+    min_participation: float = 0.60,
+    min_longs: int = 8,
 ) -> tuple[dict[str, Any] | None, dict[str, int]]:
     """Best gated candidate by train Sortino, smoothness, then drawdown."""
     from core.tab_agent_lab_score import holdout_gate
@@ -551,6 +554,8 @@ def select_winner(
             min_train=min_train,
             min_holdout=min_holdout,
             drawdown_limit=drawdown_limit,
+            min_participation=min_participation,
+            min_longs=min_longs,
         )
         cand["gate"] = reason
         if not ok:
