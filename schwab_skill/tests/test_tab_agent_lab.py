@@ -274,7 +274,7 @@ def test_resume_skips_a_finished_generation(tmp_path: Path) -> None:
 
     def _count(**kwargs: object) -> str:
         calls["n"] += 1
-        return offline_propose(**kwargs)  # type: ignore[arg-type]
+        return offline_propose(**kwargs)
 
     first = run_night(
         tmp_path,
@@ -305,7 +305,7 @@ def test_finished_night_does_not_run_again(tmp_path: Path) -> None:
 
     def _count(**kwargs: object) -> str:
         calls["n"] += 1
-        return offline_propose(**kwargs)  # type: ignore[arg-type]
+        return offline_propose(**kwargs)
 
     run_night(
         tmp_path,
