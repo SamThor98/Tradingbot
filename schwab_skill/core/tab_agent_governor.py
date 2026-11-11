@@ -425,3 +425,112 @@ def _promote_debate_combination(
             },
         )
     ]
+
+
+def install_lab_shadow(
+    skill_dir: Path | str,
+    tab_id: str,
+    texts: dict[str, str],
+    *,
+    rationale: str,
+    train_stats: dict[str, Any] | None = None,
+    holdout_stats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Install a lab winner as shadow. Never replaces the live prompt.
+
+    Live promotion stays on ``govern_agent``: the shadow still needs the
+    normal sample, drawdown, and review gates. A second call on the same
+    night reuses the shadow it already wrote.
+    """
+    from core.tab_agent import STATUS_PENDING, TabAgentError, get_tab_agent
+    from core.tab_agent_contract import missing_anchors
+    from core.tab_agent_review import write_review_request
+
+    cleaned = {str(key): str(text or "").strip() for key, text in texts.items() if str(text or "").strip()}
+    if not cleaned:
+        raise TabAgentError("Lab shadow install needs prompt text.")
+    agent = get_tab_agent(tab_id)
+    reg = agent.registry(Path(skill_dir))
+    live_before: dict[str, str] = {}
+    pending: list[tuple[str, str, dict[str, Any]]] = []
+    for key, text in cleaned.items():
+        missing = missing_anchors(tab_id, key, text)
+        if missing:
+            raise TabAgentError("Lab candidate dropped contract tokens: " + "; ".join(missing))
+        live = reg.live_version(tab_id, key)
+        if live is None:
+            raise TabAgentError(f"No live prompt for {tab_id}/{key}.")
+        live_before[key] = str(live.get("id") or "")
+        if text == str(live.get("text") or "").strip():
+            continue
+        pending.append((key, text, live))
+    if not pending:
+        return {"installed": False, "reason": "unchanged", "version_ids": [], "orders_touched": False}
+
+    marker = str(rationale or "")
+    installed: list[dict[str, Any]] = []
+    for key, text, live in pending:
+        existing = next(
+            (
+                row
+                for row in reg.versions(tab_id, key)
+                if row.get("status") == "shadow" and marker and marker in str(row.get("rationale") or "")
+            ),
+            None,
+        )
+        if existing is not None:
+            installed.append(existing)
+            continue
+        row = reg.add_version(
+            tab_id,
+            prompt_key=key,
+            text=text,
+            parent=str(live.get("id") or "") or None,
+            rationale=marker or "Overnight lab shadow.",
+            status=STATUS_PENDING,
+        )
+        shadowed = reg.mark_shadow(tab_id, str(row["id"]))
+        if shadowed.get("status") != "shadow":
+            raise TabAgentError("Lab install left a status other than shadow.")
+        current = reg.live_version(tab_id, key)
+        if current is None or str(current.get("id") or "") != live_before[key]:
+            raise TabAgentError("Lab install changed the live prompt.")
+        write_review_request(
+            skill_dir,
+            tab_id=tab_id,
+            version=shadowed,
+            parent_text=str(live.get("text") or ""),
+            score_row=train_stats if isinstance(train_stats, dict) else None,
+            objective=None,
+        )
+        installed.append(shadowed)
+
+    for key, live_id in live_before.items():
+        current = reg.live_version(tab_id, key)
+        if current is None or str(current.get("id") or "") != live_id:
+            raise TabAgentError("Lab install changed the live prompt.")
+    prompt_key = "combination" if tab_id == "debate" else installed[0].get("prompt_key")
+    report = write_change_report(
+        skill_dir,
+        {
+            "tab_id": tab_id,
+            "action": "lab_shadow",
+            "prompt_key": prompt_key,
+            "version_id": installed[0].get("id"),
+            "version_ids": [row.get("id") for row in installed],
+            "why": "Overnight lab winner beat live on the train window and the holdout. Installed as shadow only.",
+            "before": train_stats or {},
+            "after": holdout_stats or {},
+            "what_changed": marker or "Analysis prompt text staged for shadow. Live text was not replaced.",
+            "sample_size": (holdout_stats or {}).get("n"),
+            "orders_touched": False,
+        },
+    )
+    return {
+        "installed": True,
+        "reason": "shadow",
+        "version_ids": [str(row.get("id") or "") for row in installed],
+        "prompt_keys": [str(row.get("prompt_key") or "") for row in installed],
+        "orders_touched": False,
+        "report": report,
+    }
