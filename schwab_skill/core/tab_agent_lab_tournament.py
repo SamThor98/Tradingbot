@@ -303,14 +303,27 @@ def score_texts(
     blob = bundle_text(texts, keys)
     if tab == "system":
         key = keys[0]
-        return score_system_text(
-            cases,
+        from core.tab_agent_lab_plan import prepare_scoring_cases
+
+        prepared = prepare_scoring_cases(cases)
+        book = score_system_text(
+            prepared,
             texts.get(key, ""),
             config=config,
             live_text=live_texts.get(key, ""),
             drift_weight=drift_weight,
             skill_dir=skill_dir,
         )
+        _attach_system_views(
+            book,
+            prepared,
+            texts.get(key, ""),
+            live_text=live_texts.get(key, ""),
+            config=config,
+            drift_weight=drift_weight,
+            skill_dir=skill_dir,
+        )
+        return book
     decisions: list[str] = []
     kept: list[LabCase] = []
     for case in cases:
@@ -322,7 +335,18 @@ def score_texts(
             continue
         decisions.append(str(side))
         kept.append(case)
-    return score_long_cash(
+    from core.tab_agent_lab_plan import prepare_scoring_cases, source_views
+
+    prepared = prepare_scoring_cases(kept)
+    book = score_long_cash(
+        prepared,
+        decisions,
+        config=config,
+        text=blob,
+        live_text=live_blob,
+        drift_weight=drift_weight,
+    )
+    views = source_views(
         kept,
         decisions,
         config=config,
@@ -330,6 +354,41 @@ def score_texts(
         live_text=live_blob,
         drift_weight=drift_weight,
     )
+    book.update(views)
+    return book
+
+
+def _attach_system_views(
+    book: dict[str, Any],
+    cases: list[LabCase],
+    text: str,
+    *,
+    live_text: str,
+    config: ObjectiveConfig,
+    drift_weight: float,
+    skill_dir: Any,
+) -> None:
+    """Slice a confidence book without a second model call. System scoring is local."""
+
+    def _score(subset: list[LabCase]) -> dict[str, Any] | None:
+        if not subset:
+            return None
+        return score_system_text(
+            subset,
+            text,
+            config=config,
+            live_text=live_text,
+            drift_weight=drift_weight,
+            skill_dir=skill_dir,
+        )
+
+    book["slices"] = {
+        "rebuild_pre_cutoff": _score([case for case in cases if case.source == "rebuild" and case.pre_cutoff]),
+        "rebuild_post_cutoff": _score([case for case in cases if case.source == "rebuild" and not case.pre_cutoff]),
+        "live": _score([case for case in cases if case.source != "rebuild"]),
+    }
+    book["used_pre_cutoff"] = any(case.source == "rebuild" and case.pre_cutoff for case in cases)
+    book["ex_pre_cutoff"] = _score([case for case in cases if not (case.source == "rebuild" and case.pre_cutoff)])
 
 
 def run_generation(
@@ -457,7 +516,19 @@ def _one_candidate(
         skill_dir=skill_dir,
     )
     base.update({"dropped": None, "texts": texts, "train": _brief(train), "sealed": _brief(sealed)})
+    _copy_views(base, train, sealed)
     return base
+
+
+def _copy_views(base: dict[str, Any], train: dict[str, Any], sealed: dict[str, Any]) -> None:
+    """Train-only names. The generator rejects any key that says holdout."""
+    if isinstance(train.get("ex_pre_cutoff"), dict):
+        base["ex_pre"] = _brief(train["ex_pre_cutoff"])
+    if train.get("slices"):
+        base["slices"] = train.get("slices")
+    if sealed.get("slices"):
+        base["sealed_slices"] = sealed.get("slices")
+    base["used_pre_cutoff"] = bool(train.get("used_pre_cutoff"))
 
 
 def _missing_for_live(tab: str, live_texts: dict[str, str]) -> str:
@@ -537,7 +608,7 @@ def select_winner(
     min_longs: int = 8,
 ) -> tuple[dict[str, Any] | None, dict[str, int]]:
     """Best gated candidate by train Sortino, smoothness, then drawdown."""
-    from core.tab_agent_lab_score import holdout_gate
+    from core.tab_agent_lab_score import beats, holdout_gate
 
     failures: dict[str, int] = {}
     winners: list[dict[str, Any]] = []
@@ -561,6 +632,13 @@ def select_winner(
         if not ok:
             failures[reason] = failures.get(reason, 0) + 1
             continue
+        if cand.get("used_pre_cutoff"):
+            ex_pre = cand.get("ex_pre") if isinstance(cand.get("ex_pre"), dict) else {}
+            live_ex = live_train.get("ex_pre") if isinstance(live_train.get("ex_pre"), dict) else {}
+            if not beats(ex_pre, live_ex, margin):
+                cand["gate"] = "pre_cutoff_only"
+                failures["pre_cutoff_only"] = failures.get("pre_cutoff_only", 0) + 1
+                continue
         winners.append(cand)
     if not winners:
         return None, failures

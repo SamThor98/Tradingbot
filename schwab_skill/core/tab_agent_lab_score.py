@@ -38,6 +38,11 @@ DEFAULT_MIN_PARTICIPATION = 0.60
 DEFAULT_MIN_LONGS = 8
 
 
+# Model-memory cutoff. gpt-4o-mini's training ends around October 2023.
+# Rebuilt cases before this date are tagged and cannot be the only source of a win.
+PRE_CUTOFF = date(2023, 11, 1)
+
+
 @dataclass(frozen=True)
 class LabCase:
     case_id: str
@@ -48,6 +53,11 @@ class LabCase:
     stated_confidence: float | None = None
     avg_dollar_volume: float | None = None
     spread_pct: float | None = None
+    source: str = "live"
+    payload: dict[str, Any] | None = None
+    pre_cutoff: bool = False
+    era: str = ""
+    cohort_return_pct: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -324,27 +334,77 @@ def bundle_text(texts: dict[str, str], keys: tuple[str, ...]) -> str:
     return "\n".join(str(texts.get(key) or "") for key in keys)
 
 
-def load_lab_cases(skill_dir: Path | str, *, limit: int, horizon_days: int) -> list[LabCase]:
-    """Read one packet file and one replay file. No directory walk."""
+@dataclass(frozen=True)
+class LabLoad:
+    """Labeled cases after fixture removal and (ticker, as_of) dedupe.
+
+    The row cap is not applied here. A newest-N cut before the date split
+    can put every remaining row in the holdout.
+    """
+
+    cases: list[LabCase]
+    fixtures_excluded: int
+    duplicates_removed: int
+
+
+def load_lab_cases(skill_dir: Path | str, *, limit: int | None = None, horizon_days: int) -> list[LabCase]:
+    """Read one packet file and one replay file. No directory walk.
+
+    ``limit`` is accepted and ignored. Sampling happens after the date split,
+    per era, so a cap cannot empty a side.
+    """
+    _ = limit
+    return load_lab_book(skill_dir, horizon_days=horizon_days).cases
+
+
+def load_lab_book(skill_dir: Path | str, *, horizon_days: int) -> LabLoad:
+    """Packets and replay rows, fixtures out, one row per ticker and date."""
     from core.decision_packet import load_packets
+    from core.fixture_packet import is_fixture_packet
     from core.tab_agent import _packet_return
+    from core.tab_agent_lab_plan import lab_decision_card
     from core.tab_agent_replay import load_samples
 
     root = Path(skill_dir)
     merged: dict[tuple[str, str], LabCase] = {}
+    fixtures = 0
+    duplicates = 0
+    fixture_keys: set[tuple[str, str]] = set()
     for packet in load_packets(root):
+        if not isinstance(packet, dict):
+            continue
+        if is_fixture_packet(packet) or _row_is_fixture(packet):
+            fixtures += 1
+            key = _packet_key(packet)
+            if key is not None:
+                fixture_keys.add(key)
+            continue
         case = _case_from_packet(packet, horizon_days=horizon_days, packet_return=_packet_return)
-        if case is not None:
-            merged[(case.ticker, case.as_of)] = case
+        if case is None:
+            continue
+        case = _with_live_card(case, packet, lab_decision_card)
+        key = (case.ticker, case.as_of)
+        if key in merged:
+            duplicates += 1
+        merged[key] = case
     for row in load_samples(root):
+        if not isinstance(row, dict):
+            continue
+        if _row_is_fixture(row):
+            fixtures += 1
+            continue
         case = _case_from_replay(row)
         if case is None:
             continue
         key = (case.ticker, case.as_of)
+        if key in fixture_keys:
+            fixtures += 1
+            continue
         previous = merged.get(key)
         if previous is None:
-            merged[key] = case
+            merged[key] = _with_live_card(case, row, lab_decision_card)
             continue
+        duplicates += 1
         merged[key] = LabCase(
             case_id=previous.case_id,
             as_of=previous.as_of,
@@ -356,11 +416,14 @@ def load_lab_cases(skill_dir: Path | str, *, limit: int, horizon_days: int) -> l
             if previous.avg_dollar_volume is not None
             else case.avg_dollar_volume,
             spread_pct=previous.spread_pct if previous.spread_pct is not None else case.spread_pct,
+            source=previous.source or "live",
+            payload=previous.payload if previous.payload else case.payload,
+            pre_cutoff=previous.pre_cutoff,
+            era=previous.era or case.era,
+            cohort_return_pct=previous.cohort_return_pct,
         )
     ordered = sorted(merged.values(), key=lambda case: (case.as_of, case.ticker, case.case_id))
-    if limit and len(ordered) > int(limit):
-        ordered = ordered[-int(limit) :]
-    return ordered
+    return LabLoad(cases=ordered, fixtures_excluded=fixtures, duplicates_removed=duplicates)
 
 
 def _num(value: Any) -> float | None:
@@ -402,6 +465,70 @@ def _case_from_packet(packet: dict[str, Any], *, horizon_days: int, packet_retur
         stated_confidence=confidence,
         avg_dollar_volume=volume,
         spread_pct=spread,
+    )
+
+
+def _packet_key(packet: dict[str, Any]) -> tuple[str, str] | None:
+    ticker = str(packet.get("ticker") or "").upper().strip()
+    as_of = str(packet.get("created_at") or packet.get("as_of") or "")[:10]
+    if not ticker or len(as_of) < 10:
+        return None
+    return ticker, as_of
+
+
+def _row_is_fixture(row: dict[str, Any]) -> bool:
+    """Reuse the packet signature for a replay row that still carries it."""
+    from core.fixture_packet import is_fixture_packet
+
+    refs = row.get("refs") if isinstance(row.get("refs"), dict) else {}
+    order = row.get("order_ref")
+    if order is None:
+        order = refs.get("order_ref")
+    entry = row.get("entry_price")
+    if entry is None:
+        entry = refs.get("entry_price")
+    packet = {
+        "ticker": row.get("ticker"),
+        "entry_price": entry,
+        "order_ref": order,
+        "refs": {"order_ref": order} if order else refs,
+    }
+    return is_fixture_packet(packet)
+
+
+def _with_live_card(case: LabCase, source: dict[str, Any], card_fn: Any) -> LabCase:
+    """Attach the shared lab card. Live rows keep ticker and date."""
+    if case.payload:
+        return case
+    signal = dict(source)
+    refs = source.get("refs") if isinstance(source.get("refs"), dict) else {}
+    for key, value in refs.items():
+        signal.setdefault(key, value)
+    signal.setdefault("ticker", case.ticker)
+    if case.signal_score is not None:
+        signal.setdefault("signal_score", case.signal_score)
+    if case.avg_dollar_volume is not None:
+        signal.setdefault("avg_dollar_volume", case.avg_dollar_volume)
+    if case.spread_pct is not None:
+        signal.setdefault("spread_pct", case.spread_pct)
+    try:
+        pre_cutoff = date.fromisoformat(case.as_of) < PRE_CUTOFF
+    except ValueError:
+        pre_cutoff = False
+    return LabCase(
+        case_id=case.case_id,
+        as_of=case.as_of,
+        ticker=case.ticker,
+        long_return_pct=case.long_return_pct,
+        signal_score=case.signal_score,
+        stated_confidence=case.stated_confidence,
+        avg_dollar_volume=case.avg_dollar_volume,
+        spread_pct=case.spread_pct,
+        source="live",
+        payload=card_fn(signal, case.as_of),
+        pre_cutoff=pre_cutoff,
+        era=case.era,
+        cohort_return_pct=case.cohort_return_pct,
     )
 
 

@@ -3,6 +3,7 @@
 
 From ``schwab_skill/``::
 
+    python scripts/tab_agent_lab.py --plan
     python scripts/tab_agent_lab.py --dry-run
     python scripts/tab_agent_lab.py --dry-run --tab debate --candidates 3 --generations 1
 

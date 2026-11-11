@@ -267,6 +267,19 @@ def _lab_markdown(lab: Any) -> list[str]:
         f"tokens={lab.get('tokens')} spend_usd={lab.get('spend_usd')} "
         f"orders_touched={lab.get('orders_touched')}"
     )
+    trust = lab.get("trust_gate") if isinstance(lab.get("trust_gate"), dict) else {}
+    reason = lab.get("trust_reason") or trust.get("reason")
+    if reason:
+        lines.append(str(reason))
+    sources = lab.get("source_sortino")
+    if isinstance(sources, dict):
+        bits = []
+        for name in ("rebuild_pre_cutoff", "rebuild_post_cutoff", "live_train", "live_holdout"):
+            row = sources.get(name)
+            if isinstance(row, dict) and row.get("sortino_adj") is not None:
+                bits.append(f"{name}={row.get('sortino_adj')}")
+        if bits:
+            lines.append("Source Sortino: " + ", ".join(bits))
     for tab, row in (lab.get("tabs") or {}).items():
         if not isinstance(row, dict):
             continue

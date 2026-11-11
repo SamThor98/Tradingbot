@@ -28,26 +28,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
-FIXTURE_TICKER = "AAPL"
-FIXTURE_ENTRY = 185.5
-FIXTURE_ORDER_REF = "ORD123"
-
-
-def is_fixture_packet(packet: dict[str, Any]) -> bool:
-    """True for the approve-test signature: AAPL, entry 185.5, order ORD123."""
-    if str(packet.get("ticker") or "").upper() != FIXTURE_TICKER:
-        return False
-    refs = packet.get("refs") if isinstance(packet.get("refs"), dict) else {}
-    order = refs.get("order_ref")
-    if order is None:
-        order = packet.get("order_ref")
-    if str(order or "") != FIXTURE_ORDER_REF:
-        return False
-    try:
-        entry = float(packet.get("entry_price"))
-    except (TypeError, ValueError):
-        return False
-    return abs(entry - FIXTURE_ENTRY) < 1e-6
+from core.fixture_packet import FIXTURE_ENTRY, FIXTURE_ORDER_REF, FIXTURE_TICKER, is_fixture_packet
 
 
 def _signature(packet: dict[str, Any]) -> str:
