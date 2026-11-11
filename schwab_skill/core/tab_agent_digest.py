@@ -132,7 +132,18 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
         "tabs": tabs,
         "errors": errors,
         "note": "Analysis prompts only. No order, size, or execution setting is changed by this digest.",
+        "lab": _lab_report(root, stamp),
     }
+
+
+def _lab_report(skill_dir: Path, day: date) -> dict[str, Any] | None:
+    try:
+        from core.tab_agent_lab import report_for_digest
+
+        return report_for_digest(skill_dir, day)
+    except Exception as exc:
+        LOG.warning("Tab-agent lab report skipped: %s", exc)
+        return {"error": str(exc)}
 
 
 def _markdown(payload: dict[str, Any]) -> str:
@@ -232,12 +243,46 @@ def _markdown(payload: dict[str, Any]) -> str:
                         f"realized={gap.get('frequency')} gap={gap.get('gap')}"
                     )
         lines.append("")
+    lines.extend(_lab_markdown(payload.get("lab")))
     if payload.get("errors"):
         lines.append("## Errors")
         for row in payload["errors"]:
             lines.append(f"- {row.get('tab_id')}: {row.get('error')}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _lab_markdown(lab: Any) -> list[str]:
+    lines = ["## Overnight lab", ""]
+    if not isinstance(lab, dict):
+        lines.append("No finished night to report.")
+        lines.append("")
+        return lines
+    if lab.get("error"):
+        lines.append(f"Error: {lab.get('error')}")
+        lines.append("")
+        return lines
+    lines.append(
+        f"Night {lab.get('night_id')}: candidates={lab.get('candidates_tried')} "
+        f"tokens={lab.get('tokens')} spend_usd={lab.get('spend_usd')} "
+        f"orders_touched={lab.get('orders_touched')}"
+    )
+    for tab, row in (lab.get("tabs") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        shadow = row.get("shadow") if isinstance(row.get("shadow"), dict) else {}
+        best = row.get("best_train") if isinstance(row.get("best_train"), dict) else {}
+        live = row.get("live_train") if isinstance(row.get("live_train"), dict) else {}
+        holdout = row.get("best_holdout") if isinstance(row.get("best_holdout"), dict) else {}
+        lines.append(
+            f"- {tab} generations={row.get('generations')} tried={row.get('candidates_tried')} "
+            f"live_train_sortino={live.get('sortino_adj', live.get('sortino'))} "
+            f"best_train_sortino={best.get('sortino_adj')} "
+            f"best_holdout_sortino={holdout.get('sortino_adj')} "
+            f"shadow={shadow.get('installed')} versions={shadow.get('version_ids')}"
+        )
+    lines.append("")
+    return lines
 
 
 def write_daily_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, Any]:

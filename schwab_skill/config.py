@@ -2849,6 +2849,103 @@ def get_tab_agent_system_shadow_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("TAB_AGENT_SYSTEM_SHADOW_ENABLED", False, skill_dir)
 
 
+def get_tab_agent_lab_enabled(skill_dir: Path | None = None) -> bool:
+    """Nightly prompt lab. Default off. The lab never places orders."""
+    return _get_bool("TAB_AGENT_LAB_ENABLED", False, skill_dir)
+
+
+def get_tab_agent_lab_concurrency(skill_dir: Path | None = None) -> int:
+    """How many candidates a generation may score at once."""
+    return max(1, min(16, _get_int("TAB_AGENT_LAB_CONCURRENCY", 6, skill_dir)))
+
+
+def get_tab_agent_lab_candidates(skill_dir: Path | None = None) -> int:
+    """Rival prompts created in one generation."""
+    return max(2, min(16, _get_int("TAB_AGENT_LAB_CANDIDATES", 8, skill_dir)))
+
+
+def get_tab_agent_lab_model(skill_dir: Path | None = None) -> str:
+    """Model id for lab calls. Empty keeps ``LLM_MODEL_NAME``."""
+    return _env_value("TAB_AGENT_LAB_MODEL", _load_env(skill_dir)).strip()
+
+
+def get_tab_agent_lab_token_cap(skill_dir: Path | None = None) -> int:
+    """Approximate token budget for one night. 0 means unlimited."""
+    raw = _env_value("TAB_AGENT_LAB_TOKEN_CAP", _load_env(skill_dir)).strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_tab_agent_lab_holdout_weeks(skill_dir: Path | None = None) -> int:
+    """Most recent weeks kept out of the generator's scores."""
+    return max(1, min(26, _get_int("TAB_AGENT_LAB_HOLDOUT_WEEKS", 6, skill_dir)))
+
+
+def get_tab_agent_lab_margin(skill_dir: Path | None = None) -> float:
+    """Sortino points a winner must clear on both the train window and the holdout."""
+    val = _get_float("TAB_AGENT_LAB_MARGIN", 0.05, skill_dir)
+    return max(0.0, min(5.0, val))
+
+
+def get_tab_agent_lab_min_holdout_samples(skill_dir: Path | None = None) -> int:
+    """Labeled holdout rows required before a candidate can be a winner."""
+    return max(5, min(5000, _get_int("TAB_AGENT_LAB_MIN_HOLDOUT", 8, skill_dir)))
+
+
+def get_tab_agent_lab_min_participation(skill_dir: Path | None = None) -> float:
+    """Taken longs required as a fraction of the live book's longs, on each window."""
+    val = _get_float("TAB_AGENT_LAB_MIN_PARTICIPATION", 0.60, skill_dir)
+    return max(0.05, min(1.0, val))
+
+
+def get_tab_agent_lab_min_longs(skill_dir: Path | None = None) -> int:
+    """Minimum taken longs on a window. Cash rows do not count."""
+    return max(1, min(5000, _get_int("TAB_AGENT_LAB_MIN_LONGS", 8, skill_dir)))
+
+
+def get_tab_agent_lab_max_cases(skill_dir: Path | None = None) -> int:
+    """Newest stored cases kept for one night. Caps the replay read."""
+    return max(20, min(2000, _get_int("TAB_AGENT_LAB_MAX_CASES", 180, skill_dir)))
+
+
+def get_tab_agent_lab_drift_weight(skill_dir: Path | None = None) -> float:
+    """Subtracted from Sortino for prompt-length drift and extra sentences."""
+    val = _get_float("TAB_AGENT_LAB_DRIFT_WEIGHT", 0.15, skill_dir)
+    return max(0.0, min(2.0, val))
+
+
+def get_tab_agent_lab_max_generations(skill_dir: Path | None = None) -> int:
+    """Generations per tab. 0 runs until the morning window closes."""
+    raw = _env_value("TAB_AGENT_LAB_MAX_GENERATIONS", _load_env(skill_dir)).strip()
+    if not raw:
+        return 0
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_tab_agent_lab_usd_per_1k(skill_dir: Path | None = None) -> float:
+    """Planning price for 1,000 approximate tokens. Used only in the morning report."""
+    val = _get_float("TAB_AGENT_LAB_USD_PER_1K", 0.01, skill_dir)
+    return max(0.0, min(10.0, val))
+
+
+def get_tab_agent_lab_tabs(skill_dir: Path | None = None) -> tuple[str, ...]:
+    """Tabs the night loop visits. Unknown names are dropped."""
+    raw = _env_value("TAB_AGENT_LAB_TABS", _load_env(skill_dir)).strip()
+    allowed = ("today", "debate", "research", "backtest", "system")
+    if not raw:
+        return allowed
+    chosen = [part.strip().lower() for part in raw.split(",") if part.strip()]
+    picked = tuple(name for name in allowed if name in chosen)
+    return picked or allowed
+
+
 def get_tab_agent_confidence_high_min(skill_dir: Path | None = None) -> float:
     """Stated confidence at or above this takes the labeled long return."""
     low, high = get_tab_agent_confidence_high_bounds(skill_dir)
