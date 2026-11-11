@@ -106,14 +106,59 @@ def _brief(stats: dict[str, Any]) -> dict[str, Any]:
     return {key: stats.get(key) for key in keys}
 
 
+def _retire_broken_candidates(agent: Any, skill_dir: Path, reg: Any) -> list[dict[str, Any]]:
+    """Retire a shadow or pending prompt that dropped its role contract."""
+    from core.tab_agent import STATUS_PENDING, STATUS_SHADOW
+    from core.tab_agent_contract import missing_anchors
+
+    actions: list[dict[str, Any]] = []
+    for version in list(reg.versions(agent.tab_id)):
+        if version.get("status") not in {STATUS_PENDING, STATUS_SHADOW}:
+            continue
+        missing = missing_anchors(
+            agent.tab_id,
+            str(version.get("prompt_key") or ""),
+            str(version.get("text") or ""),
+        )
+        if not missing:
+            continue
+        version_id = str(version.get("id") or "")
+        reg.reject(agent.tab_id, version_id)
+        actions.append(_contract_reject_report(skill_dir, agent.tab_id, version, missing))
+    return actions
+
+
+def _contract_reject_report(
+    skill_dir: Path,
+    tab_id: str,
+    version: dict[str, Any],
+    missing: list[str],
+) -> dict[str, Any]:
+    return write_change_report(
+        skill_dir,
+        {
+            "tab_id": tab_id,
+            "action": "contract_reject",
+            "prompt_key": version.get("prompt_key"),
+            "version_id": version.get("id"),
+            "why": "Prompt dropped a required tool, schema, or role token: " + "; ".join(missing),
+            "before": {},
+            "after": {},
+            "what_changed": "Candidate retired. The live prompt was not replaced. No order was placed.",
+            "sample_size": None,
+        },
+    )
+
+
 def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
     """Promote shadow winners and roll back degraded promotions. Analysis prompts only."""
     from core.tab_agent import STATUS_SHADOW
+    from core.tab_agent_contract import missing_anchors
 
-    score = agent.score(skill_dir)
-    actions: list[dict[str, Any]] = []
     reg = agent.registry(skill_dir)
     config = load_objective(skill_dir)
+    actions: list[dict[str, Any]] = []
+    actions.extend(_retire_broken_candidates(agent, skill_dir, reg))
 
     if getattr(agent, "tab_id", "") == "debate":
         actions.extend(_rollback_debate_combination(agent, skill_dir, reg, config))
@@ -139,6 +184,15 @@ def govern_agent(agent: Any, skill_dir: Path) -> dict[str, Any]:
         version_id = str(comparison.get("version_id") or "")
         candidate = reg.get(agent.tab_id, version_id)
         if candidate is None or candidate.get("status") != STATUS_SHADOW:
+            continue
+        missing = missing_anchors(
+            agent.tab_id,
+            str(candidate.get("prompt_key") or ""),
+            str(candidate.get("text") or ""),
+        )
+        if missing:
+            reg.reject(agent.tab_id, version_id)
+            actions.append(_contract_reject_report(skill_dir, agent.tab_id, candidate, missing))
             continue
         gate = review_gate(
             skill_dir,
@@ -305,6 +359,19 @@ def _promote_debate_combination(
             rows.append(row)
     if not rows:
         return []
+    from core.tab_agent_contract import missing_anchors
+
+    broken: list[tuple[dict[str, Any], list[str]]] = []
+    for row in rows:
+        missing = missing_anchors(agent.tab_id, str(row.get("prompt_key") or ""), str(row.get("text") or ""))
+        if missing:
+            broken.append((row, missing))
+    if broken:
+        reports = []
+        for row, missing in broken:
+            reg.reject(agent.tab_id, str(row.get("id")))
+            reports.append(_contract_reject_report(skill_dir, agent.tab_id, row, missing))
+        return reports
     gates = [review_gate(skill_dir, agent.tab_id, row, wait_hours=config.review_wait_hours) for row in rows]
     combo_id = str(comparison.get("version_id") or "")
     baseline_id = str(comparison.get("baseline_version_id") or "")

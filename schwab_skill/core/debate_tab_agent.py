@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.tab_agent import STATUS_PENDING, TabAgent
+from core.tab_agent_contract import KEEP_CONTRACT, anchor_reminder, contract_skip, keeps_contract
 from core.tab_agent_objective import OBJECTIVE_ID, compare_books, evaluate_book, load_objective
 
 LOG = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ IMPROVER_SYSTEM = (
     "Optional keys: min_avg_dollar_volume, max_spread_pct, quality_threshold. "
     "Keep the JSON reply contract if you are revising the system prompt. "
     "rationale must admit when the sample is too small."
-)
+) + KEEP_CONTRACT
 
 
 def live_prompt_text(skill_dir: Path | str, key: str) -> str | None:
@@ -68,8 +69,11 @@ def live_prompt_text(skill_dir: Path | str, key: str) -> str | None:
     if not get_tab_agent_debate_enabled(Path(skill_dir)):
         return None
     row = DebateTabAgent().registry(Path(skill_dir)).live_version("debate", key)
-    if row and str(row.get("text") or "").strip():
-        return str(row["text"])
+    text = str(row.get("text") or "").strip() if row else ""
+    if text and keeps_contract("debate", key, text):
+        return text
+    if text:
+        LOG.warning("Debate prompt %s dropped its contract; using the built-in text", key)
     return None
 
 
@@ -92,12 +96,16 @@ def shadow_headers(skill_dir: Path | str) -> tuple[str, str, str] | None:
     for key, fallback in prompt_catalog().items():
         shadow = next((row for row in reg.versions("debate", key) if row.get("status") == "shadow"), None)
         live = reg.live_version("debate", key)
-        if shadow and str(shadow.get("text") or "").strip():
-            texts[key] = str(shadow["text"])
+        shadow_text = str(shadow.get("text") or "").strip() if shadow else ""
+        live_text = str(live.get("text") or "").strip() if live else ""
+        if shadow_text and keeps_contract("debate", key, shadow_text):
+            texts[key] = shadow_text
             found = True
-        elif live and str(live.get("text") or "").strip():
-            texts[key] = str(live["text"])
+        elif live_text and keeps_contract("debate", key, live_text):
+            texts[key] = live_text
         else:
+            if shadow_text or live_text:
+                LOG.warning("Debate prompt %s dropped its contract; using the built-in text", key)
             texts[key] = fallback
     if not found:
         return None
@@ -319,7 +327,8 @@ class DebateTabAgent(TabAgent):
                 f"Endorsed book n={stat.get('n')} {stat.get('primary_metric')}={stat.get('primary_score')} "
                 f"max_drawdown={stat.get('max_drawdown')}\n"
                 f"Pass counterfactual n={(stat.get('pass_book') or {}).get('n')} "
-                f"avg_return_pct={(stat.get('pass_book') or {}).get('avg_realized_return_pct')}\n\n"
+                f"avg_return_pct={(stat.get('pass_book') or {}).get('avg_realized_return_pct')}\n"
+                f"{anchor_reminder(self.tab_id, key)}\n\n"
                 "Current prompt:\n" + str(live.get("text") or "")
             )
             try:
@@ -331,6 +340,10 @@ class DebateTabAgent(TabAgent):
             parsed = parse_prompt_proposal(raw or "")
             if parsed is None or parsed["text"].strip() == str(live.get("text") or "").strip():
                 skipped.append({"prompt_key": key, "reason": "no_proposal"})
+                continue
+            blocked = contract_skip(self.tab_id, key, parsed["text"])
+            if blocked:
+                skipped.append(blocked)
                 continue
             if any(
                 parsed.get(field) is not None
