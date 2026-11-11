@@ -1078,6 +1078,19 @@ def run_scheduler() -> None:
 
     schedule.every().minute.do(_run_backtest_agent_propose_if_scheduled)
     schedule.every().minute.do(_run_system_agent_propose_if_scheduled)
+
+    def _run_tab_agent_lab_if_scheduled() -> None:
+        """6 PM to 7 AM America/Chicago. The lab process is separate from this loop."""
+        try:
+            from core.tab_agent_lab import scheduler_tick
+
+            outcome = scheduler_tick(SKILL_DIR, datetime.now(ZoneInfo("America/Chicago")))
+            if outcome.get("launched"):
+                log.info("Tab-agent lab started pid=%s", outcome.get("pid"))
+        except Exception as e:
+            log.warning("Tab-agent lab tick failed: %s", e)
+
+    schedule.every().minute.do(_run_tab_agent_lab_if_scheduled)
     try:
         from core.operator_notify_state import send_morning_brief_if_due
 
