@@ -2941,6 +2941,11 @@ def get_tab_agent_lab_rebuild_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("TAB_AGENT_LAB_REBUILD", False, skill_dir)
 
 
+def get_tab_agent_lab_reveal_live_ticker(skill_dir: Path | None = None) -> bool:
+    """Put the ticker on live lab cards. Default off so live and rebuild share one shape."""
+    return _get_bool("TAB_AGENT_LAB_REVEAL_LIVE_TICKER", False, skill_dir)
+
+
 def get_tab_agent_lab_margin(skill_dir: Path | None = None) -> float:
     """Sortino points a winner must clear on both the train window and the holdout."""
     val = _get_float("TAB_AGENT_LAB_MARGIN", 0.05, skill_dir)

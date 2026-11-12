@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from core.tab_agent_lab_plan import anonymize_card
+from core.tab_agent_lab_plan import anonymize_card, decision_payload, lab_decision_card
+from core.tab_agent_lab_score import LabCase
 from core.tab_agent_rebuild import (
     build_rebuild_cases,
     card_from_bars,
@@ -46,6 +47,53 @@ def _entry() -> dict:
         "regime_bucket": "bull",
         "era": "recent_current",
     }
+
+
+def test_live_and_rebuild_cards_share_one_key_set() -> None:
+    signal = {
+        "ticker": "MSFT",
+        "price": 100.0,
+        "entry_price": 100.0,
+        "sma_50": 90.0,
+        "sma_200": 80.0,
+        "stop_price": 92.0,
+        "stop_pct": 0.08,
+        "signal_score": 70.0,
+        "stage_2": True,
+        "vcp": True,
+        "sector_etf": "XLK",
+        "avg_dollar_volume": 40_000_000.0,
+        "spread_pct": 0.002,
+        "qual_trend": 3,
+        "qual_business": 9,
+        "news": "earnings beat",
+    }
+    raw = lab_decision_card(signal, "2024-06-03")
+    live = LabCase("MSFT:2024-06-03", "2024-06-03", "MSFT", 4.0, source="live", payload=raw)
+    rebuild = LabCase(
+        "MSFT:2024-06-03",
+        "2024-06-03",
+        "MSFT",
+        4.0,
+        source="rebuild",
+        payload=anonymize_card(raw, case_id="MSFT:2024-06-03"),
+    )
+    live_card = decision_payload(live)
+    rebuild_card = decision_payload(rebuild)
+    assert set(live_card) == set(rebuild_card)
+    assert live_card.keys() == rebuild_card.keys()
+    blob = json.dumps(live_card)
+    assert "MSFT" not in blob
+    assert "2024-06-03" not in blob
+    assert "ticker" not in live_card
+    assert "as_of" not in live_card
+    assert "price" not in live_card
+    assert "sma_50" not in live_card
+    assert "dist_sma_50_pct" in live_card
+    assert live_card["dist_sma_50_pct"] == rebuild_card["dist_sma_50_pct"]
+    revealed = decision_payload(live, reveal_ticker=True)
+    assert revealed["ticker"] == "MSFT"
+    assert "ticker" not in decision_payload(rebuild, reveal_ticker=True)
 
 
 def test_bars_after_as_of_do_not_change_the_card(tmp_path: Path) -> None:

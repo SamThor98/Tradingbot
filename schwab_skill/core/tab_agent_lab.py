@@ -74,6 +74,7 @@ class LabConfig:
     min_holdout_dates: int = 10
     train_per_era: int = 300
     rebuild: bool = False
+    reveal_live_ticker: bool = False
     drift_weight: float = 0.15
     max_generations: int = 0
     usd_per_1k: float = 0.01
@@ -101,6 +102,7 @@ class LabConfig:
             get_tab_agent_lab_min_train_dates,
             get_tab_agent_lab_model,
             get_tab_agent_lab_rebuild_enabled,
+            get_tab_agent_lab_reveal_live_ticker,
             get_tab_agent_lab_tabs,
             get_tab_agent_lab_token_cap,
             get_tab_agent_lab_train_per_era,
@@ -127,6 +129,7 @@ class LabConfig:
             min_holdout_dates=get_tab_agent_lab_min_holdout_dates(skill_dir),
             train_per_era=get_tab_agent_lab_train_per_era(skill_dir),
             rebuild=get_tab_agent_lab_rebuild_enabled(skill_dir),
+            reveal_live_ticker=get_tab_agent_lab_reveal_live_ticker(skill_dir),
             drift_weight=get_tab_agent_lab_drift_weight(skill_dir),
             max_generations=get_tab_agent_lab_max_generations(skill_dir),
             usd_per_1k=get_tab_agent_lab_usd_per_1k(skill_dir),
@@ -740,7 +743,7 @@ def _hooks(
             return None
         from core.tab_agent_lab_plan import decision_payload
 
-        payload = decision_payload(case)
+        payload = decision_payload(case, reveal_ticker=config.reveal_live_ticker)
         if tab == "debate":
             system = texts.get("system") or ""
             first = _model_call(

@@ -129,12 +129,27 @@ def lab_decision_card(signal: dict[str, Any] | None, as_of: str) -> dict[str, An
     return card
 
 
-def decision_payload(case: LabCase) -> dict[str, Any]:
-    """What ``decide`` sends. A stored payload wins. Synthetic cases get a card."""
-    if isinstance(case.payload, dict) and case.payload:
-        card = {key: value for key, value in case.payload.items() if not _drop_card_key(str(key))}
+_RAW_MARKERS = ("ticker", "symbol", "as_of", "price", "close", "entry_price", "sma_50", "sma_200", "stop_price")
+
+
+def _is_raw_card(card: dict[str, Any]) -> bool:
+    """A pit card still carries identity or a dollar price. An anonymized card does not."""
+    return any(key in card for key in _RAW_MARKERS)
+
+
+def decision_payload(case: LabCase, *, reveal_ticker: bool = False) -> dict[str, Any]:
+    """The card ``decide`` sends. Live and rebuild use the same anonymized shape.
+
+    ``reveal_ticker`` puts the ticker back on a live card only. It defaults off
+    so train and the live holdout stay on one distribution.
+    """
+    stored = case.payload if isinstance(case.payload, dict) and case.payload else None
+    if stored is not None and not _is_raw_card(stored):
+        card = {key: value for key, value in stored.items() if not _drop_card_key(str(key))}
+        for banned in _RAW_MARKERS:
+            card.pop(banned, None)
     else:
-        card = lab_decision_card(
+        raw = stored or lab_decision_card(
             {
                 "ticker": case.ticker,
                 "signal_score": case.signal_score,
@@ -143,6 +158,9 @@ def decision_payload(case: LabCase) -> dict[str, Any]:
             },
             case.as_of,
         )
+        card = anonymize_card(raw, case_id=f"{case.ticker}:{case.as_of}")
+    if reveal_ticker and str(case.source or "live") != "rebuild" and case.ticker:
+        card["ticker"] = case.ticker
     card.setdefault("instruction", _INSTRUCTION)
     return card
 
