@@ -31,9 +31,7 @@ from zoneinfo import ZoneInfo
 from core.tab_agent_lab_score import (
     DECISION_KEYS,
     LabCase,
-    load_lab_cases,
     objective_for,
-    split_walk_forward,
     synthetic_cases,
 )
 from core.tab_agent_lab_tournament import (
@@ -63,11 +61,20 @@ class LabConfig:
     model: str = ""
     token_cap: int = 0
     holdout_weeks: int = 6
+    holdout_days: int = 0
+    embargo_days: int = 20
     margin: float = 0.05
     min_holdout: int = 8
     min_participation: float = 0.60
     min_longs: int = 8
     max_cases: int = 180
+    min_train_cases: int = 150
+    min_train_dates: int = 15
+    min_holdout_cases: int = 200
+    min_holdout_dates: int = 10
+    train_per_era: int = 300
+    rebuild: bool = False
+    reveal_live_ticker: bool = False
     drift_weight: float = 0.15
     max_generations: int = 0
     usd_per_1k: float = 0.01
@@ -79,17 +86,26 @@ class LabConfig:
             get_tab_agent_lab_candidates,
             get_tab_agent_lab_concurrency,
             get_tab_agent_lab_drift_weight,
+            get_tab_agent_lab_embargo_days,
             get_tab_agent_lab_enabled,
+            get_tab_agent_lab_holdout_days,
             get_tab_agent_lab_holdout_weeks,
             get_tab_agent_lab_margin,
             get_tab_agent_lab_max_cases,
             get_tab_agent_lab_max_generations,
+            get_tab_agent_lab_min_holdout_cases,
+            get_tab_agent_lab_min_holdout_dates,
             get_tab_agent_lab_min_holdout_samples,
             get_tab_agent_lab_min_longs,
             get_tab_agent_lab_min_participation,
+            get_tab_agent_lab_min_train_cases,
+            get_tab_agent_lab_min_train_dates,
             get_tab_agent_lab_model,
+            get_tab_agent_lab_rebuild_enabled,
+            get_tab_agent_lab_reveal_live_ticker,
             get_tab_agent_lab_tabs,
             get_tab_agent_lab_token_cap,
+            get_tab_agent_lab_train_per_era,
             get_tab_agent_lab_usd_per_1k,
         )
 
@@ -100,11 +116,20 @@ class LabConfig:
             model=get_tab_agent_lab_model(skill_dir),
             token_cap=get_tab_agent_lab_token_cap(skill_dir),
             holdout_weeks=get_tab_agent_lab_holdout_weeks(skill_dir),
+            holdout_days=get_tab_agent_lab_holdout_days(skill_dir),
+            embargo_days=get_tab_agent_lab_embargo_days(skill_dir),
             margin=get_tab_agent_lab_margin(skill_dir),
             min_holdout=get_tab_agent_lab_min_holdout_samples(skill_dir),
             min_participation=get_tab_agent_lab_min_participation(skill_dir),
             min_longs=get_tab_agent_lab_min_longs(skill_dir),
             max_cases=get_tab_agent_lab_max_cases(skill_dir),
+            min_train_cases=get_tab_agent_lab_min_train_cases(skill_dir),
+            min_train_dates=get_tab_agent_lab_min_train_dates(skill_dir),
+            min_holdout_cases=get_tab_agent_lab_min_holdout_cases(skill_dir),
+            min_holdout_dates=get_tab_agent_lab_min_holdout_dates(skill_dir),
+            train_per_era=get_tab_agent_lab_train_per_era(skill_dir),
+            rebuild=get_tab_agent_lab_rebuild_enabled(skill_dir),
+            reveal_live_ticker=get_tab_agent_lab_reveal_live_ticker(skill_dir),
             drift_weight=get_tab_agent_lab_drift_weight(skill_dir),
             max_generations=get_tab_agent_lab_max_generations(skill_dir),
             usd_per_1k=get_tab_agent_lab_usd_per_1k(skill_dir),
@@ -352,7 +377,74 @@ def _score_live(
     )
     from core.tab_agent_lab_tournament import _brief
 
-    return _brief(book)
+    brief = _brief(book)
+    if isinstance(book.get("ex_pre_cutoff"), dict):
+        brief["ex_pre"] = _brief(book["ex_pre_cutoff"])
+    if book.get("slices"):
+        brief["slices"] = book.get("slices")
+    brief["used_pre_cutoff"] = bool(book.get("used_pre_cutoff"))
+    return brief
+
+
+def _load_night_cases(
+    root: Path,
+    cfg: LabConfig,
+    *,
+    cases: list[LabCase] | None,
+    horizon_days: int,
+) -> tuple[list[LabCase], int, int, str]:
+    if cases is not None:
+        return list(cases), 0, 0, "injected"
+    from core.tab_agent_lab_score import load_lab_book
+
+    book = load_lab_book(root, horizon_days=horizon_days)
+    loaded = list(book.cases)
+    if cfg.rebuild:
+        from core.tab_agent_rebuild import load_rebuild_cases
+
+        loaded.extend(load_rebuild_cases(root))
+    return loaded, book.fixtures_excluded, book.duplicates_removed, "stored"
+
+
+def _night_plan(cases: list[LabCase], cfg: LabConfig, *, fixtures_excluded: int, duplicates_removed: int) -> Any:
+    from core.tab_agent_lab_plan import plan_split
+
+    return plan_split(
+        cases,
+        holdout_weeks=cfg.holdout_weeks,
+        holdout_days=cfg.holdout_days or None,
+        embargo_days=cfg.embargo_days,
+        train_per_era=cfg.train_per_era,
+        min_train_cases=cfg.min_train_cases,
+        min_train_dates=cfg.min_train_dates,
+        min_holdout_cases=cfg.min_holdout_cases,
+        min_holdout_dates=cfg.min_holdout_dates,
+        fixtures_excluded=fixtures_excluded,
+        duplicates_removed=duplicates_removed,
+    )
+
+
+def _blocked_report(night: str, plan: Any, *, prior_tokens: int) -> dict[str, Any]:
+    """A failed gate. ``prior_tokens`` is recorded and no new call is made."""
+    payload = plan.as_dict()
+    return {
+        "night_id": night,
+        "window": "18:00-07:00 America/Chicago, weekends included",
+        "orders_touched": False,
+        "tokens": 0,
+        "prior_tokens": int(prior_tokens),
+        "spend_usd": 0.0,
+        "token_cap": 0,
+        "candidates_tried": 0,
+        "generations": {},
+        "tabs": {},
+        "cases": payload,
+        "trust_gate": payload,
+        "trust_reason": plan.reason,
+        "stopped_early": True,
+        "stop_reason": "trust_gate",
+        "note": "Shadow only. The trust gate stopped the night before any model call.",
+    }
 
 
 def run_night(
@@ -382,6 +474,30 @@ def run_night(
         return state["report"]
 
     objective_cfg = objective or objective_for(root)
+    loaded, fixtures_excluded, duplicates_removed, source_name = _load_night_cases(
+        root,
+        cfg,
+        cases=cases,
+        horizon_days=objective_cfg.horizon_days,
+    )
+    plan = _night_plan(
+        loaded,
+        cfg,
+        fixtures_excluded=fixtures_excluded,
+        duplicates_removed=duplicates_removed,
+    )
+    state["case_counts"] = plan.as_dict() | {"source": source_name}
+    if not plan.ok:
+        LOG.warning("Lab trust gate blocked the night: %s", plan.reason)
+        report = _blocked_report(night, plan, prior_tokens=int(state.get("tokens") or 0))
+        state["finished"] = True
+        state["tokens"] = 0
+        state["report"] = report
+        save_state(root, state)
+        write_night_report(root, report)
+        return report
+
+    train, holdout = plan.train, plan.holdout
     budget = Budget(cfg.token_cap, cfg.usd_per_1k)
     budget.tokens = int(state.get("tokens") or 0)
     cache = state.get("decision_cache") if isinstance(state.get("decision_cache"), dict) else {}
@@ -393,17 +509,6 @@ def run_night(
     else:
         propose, decide_inner = hooks
     decide = _caching_decide(decide_inner, cache, lock)
-    loaded = (
-        cases
-        if cases is not None
-        else load_lab_cases(root, limit=cfg.max_cases, horizon_days=objective_cfg.horizon_days)
-    )
-    train, holdout = split_walk_forward(list(loaded), cfg.holdout_weeks)
-    state["case_counts"] = {
-        "train": len(train),
-        "holdout": len(holdout),
-        "source": "injected" if cases is not None else "stored",
-    }
 
     while in_lab_window(now_fn()) and not budget.exhausted:
         progressed = False
@@ -636,8 +741,9 @@ def _hooks(
 
         if _blocked():
             return None
-        payload = case.as_dict()
-        payload["instruction"] = "Decide long or cash from these fields only. Never a short or an option."
+        from core.tab_agent_lab_plan import decision_payload
+
+        payload = decision_payload(case, reveal_ticker=config.reveal_live_ticker)
         if tab == "debate":
             system = texts.get("system") or ""
             first = _model_call(
@@ -775,6 +881,7 @@ def finalize_night(
             "shadow": shadow,
             "gate_failures": failures,
             "errors": bucket.get("errors") or [],
+            "source_sortino": _source_sortino(live_train, live_holdout),
         }
     counts = state.get("case_counts") if isinstance(state.get("case_counts"), dict) else {}
     return {
@@ -788,8 +895,42 @@ def finalize_night(
         "candidates_tried": sum(int(row.get("candidates_tried") or 0) for row in tabs_out.values()),
         "generations": {tab: row.get("generations") for tab, row in tabs_out.items()},
         "tabs": tabs_out,
+        "source_sortino": _primary_source_sortino(tabs_out),
         "note": "Shadow only. Live prompts change later, through the governor, after live samples.",
     }
+
+
+def _slice_brief(book: Any, key: str) -> dict[str, Any] | None:
+    if not isinstance(book, dict):
+        return None
+    slices = book.get("slices")
+    if not isinstance(slices, dict):
+        return None
+    row = slices.get(key)
+    if not isinstance(row, dict):
+        return None
+    return {"sortino_adj": row.get("sortino_adj"), "n": row.get("n"), "n_longs": row.get("n_longs")}
+
+
+def _source_sortino(live_train: Any, live_holdout: Any) -> dict[str, Any]:
+    return {
+        "rebuild_pre_cutoff": _slice_brief(live_train, "rebuild_pre_cutoff"),
+        "rebuild_post_cutoff": _slice_brief(live_train, "rebuild_post_cutoff"),
+        "live_train": _slice_brief(live_train, "live"),
+        "live_holdout": _slice_brief(live_holdout, "live"),
+    }
+
+
+def _primary_source_sortino(tabs_out: dict[str, Any]) -> dict[str, Any]:
+    row = tabs_out.get("today")
+    if not isinstance(row, dict) and tabs_out:
+        row = next(iter(tabs_out.values()))
+    if not isinstance(row, dict):
+        return _source_sortino({}, {})
+    stored = row.get("source_sortino")
+    if isinstance(stored, dict):
+        return stored
+    return _source_sortino(row.get("live_train"), row.get("live_holdout"))
 
 
 def _install(
@@ -866,7 +1007,16 @@ def render_report_md(report: dict[str, Any]) -> str:
     ]
     if report.get("stopped_early"):
         lines.append(f"Stopped early: {report.get('stop_reason')}")
+    if report.get("trust_reason"):
+        lines.extend(["", str(report.get("trust_reason"))])
     lines.append("")
+    sources = report.get("source_sortino")
+    if isinstance(sources, dict) and any(sources.values()):
+        lines.append("Source Sortino:")
+        for name, row in sources.items():
+            if isinstance(row, dict):
+                lines.append(f"- {name} sortino={row.get('sortino_adj')} n={row.get('n')}")
+        lines.append("")
     if report.get("sample_floor_note"):
         lines.extend([str(report["sample_floor_note"]), ""])
     for tab, row in (report.get("tabs") or {}).items():
@@ -999,6 +1149,31 @@ def scheduler_tick(
         return {"launched": False, "reason": "error", "error": str(exc)}
 
 
+def plan_night(skill_dir: Path | str, *, config: LabConfig | None = None) -> dict[str, Any]:
+    """Split and gate the stored cases. Does not call a model or write the night report."""
+    root = Path(skill_dir)
+    cfg = config or LabConfig.load(root)
+    objective = objective_for(root)
+    loaded, fixtures_excluded, duplicates_removed, source_name = _load_night_cases(
+        root,
+        cfg,
+        cases=None,
+        horizon_days=objective.horizon_days,
+    )
+    plan = _night_plan(
+        loaded,
+        cfg,
+        fixtures_excluded=fixtures_excluded,
+        duplicates_removed=duplicates_removed,
+    )
+    payload = plan.as_dict()
+    payload["source"] = source_name
+    payload["rebuild"] = bool(cfg.rebuild)
+    payload["dry_run"] = True
+    payload["plan"] = True
+    return payload
+
+
 def run_dry(
     skill_dir: Path | str,
     *,
@@ -1019,8 +1194,14 @@ def run_dry(
         candidates=max(2, candidates),
         token_cap=0,
         holdout_weeks=6,
+        embargo_days=0,
         margin=0.05,
         min_holdout=8,
+        min_train_cases=1,
+        min_train_dates=1,
+        min_holdout_cases=1,
+        min_holdout_dates=1,
+        train_per_era=0,
         max_generations=max(1, generations),
         tabs=chosen,
     )
@@ -1067,6 +1248,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Overnight tab-agent prompt lab. Analysis prompts only.")
     parser.add_argument("--skill-dir", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--dry-run", action="store_true", help="One offline generation. Does not install a shadow.")
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Print the date split and trust gate for stored cases. No model calls.",
+    )
     parser.add_argument("--until-window-end", action="store_true", help="Run until 7:00 AM America/Chicago.")
     parser.add_argument("--tab", default="", help="Dry-run one tab. Default: today.")
     parser.add_argument("--candidates", type=int, default=4)
@@ -1074,6 +1260,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
+        if args.plan:
+            report = plan_night(args.skill_dir)
+            print(json.dumps(report, indent=2, default=str))
+            return 0
         if args.dry_run:
             report = run_dry(
                 args.skill_dir,

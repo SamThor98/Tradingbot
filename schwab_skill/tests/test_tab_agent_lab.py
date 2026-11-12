@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -77,8 +78,14 @@ def _config(tabs: tuple[str, ...] = ("today",), generations: int = 1) -> LabConf
         concurrency=1,
         candidates=4,
         holdout_weeks=6,
+        embargo_days=0,
         margin=0.05,
         min_holdout=8,
+        min_train_cases=1,
+        min_train_dates=1,
+        min_holdout_cases=1,
+        min_holdout_dates=1,
+        train_per_era=0,
         max_generations=generations,
         tabs=tabs,
     )
@@ -634,6 +641,184 @@ def test_scheduler_respects_the_kill_switch_and_a_live_pid(tmp_path: Path, monke
     assert outcome["reason"] == "already_running"
 
 
+def test_cap_cannot_empty_a_side_and_embargo_holds() -> None:
+    """A newest-180 cut would drop the older dates. The date split keeps both sides."""
+    from core.tab_agent_lab_plan import plan_split, trading_days_between
+
+    days = _weekdays(date(2026, 1, 5), 80)
+    cases: list[LabCase] = []
+    for index, day in enumerate(days):
+        for copy in range(8):
+            cases.append(LabCase(f"{day.isoformat()}-{copy}", day.isoformat(), f"T{copy}", 1.0, source="live"))
+        if index == 40:
+            cases.append(
+                LabCase("rebuild-in-window", days[-3].isoformat(), "ZZZ", 4.0, source="rebuild", era="recent_current")
+            )
+    newest = sorted(cases, key=lambda case: (case.as_of, case.ticker))[-180:]
+    assert all(case.as_of >= days[-30].isoformat() for case in newest if case.source == "live")
+    plan = plan_split(
+        cases,
+        holdout_weeks=6,
+        holdout_days=8,
+        embargo_days=20,
+        train_per_era=300,
+        min_train_cases=1,
+        min_train_dates=1,
+        min_holdout_cases=1,
+        min_holdout_dates=1,
+    )
+    assert plan.train
+    assert plan.holdout
+    assert all(case.source != "rebuild" for case in plan.holdout)
+    assert any(case.source == "rebuild" for case in plan.embargo)
+    holdout_start = date.fromisoformat(min(case.as_of for case in plan.holdout))
+    for case in plan.train:
+        assert trading_days_between(date.fromisoformat(case.as_of), holdout_start) > 20
+    for case in plan.embargo:
+        if case.source == "live":
+            assert trading_days_between(date.fromisoformat(case.as_of), holdout_start) <= 20
+
+
+def test_trust_gate_spends_nothing_and_names_the_gap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def _count(**_kwargs: object) -> str:
+        calls["n"] += 1
+        return "nope"
+
+    monkeypatch.setattr("core.tab_agent_lab._model_call", lambda *_a, **_k: calls.__setitem__("n", calls["n"] + 1))
+    _write_october_store(tmp_path)
+    report = run_night(
+        tmp_path,
+        config=LabConfig(enabled=True, tabs=("today",), max_generations=3, rebuild=False),
+        clock=_evening_clock(),
+        promote=False,
+        use_llm=True,
+        objective=_objective(),
+        hooks=(_count, _count),
+    )
+    assert calls["n"] == 0
+    assert report["tokens"] == 0
+    assert report["spend_usd"] == 0.0
+    assert report["candidates_tried"] == 0
+    assert report["orders_touched"] is False
+    assert report["stop_reason"] == "trust_gate"
+    reason = report["trust_reason"]
+    assert "zero spend" in reason
+    assert "train 1 cases over 1 dates (2026-07-15..2026-07-15" in reason
+    assert "holdout 277 cases over 6 dates (2026-10-06..2026-10-13" in reason
+    assert "Need train>=150 cases over >=15 dates and holdout>=200 cases over >=10 dates" in reason
+    assert "insufficient_train_cases" in reason
+    assert "insufficient_holdout_dates" in reason
+    assert "Fixtures excluded: 16" in reason
+    text = (tmp_path / ".tab_agent_lab" / "reports" / "2026-11-11.md").read_text(encoding="utf-8")
+    assert "zero spend" in text
+    from core.tab_agent_digest import write_daily_digest
+
+    payload = write_daily_digest(tmp_path, date(2026, 11, 12))
+    digest = Path(payload["markdown_path"]).read_text(encoding="utf-8")
+    assert "zero spend" in digest
+    assert "holdout 277 cases over 6 dates" in digest
+
+
+def test_fixture_rows_are_excluded_and_ticker_dates_deduped(tmp_path: Path) -> None:
+    from core.tab_agent_lab_score import load_lab_book
+
+    packets = {
+        "packets": [
+            _labeled_packet("fixture", "AAPL", "2026-05-04", entry=185.5, order_ref="ORD123"),
+            _labeled_packet("real", "MSFT", "2026-10-06", entry=420.0, order_ref="999"),
+            _labeled_packet("dup", "MSFT", "2026-10-06", entry=420.0, order_ref="1000"),
+        ]
+    }
+    (tmp_path / "decision_packets.json").write_text(json.dumps(packets), encoding="utf-8")
+    (tmp_path / ".tab_agent_replay.jsonl").write_text(
+        json.dumps(
+            {
+                "source": "replay",
+                "ticker": "AAPL",
+                "as_of": "2026-05-04",
+                "entry_price": 185.5,
+                "order_ref": "ORD123",
+                "counterfactual_return_pct": 3.0,
+                "scored": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    book = load_lab_book(tmp_path, horizon_days=20)
+    assert book.fixtures_excluded >= 1
+    assert [(case.ticker, case.as_of) for case in book.cases] == [("MSFT", "2026-10-06")]
+    assert book.duplicates_removed >= 1
+    assert book.cases[0].payload is not None
+    assert "qual_business" not in book.cases[0].payload
+    assert "ticker" in book.cases[0].payload
+
+
+def test_source_slices_use_rebuild_excess_and_pre_cutoff_cannot_win_alone() -> None:
+    from core.tab_agent_lab_plan import prepare_scoring_cases, source_views
+
+    cases = [
+        LabCase("old", "2022-06-01", "OLD", 12.0, source="rebuild", pre_cutoff=True, signal_score=80),
+        LabCase("new", "2024-06-03", "NEW", 1.0, source="rebuild", pre_cutoff=False, signal_score=80),
+        LabCase("live", "2026-06-01", "LIVE", 5.0, source="live", signal_score=80),
+    ]
+    prepared = prepare_scoring_cases(cases)
+    assert prepared[0].long_return_pct == pytest.approx(0.0)
+    assert prepared[1].long_return_pct == pytest.approx(0.0)
+    assert prepared[2].long_return_pct == pytest.approx(5.0)
+    views = source_views(cases, ["long", "long", "long"], config=_objective())
+    assert views["used_pre_cutoff"] is True
+    assert views["slices"]["rebuild_pre_cutoff"]["n"] == 1
+    assert views["slices"]["rebuild_post_cutoff"]["n"] == 1
+    assert views["slices"]["live"]["n"] == 1
+    assert views["slices"]["rebuild_pre_cutoff"]["sortino_adj"] != views["slices"]["live"]["sortino_adj"]
+    winner, failures = select_winner(
+        [
+            {
+                "id": "only-old",
+                "dropped": None,
+                "train": {"sortino_adj": 2.0, "n": 40, "n_longs": 30, "max_drawdown": -0.05},
+                "sealed": {"sortino_adj": 1.5, "n": 20, "n_longs": 16, "max_drawdown": -0.04},
+                "used_pre_cutoff": True,
+                "ex_pre": {"sortino_adj": 0.1, "n": 20, "n_longs": 16, "max_drawdown": -0.04},
+            }
+        ],
+        {"sortino_adj": 0.4, "n": 40, "n_longs": 40, "max_drawdown": -0.05, "ex_pre": {"sortino_adj": 0.4}},
+        {"sortino_adj": 0.3, "n": 20, "n_longs": 20, "max_drawdown": -0.05},
+        margin=0.05,
+        min_train=8,
+        min_holdout=8,
+        drawdown_limit=0.20,
+    )
+    assert winner is None
+    assert failures["pre_cutoff_only"] == 1
+
+
+def test_holdout_gate_first_clears_on_nov_17_given_the_october_schedule() -> None:
+    from core.tab_agent_lab_plan import project_holdout_readiness
+
+    cohorts = [
+        ("2026-10-06", "2026-11-11", 46),
+        ("2026-10-07", "2026-11-11", 46),
+        ("2026-10-08", "2026-11-11", 46),
+        ("2026-10-09", "2026-11-11", 46),
+        ("2026-10-12", "2026-11-11", 46),
+        ("2026-10-13", "2026-11-11", 47),
+        ("2026-10-15", "2026-11-12", 1),
+        ("2026-10-16", "2026-11-13", 1),
+        ("2026-10-19", "2026-11-16", 1),
+        ("2026-10-20", "2026-11-17", 1),
+        ("2026-10-21", "2026-11-18", 1),
+        ("2026-10-22", "2026-11-19", 221),
+    ]
+    projected = project_holdout_readiness(cohorts, holdout_weeks=6, min_cases=200, min_dates=10)
+    assert projected["holdout_ready_on"] == "2026-11-17"
+    assert projected["holdout"]["dates"] == 10
+    assert projected["holdout"]["cases"] >= 200
+
+
 def test_digest_includes_the_lab_section(tmp_path: Path) -> None:
     from core.tab_agent_digest import write_daily_digest
     from core.tab_agent_lab import write_night_report
@@ -663,6 +848,52 @@ def test_digest_includes_the_lab_section(tmp_path: Path) -> None:
     assert "Overnight lab" in text
     assert "shadow=True" in text
     assert payload["lab"]["night_id"] == "2026-11-10"
+
+
+def _weekdays(start: date, count: int) -> list[date]:
+    rows: list[date] = []
+    cursor = start
+    while len(rows) < count:
+        if cursor.weekday() < 5:
+            rows.append(cursor)
+        cursor += timedelta(days=1)
+    return rows
+
+
+def _write_october_store(root: Path) -> None:
+    """294 labeled packets: 277 names on Oct 6-13, 16 AAPL fixtures, one SNA."""
+    counts = {
+        "2026-10-06": 46,
+        "2026-10-07": 46,
+        "2026-10-08": 46,
+        "2026-10-09": 46,
+        "2026-10-12": 46,
+        "2026-10-13": 47,
+    }
+    packets = [_labeled_packet("SNA", "SNA", "2026-07-15", entry=210.0, order_ref="LIVE")]
+    for index, day in enumerate(
+        ("2026-05-04", "2026-06-01", "2026-06-15", "2026-07-01", "2026-08-03", "2026-08-17", "2026-09-01", "2026-09-14")
+    ):
+        packets.append(_labeled_packet(f"fx{index}a", "AAPL", day, entry=185.5, order_ref="ORD123"))
+        packets.append(_labeled_packet(f"fx{index}b", "AAPL", day, entry=185.5, order_ref="ORD123"))
+    for as_of, count in counts.items():
+        for index in range(count):
+            packets.append(
+                _labeled_packet(f"{as_of}-{index}", f"N{index}", as_of, entry=50.0 + index, order_ref="LIVE")
+            )
+    (root / "decision_packets.json").write_text(json.dumps({"packets": packets}), encoding="utf-8")
+
+
+def _labeled_packet(packet_id: str, ticker: str, as_of: str, *, entry: float, order_ref: str) -> dict:
+    return {
+        "packet_id": packet_id,
+        "ticker": ticker,
+        "created_at": f"{as_of}T15:00:00+00:00",
+        "entry_price": entry,
+        "signal_score": 70,
+        "refs": {"order_ref": order_ref, "qual_business": 0.4, "stated_confidence": 0.8},
+        "outcome": {"label": "win", "realized_return_pct": 4.0, "horizon_days": 20},
+    }
 
 
 def _live_book(cases: list[LabCase]) -> dict:

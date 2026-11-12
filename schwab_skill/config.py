@@ -2881,8 +2881,69 @@ def get_tab_agent_lab_token_cap(skill_dir: Path | None = None) -> int:
 
 
 def get_tab_agent_lab_holdout_weeks(skill_dir: Path | None = None) -> int:
-    """Most recent weeks kept out of the generator's scores."""
+    """Most recent weeks kept out of the generator's scores. Fallback when holdout days are unset."""
     return max(1, min(26, _get_int("TAB_AGENT_LAB_HOLDOUT_WEEKS", 6, skill_dir)))
+
+
+def _optional_lab_int(key: str, skill_dir: Path | None) -> int | None:
+    raw = _env_value(key, _load_env(skill_dir)).strip()
+    if not raw:
+        return None
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def get_tab_agent_lab_holdout_days(skill_dir: Path | None = None) -> int:
+    """Trading days in the live holdout. 0 means use ``TAB_AGENT_LAB_HOLDOUT_WEEKS``."""
+    parsed = _optional_lab_int("TAB_AGENT_LAB_HOLDOUT_DAYS", skill_dir)
+    if parsed is None:
+        return 0
+    return max(1, min(252, parsed))
+
+
+def get_tab_agent_lab_embargo_days(skill_dir: Path | None = None) -> int:
+    """Weekdays purged between train end and holdout start. Default is the 20-day label horizon."""
+    parsed = _optional_lab_int("TAB_AGENT_LAB_EMBARGO_DAYS", skill_dir)
+    if parsed is None:
+        return 20
+    return max(0, min(120, parsed))
+
+
+def get_tab_agent_lab_min_train_cases(skill_dir: Path | None = None) -> int:
+    """Train rows required before the night calls a model."""
+    return max(1, min(100000, _get_int("TAB_AGENT_LAB_MIN_TRAIN_CASES", 150, skill_dir)))
+
+
+def get_tab_agent_lab_min_train_dates(skill_dir: Path | None = None) -> int:
+    """Distinct train as-of dates required before the night calls a model."""
+    return max(1, min(2000, _get_int("TAB_AGENT_LAB_MIN_TRAIN_DATES", 15, skill_dir)))
+
+
+def get_tab_agent_lab_min_holdout_cases(skill_dir: Path | None = None) -> int:
+    """Live holdout rows required before the night calls a model."""
+    return max(1, min(100000, _get_int("TAB_AGENT_LAB_MIN_HOLDOUT_CASES", 200, skill_dir)))
+
+
+def get_tab_agent_lab_min_holdout_dates(skill_dir: Path | None = None) -> int:
+    """Distinct live holdout dates required before the night calls a model."""
+    return max(1, min(2000, _get_int("TAB_AGENT_LAB_MIN_HOLDOUT_DATES", 10, skill_dir)))
+
+
+def get_tab_agent_lab_train_per_era(skill_dir: Path | None = None) -> int:
+    """Train rows kept in each era. This replaces a newest-N cap that could empty train."""
+    return max(1, min(5000, _get_int("TAB_AGENT_LAB_TRAIN_PER_ERA", 300, skill_dir)))
+
+
+def get_tab_agent_lab_rebuild_enabled(skill_dir: Path | None = None) -> bool:
+    """When on, rebuilt backtest cases join train. Default off. Does not place orders."""
+    return _get_bool("TAB_AGENT_LAB_REBUILD", False, skill_dir)
+
+
+def get_tab_agent_lab_reveal_live_ticker(skill_dir: Path | None = None) -> bool:
+    """Put the ticker on live lab cards. Default off so live and rebuild share one shape."""
+    return _get_bool("TAB_AGENT_LAB_REVEAL_LIVE_TICKER", False, skill_dir)
 
 
 def get_tab_agent_lab_margin(skill_dir: Path | None = None) -> float:
@@ -2908,7 +2969,7 @@ def get_tab_agent_lab_min_longs(skill_dir: Path | None = None) -> int:
 
 
 def get_tab_agent_lab_max_cases(skill_dir: Path | None = None) -> int:
-    """Newest stored cases kept for one night. Caps the replay read."""
+    """Legacy newest-N cap. The night samples train per era instead of using this cut."""
     return max(20, min(2000, _get_int("TAB_AGENT_LAB_MAX_CASES", 180, skill_dir)))
 
 
