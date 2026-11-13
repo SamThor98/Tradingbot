@@ -5,9 +5,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
-import httpx
 import pytest
-from openai import APITimeoutError
 
 import core.debate_committee as committee
 from config import clear_env_cache, get_debate_committee_timeout_seconds
@@ -31,6 +29,14 @@ _LLM_KEYS = (
 )
 
 _OPENAI_URL = "https://api.openai.com/v1"
+
+
+class APITimeoutError(Exception):
+    """Name matches openai.APITimeoutError. The test does not import the SDK."""
+
+
+class ReadTimeout(Exception):
+    """Name matches httpx.ReadTimeout and httpx2.ReadTimeout."""
 
 
 def _scrub(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,8 +237,8 @@ def test_default_client_uses_openai_mini_and_thirty_seconds(tmp_path, monkeypatc
 @pytest.mark.parametrize(
     "exc_factory",
     [
-        lambda: APITimeoutError(httpx.Request("POST", _OPENAI_URL + "/chat/completions")),
-        lambda: httpx.ReadTimeout("timed out"),
+        lambda: APITimeoutError("timed out"),
+        lambda: ReadTimeout("timed out"),
     ],
 )
 def test_timeout_is_not_labeled_parse_failed(tmp_path, monkeypatch, caplog, exc_factory) -> None:
@@ -288,6 +294,29 @@ def test_api_error_is_not_labeled_parse_failed(tmp_path, monkeypatch, caplog) ->
     assert "elapsed_seconds=" in caplog.text
     assert "upstream blew up" not in caplog.text
     assert "sk-openai" not in caplog.text
+
+
+def test_installed_sdk_timeouts_match_by_class_name() -> None:
+    from core.debate_committee import _is_timeout_error
+
+    matched = 0
+    for module_name in ("httpx", "httpx2"):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            continue
+        assert _is_timeout_error(module.ReadTimeout("timed out"))
+        matched += 1
+        try:
+            from openai import APITimeoutError as SdkTimeout
+
+            request = module.Request("POST", "https://api.openai.com/v1/chat/completions")
+            assert _is_timeout_error(SdkTimeout(request))
+            matched += 1
+        except Exception:
+            continue
+    assert matched >= 1
+    assert _is_timeout_error(RuntimeError("upstream")) is False
 
 
 def test_bad_json_stays_parse_failed(tmp_path, monkeypatch, caplog) -> None:

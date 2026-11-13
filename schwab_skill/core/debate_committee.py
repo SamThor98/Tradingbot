@@ -66,27 +66,29 @@ class CommitteeTransportError(Exception):
         super().__init__(label)
 
 
+# openai.APITimeoutError, plus the timeout classes shared by httpx and httpx2.
+# Match on the class name so a missing httpx install (OpenAI 3 depends on
+# httpx2) still labels the failure as a timeout.
+_TIMEOUT_TYPE_NAMES = frozenset(
+    {
+        "APITimeoutError",
+        "TimeoutException",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+    }
+)
+
+
 def _is_timeout_error(exc: BaseException) -> bool:
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if current.__class__.__name__ == "APITimeoutError":
+        names = {cls.__name__ for cls in type(current).__mro__}
+        if names & _TIMEOUT_TYPE_NAMES:
             return True
-        try:
-            import httpx
-
-            if isinstance(current, httpx.TimeoutException):
-                return True
-        except Exception:
-            pass
-        try:
-            from openai import APITimeoutError
-
-            if isinstance(current, APITimeoutError):
-                return True
-        except Exception:
-            pass
         cause = current.__cause__ if isinstance(current.__cause__, BaseException) else None
         if cause is None and isinstance(current.__context__, BaseException):
             cause = current.__context__
