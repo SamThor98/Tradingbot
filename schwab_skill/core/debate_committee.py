@@ -11,13 +11,19 @@ import logging
 import math
 import re
 import statistics
+import time
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 LOG = logging.getLogger(__name__)
 COMMITTEE_LOG_FILE = ".debate_committee_log.jsonl"
+# Five seats (name, score, claim) plus a chair note. 400 tokens can end
+# mid-object, and that clipped JSON is logged as a parse failure.
+_MAX_TOKENS = 600
+_MAX_RETRIES = 0
+_FALLBACK_WARNED = False
 
 SEAT_NAMES = ("trend", "setup", "risk", "skeptic", "business")
 SCORE_MOVE_CAP = 15.0
@@ -40,6 +46,132 @@ _ROUND1 = "First round. Score each seat from the checklist numbers."
 _ROUND2 = "Second round. Move each score by at most 15 points from round1."
 
 CompleteFn = Callable[[str], str]
+
+
+class CommitteeRoute(NamedTuple):
+    api_key: str
+    base_url: str
+    model: str
+    timeout_seconds: float
+    fallback: bool
+
+
+class CommitteeTransportError(Exception):
+    """LLM transport failure. ``label`` is the diagnostics key."""
+
+    def __init__(self, label: str, model: str, elapsed: float) -> None:
+        self.label = label
+        self.model = model
+        self.elapsed = elapsed
+        super().__init__(label)
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if current.__class__.__name__ == "APITimeoutError":
+            return True
+        try:
+            import httpx
+
+            if isinstance(current, httpx.TimeoutException):
+                return True
+        except Exception:
+            pass
+        try:
+            from openai import APITimeoutError
+
+            if isinstance(current, APITimeoutError):
+                return True
+        except Exception:
+            pass
+        cause = current.__cause__ if isinstance(current.__cause__, BaseException) else None
+        if cause is None and isinstance(current.__context__, BaseException):
+            cause = current.__context__
+        current = cause
+    return False
+
+
+def _warn_endpoint_fallback(provider: str, model: str) -> None:
+    global _FALLBACK_WARNED
+    if _FALLBACK_WARNED:
+        return
+    _FALLBACK_WARNED = True
+    LOG.warning(
+        "Debate committee has no OpenAI-compatible key "
+        "(DEBATE_COMMITTEE_API_KEY, MIROFISH_API_KEY, or OPENAI_API_KEY); "
+        "falling back to resolve_llm_endpoint provider=%s model=%s",
+        provider,
+        model,
+    )
+
+
+def resolve_committee_route(skill_dir: Path | None = None) -> CommitteeRoute:
+    """Committee model, URL, key, and timeout.
+
+    An OpenAI-compatible key keeps this off ``LLM_MODEL_NAME`` / ``LLM_BASE_URL``.
+    With no such key, the existing global resolver is the last resort.
+    """
+    from config import (
+        get_debate_committee_api_key,
+        get_debate_committee_base_url,
+        get_debate_committee_model,
+        get_debate_committee_timeout_seconds,
+    )
+
+    timeout = get_debate_committee_timeout_seconds(skill_dir)
+    api_key = get_debate_committee_api_key(skill_dir)
+    if api_key:
+        return CommitteeRoute(
+            api_key=api_key,
+            base_url=get_debate_committee_base_url(skill_dir),
+            model=get_debate_committee_model(skill_dir),
+            timeout_seconds=timeout,
+            fallback=False,
+        )
+    from core.llm_endpoint import resolve_llm_endpoint
+
+    endpoint = resolve_llm_endpoint()
+    _warn_endpoint_fallback(endpoint.provider, endpoint.model)
+    return CommitteeRoute(
+        api_key=endpoint.api_key,
+        base_url=endpoint.base_url,
+        model=endpoint.model,
+        timeout_seconds=timeout,
+        fallback=True,
+    )
+
+
+def _note_transport(
+    exc: CommitteeTransportError,
+    ticker: str,
+    diag: dict[str, Any] | None,
+) -> None:
+    if isinstance(diag, dict):
+        diag[exc.label] = int(diag.get(exc.label, 0) or 0) + 1
+    LOG.warning(
+        "%s model=%s ticker=%s elapsed_seconds=%.2f",
+        exc.label,
+        exc.model,
+        ticker,
+        exc.elapsed,
+    )
+
+
+def _call_model(
+    caller: CompleteFn,
+    prompt: str,
+    ticker: str,
+    diag: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    """Return ``(text, transport_failed)``. Transport failures are already logged."""
+    try:
+        return caller(prompt), False
+    except CommitteeTransportError as exc:
+        _note_transport(exc, ticker, diag)
+        return "", True
 
 
 def _in_sample(ticker: str) -> bool:
@@ -187,41 +319,38 @@ def _prompt(
 
 
 def _default_complete(prompt: str, skill_dir: Path | None = None) -> str:
-    from core.llm_endpoint import resolve_llm_endpoint
-
-    endpoint = resolve_llm_endpoint()
-    if not endpoint.api_key:
+    route = resolve_committee_route(skill_dir)
+    if not route.api_key:
         return ""
     system, _round1, _round2 = _headers(skill_dir)
+    started = time.perf_counter()
     try:
         from openai import OpenAI
 
         client = OpenAI(
-            api_key=endpoint.api_key,
-            base_url=endpoint.base_url or None,
-            timeout=12.0,
-            max_retries=0,
+            api_key=route.api_key,
+            base_url=route.base_url or None,
+            timeout=route.timeout_seconds,
+            max_retries=_MAX_RETRIES,
         )
         resp = client.chat.completions.create(
-            model=endpoint.model,
+            model=route.model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=400,
+            max_tokens=_MAX_TOKENS,
             temperature=0,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as exc:
-        LOG.warning("Debate committee call failed: %s", exc)
-        return ""
+        elapsed = time.perf_counter() - started
+        label = "debate_committee_timeout" if _is_timeout_error(exc) else "debate_committee_api_error"
+        raise CommitteeTransportError(label, route.model, elapsed) from exc
 
 
-def _endpoint_ready() -> bool:
-    from core.llm_endpoint import resolve_llm_endpoint
-
-    endpoint = resolve_llm_endpoint()
-    return bool(endpoint.api_key)
+def _endpoint_ready(skill_dir: Path | None = None) -> bool:
+    return bool(resolve_committee_route(skill_dir).api_key)
 
 
 def maybe_attach_committee(
@@ -252,7 +381,7 @@ def maybe_attach_committee(
     grade = signal.get("debate_grade")
     if not isinstance(grade, dict) or grade.get("qual_abstain") or grade.get("qual_raw") is None:
         return signal
-    if complete is None and not _endpoint_ready():
+    if complete is None and not _endpoint_ready(skill_dir):
         diag["debate_committee_skipped_no_key"] = int(diag.get("debate_committee_skipped_no_key", 0) or 0) + 1
         return signal
     ran = int(diag.get("debate_committee_ran", 0) or 0)
@@ -286,12 +415,26 @@ def maybe_attach_committee(
     raw_before = grade.get("qual_raw")
     score_before = signal.get("signal_score")
     live_headers = _headers(skill_dir)
-    first = _parse_round(caller(_prompt(signal, grade, None, skill_dir, headers=live_headers)))
+    first_text, failed = _call_model(
+        caller,
+        _prompt(signal, grade, None, skill_dir, headers=live_headers),
+        ticker,
+        diag,
+    )
+    if failed:
+        return signal
+    first = _parse_round(first_text)
     if first is None:
         diag["debate_committee_parse_failed"] = int(diag.get("debate_committee_parse_failed", 0) or 0) + 1
         return signal
     _force_business_abstain(first, grade)
-    second = _parse_round(caller(_prompt(signal, grade, first, skill_dir, headers=live_headers)))
+    second_text, second_failed = _call_model(
+        caller,
+        _prompt(signal, grade, first, skill_dir, headers=live_headers),
+        ticker,
+        diag,
+    )
+    second = None if second_failed else _parse_round(second_text)
     final = _cap_moves(first, second) if second is not None else first
     _force_business_abstain(final, grade)
 
@@ -351,12 +494,27 @@ def _shadow_debate_score(
         return None
     if headers is None:
         return None
+    ticker = str(signal.get("ticker") or "")
     try:
-        first = _parse_round(caller(_prompt(signal, grade, None, skill_dir, headers=headers)))
+        first_text, failed = _call_model(
+            caller,
+            _prompt(signal, grade, None, skill_dir, headers=headers),
+            ticker,
+            None,
+        )
+        if failed:
+            return None
+        first = _parse_round(first_text)
         if first is None:
             return None
         _force_business_abstain(first, grade)
-        second = _parse_round(caller(_prompt(signal, grade, first, skill_dir, headers=headers)))
+        second_text, second_failed = _call_model(
+            caller,
+            _prompt(signal, grade, first, skill_dir, headers=headers),
+            ticker,
+            None,
+        )
+        second = None if second_failed else _parse_round(second_text)
         final = _cap_moves(first, second) if second is not None else first
         scored = [seat for seat in final["seats"].values() if seat.get("score") is not None]
         if len(scored) < 2:
