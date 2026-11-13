@@ -2819,6 +2819,49 @@ def get_tab_agent_debate_shadow_enabled(skill_dir: Path | None = None) -> bool:
     return _get_bool("TAB_AGENT_DEBATE_SHADOW_ENABLED", True, skill_dir)
 
 
+_DEBATE_COMMITTEE_DEFAULT_MODEL = "gpt-4o-mini"
+_DEBATE_COMMITTEE_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+_DEBATE_COMMITTEE_DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+def get_debate_committee_model(skill_dir: Path | None = None) -> str:
+    """Model id for committee calls only. Does not change ``LLM_MODEL_NAME``."""
+    raw = _env_value("DEBATE_COMMITTEE_MODEL", _load_env(skill_dir)).strip()
+    return raw or _DEBATE_COMMITTEE_DEFAULT_MODEL
+
+
+def get_debate_committee_base_url(skill_dir: Path | None = None) -> str:
+    """OpenAI-compatible base URL for the committee. Default is the OpenAI API."""
+    raw = _env_value("DEBATE_COMMITTEE_BASE_URL", _load_env(skill_dir)).strip()
+    return raw or _DEBATE_COMMITTEE_DEFAULT_BASE_URL
+
+
+def get_debate_committee_timeout_seconds(skill_dir: Path | None = None) -> float:
+    """Per-call committee timeout in seconds. Default 30, clamped to 1–120."""
+    val = _get_float(
+        "DEBATE_COMMITTEE_TIMEOUT_SECONDS",
+        _DEBATE_COMMITTEE_DEFAULT_TIMEOUT_SECONDS,
+        skill_dir,
+    )
+    if val != val:
+        return _DEBATE_COMMITTEE_DEFAULT_TIMEOUT_SECONDS
+    return max(1.0, min(120.0, val))
+
+
+def get_debate_committee_api_key(skill_dir: Path | None = None) -> str:
+    """OpenAI-compatible key: committee, then MiroFish, then OpenAI.
+
+    ``XAI_API_KEY`` is not an OpenAI key. When this returns empty, the
+    committee falls back to ``resolve_llm_endpoint()``.
+    """
+    env = _load_env(skill_dir)
+    for name in ("DEBATE_COMMITTEE_API_KEY", "MIROFISH_API_KEY", "OPENAI_API_KEY"):
+        raw = _env_value(name, env).strip()
+        if raw:
+            return raw
+    return ""
+
+
 def get_tab_agent_research_enabled(skill_dir: Path | None = None) -> bool:
     """Serve Research quick-check prompts from the registry. Default off."""
     return _get_bool("TAB_AGENT_RESEARCH_ENABLED", False, skill_dir)

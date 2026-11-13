@@ -4030,6 +4030,8 @@ def scan_for_signals_detailed(
             "debate_committee_ran": 0,
             "debate_committee_skipped_no_key": 0,
             "debate_committee_parse_failed": 0,
+            "debate_committee_timeout": 0,
+            "debate_committee_api_error": 0,
             "debate_committee_live_coerced": 0,
             "meta_policy_suppressed": 0,
             "meta_policy_downsized": 0,
