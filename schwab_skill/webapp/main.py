@@ -1344,9 +1344,7 @@ def _build_funnel_stages(diagnostics: dict[str, Any], final_count: int) -> dict[
             "value": n_quality,
             "filtered": quality_filtered_total,
             "mode": quality_gates_mode,
-            "shadow_filtered": (
-                self_study_would_filter if self_study_mode == "shadow" else 0
-            ),
+            "shadow_filtered": (self_study_would_filter if self_study_mode == "shadow" else 0),
             "tooltip": (
                 "Survivors of Stage B exceptions/timeouts, self-study min "
                 "conviction, and quality gates (forensic, weak breakout volume, "
@@ -1632,6 +1630,9 @@ def _record_scan_outcomes(signals: list[dict[str, Any]] | None, diagnostics: Any
 
 
 def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None:
+    from core.process_memory import read_rss_mb, release_process_memory
+
+    LOG.info("Scan %s starting rss_mb=%s", job_id, read_rss_mb())
     try:
         _sse_publish("scan_started", {"job_id": job_id})
         skw = scan_kwargs or {}
@@ -1725,6 +1726,9 @@ def _scan_worker(job_id: str, scan_kwargs: dict[str, Any] | None = None) -> None
                 )
         _sse_publish("scan_failed", {"job_id": job_id, "error": str(e)})
         _record_endpoint_error("scan_worker")
+    finally:
+        release_process_memory()
+        LOG.info("Scan %s released scan memory rss_mb=%s", job_id, read_rss_mb())
 
 
 def _safe_telemetry_float(value: Any, default: float = 0.0) -> float:
@@ -1971,6 +1975,8 @@ _STARTUP_TIME = datetime.now(timezone.utc)
 
 @app.get("/api/health", response_model=ApiResponse)
 def health() -> ApiResponse:
+    from core.process_memory import read_rss_mb
+
     now = datetime.now(timezone.utc)
     uptime_seconds = int((now - _STARTUP_TIME).total_seconds())
     return _ok(
@@ -1979,6 +1985,9 @@ def health() -> ApiResponse:
             "time": now.isoformat(),
             "uptime_seconds": uptime_seconds,
             "version": app.version,
+            # Resident set after the last scan. A weekly universe that does not
+            # come back down here is still holding price history.
+            "memory_rss_mb": read_rss_mb(),
         }
     )
 
@@ -2678,9 +2687,7 @@ def _continue_auto_study(db: Session, finished_run_id: str) -> str | None:
         if str(study.get("status") or "") != "active":
             return None
         trials = study.get("trials") or []
-        if not any(
-            isinstance(row, dict) and str(row.get("run_id") or "") == finished_run_id for row in trials
-        ):
+        if not any(isinstance(row, dict) and str(row.get("run_id") or "") == finished_run_id for row in trials):
             return None
         proposal = refresh_proposal(study, _study_runs_by_id(db, study), skill_dir=SKILL_DIR)
         if str(proposal.get("action") or "") != "queue" or not isinstance(proposal.get("spec"), dict):
@@ -2965,11 +2972,7 @@ def _study_runs_by_id(db: Session, study: dict[str, Any] | None) -> dict[str, di
     ids = [str(row.get("run_id")) for row in study.get("trials") or [] if isinstance(row, dict) and row.get("run_id")]
     if not ids:
         return {}
-    found = (
-        db.query(BacktestRun)
-        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id.in_(ids))
-        .all()
-    )
+    found = db.query(BacktestRun).filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id.in_(ids)).all()
     payload: dict[str, dict[str, Any]] = {}
     for row in found:
         result = _coerce_json_dict(row.result_json) if row.result_json else {}
@@ -3054,11 +3057,7 @@ def local_backtest_run_detail(
     run_id: str,
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    row = (
-        db.query(BacktestRun)
-        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id)
-        .first()
-    )
+    row = db.query(BacktestRun).filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Backtest run not found.")
     older = (
@@ -3091,11 +3090,7 @@ def cancel_local_backtest_run(
     _auth: dict[str, str] = Depends(require_api_key_if_set),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    row = (
-        db.query(BacktestRun)
-        .filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id)
-        .first()
-    )
+    row = db.query(BacktestRun).filter(BacktestRun.user_id == LOCAL_DASHBOARD_USER_ID, BacktestRun.id == run_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Backtest run not found.")
     if row.status != "queued":
