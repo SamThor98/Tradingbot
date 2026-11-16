@@ -268,6 +268,8 @@ def _aggregate_era(
         "start": start_date,
         "end": end_date,
         "profit_factor_net": round(float(pf_net), 3) if pf_net != float("inf") else "inf",
+        "profit_factor_basis": "equal_weight_percent_all_signals",
+        "portfolio_profit_factor": portfolio.get("profit_factor_dollar"),
         "total_return_net_pct": float(portfolio["total_return_net_pct"]),
         "max_drawdown_net_pct": float(portfolio["max_drawdown_net_pct"]),
         "win_rate_net": round(100.0 * wins_net / total, 2),

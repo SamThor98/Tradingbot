@@ -126,3 +126,18 @@ def test_persist_skips_signals_without_ticker(db_session) -> None:
     assert inserted == 1
     persisted = db_session.query(ScanResult).filter(ScanResult.user_id == "local").all()
     assert {r.ticker for r in persisted} == {"NVDA"}
+
+
+def test_column_keeps_composite_and_payload_keeps_checklist_score(db_session) -> None:
+    from webapp.main import _persist_scan_results_local
+
+    inserted = _persist_scan_results_local(
+        db_session,
+        "job-scores",
+        [{"ticker": "PTC", "signal_score": 51.69, "composite_score": 81.42}],
+    )
+    assert inserted == 1
+    row = db_session.query(ScanResult).filter(ScanResult.ticker == "PTC").one()
+    assert row.signal_score == pytest.approx(81.42)
+    assert row.payload_json["signal_score"] == pytest.approx(51.69)
+    assert row.payload_json["scanner_signal_score"] == pytest.approx(51.69)

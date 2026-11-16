@@ -16,6 +16,7 @@ from operator_desk import (
     claim_desk_slot,
     compose_brief,
     deliberate_name,
+    desk_due_key,
     desk_slot_key,
     empty_book_decision,
     filter_signals,
@@ -47,6 +48,7 @@ def _ledger(path: Path, pf: float, worst: float) -> None:
     path.write_text(
         json.dumps(
             {
+                "generated_at": "2026-06-16T12:00:00+00:00",
                 "ranking": [
                     {
                         "config_id": "control_legacy",
@@ -54,7 +56,7 @@ def _ledger(path: Path, pf: float, worst: float) -> None:
                         "worst_era_pf_treatment": worst,
                         "passes_guardrails": True,
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -117,7 +119,11 @@ def test_desk_brief_uses_stored_backtest_and_posts_discord(tmp_path: Path) -> No
     tools = _FakeTools(
         {
             ("GET", "/api/health"): {"ok": True, "data": {"status": "ok"}, "error": None},
-            ("POST", "/api/scan"): {"ok": True, "data": {"started": True, "job_id": "job1", "status": "running"}, "error": None},
+            ("POST", "/api/scan"): {
+                "ok": True,
+                "data": {"started": True, "job_id": "job1", "status": "running"},
+                "error": None,
+            },
             ("GET", "/api/scan/status"): {
                 "ok": True,
                 "data": {
@@ -188,7 +194,7 @@ def test_desk_brief_uses_stored_backtest_and_posts_discord(tmp_path: Path) -> No
     assert sent and sent[0]["title"] == "Operator Desk"
     posted = {field["name"]: field["value"] for field in sent[0]["fields"]}
     assert "Review AAA" in sent[0]["description"]
-    assert "Gate short" in sent[0]["description"]
+    assert "Book gate (control_legacy, Jun 16): short · PF 1.089 · worst 0.903" in sent[0]["description"]
     assert "AAA" in posted["Setups"]
     assert "Ranked by signal_score" not in posted["Setups"]
     assert all(len(field["value"]) <= 1024 for field in sent[0]["fields"])
@@ -436,8 +442,106 @@ def test_strategy_labels_keep_every_pass() -> None:
     assert labels == ["Stage 2 breakout", "10-month SMA", "Weekly Stage 2"]
 
 
+def test_strategy_labels_ignore_the_default_tag_when_daily_did_not_trigger() -> None:
+    labels = strategy_labels(
+        {
+            "entry_family": "horizon",
+            "strategy_attribution": {
+                "catalog_id": "trend_breakout",
+                "top_live": "trend_breakout",
+                "passed_ids": ["trend_breakout", "weekly_swing"],
+            },
+            "strategy_plugins": [
+                {"name": "trend_breakout", "triggered": False, "raw_score": 0.0},
+                {"name": "weekly_swing", "triggered": True, "raw_score": 88.0},
+            ],
+        }
+    )
+    assert labels == ["Weekly Stage 2"]
+
+
+def test_strategy_labels_do_not_invent_stage2_from_catalog_id() -> None:
+    assert (
+        strategy_labels({"strategy_attribution": {"catalog_id": "trend_breakout", "top_live": "trend_breakout"}}) == []
+    )
+
+
+def test_hollow_sleeve_grade_is_not_a_letter() -> None:
+    card = deliberate_name(
+        {
+            "ticker": "PTC",
+            "signal_score": 51.69,
+            "data_quality": "ok",
+            "below_bar": False,
+            "book": "final",
+            "row": {
+                "ticker": "PTC",
+                "signal_score": 51.69,
+                "entry_family": "horizon",
+                "executable": False,
+                "strategy_plugins": [
+                    {"name": "trend_breakout", "triggered": False, "raw_score": 0.0},
+                    {"name": "weekly_swing", "triggered": True, "raw_score": 96.0},
+                ],
+                "debate_grade": {
+                    "qual_letter": "A",
+                    "grade_basis": "sleeve",
+                    "sleeve_name": "weekly_swing",
+                    "seats": [
+                        {"seat": "Trend", "line": "Abstained."},
+                        {"seat": "Setup", "line": "Abstained."},
+                        {"seat": "Risk", "line": "Abstained."},
+                        {"seat": "Skeptic", "line": "Abstained."},
+                        {"seat": "Business", "line": "Books pass the dated checklist."},
+                    ],
+                },
+                "entry_timing_shadow": {"would_filter": True, "would_filter_reasons": ["breakout_buffer_low"]},
+                "meta_policy": {
+                    "mode": "shadow",
+                    "score_pre_meta_policy": 51.7,
+                    "score_post_meta_policy": 49.6,
+                },
+                "volume_bar": "partial",
+                "expansion_volume_ratio_completed": 1.12,
+            },
+        }
+    )
+    embed = brief_embed(
+        "",
+        gate={
+            "found": True,
+            "config_id": "control_legacy",
+            "as_of_label": "Jun 16",
+            "pf_mean_treatment": 1.089,
+            "worst_era_pf_treatment": 0.903,
+            "clears_promotion": False,
+        },
+        scan={"ok": True, "data": {"scanned_at": "2026-11-16T14:52:00+00:00", "signals_found": 1}},
+        names=[card],
+        cleared_count=1,
+        dropped_count=0,
+    )
+    description = embed["description"]
+    assert "Book gate (control_legacy, Jun 16): short · PF 1.089 · worst 0.903" in description
+    assert "Review PTC (shadow-only, breakout buffer low, shadow risk 51.7→49.6)" in description
+    setup = embed["fields"][0]["value"]
+    assert "**PTC** 52 wk · Weekly Stage 2 · no book gate · vol 1.12x last session" in setup
+    assert "shadow-only" in setup
+    assert "breakout buffer low" in setup
+    assert "shadow risk 51.7→49.6" in setup
+    assert " A " not in f" {setup} "
+    footer = embed["footer"]["text"]
+    assert "Scan 8:52 AM CT" in footer
+    assert "partial-day volume" in footer
+    assert "No order sent" in footer
+
+
 def test_desk_slot_is_weekday_0830(tmp_path: Path) -> None:
     assert desk_slot_key(datetime(2026, 10, 6, 8, 30), hour=8, minute=30) == "2026-10-06T0830"
+    assert desk_due_key(datetime(2026, 10, 6, 8, 31), hour=8, minute=30) == "2026-10-06T0830"
+    assert desk_due_key(datetime(2026, 10, 6, 11, 29), hour=8, minute=30) == "2026-10-06T0830"
+    assert desk_due_key(datetime(2026, 10, 6, 11, 31), hour=8, minute=30) is None
+    assert desk_due_key(datetime(2026, 10, 6, 8, 29), hour=8, minute=30) is None
     assert desk_slot_key(datetime(2026, 10, 6, 10, 5), hour=8, minute=30) is None
     assert desk_slot_key(datetime(2026, 10, 10, 8, 30), hour=8, minute=30) is None
     assert claim_desk_slot(tmp_path, "2026-10-06T0830") is True
@@ -464,6 +568,7 @@ def test_discord_brief_keeps_each_name_intact() -> None:
             "pf_mean_treatment": 1.089,
             "worst_era_pf_treatment": 0.903,
             "clears_promotion": False,
+            "as_of_label": "Jun 16",
         },
         scan={
             "ok": True,
@@ -495,7 +600,10 @@ def test_discord_brief_keeps_each_name_intact() -> None:
     )
     fields = embed["fields"]
     assert [field["name"] for field in fields] == ["Setups"]
-    assert embed["description"] == "No entry · 0 cleared 50\nGate short · PF 1.089 · worst 0.903"
+    assert (
+        embed["description"]
+        == "No entry · 0 cleared 50\nBook gate (control_legacy, Jun 16): short · PF 1.089 · worst 0.903"
+    )
     research = fields[0]["value"]
     assert "Stack holds" not in research
     assert "books pass" not in research
@@ -688,7 +796,7 @@ def test_status_blackout_brief_hides_the_exception() -> None:
     )
     assert "RemoteDisconnected" not in embed["description"]
     assert "Could not read scan status" in embed["description"]
-    assert "Gate short" in embed["description"]
+    assert "Book gate: short · PF 1.089 · worst 0.903" in embed["description"]
     setups = next(field["value"] for field in embed["fields"] if field["name"] == "Setups")
     assert setups == "Waiting on the scan."
 

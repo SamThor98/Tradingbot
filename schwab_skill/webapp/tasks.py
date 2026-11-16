@@ -498,6 +498,8 @@ def scan_for_user(user_id: str, scan_options: dict[str, Any] | None = None) -> d
                 # Persist canonical JSON objects (not pre-encoded JSON strings)
                 # so API readers can consume payloads without extra decoding.
                 payload_obj = json.loads(json.dumps(sig, default=_json_default))
+                if isinstance(payload_obj, dict) and "scanner_signal_score" not in payload_obj:
+                    payload_obj["scanner_signal_score"] = payload_obj.get("signal_score")
                 row = ScanResult(
                     user_id=user_id,
                     job_id=job_id,
