@@ -86,7 +86,7 @@ def _install_fake_yfinance(monkeypatch: pytest.MonkeyPatch, sector: str) -> None
         def __init__(self, _symbol: str) -> None:
             self.info = {"sector": sector}
 
-    fake.Ticker = _Ticker
+    fake.Ticker = _Ticker  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "yfinance", fake)
 
 
@@ -123,7 +123,7 @@ def test_live_override_survives_yfinance_failure(tmp_path: Path, monkeypatch: py
         def __init__(self, _symbol: str) -> None:
             raise RuntimeError("yahoo down")
 
-    fake.Ticker = _Boom
+    fake.Ticker = _Boom  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "yfinance", fake)
     monkeypatch.setenv("SECTOR_MAP_OVERRIDE_MODE", "live")
     assert get_ticker_sector_etf("PAYX", skill_dir=tmp_path) == "XLI"
