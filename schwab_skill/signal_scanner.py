@@ -2580,6 +2580,9 @@ def _scan_stage_b_enrich(
             "fallback_reason": candidate.get("fallback_reason"),
             "_data_quality": session_data_quality or candidate.get("data_quality"),
             "entry_timing_shadow": candidate.get("entry_timing_shadow"),
+            "pts_52w_cap": candidate.get("pts_52w_cap"),
+            "early_stop_gate": candidate.get("early_stop_gate"),
+            "sec_score_hint_applied": bool(sec_score_hint_delta) and not sec_shadow_mode,
             "trend_stack_ok": candidate.get("trend_stack_ok"),
             "sma200_rising": candidate.get("sma200_rising"),
             "vcp_present": candidate.get("vcp_present"),
@@ -2787,6 +2790,16 @@ def _scan_stage_b_enrich(
             diag_delta["confidence_rank_score_failed"] = (
                 int(diag_delta.get("confidence_rank_score_failed", 0) or 0) + 1
             )
+        try:
+            from stage_analysis import completed_session_volume
+
+            volume_note = completed_session_volume(df)
+            signal_row["volume_bar"] = volume_note.get("volume_bar")
+            signal_row["expansion_volume_ratio_completed"] = volume_note.get(
+                "expansion_volume_ratio_completed"
+            )
+        except Exception as volume_exc:
+            LOG.debug("Completed-session volume note skipped for %s: %s", ticker, volume_exc)
         return {"ok": True, "signal": signal_row, "diag": diag_delta}
     except Exception as e:
         diag_delta["stage_b_exceptions"] += 1

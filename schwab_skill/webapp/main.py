@@ -1470,6 +1470,12 @@ _LOCAL_FLAGGED_DAYS_LOOKBACK = max(1, int(os.getenv("WEB_LOCAL_FLAGGED_DAYS_LOOK
 
 
 def _scan_result_signal_score(signal: dict[str, Any]) -> float | None:
+    """Rank key for scan_results.signal_score.
+
+    composite_score when Stage B wrote one, else the checklist signal_score.
+    The operator desk quotes the checklist number. That number is also copied
+    onto the payload as scanner_signal_score.
+    """
     raw = signal.get("composite_score")
     if raw is None:
         raw = signal.get("signal_score")
@@ -1505,6 +1511,8 @@ def _persist_scan_results_local(
             payload_obj = json.loads(json.dumps(sig, default=_json_default))
         except (TypeError, ValueError):
             payload_obj = {"ticker": ticker}
+        if isinstance(payload_obj, dict) and "scanner_signal_score" not in payload_obj:
+            payload_obj["scanner_signal_score"] = payload_obj.get("signal_score")
         db.add(
             ScanResult(
                 user_id=LOCAL_DASHBOARD_USER_ID,

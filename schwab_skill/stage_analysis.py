@@ -8,6 +8,7 @@ Configurable via STAGE2_52W_PCT, STAGE2_SMA_UPWARD_DAYS, VCP_DAYS in .env.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,56 @@ def expansion_volume_ratio(df: pd.DataFrame) -> float | None:
     if not math.isfinite(latest) or not math.isfinite(prior) or latest < 0 or prior <= 0:
         return None
     return round(latest / prior, 4)
+
+
+def _volume_ratio_ending_at(df: pd.DataFrame, end_offset: int) -> float | None:
+    """Volume of the bar ``end_offset`` from the end, over the prior 50-day average.
+
+    ``end_offset`` 1 is the last bar. This is a display reading. It does not
+    feed ``pts_volume`` or any gate.
+    """
+    if df is None or "volume" not in getattr(df, "columns", []):
+        return None
+    if AVG_VOL_50 not in df.columns or len(df) < end_offset + 1:
+        return None
+    try:
+        latest = float(df["volume"].iloc[-end_offset])
+        prior = float(df[AVG_VOL_50].iloc[-(end_offset + 1)])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not math.isfinite(latest) or not math.isfinite(prior) or latest < 0 or prior <= 0:
+        return None
+    return round(latest / prior, 4)
+
+
+def completed_session_volume(df: pd.DataFrame, now: datetime | None = None) -> dict[str, Any]:
+    """Flag an intraday daily bar and quote the previous session's volume ratio.
+
+    The live score still uses whatever bar the scan saw. This dict is for the
+    operator desk so a partial session cannot be read as a full-day dry-up.
+    """
+    from zoneinfo import ZoneInfo
+
+    out: dict[str, Any] = {
+        "volume_bar": "complete",
+        "expansion_volume_ratio_completed": _volume_ratio_ending_at(df, 1),
+    }
+    if df is None or len(df) < 2:
+        return out
+    try:
+        last_day = pd.Timestamp(df.index[-1]).date()
+    except (TypeError, ValueError, IndexError):
+        return out
+    clock = now or datetime.now(ZoneInfo("America/New_York"))
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=ZoneInfo("America/New_York"))
+    else:
+        clock = clock.astimezone(ZoneInfo("America/New_York"))
+    before_close = clock.weekday() < 5 and (clock.hour, clock.minute) < (16, 0)
+    if before_close and last_day == clock.date():
+        out["volume_bar"] = "partial"
+        out["expansion_volume_ratio_completed"] = _volume_ratio_ending_at(df, 2)
+    return out
 
 
 def expansion_volume_ratio_by_date(df: pd.DataFrame) -> pd.Series:
