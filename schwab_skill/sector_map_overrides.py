@@ -5,11 +5,11 @@ membership plus iShares IJH (S&P 400) and IJR (S&P 600) holdings, each as of
 2026-10-27. It is today's sector assignment, not a historical one, and is
 not applied unless ``SECTOR_MAP_OVERRIDE_MODE`` is ``shadow`` or ``live``.
 
-``off`` (the default) leaves the yfinance sector-name map in charge, including
-yfinance's ``Consumer Defensive`` label, which stays unresolved. ``shadow``
-keeps that ETF and records disagreements (holdings map, or that staples
-alias). ``live`` returns the sponsor ETF, and applies ``Consumer Defensive``
-→ XLP when the name is not in the holdings map.
+``off`` (the default) leaves the yfinance sector-name map in charge.
+That map includes yfinance's ``Consumer Defensive`` label → XLP, matching
+current ``main``, so the default scan path does not drop staples. ``shadow``
+keeps that ETF and records sponsor-holdings disagreements. ``live`` returns
+the sponsor ETF when the name is listed.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ LOG = logging.getLogger(__name__)
 _MAP_PATH = Path(__file__).resolve().parent / "data" / "sector_map_overrides.json"
 _SAMPLE_CAP = 20
 
-# yfinance says "Consumer Defensive". The base SECTOR_TO_ETF map does not
-# (it has the plural "consumer defensives" / "consumer staples" only). This
-# alias is gated: off ignores it, shadow logs it, live applies it.
+# Fallback only when the base lookup returned no ETF but a yfinance label was
+# observed (stale unresolved cache). The base map already sends "consumer
+# defensive" to XLP, so a normal off/shadow lookup does not use this.
 GATED_YAHOO_SECTOR_TO_ETF: dict[str, str] = {
     "consumer defensive": "XLP",
 }
@@ -126,8 +126,8 @@ def apply_sector_map_override(
     """Return the ETF the rest of the pipeline should use.
 
     ``off`` and ``shadow`` return ``base_etf``. ``live`` returns the sponsor
-    ETF when the name is listed, otherwise the gated yfinance alias
-    (``Consumer Defensive`` → XLP).
+    ETF when the name is listed. A missing base ETF can still use the staples
+    alias when that yfinance label was observed.
     """
     from config import get_sector_map_override_mode
 
@@ -151,8 +151,8 @@ def describe_sector_map_override(
     """Compare the ETF just returned with the sponsor override, if any.
 
     In ``shadow``, ``effective_etf`` is still the yfinance result, so a
-    disagreement means live mode would reassign the name (holdings map, or
-    the gated ``Consumer Defensive`` alias). In ``live``, ``applied`` means
+    disagreement means live mode would reassign the name from the holdings map.
+    In ``live``, ``applied`` means
     the returned ETF came from that override. The comparison is point-in-time
     against today's sponsor files, not a historical sector.
     """

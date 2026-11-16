@@ -24,8 +24,7 @@ SECTOR_TO_ETF: dict[str, str] = {
     "energy": "XLE",
     "healthcare": "XLV",
     "consumer cyclical": "XLY",  # Consumer Discretionary
-    # yfinance's "Consumer Defensive" label is not a base-map hit. Off mode
-    # leaves it unresolved; shadow records it and live maps it to XLP.
+    "consumer defensive": "XLP",  # Consumer Staples (yfinance's current label)
     "consumer defensives": "XLP",  # Consumer Staples
     "consumer staples": "XLP",
     "basic materials": "XLB",
@@ -280,9 +279,9 @@ def get_ticker_sector_etf(ticker: str, skill_dir: Path | None = None) -> str | N
     outages don't permanently disable sector-aware filtering for the ticker.
 
     With ``SECTOR_MAP_OVERRIDE_MODE=off`` this is the yfinance sector-name map
-    only, including leaving yfinance's ``Consumer Defensive`` label unresolved.
-    ``shadow`` keeps that ETF and records disagreements. ``live`` may return a
-    sponsor-file ETF. The override is not written into the yfinance cache.
+    only, including ``Consumer Defensive`` → XLP. ``shadow`` keeps that ETF and
+    records sponsor disagreements. ``live`` may return a sponsor-file ETF. The
+    override is not written into the yfinance cache.
 
     Sponsor membership is a point-in-time classification (the file's as-of
     date), not the sector the stock had on earlier dates.
