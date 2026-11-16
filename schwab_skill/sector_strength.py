@@ -307,7 +307,7 @@ def _resolve_ticker_sector_etf_base(
     # A sector ETF is its own sector proxy; never send it to yfinance `info`
     # (ETFs have no `sector`, so they used to be cached as unresolved forever).
     if tkr in SECTOR_ETFS:
-        return tkr
+        return tkr, None
     cache = _load_sector_cache(skill_dir)
     mapping = cache.get("sector_etf_by_ticker", {})
     if tkr in mapping:
