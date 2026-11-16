@@ -7,10 +7,9 @@ from pathlib import Path
 import sector_strength
 
 
-def test_consumer_defensive_singular_is_not_a_base_map_hit() -> None:
-    # The singular yfinance label is applied only by SECTOR_MAP_OVERRIDE_MODE.
-    assert "consumer defensive" not in sector_strength.SECTOR_TO_ETF
-    assert sector_strength.SECTOR_TO_ETF["consumer defensives"] == "XLP"
+def test_consumer_defensive_singular_maps_to_xlp() -> None:
+    # yfinance currently reports staples as "Consumer Defensive" (singular).
+    assert sector_strength.SECTOR_TO_ETF["consumer defensive"] == "XLP"
 
 
 def test_sector_etf_resolves_to_itself_without_lookup(tmp_path: Path) -> None:
@@ -33,7 +32,4 @@ def test_staples_ticker_resolves_via_yfinance_sector_label(monkeypatch, tmp_path
     monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
     monkeypatch.setattr(sector_strength, "get_schwab_only_data", lambda: False, raising=False)
 
-    monkeypatch.setenv("SECTOR_MAP_OVERRIDE_MODE", "off")
-    assert sector_strength.get_ticker_sector_etf("ADM", skill_dir=tmp_path) is None
-    monkeypatch.setenv("SECTOR_MAP_OVERRIDE_MODE", "live")
     assert sector_strength.get_ticker_sector_etf("ADM", skill_dir=tmp_path) == "XLP"

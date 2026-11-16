@@ -2,7 +2,7 @@
 
 Point-in-time comparison of the yfinance sector label against the bundled sponsor map. The map is today's classification (sponsor files as of 2026-10-27), not the sector those stocks had on earlier dates.
 
-Retrieved 2026-10-29. yfinance `Ticker.info['sector']` was read that day for every symbol in the tracked universe and watchlist lists below. The yfinance ETF is the **off-mode** `SECTOR_TO_ETF` lookup, so `Consumer Defensive` stays unresolved. `BF.B` was read as `BF-B` because yfinance returns 404 for the dot form.
+Retrieved 2026-10-29. yfinance `Ticker.info['sector']` was read that day for every symbol in the tracked universe and watchlist lists below. The yfinance ETF column is that day's lookup, taken before the base map included singular `Consumer Defensive`. Current `off` mode matches `main` and maps that label to XLP. `BF.B` was read as `BF-B` because yfinance returns 404 for the dot form.
 
 Tracked lists:
 
@@ -54,7 +54,7 @@ The local `.sector_map_cache.json` on Sam's computer was not in this workspace. 
 | UBER | UBER | Technology | XLK | XLI | scripts/run_entry_timing_experiment_scan.py:EXPERIMENT_SMOKE_TICKERS;scripts/run_scoring_trades_backtest.py:SAMPLE_TICKERS |
 | WMT | WMT | Consumer Defensive | — | XLP | signal_scanner.py:DEFAULT_WATCHLIST;scripts/analyze_sector_regime.py:DEFAULT_TICKERS;scripts/refresh_prob_rank_dual_run_sample.py:SAMPLE_TICKERS;scripts/refresh_scoring_trade_sample.py:SAMPLE_TICKERS;scripts/run_entry_timing_experiment_scan.py:EXPERIMENT_SMOKE_TICKERS;scripts/run_scoring_trades_backtest.py:SAMPLE_TICKERS;scripts/verify_prob_rank_dashboard_scan.py:DEFAULT_TICKERS |
 
-Nineteen rows are `Consumer Defensive`, which off mode does not map, against a bundled XLP. `UBER` is Technology → XLK against XLI. `DD` is Basic Materials → XLB against XLI (DuPont is in the State Street XLI holdings file retrieved 2026-10-28).
+Nineteen rows are `Consumer Defensive`. Current off mode maps that label to XLP, same as `main`; the dash in the yfinance column is the 2026-10-29 lookup. The bundled ETF is XLP. `UBER` is Technology → XLK against XLI. `DD` is Basic Materials → XLB against XLI (DuPont is in the State Street XLI holdings file retrieved 2026-10-28).
 
 CSV: `schwab_skill/data/sector_map_override_audit.csv`.
 

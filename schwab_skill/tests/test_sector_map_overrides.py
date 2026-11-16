@@ -33,13 +33,14 @@ def test_spdr_map_covers_known_disagreements() -> None:
     assert lookup_sector_map_override("SPY") is None
 
 
-# Exact yfinance-name table on main. Consumer Defensive is intentionally absent.
+# Yfinance-name table on current main, including the singular staples label.
 _MAIN_SECTOR_TO_ETF = {
     "technology": "XLK",
     "financial services": "XLF",
     "energy": "XLE",
     "healthcare": "XLV",
     "consumer cyclical": "XLY",
+    "consumer defensive": "XLP",
     "consumer defensives": "XLP",
     "consumer staples": "XLP",
     "basic materials": "XLB",
@@ -53,7 +54,7 @@ _MAIN_SECTOR_TO_ETF = {
 
 def test_sector_name_map_matches_main() -> None:
     assert SECTOR_TO_ETF == _MAIN_SECTOR_TO_ETF
-    assert "consumer defensive" not in SECTOR_TO_ETF
+    assert SECTOR_TO_ETF["consumer defensive"] == "XLP"
 
 
 def test_off_matches_main_for_consumer_defensive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,14 +64,12 @@ def test_off_matches_main_for_consumer_defensive(tmp_path: Path, monkeypatch: py
     _install_fake_yfinance(monkeypatch, "Consumer Defensive")
     # KO is in the XLP holdings. ZZDEF is not in the sponsor map at all.
     names = ("KO", "PEP", "PG", "WMT", "COST", "PM", "ZZDEF")
-    main_etf = _MAIN_SECTOR_TO_ETF.get("consumer defensive")
     for ticker in names:
         got = get_ticker_sector_etf(ticker, skill_dir=tmp_path)
-        assert got == main_etf
-        assert got is None
+        assert got == "XLP"
     cache = json.loads((tmp_path / ".sector_map_cache.json").read_text(encoding="utf-8"))
     for ticker in names:
-        assert cache["sector_etf_by_ticker"][ticker] is None
+        assert cache["sector_etf_by_ticker"][ticker] == "XLP"
 
 
 def test_override_mode_defaults_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,25 +156,23 @@ def test_shadow_diagnostics_count_disagreements(tmp_path: Path, monkeypatch: pyt
     assert samples[0]["override_etf"] == "XLI"
 
 
-def test_consumer_defensive_alias_is_shadow_and_live_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_consumer_defensive_is_not_a_shadow_disagreement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Staples already resolve to XLP, so shadow must not count that label as a rewrite."""
     monkeypatch.setenv("SCHWAB_ONLY_DATA", "false")
     _install_fake_yfinance(monkeypatch, "Consumer Defensive")
     monkeypatch.setenv("SECTOR_MAP_OVERRIDE_MODE", "shadow")
-    assert get_ticker_sector_etf("ZZDEF", skill_dir=tmp_path) is None
-    view = describe_sector_map_override("ZZDEF", None, skill_dir=tmp_path)
-    assert view["disagree"] is True
+    assert get_ticker_sector_etf("ZZDEF", skill_dir=tmp_path) == "XLP"
+    view = describe_sector_map_override("ZZDEF", "XLP", skill_dir=tmp_path, yahoo_sector="consumer defensive")
+    assert view["disagree"] is False
     assert view["override_etf"] == "XLP"
     assert view["applied"] is False
-    sink: dict[str, object] = {}
-    accumulate_sector_map_override_view(sink, view)
-    assert sink["sector_map_override_disagree"] == 1
 
     monkeypatch.setenv("SECTOR_MAP_OVERRIDE_MODE", "live")
     assert get_ticker_sector_etf("ZZDEF", skill_dir=tmp_path) == "XLP"
     assert get_ticker_sector_etf("KO", skill_dir=tmp_path) == "XLP"
     cache = json.loads((tmp_path / ".sector_map_cache.json").read_text(encoding="utf-8"))
-    assert cache["sector_etf_by_ticker"]["ZZDEF"] is None
-    assert cache["sector_etf_by_ticker"]["KO"] is None
+    assert cache["sector_etf_by_ticker"]["ZZDEF"] == "XLP"
+    assert cache["sector_etf_by_ticker"]["KO"] == "XLP"
 
 
 def test_off_diagnostics_do_not_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
