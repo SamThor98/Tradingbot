@@ -876,6 +876,7 @@ def _run_bot_async(env: dict) -> None:
                 await _slash(interaction, OperatorIntent("resume", True))
 
 
+            # Read-only phone views: /top, /picks, /levels. They do not place or approve orders.
             @self.tree.command(name="top", description="Ranked names from the latest scan (read-only)")
             @app_commands.describe(n="How many names to show (1-15, default 10)")
             async def top_cmd(interaction: discord.Interaction, n: int = 10):

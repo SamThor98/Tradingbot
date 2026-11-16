@@ -385,9 +385,10 @@ def test_commands_are_read_only_and_scan_omits_strategy_ids() -> None:
 
     import re
 
-    calls = re.findall(r"run_scan_and_notify\([^)]*\)", bot)
-    assert len(calls) == 2
-    for call in calls:
-        assert call == "run_scan_and_notify(skill_dir=SKILL_DIR, send_summary=False)"
-        assert "strategy_ids" not in call
-        assert "weekly_swing" not in call
+    # Scan execution moved to the operator desk. It still must not pin a strategy sleeve.
+    operator = (root / "discord_operator.py").read_text(encoding="utf-8")
+    calls = re.findall(r"run_scan_and_notify\([^)]*\)", operator)
+    assert calls == ["run_scan_and_notify(skill_dir=ctx.skill_dir, send_summary=False)"]
+    assert "strategy_ids" not in operator[operator.index("run_scan_and_notify") :]
+    assert "weekly_swing" not in calls[0]
+    assert "run_scan_and_notify" not in bot
