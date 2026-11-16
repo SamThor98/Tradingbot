@@ -184,3 +184,46 @@ def test_chain_correlation_guard_shadow_only_annotates(tmp_path, hermetic_chain,
     assert [s["ticker"] for s in out] == ["TECH_HI", "TECH_LO"]
     assert diagnostics["correlation_guard_would_demote"] == 1
     assert diagnostics["correlation_guard_demoted"] == 0
+
+
+def test_chain_top_n_records_pruned_admit(tmp_path, hermetic_chain) -> None:
+    signals = [
+        _make_signal("LOW", 10.0),
+        _make_signal("HIGH", 90.0),
+        _make_signal("MID", 50.0),
+    ]
+    for row in signals:
+        row["entry_family"] = "stage2"
+    out, diagnostics = _run_chain(signals, top_n=2, skill_dir=tmp_path)
+
+    assert [s["ticker"] for s in out] == ["HIGH", "MID"]
+    rows = diagnostics["pruned_admits"]
+    assert [row["ticker"] for row in rows] == ["LOW"]
+    assert rows[0]["strategy"] == "trend_breakout"
+    assert rows[0]["stage"] == "top_n"
+    assert rows[0]["reason"] == "trimmed_top_n"
+    assert rows[0]["score"] == 10.0
+    assert rows[0]["sort_key"] == "sort_score_desc,signal_score_desc,ticker_asc"
+    assert diagnostics["pruned_admits_count"] == 1
+    assert diagnostics["pruned_admits_omitted"] == 0
+
+
+def test_chain_research_top_n_records_weekly_swing_score(tmp_path, hermetic_chain) -> None:
+    def _weekly(ticker: str, raw_score: float) -> dict[str, Any]:
+        row = _make_signal(ticker, raw_score)
+        row["entry_family"] = "horizon"
+        row["strategy_plugins"] = [{"name": "weekly_swing", "triggered": True, "raw_score": raw_score}]
+        return row
+
+    signals = [_weekly("AAA", 91.0), _weekly("BBB", 99.0), _weekly("CCC", 95.0)]
+    out, diagnostics = _run_chain(signals, top_n=2, skill_dir=tmp_path)
+
+    assert [s["ticker"] for s in out] == ["BBB", "CCC"]
+    dropped = diagnostics["pruned_admits"]
+    assert len(dropped) == 1
+    assert dropped[0]["ticker"] == "AAA"
+    assert dropped[0]["strategy"] == "weekly_swing"
+    assert dropped[0]["stage"] == "top_n"
+    assert dropped[0]["reason"] == "trimmed_top_n"
+    assert dropped[0]["score"] == 91.0
+    assert dropped[0]["sort_key"] == "research_score_desc,signal_score_desc,ticker_asc"
