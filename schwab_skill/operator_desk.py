@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -192,6 +192,8 @@ def load_signal_gate(skill_dir: Path) -> dict[str, Any]:
         "promotion_pf_mean": PROMOTION_PF_MEAN,
         "promotion_worst_era_pf": PROMOTION_WORST_ERA_PF,
         "clears_promotion": False,
+        "as_of": None,
+        "as_of_label": None,
     }
     if not path.exists():
         out["summary"] = f"{LEDGER_NAME} is missing. Promotion status is unknown."
@@ -215,12 +217,8 @@ def load_signal_gate(skill_dir: Path) -> dict[str, Any]:
         return out
     pf = _float(row.get("pf_mean_treatment"))
     worst = _float(row.get("worst_era_pf_treatment"))
-    clears = (
-        pf is not None
-        and worst is not None
-        and pf >= PROMOTION_PF_MEAN
-        and worst >= PROMOTION_WORST_ERA_PF
-    )
+    clears = pf is not None and worst is not None and pf >= PROMOTION_PF_MEAN and worst >= PROMOTION_WORST_ERA_PF
+    as_of = _gate_as_of(payload if isinstance(payload, dict) else None, path)
     out.update(
         {
             "found": True,
@@ -229,6 +227,8 @@ def load_signal_gate(skill_dir: Path) -> dict[str, Any]:
             "worst_era_pf_treatment": worst,
             "passes_guardrails": row.get("passes_guardrails"),
             "clears_promotion": clears,
+            "as_of": None if as_of is None else as_of.date().isoformat(),
+            "as_of_label": None if as_of is None else _short_date(as_of),
         }
     )
     pf_txt = "n/a" if pf is None else f"{pf:.3f}"
@@ -240,6 +240,31 @@ def load_signal_gate(skill_dir: Path) -> dict[str, Any]:
         f"and worst-era >= {PROMOTION_WORST_ERA_PF:.2f}. This row {gate_txt} promotion."
     )
     return out
+
+
+def _gate_as_of(payload: dict[str, Any] | None, path: Path) -> datetime | None:
+    """Artifact date for the book gate. File mtime is the fallback."""
+    body = payload or {}
+    for key in ("generated_at", "as_of", "updated"):
+        raw = body.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(stamp, tz=timezone.utc)
+
+
+def _short_date(moment: datetime) -> str:
+    return f"{moment.strftime('%b')} {moment.day}"
 
 
 def research_scan_body() -> dict[str, Any]:
@@ -351,20 +376,39 @@ _STRATEGY_BRIEF = {
 }
 
 
-def strategy_labels(row: dict[str, Any] | None) -> list[str]:
-    """Every sleeve this row passed. A name can carry more than one."""
+_DAILY_STAGE2_IDS = frozenset({"trend_breakout", "breakout", "stage2", "stage2_vcp"})
+
+
+def _strategy_ids_from_plugins(plugins: list[Any]) -> list[str]:
+    ids: list[str] = []
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or not plugin.get("triggered"):
+            continue
+        sid = str(plugin.get("name") or "").strip().lower()
+        if sid and sid not in ids:
+            ids.append(sid)
+    return ids
+
+
+def triggered_strategy_ids(row: dict[str, Any] | None) -> list[str]:
+    """Sleeves that actually fired. The saved default tag is not a trigger."""
     signal = row if isinstance(row, dict) else {}
+    plugins = signal.get("strategy_plugins")
+    if isinstance(plugins, list) and plugins:
+        return _strategy_ids_from_plugins(plugins)
     attr = signal.get("strategy_attribution") if isinstance(signal.get("strategy_attribution"), dict) else {}
     ids: list[str] = []
     for raw in attr.get("passed_ids") or []:
         sid = str(raw or "").strip().lower()
         if sid and sid not in ids:
             ids.append(sid)
-    if not ids:
-        for key in ("catalog_id", "top_live", "top_shadow"):
-            sid = str(attr.get(key) or "").strip().lower()
-            if sid and sid not in ids and sid != "unknown":
-                ids.append(sid)
+    family = str(signal.get("entry_family") or "").strip().lower()
+    if family == "horizon":
+        ids = [sid for sid in ids if sid not in _DAILY_STAGE2_IDS]
+    return ids
+
+
+def _labels_for_ids(ids: list[str]) -> list[str]:
     labels: list[str] = []
     for sid in ids:
         label = _STRATEGY_BRIEF.get(sid)
@@ -376,6 +420,11 @@ def strategy_labels(row: dict[str, Any] | None) -> list[str]:
         if label not in labels:
             labels.append(label)
     return labels
+
+
+def strategy_labels(row: dict[str, Any] | None) -> list[str]:
+    """Labels for sleeves that triggered. A default catalog tag is not a setup."""
+    return _labels_for_ids(triggered_strategy_ids(row))
 
 
 def deliberate_name(item: dict[str, Any]) -> dict[str, Any]:
@@ -427,6 +476,8 @@ def deliberate_name(item: dict[str, Any]) -> dict[str, Any]:
         "data_quality": item.get("data_quality"),
         "stance": stance,
         "letter": grade.get("qual_letter"),
+        "grade_basis": grade.get("grade_basis"),
+        "sleeve_name": grade.get("sleeve_name"),
         "would_skip": bool(grade.get("would_skip")),
         "reasoning": reasoning,
         "seats": [{"seat": seat.get("seat"), "line": seat.get("line")} for seat in seats],
@@ -436,6 +487,10 @@ def deliberate_name(item: dict[str, Any]) -> dict[str, Any]:
         "below_bar": bool(item.get("below_bar")),
         "book": item.get("book"),
         "strategies": strategy_labels(row),
+        "strategy_ids": triggered_strategy_ids(row),
+        "review_flags": setup_flags(row),
+        "volume_ratio_completed": _float(row.get("expansion_volume_ratio_completed")),
+        "volume_bar": row.get("volume_bar"),
     }
 
 
@@ -559,7 +614,9 @@ def run_scan_agent(
             timeout=60,
         )
         if not posted.get("ok"):
-            summary = _plain_transport_failure(posted.get("error")) or str(posted.get("error") or "Scan failed to start.")
+            summary = _plain_transport_failure(posted.get("error")) or str(
+                posted.get("error") or "Scan failed to start."
+            )
             return {"agent": "scan", "ok": False, "summary": summary, "data": {"error": posted.get("error")}}
         started_job = (posted.get("data") or {}).get("job_id")
     waiting = bool(run_scan or wait_if_running)
@@ -619,7 +676,10 @@ def run_scan_agent(
     count = found if isinstance(found, int) else len(signals)
     watched = diagnostics.get("watchlist_size")
     preset = diagnostics.get("universe_preset") or "sp1500"
-    bits = [f"{'Fresh' if run_scan else 'Last'} scan of {watched if watched is not None else '?'} {preset} names: {count} kept."]
+    scanned_at = body.get("at") or body.get("finished_at") or (last.get("data") or {}).get("at")
+    bits = [
+        f"{'Fresh' if run_scan else 'Last'} scan of {watched if watched is not None else '?'} {preset} names: {count} kept."
+    ]
     if headline:
         bits.append(str(headline))
     if dq:
@@ -634,6 +694,7 @@ def run_scan_agent(
         "summary": " ".join(bits),
         "data": {
             "fresh": bool(run_scan),
+            "scanned_at": scanned_at,
             "watchlist_size": watched,
             "universe_preset": preset,
             "signals_found": count,
@@ -817,6 +878,54 @@ _SEAT_NOTE = {
 FIELD_LIMIT = 1000
 
 
+_TIMING_LABELS = {
+    "breakout_buffer_low": "breakout buffer low",
+    "sma50_cushion_low": "SMA50 cushion low",
+    "sma50_extension_high": "extended",
+    "pts_52w_cap_high": "extended",
+    "early_stop_gate": "breakout buffer low",
+}
+
+
+def _flag_reasons(block: Any) -> list[str]:
+    if not isinstance(block, dict):
+        return []
+    reasons = block.get("would_filter_reasons") or []
+    if not isinstance(reasons, list):
+        return []
+    return [str(reason) for reason in reasons if str(reason or "").strip()]
+
+
+def setup_flags(row: dict[str, Any] | None) -> list[str]:
+    """Red flags for the alert. Display only. Does not change the score."""
+    signal = row if isinstance(row, dict) else {}
+    flags: list[str] = []
+    family = str(signal.get("entry_family") or "").strip().lower()
+    if signal.get("executable") is False or family in {"horizon", "pead_primary"}:
+        flags.append("shadow-only")
+    for reason in _flag_reasons(signal.get("entry_timing_shadow")) + _flag_reasons(signal.get("early_stop_gate")):
+        label = _TIMING_LABELS.get(reason, reason.replace("_", " "))
+        if label not in flags:
+            flags.append(label)
+    cap = signal.get("pts_52w_cap")
+    if isinstance(cap, dict) and cap.get("would_filter") and "extended" not in flags:
+        flags.append("extended")
+    if signal.get("pead_extension_drop_would_drop") is True and "extended" not in flags:
+        flags.append("extended")
+    meta = signal.get("meta_policy") if isinstance(signal.get("meta_policy"), dict) else {}
+    if str(meta.get("mode") or "").strip().lower() != "live":
+        pre = _float(meta.get("score_pre_meta_policy"))
+        post = _float(meta.get("score_post_meta_policy"))
+        if pre is not None and post is not None and abs(pre - post) >= 0.05:
+            flags.append(f"shadow risk {pre:.1f}→{post:.1f}")
+    if signal.get("sec_score_hint_applied") is False:
+        delta = _float(signal.get("sec_score_hint_delta"))
+        score = _float(signal.get("signal_score"))
+        if delta is not None and score is not None and abs(delta) >= 0.05:
+            flags.append(f"sec shadow {score:.1f}→{score + delta:.1f}")
+    return flags
+
+
 def _seat_notes(card: dict[str, Any]) -> list[str]:
     """Flags worth a second look. Routine passes stay off the line."""
     notes: list[str] = []
@@ -834,8 +943,51 @@ def _seat_notes(card: dict[str, Any]) -> list[str]:
     return notes
 
 
-def _name_line(card: dict[str, Any], *, mention_bar: bool, bold_ticker: bool = False) -> str:
-    letter = card.get("letter") or "—"
+def _sleeve_marker(card: dict[str, Any]) -> str:
+    sleeve = str(card.get("sleeve_name") or "").strip().lower()
+    strategies = " ".join(str(item).lower() for item in (card.get("strategies") or []))
+    blob = f"{sleeve} {strategies}"
+    if "month" in blob:
+        return "mo"
+    if "week" in blob or str(card.get("grade_basis") or "") == "sleeve":
+        return "wk"
+    return "—"
+
+
+def _letter_mark(card: dict[str, Any]) -> str:
+    """A letter only when at least three checks voted. A sleeve score is not a grade."""
+    seats = card.get("seats")
+    if isinstance(seats, list) and seats:
+        contributing = [
+            seat for seat in seats if isinstance(seat, dict) and str(seat.get("line") or "") not in {"", "Abstained."}
+        ]
+        if len(contributing) < 3:
+            return _sleeve_marker(card)
+    letter = str(card.get("letter") or "").strip().upper()
+    if letter in {"A", "B", "C", "D", "F"}:
+        return letter
+    if str(card.get("grade_basis") or "") == "sleeve":
+        return _sleeve_marker(card)
+    return "—"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    out: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _name_line(
+    card: dict[str, Any],
+    *,
+    mention_bar: bool,
+    bold_ticker: bool = False,
+    partial_volume: bool = False,
+) -> str:
+    letter = _letter_mark(card)
     score = card.get("signal_score")
     score_txt = "n/a" if score is None else f"{float(score):.0f}"
     stance = str(card.get("stance") or "")
@@ -845,17 +997,36 @@ def _name_line(card: dict[str, Any], *, mention_bar: bool, bold_ticker: bool = F
     strategies = [str(item) for item in (card.get("strategies") or []) if item]
     if strategies:
         notes.append(" · ".join(strategies))
+    if "strategy_ids" in card and not _daily_book_admitted(card):
+        notes.append("no book gate")
     if card.get("book") == "shortlist":
         notes.append("shortlist")
     if mention_bar and card.get("below_bar"):
         notes.append("below 50")
+    if partial_volume:
+        completed = _float(card.get("volume_ratio_completed"))
+        if completed is None:
+            notes.append("vol partial")
+        else:
+            notes.append(f"vol {completed:.2f}x last session")
     if stance and stance != "constructive":
         notes.append(stance)
+    notes.extend(str(flag) for flag in (card.get("review_flags") or []) if flag)
     notes.extend(_seat_notes(card))
+    notes = _dedupe(notes)
     base = f"{label} {score_txt} {letter}"
     if notes:
         return f"{base} · {' · '.join(notes)}"
     return base
+
+
+def _daily_book_admitted(card: dict[str, Any]) -> bool:
+    """True when this name was admitted by the daily Stage 2 book the gate measures."""
+    ids = [str(item).strip().lower() for item in (card.get("strategy_ids") or []) if str(item).strip()]
+    if not ids:
+        # No sleeve list: do not pretend the book gate is this ticker's backtest.
+        return False
+    return any(sid in _DAILY_STAGE2_IDS for sid in ids)
 
 
 def _pack_blocks(title: str, blocks: list[str], *, limit: int = FIELD_LIMIT) -> list[dict[str, Any]]:
@@ -887,6 +1058,59 @@ def _pack_blocks(title: str, blocks: list[str], *, limit: int = FIELD_LIMIT) -> 
     return fields
 
 
+def _parse_when(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _scan_moment(scan: dict[str, Any] | None) -> datetime | None:
+    body = scan or {}
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    return _parse_when(body.get("scanned_at") or data.get("scanned_at") or data.get("at") or body.get("at"))
+
+
+def volume_is_partial(moment: datetime | None) -> bool:
+    """True when the scan clock is a weekday before the 16:00 ET cash close."""
+    if moment is None:
+        return False
+    from zoneinfo import ZoneInfo
+
+    local = moment.astimezone(ZoneInfo("America/New_York"))
+    return local.weekday() < 5 and (local.hour, local.minute) < (16, 0)
+
+
+def _footer_text(scan: dict[str, Any] | None, *, now: datetime | None = None) -> str:
+    moment = _scan_moment(scan)
+    parts: list[str] = []
+    if moment is not None:
+        from zoneinfo import ZoneInfo
+
+        ct = moment.astimezone(ZoneInfo("America/Chicago"))
+        clock = ct.strftime("%I:%M %p").lstrip("0")
+        age = ""
+        clock_now = now or datetime.now(timezone.utc)
+        if clock_now.tzinfo is None:
+            clock_now = clock_now.replace(tzinfo=timezone.utc)
+        minutes = int((clock_now - moment).total_seconds() // 60)
+        if minutes >= 0:
+            if minutes < 60:
+                age = f" · {minutes}m old"
+            else:
+                age = f" · {minutes // 60}h old"
+        parts.append(f"Scan {clock} CT{age}")
+        if volume_is_partial(moment) or str((scan or {}).get("volume_bar") or "") == "partial":
+            parts.append("partial-day volume")
+    parts.append("No order sent")
+    return " · ".join(parts)
+
+
 def _gate_brief(gate: dict[str, Any] | None) -> str:
     if not gate or not gate.get("found"):
         return ""
@@ -895,20 +1119,37 @@ def _gate_brief(gate: dict[str, Any] | None) -> str:
     pf_txt = "n/a" if pf is None else f"{float(pf):.3f}"
     worst_txt = "n/a" if worst is None else f"{float(worst):.3f}"
     status = "clears" if gate.get("clears_promotion") else "short"
-    return f"Gate {status} · PF {pf_txt} · worst {worst_txt}"
+    name = str(gate.get("config_id") or "").strip()
+    when = str(gate.get("as_of_label") or "").strip()
+    if name and when:
+        who = f"{name}, {when}"
+    else:
+        who = name or when
+    label = f"Book gate ({who})" if who else "Book gate"
+    return f"{label}: {status} · PF {pf_txt} · worst {worst_txt}"
 
 
-def _setup_lines(names: list[dict[str, Any]], *, bold_ticker: bool) -> list[str]:
+def _setup_lines(names: list[dict[str, Any]], *, bold_ticker: bool, partial_volume: bool = False) -> list[str]:
     shown = names[:MAX_OPINIONS]
     below = sum(1 for card in names if card.get("below_bar"))
     mixed = 0 < below < len(names)
-    return [_name_line(card, mention_bar=mixed, bold_ticker=bold_ticker) for card in shown]
+    return [
+        _name_line(card, mention_bar=mixed, bold_ticker=bold_ticker, partial_volume=partial_volume) for card in shown
+    ]
+
+
+def _review_token(card: dict[str, Any]) -> str:
+    ticker = str(card.get("ticker") or "—")
+    flags = [str(flag) for flag in (card.get("review_flags") or []) if flag]
+    if not flags:
+        return ticker
+    return f"{ticker} ({', '.join(flags)})"
 
 
 def _action_brief(names: list[dict[str, Any]], *, cleared_count: int, data_quality: Any) -> str:
     shown = [card for card in names[:MAX_OPINIONS] if not card.get("below_bar")]
     if shown:
-        head = "Review " + ", ".join(str(card.get("ticker")) for card in shown)
+        head = "Review " + ", ".join(_review_token(card) for card in shown)
     elif names:
         head = f"No entry · {cleared_count} cleared 50"
     else:
@@ -946,7 +1187,7 @@ def compose_brief(
         lines.append(_plain_transport_failure(scan_line) or scan_line)
     if names:
         lines.append(f"{cleared_count} cleared 50 · graded {len(names)} · {dropped_count} filtered")
-        lines.extend(_setup_lines(names, bold_ticker=False))
+        lines.extend(_setup_lines(names, bold_ticker=False, partial_volume=volume_is_partial(_scan_moment(scan))))
     elif scan.get("ok") is False:
         lines.append("No research list until that scan finishes.")
     else:
@@ -954,7 +1195,9 @@ def compose_brief(
     lines.append(str(backtest.get("summary") or "Backtest agent did not report."))
     if equity is not None:
         lines.append(str(equity.get("summary") or "Equity check did not report."))
-        grade_stance = next((card.get("stance") for card in names if card.get("ticker") == equity.get("data", {}).get("ticker")), None)
+        grade_stance = next(
+            (card.get("stance") for card in names if card.get("ticker") == equity.get("data", {}).get("ticker")), None
+        )
         description = str((equity.get("data") or {}).get("description") or "")
         if grade_stance and description and grade_stance not in description.lower():
             lines.append(
@@ -1005,8 +1248,9 @@ def brief_embed(
         elif data.get("queue_error"):
             parts.append(str(data["queue_error"]))
     fields: list[dict[str, Any]] = []
+    partial_volume = volume_is_partial(_scan_moment(scan_body))
     if name_rows:
-        fields.extend(_pack_blocks("Setups", _setup_lines(name_rows, bold_ticker=True)))
+        fields.extend(_pack_blocks("Setups", _setup_lines(name_rows, bold_ticker=True, partial_volume=partial_volume)))
     elif scan_body.get("ok") is False:
         fields.append({"name": "Setups", "value": "Waiting on the scan.", "inline": False})
     elif scan is not None:
@@ -1024,7 +1268,7 @@ def brief_embed(
         "description": "\n".join(part for part in parts if part) or "No brief.",
         "color": 0x9B59B6,
         "fields": fields,
-        "footer": {"text": "No order sent"},
+        "footer": {"text": _footer_text(scan_body)},
     }
 
 
@@ -1201,11 +1445,36 @@ def run_operator_desk(
     return brief
 
 
+DESK_SLOT_GRACE_MINUTES = 180
+
+
 def desk_slot_key(now: datetime, *, hour: int, minute: int) -> str | None:
     """Weekday slot id for the desk clock. Other minutes return None."""
     if now.weekday() >= 5 or now.hour != hour or now.minute != minute:
         return None
     return now.strftime("%Y-%m-%dT%H%M")
+
+
+def desk_due_key(
+    now: datetime,
+    *,
+    hour: int,
+    minute: int,
+    grace_minutes: int = DESK_SLOT_GRACE_MINUTES,
+) -> str | None:
+    """Slot id from the scheduled minute through the grace window.
+
+    The scheduler is one thread. A long job can skip the exact minute.
+    The same key is used for the whole window, so the claim still fires once.
+    """
+    if now.weekday() >= 5:
+        return None
+    slot = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now < slot:
+        return None
+    if now - slot > timedelta(minutes=max(0, grace_minutes)):
+        return None
+    return slot.strftime("%Y-%m-%dT%H%M")
 
 
 def claim_desk_slot(skill_dir: Path, key: str) -> bool:
@@ -1230,7 +1499,7 @@ def tick_operator_desk(skill_dir: Path, now: datetime | None = None) -> bool:
     if get_operator_desk_mode(skill_dir) == "off":
         return False
     current = now or datetime.now(ZoneInfo("America/New_York"))
-    key = desk_slot_key(
+    key = desk_due_key(
         current,
         hour=get_operator_desk_hour(skill_dir),
         minute=get_operator_desk_minute(skill_dir),

@@ -197,6 +197,9 @@ class ScanResult(Base):
     )
     job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     ticker: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # Rank key for dashboard sorts. Local scans store composite_score here when
+    # the scan produced one. The operator-desk checklist number stays on the
+    # payload as signal_score and scanner_signal_score.
     signal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

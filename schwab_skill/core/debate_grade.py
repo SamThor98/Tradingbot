@@ -95,6 +95,43 @@ def letter_for_score(score: float) -> str:
     return "F"
 
 
+# A letter is a claim that the checklist voted. One sleeve score, or a single
+# business seat, is not that vote.
+MIN_CHECKS_FOR_LETTER = 3
+
+
+def contributing_check_count(grade: dict[str, Any] | None) -> int:
+    """Seats with a real line. ``Abstained.`` does not count."""
+    if not isinstance(grade, dict):
+        return 0
+    count = 0
+    for seat in grade.get("seats") or []:
+        if not isinstance(seat, dict):
+            continue
+        line = str(seat.get("line") or "")
+        if line and line != "Abstained.":
+            count += 1
+    return count
+
+
+def assign_display_letter(grade: dict[str, Any]) -> None:
+    """Set ``qual_letter`` only when at least three checks contributed.
+
+    The numeric ``qual_score`` stays. A withheld letter is not a rank input.
+    """
+    if grade.get("qual_abstain"):
+        grade["qual_letter"] = None
+        grade.pop("letter_withheld", None)
+        return
+    if contributing_check_count(grade) < MIN_CHECKS_FOR_LETTER:
+        grade["qual_letter"] = None
+        grade["letter_withheld"] = "few_checks"
+        return
+    score = _safe_float(grade.get("qual_score"))
+    grade.pop("letter_withheld", None)
+    grade["qual_letter"] = None if score is None else letter_for_score(float(score))
+
+
 def combine_pillars(
     values: dict[str, float | None],
     weights: dict[str, float] | None = None,
@@ -300,7 +337,7 @@ def _sleeve_grade(sleeve: dict[str, Any], base: dict[str, Any]) -> dict[str, Any
             "qual_raw": score,
             "qual_raw_equal": score,
             "qual_score": score,
-            "qual_letter": letter_for_score(score),
+            "qual_letter": None,
             "qual_abstain": False,
             "would_skip": False,
             "grade_basis": "sleeve",
@@ -314,6 +351,7 @@ def _sleeve_grade(sleeve: dict[str, Any], base: dict[str, Any]) -> dict[str, Any
     grade["seats"] = _seat_lines(
         trend=None, setup=None, asymmetry=None, crowding_fail=None, abstain=True
     )
+    assign_display_letter(grade)
     return grade
 
 
@@ -415,7 +453,7 @@ def grade_from_signal(signal: dict[str, Any]) -> dict[str, Any]:
         "qual_raw": round(float(qual_raw), 6),
         "qual_raw_equal": None if qual_raw_equal is None else round(float(qual_raw_equal), 6),
         "qual_score": qual_score,
-        "qual_letter": letter_for_score(qual_score),
+        "qual_letter": None,
         "qual_trend": trend,
         "qual_setup": setup,
         "qual_asymmetry": asymmetry,
@@ -445,6 +483,7 @@ def grade_from_signal(signal: dict[str, Any]) -> dict[str, Any]:
         abstain=False,
     )
     grade["chair"] = _chair_sentence(grade)
+    assign_display_letter(grade)
     return grade
 
 
@@ -505,6 +544,7 @@ def _stamp_business(signal: dict[str, Any], grade: dict[str, Any]) -> None:
         if isinstance(seat, dict) and seat.get("seat") == "Business":
             seat["line"] = "Books pass the dated checklist." if score >= 50.0 else "Books fail the dated checklist."
     grade["chair"] = _chair_sentence(grade)
+    assign_display_letter(grade)
 
 
 def _stamp_asymmetry_distance(signal: dict[str, Any], grade: dict[str, Any]) -> None:
@@ -546,7 +586,7 @@ def refresh_display_caps(grade: dict[str, Any]) -> None:
         if raw_sleeve is None or grade.get("qual_abstain"):
             return
         grade["qual_score"] = round(raw_sleeve, 6)
-        grade["qual_letter"] = letter_for_score(float(grade["qual_score"]))
+        assign_display_letter(grade)
         return
     raw = _safe_float(grade.get("qual_raw"))
     if raw is None or grade.get("qual_abstain"):
@@ -558,7 +598,7 @@ def refresh_display_caps(grade: dict[str, Any]) -> None:
         disagreement=_safe_float(grade.get("qual_disagreement")),
         disagreement_source=str(grade.get("disagreement_source") or ""),
     )
-    grade["qual_letter"] = letter_for_score(float(grade["qual_score"]))
+    assign_display_letter(grade)
 
 
 def research_grade_signal(

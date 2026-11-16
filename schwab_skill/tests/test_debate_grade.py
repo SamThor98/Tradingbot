@@ -67,9 +67,7 @@ def test_stale_data_abstains_without_a_letter() -> None:
 
 
 def test_caps_change_qual_score_and_leave_qual_raw() -> None:
-    trend_fail = grade_from_signal(
-        _passing_signal(trend_stack_ok=False, sma200_rising=False)
-    )
+    trend_fail = grade_from_signal(_passing_signal(trend_stack_ok=False, sma200_rising=False))
     assert trend_fail["qual_trend"] == 0.0
     assert trend_fail["qual_raw"] > trend_fail["qual_score"]
     assert trend_fail["qual_letter"] in {"D", "F"}
@@ -481,9 +479,33 @@ def test_horizon_sleeve_grade_is_not_the_daily_vcp_checklist() -> None:
         )
     )
     assert grade["grade_basis"] == "sleeve"
-    assert grade["qual_letter"] == "A"
+    assert grade["qual_letter"] is None
+    assert grade["letter_withheld"] == "few_checks"
     assert grade["qual_score"] == 100.0
     assert "weekly swing" in grade["chair"]
+
+
+def test_sleeve_letter_stays_withheld_when_only_business_votes() -> None:
+    signal = _passing_signal(
+        entry_family="horizon",
+        vcp_present=False,
+        trend_stack_ok=False,
+        sma200_rising=False,
+        business_as_of="2026-02-01",
+        sec_risk_tag="low",
+        guidance_signal="positive",
+        forensic_observed=True,
+        forensic_flags=[],
+        strategy_plugins=[
+            {"name": "trend_breakout", "triggered": False, "raw_score": 0.0},
+            {"name": "weekly_swing", "triggered": True, "raw_score": 100.0},
+        ],
+    )
+    attach_debate_grade(signal, diagnostics={}, skill_dir=None)
+    grade = signal["debate_grade"]
+    assert grade["qual_letter"] is None
+    assert any(seat.get("seat") == "Business" and seat.get("line") != "Abstained." for seat in grade["seats"])
+    assert signal["signal_score"] == 62.0
 
 
 def test_stage2_grade_stays_on_the_daily_checklist() -> None:

@@ -1218,13 +1218,21 @@ def _simulate_portfolio_equity(
     Sizing per accepted trade:
       * If ``risk_per_trade_pct > 0`` AND ``stop_pct`` is finite & positive,
         allocate ``equity * risk_per_trade_pct / stop_pct`` (capped at 100%
-        of equity to avoid implicit leverage).
+        of equity for that one name).
       * Otherwise fall back to ``equity * position_size_pct``.
+
+    Open notional is reserved. A new trade that would push gross exposure
+    above current equity is left out (``capacity_filtered``). Stacking ten
+    full-equity positions was implicit leverage: equal-weight percent profit
+    factor could stay above 1 while the compounded book fell 67% to 97%.
+
+    ``profit_factor_dollar`` is the dollar P&L of trades that actually
+    entered. It is not the equal-weight percent profit factor.
 
     Returns a dict with ``equity_curve`` (list of ``(timestamp, equity)``),
     ``total_return_net_pct``, ``max_drawdown_net_pct``, ``capacity_filtered``,
     ``avg_concurrent``, ``peak_concurrent``, ``risk_sized_count``,
-    ``fixed_sized_count``.
+    ``fixed_sized_count``, ``profit_factor_dollar``.
     """
     if not trades:
         return {
@@ -1236,6 +1244,8 @@ def _simulate_portfolio_equity(
             "peak_concurrent": 0,
             "risk_sized_count": 0,
             "fixed_sized_count": 0,
+            "profit_factor_dollar": None,
+            "gross_capped_at_equity": True,
             "starting_equity": float(starting_equity),
             "ending_equity": float(starting_equity),
         }
@@ -1269,6 +1279,8 @@ def _simulate_portfolio_equity(
             "peak_concurrent": 0,
             "risk_sized_count": 0,
             "fixed_sized_count": 0,
+            "profit_factor_dollar": None,
+            "gross_capped_at_equity": True,
             "starting_equity": float(starting_equity),
             "ending_equity": float(starting_equity),
         }
@@ -1283,15 +1295,24 @@ def _simulate_portfolio_equity(
     fixed_sized = 0
     concurrent_samples: list[int] = []
     peak_concurrent = 0
+    open_notional = 0.0
+    dollar_win = 0.0
+    dollar_loss = 0.0
     curve: list[tuple[str, float]] = [(parsed[0]["entry_date"].isoformat(), equity)]
 
     def _close_due(now: pd.Timestamp) -> None:
-        nonlocal equity, peak, worst_dd
+        nonlocal equity, peak, worst_dd, open_notional, dollar_win, dollar_loss
         still_open: list[dict[str, Any]] = []
         ready = [p for p in open_positions if p["exit_date"] <= now]
         ready.sort(key=lambda p: p["exit_date"])
         for p in ready:
-            equity += p["allocated"] * p["net_return"]
+            pnl = float(p["allocated"]) * float(p["net_return"])
+            equity += pnl
+            open_notional = max(0.0, open_notional - float(p["allocated"]))
+            if pnl > 0:
+                dollar_win += pnl
+            elif pnl < 0:
+                dollar_loss += abs(pnl)
             if equity > peak:
                 peak = equity
             if peak > 0:
@@ -1306,18 +1327,28 @@ def _simulate_portfolio_equity(
 
     for t in parsed:
         _close_due(t["entry_date"])
-        if len(open_positions) >= max_concurrent_positions:
+        if equity <= 0 or len(open_positions) >= max_concurrent_positions:
+            capacity_filtered += 1
+            continue
+        room = max(0.0, equity - open_notional)
+        if room <= 0:
             capacity_filtered += 1
             continue
         if risk_per_trade_pct > 0 and t["stop_pct"] > 0:
             allocated = min(equity, equity * risk_per_trade_pct / t["stop_pct"])
-            risk_sized += 1
+            sized_by_risk = True
         else:
             allocated = equity * position_size_pct
-            fixed_sized += 1
-        if allocated <= 0 or equity <= 0:
+            sized_by_risk = False
+        allocated = min(float(allocated), room)
+        if allocated <= 0:
             capacity_filtered += 1
             continue
+        if sized_by_risk:
+            risk_sized += 1
+        else:
+            fixed_sized += 1
+        open_notional += allocated
         open_positions.append(
             {
                 "exit_date": t["exit_date"],
@@ -1335,6 +1366,7 @@ def _simulate_portfolio_equity(
 
     total_return = (equity / starting_equity) - 1.0 if starting_equity > 0 else 0.0
     avg_concurrent = sum(concurrent_samples) / len(concurrent_samples) if concurrent_samples else 0.0
+    profit_factor_dollar = (dollar_win / dollar_loss) if dollar_loss > 0 else None
     return {
         "equity_curve": curve,
         "total_return_net_pct": round(100.0 * total_return, 4),
@@ -1344,6 +1376,8 @@ def _simulate_portfolio_equity(
         "peak_concurrent": int(peak_concurrent),
         "risk_sized_count": int(risk_sized),
         "fixed_sized_count": int(fixed_sized),
+        "profit_factor_dollar": (None if profit_factor_dollar is None else round(float(profit_factor_dollar), 4)),
+        "gross_capped_at_equity": True,
         "starting_equity": float(starting_equity),
         "ending_equity": float(equity),
     }
