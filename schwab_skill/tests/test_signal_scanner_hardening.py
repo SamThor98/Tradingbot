@@ -325,7 +325,8 @@ def test_release_candidate_frames_drops_histories() -> None:
     frame = _sample_df()
     kept = {"ticker": "AAA", "df": frame, "price": 1.0}
     empty = {"ticker": "BBB"}
-    released = signal_scanner.release_candidate_frames([kept, empty, "nope"])  # type: ignore[list-item]
+    rows: list[Any] = [kept, empty, "nope"]
+    released = signal_scanner.release_candidate_frames(rows)
     assert released == 1
     assert "df" not in kept
     assert kept["price"] == 1.0
