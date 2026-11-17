@@ -41,6 +41,10 @@ from config import (
     get_backtest_portfolio_max_positions,
     get_backtest_portfolio_starting_equity,
     get_backtest_position_size_pct,
+    get_backtest_price_cache_dir,
+    get_backtest_price_quality_enabled,
+    get_backtest_price_quality_min_reversals,
+    get_backtest_price_quality_move_pct,
     get_backtest_risk_per_trade_pct,
     get_breakout_confirm_bars,
     get_breakout_confirm_enabled,
@@ -367,6 +371,14 @@ HISTORY_WARMUP_DAYS = 420
 # valid 200-session average until about the 200th session, mid-October. The
 # 2020 crash and the 2022 bear sit before that date, so those books never
 # tested them. Replay requests use periodType=year, period=20.
+# A cache that ends on the last completed session still covers a request
+# whose end date is today or the next holiday. Larger holes are fetched.
+CACHE_EDGE_TOLERANCE_DAYS = 4
+SURVIVORSHIP_NOTE = (
+    "Tickers with no daily bars are listed in no_data_tickers. A missing name "
+    "is usually delisted or merged, so a universe built from today's members "
+    "does not include them and the replay is survivorship-biased."
+)
 HISTORY_FETCH_NOTE = (
     "Fetch daily bars from 420 calendar days before each era start "
     "(about 290 sessions; 252 are required before the first day for a full "
@@ -521,29 +533,184 @@ def _build_ohlc_path(df: pd.DataFrame, entry_idx: int, exit_idx: int) -> list[di
     return out
 
 
-def _fetch_history_with_meta(
-    symbol: str,
-    start_date: str,
-    end_date: str,
-    schwab_auth: DualSchwabAuth | None = None,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Schwab daily history first, Yahoo only when Schwab fails.
+def resolve_price_cache_dir(raw: str | None, skill_dir: Path | None = None) -> Path | None:
+    """Absolute cache directory, or None when replay should not use one."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        return path
+    root = (skill_dir or SKILL_DIR).parent
+    return (root / path).resolve()
 
-    Matches the scanner's provider order. Replay asks for the extended
-    year/20 daily window so the pre-era warmup is actually returned.
-    A Yahoo fill is a fallback, so the study will not treat that window
-    as clean enough to search.
+
+def price_cache_candidate_paths(cache_dir: Path, ticker: str) -> list[Path]:
+    """Per-ticker files this repo already writes, plus a CSV twin.
+
+    ``{TICKER}.parquet`` has columns ``date, open, high, low, close, volume``
+    (the date may instead be the index). ``{TICKER}.csv`` is the same table.
     """
-    from market_data import get_daily_history_with_meta
+    symbol = str(ticker or "").strip().upper()
+    safe = "".join(ch if ch.isalnum() else "_" for ch in symbol)
+    names = [f"{safe}.parquet", f"{safe}.csv", f"{symbol}.parquet", f"{symbol}.csv"]
+    seen: set[str] = set()
+    out: list[Path] = []
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(cache_dir / name)
+    return out
 
-    frame, source = get_daily_history_with_meta(
-        symbol,
-        auth=schwab_auth,
-        skill_dir=_runtime_skill_dir(),
-        start_date=start_date,
-        end_date=end_date,
-        extended_history=True,
-    )
+
+def _normalize_ohlcv_frame(frame: pd.DataFrame) -> pd.DataFrame | None:
+    if frame is None or frame.empty:
+        return None
+    work = frame.copy()
+    work.columns = [str(col).strip().lower() for col in work.columns]
+    if "date" in work.columns:
+        work = work.set_index("date")
+    elif "datetime" in work.columns:
+        work = work.set_index("datetime")
+    needed = ["open", "high", "low", "close", "volume"]
+    if any(col not in work.columns for col in needed):
+        return None
+    out = work[needed].apply(pd.to_numeric, errors="coerce")
+    try:
+        idx = pd.to_datetime(out.index)
+    except Exception:
+        return None
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    out.index = pd.DatetimeIndex(idx).normalize()
+    out.index.name = "date"
+    out = out.sort_index()
+    out = out[~out.index.duplicated(keep="last")]
+    return out
+
+
+def read_price_cache_frame(cache_dir: Path, ticker: str) -> pd.DataFrame | None:
+    """Load one ticker from the cache. Unreadable files are a miss."""
+    for path in price_cache_candidate_paths(cache_dir, ticker):
+        if not path.is_file():
+            continue
+        try:
+            if path.suffix.lower() == ".parquet":
+                raw = pd.read_parquet(path)
+            elif path.suffix.lower() == ".csv":
+                raw = pd.read_csv(path)
+            else:
+                continue
+        except Exception as exc:
+            LOG.warning("Price cache unreadable for %s (%s): %s", ticker, path, exc)
+            continue
+        normalized = _normalize_ohlcv_frame(raw)
+        if normalized is not None and not normalized.empty:
+            return normalized
+    return None
+
+
+def _history_gaps(index: pd.DatetimeIndex, start_date: str, end_date: str) -> list[tuple[str, str]]:
+    """Requested dates the cache does not already cover, outside a short edge tolerance."""
+    if index is None or len(index) == 0:
+        return [(start_date, end_date)]
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    slack = pd.Timedelta(days=CACHE_EDGE_TOLERANCE_DAYS)
+    gaps: list[tuple[str, str]] = []
+    first = pd.Timestamp(index.min())
+    last = pd.Timestamp(index.max())
+    if first > start_ts + slack:
+        gap_end = (first - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        if gap_end >= start_date:
+            gaps.append((start_date, gap_end))
+    if last < end_ts - slack:
+        gap_start = (last + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        if gap_start <= end_date:
+            gaps.append((gap_start, end_date))
+    return gaps
+
+
+def _slice_history(frame: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame:
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    return frame.loc[(frame.index >= start_ts) & (frame.index <= end_ts)].copy()
+
+
+def _count_reversal_spikes(close: pd.Series, move_pct: float) -> int:
+    """Count >move_pct closes that the next session undoes with another >move_pct move.
+
+    The reversing bar is consumed so one spike-and-undo is one event. A move
+    that sticks, and a single spike, are not repeated reversals.
+    """
+    prices = pd.to_numeric(close, errors="coerce")
+    returns = prices.pct_change()
+    count = 0
+    i = 1
+    last = len(returns) - 1
+    while i < last:
+        current = returns.iloc[i]
+        nxt = returns.iloc[i + 1]
+        try:
+            current_f = float(current)
+            next_f = float(nxt)
+        except (TypeError, ValueError):
+            i += 1
+            continue
+        if current_f != current_f or next_f != next_f:
+            i += 1
+            continue
+        if abs(current_f) >= move_pct and abs(next_f) >= move_pct and current_f * next_f < 0:
+            count += 1
+            i += 2
+            continue
+        i += 1
+    return count
+
+
+def screen_price_quality(
+    frame: pd.DataFrame,
+    *,
+    move_pct: float = 0.50,
+    min_reversals: int = 2,
+) -> dict[str, Any] | None:
+    """Exclusion record for an unusable adjusted series, or None to keep it.
+
+    One non-positive open/high/low/close is enough: Schwab special-dividend
+    adjustments write those. A single >move_pct day is kept. The series is
+    dropped only when that kind of day reverses the next session at least
+    ``min_reversals`` times.
+    """
+    if frame is None or frame.empty:
+        return None
+    for col in ("open", "high", "low", "close"):
+        if col not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[col], errors="coerce")
+        bad = values[values <= 0]
+        if not bad.empty:
+            first = pd.Timestamp(bad.index[0])
+            return {
+                "reason": "non_positive_price",
+                "column": col,
+                "bars": int(len(bad)),
+                "first_date": first.date().isoformat(),
+            }
+    if "close" not in frame.columns:
+        return None
+    reversals = _count_reversal_spikes(frame["close"], float(move_pct))
+    if reversals >= int(min_reversals):
+        return {
+            "reason": "reversal_spikes",
+            "reversal_count": int(reversals),
+            "move_pct": float(move_pct),
+            "min_reversals": int(min_reversals),
+        }
+    return None
+
+
+def _remote_history_meta(frame: pd.DataFrame, source: dict[str, Any]) -> dict[str, Any]:
     provider = str(source.get("provider") or "unknown")
     used_fallback = bool(source.get("used_fallback"))
     reason = str(source.get("fallback_reason") or "").strip()
@@ -554,13 +721,87 @@ def _fetch_history_with_meta(
             reason = "schwab_empty"
         else:
             reason = "unknown"
-    meta = {
+    return {
         "provider": provider,
         "used_fallback": used_fallback,
         "reason": reason,
         "rows": int(source.get("rows") or len(frame)),
     }
-    return frame, meta
+
+
+def _fetch_remote_history(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    schwab_auth: DualSchwabAuth | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Schwab daily history first, Yahoo only when Schwab fails."""
+    from market_data import get_daily_history_with_meta
+
+    frame, source = get_daily_history_with_meta(
+        symbol,
+        auth=schwab_auth,
+        skill_dir=_runtime_skill_dir(),
+        start_date=start_date,
+        end_date=end_date,
+        extended_history=True,
+    )
+    return frame, _remote_history_meta(frame, source)
+
+
+def _fetch_history_with_meta(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    schwab_auth: DualSchwabAuth | None = None,
+    cache_dir: Path | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Cache first. Schwab (then Yahoo) only for a missing ticker or missing dates.
+
+    Replay asks for the extended year/20 daily window so the pre-era warmup
+    is actually returned. A Yahoo fill is a fallback, so the study will not
+    treat that window as clean enough to search.
+    """
+    cached = read_price_cache_frame(cache_dir, symbol) if cache_dir is not None else None
+    if cached is None:
+        frame, meta = _fetch_remote_history(symbol, start_date, end_date, schwab_auth=schwab_auth)
+        meta["cache_status"] = "miss" if cache_dir is not None else "off"
+        return frame, meta
+
+    gaps = _history_gaps(cached.index, start_date, end_date)
+    if not gaps:
+        sliced = _slice_history(cached, start_date, end_date)
+        return sliced, {
+            "provider": "cache",
+            "used_fallback": False,
+            "reason": "cache_hit",
+            "rows": int(len(sliced)),
+            "cache_status": "hit",
+        }
+
+    parts = [cached]
+    gap_provider = "schwab"
+    gap_filled = False
+    for gap_start, gap_end in gaps:
+        gap_frame, gap_meta = _fetch_remote_history(symbol, gap_start, gap_end, schwab_auth=schwab_auth)
+        gap_provider = str(gap_meta.get("provider") or gap_provider)
+        if gap_frame is not None and not gap_frame.empty:
+            parts.append(gap_frame)
+            gap_filled = True
+    merged = pd.concat(parts)
+    merged = merged.sort_index()
+    merged = merged[~merged.index.duplicated(keep="first")]
+    sliced = _slice_history(merged, start_date, end_date)
+    provider = f"cache+{gap_provider}" if gap_filled else "cache"
+    return sliced, {
+        "provider": provider,
+        "used_fallback": False,
+        "reason": "cache_partial" if gap_filled else "cache_gap_unfilled",
+        "rows": int(len(sliced)),
+        "cache_status": "partial",
+        "gap_provider": gap_provider,
+        "gaps": [{"start": start, "end": end} for start, end in gaps],
+    }
 
 
 def _fetch_history_schwab(
@@ -807,7 +1048,26 @@ def _prepare_context(
         "history_warmup_calendar_days": int(HISTORY_WARMUP_DAYS),
         "history_warmup_sessions_required": int(INDICATOR_WARMUP_SESSIONS),
         "history_fetch_note": HISTORY_FETCH_NOTE,
+        "history_provider_cache": 0,
+        "history_cache_hit": 0,
+        "history_cache_partial": 0,
+        "history_cache_miss": 0,
+        "price_quality_excluded_count": 0,
+        "no_data_count": 0,
+        "price_quality_excluded": [],
+        "no_data_tickers": [],
+        "survivorship_note": SURVIVORSHIP_NOTE,
     }
+    cache_dir = resolve_price_cache_dir(get_backtest_price_cache_dir(sd), sd)
+    data_integrity["price_cache_enabled"] = cache_dir is not None
+    data_integrity["price_cache_dir"] = str(cache_dir) if cache_dir is not None else None
+    data_integrity["price_cache_present"] = bool(cache_dir is not None and cache_dir.is_dir())
+    quality_on = bool(get_backtest_price_quality_enabled(sd))
+    quality_move = float(get_backtest_price_quality_move_pct(sd))
+    quality_min_reversals = int(get_backtest_price_quality_min_reversals(sd))
+    data_integrity["price_quality_enabled"] = quality_on
+    data_integrity["price_quality_move_pct"] = quality_move
+    data_integrity["price_quality_min_reversals"] = quality_min_reversals
     from market_data import SCHWAB_DAILY_EXTENDED_PERIOD_YEARS
 
     data_integrity["history_period_type"] = "year"
@@ -856,17 +1116,37 @@ def _prepare_context(
                     len(universe),
                 )
 
-    for ticker in universe:
-        df, history_meta = _fetch_history_with_meta(ticker, fetch_start, end_date, schwab_auth=schwab_auth)
+    def _record_fetch(ticker: str, df: pd.DataFrame, history_meta: dict[str, Any]) -> bool:
+        """Count the fetch and return False when the ticker must not enter the book."""
         history_meta_by_ticker[ticker] = dict(history_meta or {})
         data_integrity["history_fetch_total"] = int(data_integrity.get("history_fetch_total", 0) or 0) + 1
         provider = str(history_meta.get("provider") or "unknown")
+        cache_status = str(history_meta.get("cache_status") or "off")
         reason = str(history_meta.get("reason") or "unknown")
         reason_counts = dict(data_integrity.get("history_reason_counts") or {})
         reason_counts[reason] = int(reason_counts.get(reason, 0) or 0) + 1
         data_integrity["history_reason_counts"] = reason_counts
-        if provider == "schwab":
+        if cache_status == "hit":
+            data_integrity["history_cache_hit"] = int(data_integrity.get("history_cache_hit", 0) or 0) + 1
+        elif cache_status == "partial":
+            data_integrity["history_cache_partial"] = int(data_integrity.get("history_cache_partial", 0) or 0) + 1
+        elif cache_status == "miss":
+            data_integrity["history_cache_miss"] = int(data_integrity.get("history_cache_miss", 0) or 0) + 1
+        if provider == "cache":
+            data_integrity["history_provider_cache"] = int(data_integrity.get("history_provider_cache", 0) or 0) + 1
+        elif provider == "schwab":
             data_integrity["history_provider_schwab"] = int(data_integrity.get("history_provider_schwab", 0) or 0) + 1
+        elif provider.startswith("cache+"):
+            data_integrity["history_provider_cache"] = int(data_integrity.get("history_provider_cache", 0) or 0) + 1
+            gap_provider = provider.split("+", 1)[1]
+            if gap_provider == "schwab":
+                data_integrity["history_provider_schwab"] = (
+                    int(data_integrity.get("history_provider_schwab", 0) or 0) + 1
+                )
+            elif gap_provider == "yfinance":
+                data_integrity["history_provider_yfinance"] = (
+                    int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
+                )
         elif provider == "yfinance":
             data_integrity["history_provider_yfinance"] = (
                 int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
@@ -875,14 +1155,34 @@ def _prepare_context(
             data_integrity["history_provider_unknown"] = int(data_integrity.get("history_provider_unknown", 0) or 0) + 1
         if bool(history_meta.get("used_fallback")):
             data_integrity["history_fallback_used"] = int(data_integrity.get("history_fallback_used", 0) or 0) + 1
-        if df.empty or len(df) < MIN_BARS:
-            if df.empty:
-                data_integrity["history_fetch_empty"] = int(data_integrity.get("history_fetch_empty", 0) or 0) + 1
-            else:
-                data_integrity["history_fetch_too_short"] = (
-                    int(data_integrity.get("history_fetch_too_short", 0) or 0) + 1
+        if df.empty:
+            data_integrity["history_fetch_empty"] = int(data_integrity.get("history_fetch_empty", 0) or 0) + 1
+            data_integrity["no_data_count"] = int(data_integrity.get("no_data_count", 0) or 0) + 1
+            note = {"ticker": ticker, "reason": "no_data"}
+            data_integrity["no_data_tickers"].append(note)
+            excluded.append({"ticker": ticker, "reason": "no_data", "bars": 0})
+            return False
+        if quality_on:
+            quality = screen_price_quality(df, move_pct=quality_move, min_reversals=quality_min_reversals)
+            if quality is not None:
+                record = {"ticker": ticker, **quality}
+                data_integrity["price_quality_excluded"].append(record)
+                data_integrity["price_quality_excluded_count"] = (
+                    int(data_integrity.get("price_quality_excluded_count", 0) or 0) + 1
                 )
+                excluded.append(record)
+                return False
+        if len(df) < MIN_BARS:
+            data_integrity["history_fetch_too_short"] = int(data_integrity.get("history_fetch_too_short", 0) or 0) + 1
             excluded.append({"ticker": ticker, "reason": "insufficient_history", "bars": len(df)})
+            return False
+        return True
+
+    for ticker in universe:
+        df, history_meta = _fetch_history_with_meta(
+            ticker, fetch_start, end_date, schwab_auth=schwab_auth, cache_dir=cache_dir
+        )
+        if not _record_fetch(ticker, df, history_meta):
             continue
         price_data[ticker] = add_indicators(df)
         if sessions_before_start(df, start_date) < INDICATOR_WARMUP_SESSIONS:
@@ -894,9 +1194,21 @@ def _prepare_context(
 
     sector_perf: dict[str, pd.DataFrame] = {}
     for sym in sorted(set(SECTOR_ETFS + ["SPY"])):
-        sdf, _meta = _fetch_history_with_meta(sym, fetch_start, end_date, schwab_auth=schwab_auth)
-        if not sdf.empty and len(sdf) >= MIN_BARS:
-            sector_perf[sym] = sdf
+        sdf, _sector_meta = _fetch_history_with_meta(
+            sym, fetch_start, end_date, schwab_auth=schwab_auth, cache_dir=cache_dir
+        )
+        if sdf.empty or len(sdf) < MIN_BARS:
+            continue
+        if quality_on:
+            sector_quality = screen_price_quality(sdf, move_pct=quality_move, min_reversals=quality_min_reversals)
+            if sector_quality is not None:
+                record = {"ticker": sym, "role": "sector", **sector_quality}
+                data_integrity["price_quality_excluded"].append(record)
+                data_integrity["price_quality_excluded_count"] = (
+                    int(data_integrity.get("price_quality_excluded_count", 0) or 0) + 1
+                )
+                continue
+        sector_perf[sym] = sdf
 
     return BacktestContext(
         watchlist=sorted(price_data.keys()),

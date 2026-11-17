@@ -456,6 +456,43 @@ def get_backtest_entry_fill(skill_dir: Path | None = None) -> str:
     return "next_open"
 
 
+def get_backtest_price_cache_dir(skill_dir: Path | None = None) -> str:
+    """Directory of per-ticker daily bars for replay. Empty means Schwab only.
+
+    Relative paths are resolved from the repo root (the parent of ``skill_dir``).
+    Each ticker is ``{TICKER}.parquet`` or ``{TICKER}.csv`` with columns
+    ``date, open, high, low, close, volume``.
+    """
+    env = _load_env(skill_dir)
+    return _env_value("BACKTEST_PRICE_CACHE_DIR", env).strip()
+
+
+def get_backtest_price_quality_enabled(skill_dir: Path | None = None) -> bool:
+    """Drop unusable adjusted series before they enter a replay. Default on."""
+    return _get_bool("BACKTEST_PRICE_QUALITY_ENABLED", True, skill_dir)
+
+
+def get_backtest_price_quality_move_pct(skill_dir: Path | None = None) -> float:
+    """Absolute close-to-close move that counts as an implausible bar."""
+    val = _get_float("BACKTEST_PRICE_QUALITY_MOVE_PCT", 0.50, skill_dir)
+    return max(0.05, min(0.95, val))
+
+
+def get_backtest_price_quality_min_reversals(skill_dir: Path | None = None) -> int:
+    """How many >move spikes that reverse the next day exclude a ticker.
+
+    Default 2. One large move, or one move that reverses, stays in the book.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("BACKTEST_PRICE_QUALITY_MIN_REVERSALS", env)
+    if not raw:
+        return 2
+    try:
+        return max(1, int(float(raw)))
+    except (TypeError, ValueError):
+        return 2
+
+
 def get_backtest_entry_family(skill_dir: Path | None = None) -> str:
     """Backtest / multi-era entry generator family (Track B).
 

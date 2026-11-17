@@ -118,6 +118,21 @@ python scripts/run_multi_era_backtest_schwab_only.py
 BACKTEST_ENTRY_FILL=same_close python scripts/run_multi_era_backtest_schwab_only.py
 ```
 
+`BACKTEST_PRICE_CACHE_DIR` points at one file per ticker, `{TICKER}.parquet`
+or `{TICKER}.csv`, with columns `date, open, high, low, close, volume`.
+A relative path is from the repo root. The replay reads the cache and asks
+Schwab only for a ticker or a date range the file does not cover. The
+artifact records `price_cache_enabled`, `price_cache_dir`, and the hit /
+partial / miss counts.
+
+Before a name enters the book, a non-positive open, high, low, or close
+drops it (`non_positive_price`). So does a series with at least two
+sessions that move more than 50% and reverse by more than 50% the next
+session (`reversal_spikes`). One large move is kept. Every excluded ticker
+and the reason are on `price_quality_excluded`. Names that returned no bars
+are on `no_data_tickers`, with `survivorship_note` explaining that a
+today's-members universe misses delisted and merged names.
+
 See `validation_artifacts/phase0_sizing_audit_*.md` for the
 before/after comparison that confirmed the legacy DDs were aggregator
 artifacts, not strategy risk.
