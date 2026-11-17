@@ -438,6 +438,24 @@ def get_early_stop_gate_breakout_buffer_min(skill_dir: Path | None = None) -> fl
     return max(0.0, min(0.25, val))
 
 
+_BACKTEST_ENTRY_FILL_VALUES = frozenset({"next_open", "same_close"})
+
+
+def get_backtest_entry_fill(skill_dir: Path | None = None) -> str:
+    """How a replay fills an entry after the signal bar.
+
+    ``next_open`` (default): the signal is the bar's close; the fill is the
+    next session's open. There is no fill when that bar does not exist.
+    ``same_close``: legacy fill at the signal bar's close. That close is not
+    a price you can trade, so it is comparison-only.
+    """
+    env = _load_env(skill_dir)
+    raw = _env_value("BACKTEST_ENTRY_FILL", env).strip().lower()
+    if raw in _BACKTEST_ENTRY_FILL_VALUES:
+        return raw
+    return "next_open"
+
+
 def get_backtest_entry_family(skill_dir: Path | None = None) -> str:
     """Backtest / multi-era entry generator family (Track B).
 

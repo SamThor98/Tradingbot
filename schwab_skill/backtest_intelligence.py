@@ -339,6 +339,8 @@ def simulate_exit_with_manager(
     *,
     skill_dir: Path,
     mode: PluginMode,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
 ) -> tuple[float, pd.Timestamp, str, dict[str, Any]]:
     """Drop-in replacement for ``backtest._simulate_exit`` that models the
     live exit-manager state machine.
@@ -358,7 +360,13 @@ def simulate_exit_with_manager(
     """
     mode = _normalise_mode(mode)
     legacy_exit = _legacy_simulate_exit(
-        df, entry_idx, hold_days_default, stop_pct, skill_dir=skill_dir
+        df,
+        entry_idx,
+        hold_days_default,
+        stop_pct,
+        skill_dir=skill_dir,
+        entry_price=entry_price,
+        evaluate_entry_bar=evaluate_entry_bar,
     )
     if mode == "off":
         return legacy_exit[0], legacy_exit[1], legacy_exit[2], {"mode": "off"}
@@ -373,6 +381,8 @@ def simulate_exit_with_manager(
         partial_fraction=settings["partial_fraction"],
         breakeven_after_partial=settings["breakeven_after_partial"],
         max_hold_days=settings["max_hold_days"],
+        entry_price=entry_price,
+        evaluate_entry_bar=evaluate_entry_bar,
     )
     info = {"mode": mode, "settings": settings, "managed": managed_exit["info"]}
     if mode == "shadow":
@@ -394,6 +404,8 @@ def _legacy_simulate_exit(
     stop_pct: float,
     *,
     skill_dir: Path | None = None,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
 ) -> tuple[float, pd.Timestamp, str]:
     """Mirror of ``backtest._simulate_exit`` so the overlay can produce a true
     no-op when ``mode == "off"`` even from outside the backtest module.
@@ -406,6 +418,8 @@ def _legacy_simulate_exit(
         hold_days,
         stop_pct,
         skill_dir=skill_dir or Path(__file__).resolve().parent,
+        entry_price=entry_price,
+        evaluate_entry_bar=evaluate_entry_bar,
     )
 
 
@@ -419,6 +433,8 @@ def _managed_simulate_exit(
     partial_fraction: float,
     breakeven_after_partial: bool,
     max_hold_days: int,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
 ) -> dict[str, Any]:
     """Multi-leg exit simulator.
 
@@ -429,7 +445,10 @@ def _managed_simulate_exit(
          stop to breakeven.
       3. If days_held >= effective_hold_days -> time-exit remaining at close.
     """
-    entry_price = float(df["close"].iloc[entry_idx])
+    if entry_price is None:
+        entry_price = float(df["close"].iloc[entry_idx])
+    else:
+        entry_price = float(entry_price)
     risk_per_share = entry_price * stop_pct
     partial_target = entry_price + partial_r_mult * risk_per_share
     effective_hold = min(max_hold_days, hold_days_default)
@@ -443,7 +462,8 @@ def _managed_simulate_exit(
     final_idx: int | None = None
     reason = "time_exit"
 
-    for j in range(entry_idx + 1, last_idx + 1):
+    first_j = entry_idx if evaluate_entry_bar else entry_idx + 1
+    for j in range(first_j, last_idx + 1):
         px = float(df["close"].iloc[j])
         highest_close = max(highest_close, px)
         trailed = highest_close * (1.0 - stop_pct)

@@ -1,7 +1,7 @@
 ---
 source: schwab_skill/backtest.py
 created: 2026-04-17
-updated: 2026-10-10
+updated: 2026-11-17
 tags: [backtest, validation, scanner, portfolio-sim]
 ---
 
@@ -86,12 +86,37 @@ Each backtest result now exposes a `portfolio_summary` block with
 `avg_concurrent`, `peak_concurrent`, `capacity_filtered`,
 `risk_sized_count`, `fixed_sized_count`, and `ending_equity`.
 
+Same-day entries are ordered by the score known at entry, then ticker.
+The exit date is not a tie-break. When the book is full, sorting on the
+exit date chooses the trade by how it later finished.
+
 The Schwab-only multi-era runner
 (`scripts/run_multi_era_backtest_schwab_only.py`) consumes the same
-helper inside `_aggregate_era`. Chunks now persist `entry_date` and
-`stop_pct` so the simulator can compute accurate concurrency and
-risk-based sizing across the full universe; pre-patch chunks fall back
-to instantaneous closes and fixed-% sizing.
+helper inside `_aggregate_era`. Chunks persist `entry_date`, `ticker`,
+`signal_score`, and `stop_pct` so the simulator can compute concurrency
+and risk-based sizing without looking at the exit.
+
+## Entry fill and era warmup
+
+`BACKTEST_ENTRY_FILL=next_open` (default) fills at the next session's
+open and skips the trade when that bar does not exist. `same_close` is
+the old signal-bar close, kept so a run can be compared with older
+tapes. The mode is written on the result and on each multi-era artifact.
+
+Each era needs **420 calendar days** of daily bars before its start
+(about 290 sessions). **252 sessions** must already exist before the
+first day so the 52-week high is a full year; the 200-day average needs
+200. Schwab daily history for that window is `periodType=year`,
+`period=20`, `frequencyType=daily`, `frequency=1`, plus the start and
+end. `periodType=month` stops at six months. A series that then starts
+on the era's January 1 has no valid 200-day average until about the
+200th session, mid-October, so the 2020 crash and the 2022 bear were
+not in those books.
+
+```bash
+python scripts/run_multi_era_backtest_schwab_only.py
+BACKTEST_ENTRY_FILL=same_close python scripts/run_multi_era_backtest_schwab_only.py
+```
 
 See `validation_artifacts/phase0_sizing_audit_*.md` for the
 before/after comparison that confirmed the legacy DDs were aggregator

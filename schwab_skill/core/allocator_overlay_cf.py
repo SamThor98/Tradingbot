@@ -36,8 +36,10 @@ class CrashWindow:
 
 
 # Heuristic SPY shock windows when no SPY series is available (research proxy).
-# Also include mid-era stress bands that overlap typical control_legacy_aug chunk
-# calendars (chunks often start mid-October within each ERA_BOUNDS window).
+# Older chunks often started mid-October inside each ERA_BOUNDS window because
+# the price fetch did not keep 252 sessions of warmup before January. New
+# replays fetch that warmup (see backtest.HISTORY_FETCH_NOTE). The October
+# bands stay so those older tapes still have a crash proxy.
 DEFAULT_CRASH_WINDOWS: tuple[CrashWindow, ...] = (
     CrashWindow("2020-02-20", "2020-04-15"),
     CrashWindow("2020-10-15", "2020-11-15"),  # chunk-visible COVID aftermath stress
@@ -245,9 +247,7 @@ def apply_allocator_admission(
         "dd_soft": DD_SOFT,
         "dd_hard": DD_HARD,
         "dd_floor": DD_FLOOR,
-        "crash_windows": [{"start": w.start, "end": w.end} for w in windows]
-        if use_crash_windows
-        else [],
+        "crash_windows": [{"start": w.start, "end": w.end} for w in windows] if use_crash_windows else [],
         "crash_window_note": (
             "Heuristic windows; control_legacy_aug era chunks often start mid-window "
             "and may miss classic crash dates — DD staircase still applies."
@@ -340,12 +340,7 @@ def sweep_allocator_overlay_arms(df: pd.DataFrame) -> dict[str, Any]:
                         use_crash_windows=use_crash,
                         max_concurrent=max_c,
                     )
-                    label = (
-                        f"top{top_n}"
-                        f"{'_dd' if use_dd else ''}"
-                        f"{'_crash' if use_crash else ''}"
-                        f"_c{max_c}"
-                    )
+                    label = f"top{top_n}{'_dd' if use_dd else ''}{'_crash' if use_crash else ''}_c{max_c}"
                     arm = summarize_overlay_arm(kept, label=label, baseline_n=baseline_n)
                     arm["diagnostics"] = diag
                     arm["params"] = {
@@ -385,11 +380,7 @@ def sweep_allocator_overlay_arms(df: pd.DataFrame) -> dict[str, Any]:
     report["soft_rank_top5"] = ranked[:5]
 
     # Capacity-aware pick: floors + retention >= 50% of stack book (constitution soft #2)
-    capacity_pool = [
-        a
-        for a in floor_clearers
-        if float(a.get("retention_pct") or 0.0) >= 50.0
-    ]
+    capacity_pool = [a for a in floor_clearers if float(a.get("retention_pct") or 0.0) >= 50.0]
     if capacity_pool:
         capacity_pick = sorted(
             capacity_pool,

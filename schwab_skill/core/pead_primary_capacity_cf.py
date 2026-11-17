@@ -98,9 +98,7 @@ def summarize_arm(
         "n_eras": n_eras,
         "early_stopout_pct": cohort.get("early_stopout_pct"),
         "per_era_n": per_era_n,
-        "per_era_pf": {
-            str(era): _cohort_stats(group).get("pf") for era, group in df.groupby("era")
-        },
+        "per_era_pf": {str(era): _cohort_stats(group).get("pf") for era, group in df.groupby("era")},
         "thin_eras": thin_eras,
         "passes_pf_150": passes,
         "verdict": verdict,
@@ -181,12 +179,16 @@ def portfolio_note(
     work = work.dropna(subset=["entry_date", "exit_date"])
     if score_col and score_col in work.columns:
         work["_score_priority"] = pd.to_numeric(work[score_col], errors="coerce").fillna(-1e18)
-        work = work.sort_values(
-            ["entry_date", "_score_priority", "exit_date"],
-            ascending=[True, False, True],
-        )
+        sort_cols = ["entry_date", "_score_priority"]
+        ascending = [True, False]
+        if "ticker" in work.columns:
+            sort_cols.append("ticker")
+            ascending.append(True)
+        work = work.sort_values(sort_cols, ascending=ascending)
+    elif "ticker" in work.columns:
+        work = work.sort_values(["entry_date", "ticker"])
     else:
-        work = work.sort_values(["entry_date", "exit_date"])
+        work = work.sort_values(["entry_date"])
 
     rows = work.to_dict(orient="records")
     sim = _simulate_portfolio_equity(

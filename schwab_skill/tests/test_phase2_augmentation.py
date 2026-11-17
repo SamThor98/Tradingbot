@@ -156,6 +156,10 @@ LEGACY_KEYS = {
     "signal_score",
     "mirofish_conviction",
     "exit_reason",
+    # Known at entry. The portfolio book uses them to break same-day ties
+    # without looking at the exit. entry_fill says which price was traded.
+    "ticker",
+    "entry_fill",
 }
 
 
@@ -241,6 +245,8 @@ def test_legacy_projection_handles_missing_optional_fields() -> None:
     assert r["signal_score"] is None
     assert r["mirofish_conviction"] is None
     assert r["exit_reason"] == ""
+    assert r["ticker"] is None
+    assert r["entry_fill"] is None
 
 
 # ---------------------------------------------------------------------------
