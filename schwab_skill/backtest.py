@@ -34,12 +34,17 @@ from config import (
     get_backtest_adaptive_guardrail_policy_path,
     get_backtest_adaptive_guardrails_enabled,
     get_backtest_entry_family,
+    get_backtest_entry_fill,
     get_backtest_hold_days,
     get_backtest_min_hold_days_before_trail,
     get_backtest_min_hold_defer_soft_exits,
     get_backtest_portfolio_max_positions,
     get_backtest_portfolio_starting_equity,
     get_backtest_position_size_pct,
+    get_backtest_price_cache_dir,
+    get_backtest_price_quality_enabled,
+    get_backtest_price_quality_min_reversals,
+    get_backtest_price_quality_move_pct,
     get_backtest_risk_per_trade_pct,
     get_breakout_confirm_bars,
     get_breakout_confirm_enabled,
@@ -134,6 +139,139 @@ def replay_honors_account_focus(
     return preset == "focused" or explicit == "focused"
 
 
+def _entry_time_score(trade: dict[str, Any]) -> float | None:
+    """Score known when the entry was chosen. Outcomes are not a score."""
+    for key in ("_score_priority", "signal_score"):
+        if key not in trade or trade.get(key) is None:
+            continue
+        try:
+            val = float(trade.get(key))
+        except (TypeError, ValueError):
+            continue
+        if val != val:
+            continue
+        return val
+    return None
+
+
+def portfolio_admission_key(trade: dict[str, Any]) -> tuple[Any, ...]:
+    """Order same-day entries without looking at the exit.
+
+    Higher entry-time score first, then ticker. Exit date and return are
+    not in the key: when the book is full, sorting on them picks the trade
+    by how it later turned out.
+    """
+    raw_entry = trade.get("entry_date")
+    try:
+        entry = pd.Timestamp(raw_entry)
+        entry = pd.Timestamp.max if pd.isna(entry) else entry
+    except Exception:
+        entry = pd.Timestamp.max
+    score = _entry_time_score(trade)
+    score_ord = float("inf") if score is None else -float(score)
+    ticker = str(trade.get("ticker") or "").upper()
+    return (entry, score_ord, ticker)
+
+
+def sessions_before_start(df: pd.DataFrame, start: str) -> int:
+    """How many bars in ``df`` fall strictly before ``start``."""
+    if df is None or df.empty:
+        return 0
+    try:
+        start_ts = pd.Timestamp(start)
+    except Exception:
+        return 0
+    if pd.isna(start_ts):
+        return 0
+    count = 0
+    for ts in df.index:
+        try:
+            if pd.Timestamp(ts) < start_ts:
+                count += 1
+        except Exception:
+            continue
+    return count
+
+
+def first_replay_session(df: pd.DataFrame, start: str, end: str) -> pd.Timestamp | None:
+    """First bar that can be traded: index >= REPLAY_MIN_BAR_INDEX and inside the era.
+
+    The index counts bars in the full frame, including the warmup fetched
+    before ``start``. Without those bars the first eligible session is the
+    200th session of the era (mid-October when the era starts in January).
+    """
+    if df is None or df.empty:
+        return None
+    try:
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+    except Exception:
+        return None
+    for idx, ts in enumerate(df.index):
+        if idx < REPLAY_MIN_BAR_INDEX:
+            continue
+        try:
+            stamp = pd.Timestamp(ts)
+        except Exception:
+            continue
+        if start_ts <= stamp <= end_ts:
+            return stamp
+    return None
+
+
+def resolve_entry_fill(
+    df: pd.DataFrame,
+    signal_idx: int,
+    mode: str,
+    *,
+    era_end: pd.Timestamp | str | None = None,
+) -> dict[str, Any] | None:
+    """Price and bar for an entry after the signal at ``signal_idx``.
+
+    ``next_open`` fills at the next session's open and returns None when
+    that bar is missing or falls after ``era_end``. ``same_close`` fills at
+    the signal bar's close. Costs are applied later to whatever price this
+    returns.
+    """
+    if df is None or df.empty or signal_idx < 0 or signal_idx >= len(df):
+        return None
+    fill_mode = str(mode or "next_open").strip().lower()
+    if fill_mode not in {"next_open", "same_close"}:
+        fill_mode = "next_open"
+    end_ts = None
+    if era_end is not None:
+        try:
+            end_ts = pd.Timestamp(era_end)
+        except Exception:
+            end_ts = None
+
+    if fill_mode == "same_close":
+        try:
+            px = float(df["close"].iloc[signal_idx])
+        except (TypeError, ValueError, KeyError):
+            return None
+        if not math.isfinite(px) or px <= 0:
+            return None
+        ts = pd.Timestamp(df.index[signal_idx])
+        if end_ts is not None and ts > end_ts:
+            return None
+        return {"fill_idx": int(signal_idx), "entry_price": px, "entry_ts": ts, "entry_fill": "same_close"}
+
+    fill_idx = int(signal_idx) + 1
+    if fill_idx >= len(df) or "open" not in df.columns:
+        return None
+    try:
+        px = float(df["open"].iloc[fill_idx])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(px) or px <= 0:
+        return None
+    ts = pd.Timestamp(df.index[fill_idx])
+    if end_ts is not None and ts.normalize() > end_ts.normalize():
+        return None
+    return {"fill_idx": fill_idx, "entry_price": px, "entry_ts": ts, "entry_fill": "next_open"}
+
+
 def _history_pad_days(strategy_ids: list[str] | None) -> int:
     """Calendar days of price history fetched before the requested start."""
     pad = HISTORY_WARMUP_DAYS
@@ -149,9 +287,7 @@ def _history_pad_days(strategy_ids: list[str] | None) -> int:
     return pad
 
 
-def _attach_liquid_shadow(
-    trades: list[dict[str, Any]], diagnostics: dict[str, Any], skill_dir: Path
-) -> None:
+def _attach_liquid_shadow(trades: list[dict[str, Any]], diagnostics: dict[str, Any], skill_dir: Path) -> None:
     """Attach Liquid funding features to closed trades (shadow only).
 
     Point-in-time: funding features use only funding days strictly before
@@ -220,8 +356,36 @@ def _load_adaptive_guardrail_policy(skill_dir: Path) -> AdaptiveGuardrailPolicy 
 
 HOLD_DAYS = 20
 MIN_BARS = 260
-# Calendar days so a one-year window still has MIN_BARS sessions of warmup.
+# Sessions that must already exist before an era's first day. SMA200 is valid
+# at 200; a 52-week high uses 252. 420 calendar days is about 290 sessions
+# (420 * 252 / 365), which covers that with holiday slack.
+INDICATOR_WARMUP_SESSIONS = 252
+# First bar index the replay will trade. Index 200 means 200 earlier sessions
+# exist, which is when the 200-day average is defined.
+REPLAY_MIN_BAR_INDEX = 200
+# Calendar days fetched before the requested start so the first era session
+# already has INDICATOR_WARMUP_SESSIONS of history.
 HISTORY_WARMUP_DAYS = 420
+# Why stored eras began mid-October: Schwab periodType=month returns at most
+# six months. A series that actually starts on the era's January 1 has no
+# valid 200-session average until about the 200th session, mid-October. The
+# 2020 crash and the 2022 bear sit before that date, so those books never
+# tested them. Replay requests use periodType=year, period=20.
+# A cache that ends on the last completed session still covers a request
+# whose end date is today or the next holiday. Larger holes are fetched.
+CACHE_EDGE_TOLERANCE_DAYS = 4
+SURVIVORSHIP_NOTE = (
+    "Tickers with no daily bars are listed in no_data_tickers. A missing name "
+    "is usually delisted or merged, so a universe built from today's members "
+    "does not include them and the replay is survivorship-biased."
+)
+HISTORY_FETCH_NOTE = (
+    "Fetch daily bars from 420 calendar days before each era start "
+    "(about 290 sessions; 252 are required before the first day for a full "
+    "52-week window, 200 for the 200-day average). Schwab must be asked with "
+    "periodType=year, period=20, frequencyType=daily, frequency=1, plus the "
+    "start and end. periodType=month stops at six months and drops this warmup."
+)
 SECTOR_LOOKBACK_DAYS = 21
 DEFAULT_SLIPPAGE_BPS_PER_SIDE = 15.0
 DEFAULT_FEE_PER_SHARE = 0.005
@@ -304,21 +468,28 @@ def _is_ohlc_path_logging_enabled() -> bool:
 
 
 def _compute_mfe_mae(
-    df: pd.DataFrame, entry_idx: int, exit_idx: int, entry_price: float
+    df: pd.DataFrame,
+    entry_idx: int,
+    exit_idx: int,
+    entry_price: float,
+    *,
+    include_entry_bar: bool = False,
 ) -> tuple[float | None, float | None]:
     """Maximum Favorable / Adverse Excursion as fractional returns.
 
     Walks the *intraday* high and low between entry and exit (exclusive of
     entry day, inclusive of exit day) so the result reflects the worst /
-    best print the trade ever saw, not just close-to-close moves. Returns
-    (None, None) when the window is empty or the entry price is invalid.
+    best print the trade ever saw, not just close-to-close moves. A next-open
+    fill includes the entry bar: that session's range is after the open.
+    Returns (None, None) when the window is empty or the entry price is invalid.
     """
     if entry_price <= 0 or exit_idx < entry_idx:
         return None, None
     last = min(exit_idx, len(df) - 1)
-    if last <= entry_idx:
+    start = entry_idx if include_entry_bar else entry_idx + 1
+    if last < start:
         return 0.0, 0.0
-    window = df.iloc[entry_idx + 1 : last + 1]
+    window = df.iloc[start : last + 1]
     if window.empty:
         return 0.0, 0.0
     try:
@@ -362,26 +533,184 @@ def _build_ohlc_path(df: pd.DataFrame, entry_idx: int, exit_idx: int) -> list[di
     return out
 
 
-def _fetch_history_with_meta(
-    symbol: str,
-    start_date: str,
-    end_date: str,
-    schwab_auth: DualSchwabAuth | None = None,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Schwab daily history first, Yahoo only when Schwab fails.
+def resolve_price_cache_dir(raw: str | None, skill_dir: Path | None = None) -> Path | None:
+    """Absolute cache directory, or None when replay should not use one."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        return path
+    root = (skill_dir or SKILL_DIR).parent
+    return (root / path).resolve()
 
-    Matches the scanner. A Yahoo fill is a fallback, so the study will not
-    treat that window as clean enough to search.
+
+def price_cache_candidate_paths(cache_dir: Path, ticker: str) -> list[Path]:
+    """Per-ticker files this repo already writes, plus a CSV twin.
+
+    ``{TICKER}.parquet`` has columns ``date, open, high, low, close, volume``
+    (the date may instead be the index). ``{TICKER}.csv`` is the same table.
     """
-    from market_data import get_daily_history_with_meta
+    symbol = str(ticker or "").strip().upper()
+    safe = "".join(ch if ch.isalnum() else "_" for ch in symbol)
+    names = [f"{safe}.parquet", f"{safe}.csv", f"{symbol}.parquet", f"{symbol}.csv"]
+    seen: set[str] = set()
+    out: list[Path] = []
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(cache_dir / name)
+    return out
 
-    frame, source = get_daily_history_with_meta(
-        symbol,
-        auth=schwab_auth,
-        skill_dir=_runtime_skill_dir(),
-        start_date=start_date,
-        end_date=end_date,
-    )
+
+def _normalize_ohlcv_frame(frame: pd.DataFrame) -> pd.DataFrame | None:
+    if frame is None or frame.empty:
+        return None
+    work = frame.copy()
+    work.columns = [str(col).strip().lower() for col in work.columns]
+    if "date" in work.columns:
+        work = work.set_index("date")
+    elif "datetime" in work.columns:
+        work = work.set_index("datetime")
+    needed = ["open", "high", "low", "close", "volume"]
+    if any(col not in work.columns for col in needed):
+        return None
+    out = work[needed].apply(pd.to_numeric, errors="coerce")
+    try:
+        idx = pd.to_datetime(out.index)
+    except Exception:
+        return None
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    out.index = pd.DatetimeIndex(idx).normalize()
+    out.index.name = "date"
+    out = out.sort_index()
+    out = out[~out.index.duplicated(keep="last")]
+    return out
+
+
+def read_price_cache_frame(cache_dir: Path, ticker: str) -> pd.DataFrame | None:
+    """Load one ticker from the cache. Unreadable files are a miss."""
+    for path in price_cache_candidate_paths(cache_dir, ticker):
+        if not path.is_file():
+            continue
+        try:
+            if path.suffix.lower() == ".parquet":
+                raw = pd.read_parquet(path)
+            elif path.suffix.lower() == ".csv":
+                raw = pd.read_csv(path)
+            else:
+                continue
+        except Exception as exc:
+            LOG.warning("Price cache unreadable for %s (%s): %s", ticker, path, exc)
+            continue
+        normalized = _normalize_ohlcv_frame(raw)
+        if normalized is not None and not normalized.empty:
+            return normalized
+    return None
+
+
+def _history_gaps(index: pd.DatetimeIndex, start_date: str, end_date: str) -> list[tuple[str, str]]:
+    """Requested dates the cache does not already cover, outside a short edge tolerance."""
+    if index is None or len(index) == 0:
+        return [(start_date, end_date)]
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    slack = pd.Timedelta(days=CACHE_EDGE_TOLERANCE_DAYS)
+    gaps: list[tuple[str, str]] = []
+    first = pd.Timestamp(index.min())
+    last = pd.Timestamp(index.max())
+    if first > start_ts + slack:
+        gap_end = (first - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        if gap_end >= start_date:
+            gaps.append((start_date, gap_end))
+    if last < end_ts - slack:
+        gap_start = (last + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        if gap_start <= end_date:
+            gaps.append((gap_start, end_date))
+    return gaps
+
+
+def _slice_history(frame: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame:
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    return frame.loc[(frame.index >= start_ts) & (frame.index <= end_ts)].copy()
+
+
+def _count_reversal_spikes(close: pd.Series, move_pct: float) -> int:
+    """Count >move_pct closes that the next session undoes with another >move_pct move.
+
+    The reversing bar is consumed so one spike-and-undo is one event. A move
+    that sticks, and a single spike, are not repeated reversals.
+    """
+    prices = pd.to_numeric(close, errors="coerce")
+    returns = prices.pct_change()
+    count = 0
+    i = 1
+    last = len(returns) - 1
+    while i < last:
+        current = returns.iloc[i]
+        nxt = returns.iloc[i + 1]
+        try:
+            current_f = float(current)
+            next_f = float(nxt)
+        except (TypeError, ValueError):
+            i += 1
+            continue
+        if current_f != current_f or next_f != next_f:
+            i += 1
+            continue
+        if abs(current_f) >= move_pct and abs(next_f) >= move_pct and current_f * next_f < 0:
+            count += 1
+            i += 2
+            continue
+        i += 1
+    return count
+
+
+def screen_price_quality(
+    frame: pd.DataFrame,
+    *,
+    move_pct: float = 0.50,
+    min_reversals: int = 2,
+) -> dict[str, Any] | None:
+    """Exclusion record for an unusable adjusted series, or None to keep it.
+
+    One non-positive open/high/low/close is enough: Schwab special-dividend
+    adjustments write those. A single >move_pct day is kept. The series is
+    dropped only when that kind of day reverses the next session at least
+    ``min_reversals`` times.
+    """
+    if frame is None or frame.empty:
+        return None
+    for col in ("open", "high", "low", "close"):
+        if col not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[col], errors="coerce")
+        bad = values[values <= 0]
+        if not bad.empty:
+            first = pd.Timestamp(bad.index[0])
+            return {
+                "reason": "non_positive_price",
+                "column": col,
+                "bars": int(len(bad)),
+                "first_date": first.date().isoformat(),
+            }
+    if "close" not in frame.columns:
+        return None
+    reversals = _count_reversal_spikes(frame["close"], float(move_pct))
+    if reversals >= int(min_reversals):
+        return {
+            "reason": "reversal_spikes",
+            "reversal_count": int(reversals),
+            "move_pct": float(move_pct),
+            "min_reversals": int(min_reversals),
+        }
+    return None
+
+
+def _remote_history_meta(frame: pd.DataFrame, source: dict[str, Any]) -> dict[str, Any]:
     provider = str(source.get("provider") or "unknown")
     used_fallback = bool(source.get("used_fallback"))
     reason = str(source.get("fallback_reason") or "").strip()
@@ -392,13 +721,87 @@ def _fetch_history_with_meta(
             reason = "schwab_empty"
         else:
             reason = "unknown"
-    meta = {
+    return {
         "provider": provider,
         "used_fallback": used_fallback,
         "reason": reason,
         "rows": int(source.get("rows") or len(frame)),
     }
-    return frame, meta
+
+
+def _fetch_remote_history(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    schwab_auth: DualSchwabAuth | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Schwab daily history first, Yahoo only when Schwab fails."""
+    from market_data import get_daily_history_with_meta
+
+    frame, source = get_daily_history_with_meta(
+        symbol,
+        auth=schwab_auth,
+        skill_dir=_runtime_skill_dir(),
+        start_date=start_date,
+        end_date=end_date,
+        extended_history=True,
+    )
+    return frame, _remote_history_meta(frame, source)
+
+
+def _fetch_history_with_meta(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    schwab_auth: DualSchwabAuth | None = None,
+    cache_dir: Path | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Cache first. Schwab (then Yahoo) only for a missing ticker or missing dates.
+
+    Replay asks for the extended year/20 daily window so the pre-era warmup
+    is actually returned. A Yahoo fill is a fallback, so the study will not
+    treat that window as clean enough to search.
+    """
+    cached = read_price_cache_frame(cache_dir, symbol) if cache_dir is not None else None
+    if cached is None:
+        frame, meta = _fetch_remote_history(symbol, start_date, end_date, schwab_auth=schwab_auth)
+        meta["cache_status"] = "miss" if cache_dir is not None else "off"
+        return frame, meta
+
+    gaps = _history_gaps(cached.index, start_date, end_date)
+    if not gaps:
+        sliced = _slice_history(cached, start_date, end_date)
+        return sliced, {
+            "provider": "cache",
+            "used_fallback": False,
+            "reason": "cache_hit",
+            "rows": int(len(sliced)),
+            "cache_status": "hit",
+        }
+
+    parts = [cached]
+    gap_provider = "schwab"
+    gap_filled = False
+    for gap_start, gap_end in gaps:
+        gap_frame, gap_meta = _fetch_remote_history(symbol, gap_start, gap_end, schwab_auth=schwab_auth)
+        gap_provider = str(gap_meta.get("provider") or gap_provider)
+        if gap_frame is not None and not gap_frame.empty:
+            parts.append(gap_frame)
+            gap_filled = True
+    merged = pd.concat(parts)
+    merged = merged.sort_index()
+    merged = merged[~merged.index.duplicated(keep="first")]
+    sliced = _slice_history(merged, start_date, end_date)
+    provider = f"cache+{gap_provider}" if gap_filled else "cache"
+    return sliced, {
+        "provider": provider,
+        "used_fallback": False,
+        "reason": "cache_partial" if gap_filled else "cache_gap_unfilled",
+        "rows": int(len(sliced)),
+        "cache_status": "partial",
+        "gap_provider": gap_provider,
+        "gaps": [{"start": start, "end": end} for start, end in gaps],
+    }
 
 
 def _fetch_history_schwab(
@@ -407,14 +810,12 @@ def _fetch_history_schwab(
     end_date: str,
     auth: DualSchwabAuth | None = None,
 ) -> pd.DataFrame:
+    from market_data import schwab_daily_pricehistory_params
+
     url = "https://api.schwabapi.com/marketdata/v1/pricehistory"
-    params = {
-        "symbol": str(symbol).upper().strip(),
-        "periodType": "month",
-        "frequencyType": "daily",
-        "startDate": int(datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc).timestamp() * 1000),
-        "endDate": int(datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).timestamp() * 1000),
-    }
+    start_ms = int(datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    params = schwab_daily_pricehistory_params(symbol, start_ms, end_ms, extended=True)
     try:
         session_auth = auth or DualSchwabAuth(skill_dir=_runtime_skill_dir(), auto_refresh=False)
         token = session_auth.get_market_token()
@@ -643,7 +1044,34 @@ def _prepare_context(
         "membership_filtered_out": 0,
         "universe_preset": preset_key if watchlist is None else "custom",
         "account_focus_honored": bool(honor_account_focus and watchlist is None),
+        "history_warmup_short": 0,
+        "history_warmup_calendar_days": int(HISTORY_WARMUP_DAYS),
+        "history_warmup_sessions_required": int(INDICATOR_WARMUP_SESSIONS),
+        "history_fetch_note": HISTORY_FETCH_NOTE,
+        "history_provider_cache": 0,
+        "history_cache_hit": 0,
+        "history_cache_partial": 0,
+        "history_cache_miss": 0,
+        "price_quality_excluded_count": 0,
+        "no_data_count": 0,
+        "price_quality_excluded": [],
+        "no_data_tickers": [],
+        "survivorship_note": SURVIVORSHIP_NOTE,
     }
+    cache_dir = resolve_price_cache_dir(get_backtest_price_cache_dir(sd), sd)
+    data_integrity["price_cache_enabled"] = cache_dir is not None
+    data_integrity["price_cache_dir"] = str(cache_dir) if cache_dir is not None else None
+    data_integrity["price_cache_present"] = bool(cache_dir is not None and cache_dir.is_dir())
+    quality_on = bool(get_backtest_price_quality_enabled(sd))
+    quality_move = float(get_backtest_price_quality_move_pct(sd))
+    quality_min_reversals = int(get_backtest_price_quality_min_reversals(sd))
+    data_integrity["price_quality_enabled"] = quality_on
+    data_integrity["price_quality_move_pct"] = quality_move
+    data_integrity["price_quality_min_reversals"] = quality_min_reversals
+    from market_data import SCHWAB_DAILY_EXTENDED_PERIOD_YEARS
+
+    data_integrity["history_period_type"] = "year"
+    data_integrity["history_period_years"] = int(SCHWAB_DAILY_EXTENDED_PERIOD_YEARS)
     pad = max(0, int(history_pad_days or 0))
     fetch_start = start_date
     if pad:
@@ -688,17 +1116,37 @@ def _prepare_context(
                     len(universe),
                 )
 
-    for ticker in universe:
-        df, history_meta = _fetch_history_with_meta(ticker, fetch_start, end_date, schwab_auth=schwab_auth)
+    def _record_fetch(ticker: str, df: pd.DataFrame, history_meta: dict[str, Any]) -> bool:
+        """Count the fetch and return False when the ticker must not enter the book."""
         history_meta_by_ticker[ticker] = dict(history_meta or {})
         data_integrity["history_fetch_total"] = int(data_integrity.get("history_fetch_total", 0) or 0) + 1
         provider = str(history_meta.get("provider") or "unknown")
+        cache_status = str(history_meta.get("cache_status") or "off")
         reason = str(history_meta.get("reason") or "unknown")
         reason_counts = dict(data_integrity.get("history_reason_counts") or {})
         reason_counts[reason] = int(reason_counts.get(reason, 0) or 0) + 1
         data_integrity["history_reason_counts"] = reason_counts
-        if provider == "schwab":
+        if cache_status == "hit":
+            data_integrity["history_cache_hit"] = int(data_integrity.get("history_cache_hit", 0) or 0) + 1
+        elif cache_status == "partial":
+            data_integrity["history_cache_partial"] = int(data_integrity.get("history_cache_partial", 0) or 0) + 1
+        elif cache_status == "miss":
+            data_integrity["history_cache_miss"] = int(data_integrity.get("history_cache_miss", 0) or 0) + 1
+        if provider == "cache":
+            data_integrity["history_provider_cache"] = int(data_integrity.get("history_provider_cache", 0) or 0) + 1
+        elif provider == "schwab":
             data_integrity["history_provider_schwab"] = int(data_integrity.get("history_provider_schwab", 0) or 0) + 1
+        elif provider.startswith("cache+"):
+            data_integrity["history_provider_cache"] = int(data_integrity.get("history_provider_cache", 0) or 0) + 1
+            gap_provider = provider.split("+", 1)[1]
+            if gap_provider == "schwab":
+                data_integrity["history_provider_schwab"] = (
+                    int(data_integrity.get("history_provider_schwab", 0) or 0) + 1
+                )
+            elif gap_provider == "yfinance":
+                data_integrity["history_provider_yfinance"] = (
+                    int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
+                )
         elif provider == "yfinance":
             data_integrity["history_provider_yfinance"] = (
                 int(data_integrity.get("history_provider_yfinance", 0) or 0) + 1
@@ -707,16 +1155,38 @@ def _prepare_context(
             data_integrity["history_provider_unknown"] = int(data_integrity.get("history_provider_unknown", 0) or 0) + 1
         if bool(history_meta.get("used_fallback")):
             data_integrity["history_fallback_used"] = int(data_integrity.get("history_fallback_used", 0) or 0) + 1
-        if df.empty or len(df) < MIN_BARS:
-            if df.empty:
-                data_integrity["history_fetch_empty"] = int(data_integrity.get("history_fetch_empty", 0) or 0) + 1
-            else:
-                data_integrity["history_fetch_too_short"] = (
-                    int(data_integrity.get("history_fetch_too_short", 0) or 0) + 1
+        if df.empty:
+            data_integrity["history_fetch_empty"] = int(data_integrity.get("history_fetch_empty", 0) or 0) + 1
+            data_integrity["no_data_count"] = int(data_integrity.get("no_data_count", 0) or 0) + 1
+            note = {"ticker": ticker, "reason": "no_data"}
+            data_integrity["no_data_tickers"].append(note)
+            excluded.append({"ticker": ticker, "reason": "no_data", "bars": 0})
+            return False
+        if quality_on:
+            quality = screen_price_quality(df, move_pct=quality_move, min_reversals=quality_min_reversals)
+            if quality is not None:
+                record = {"ticker": ticker, **quality}
+                data_integrity["price_quality_excluded"].append(record)
+                data_integrity["price_quality_excluded_count"] = (
+                    int(data_integrity.get("price_quality_excluded_count", 0) or 0) + 1
                 )
+                excluded.append(record)
+                return False
+        if len(df) < MIN_BARS:
+            data_integrity["history_fetch_too_short"] = int(data_integrity.get("history_fetch_too_short", 0) or 0) + 1
             excluded.append({"ticker": ticker, "reason": "insufficient_history", "bars": len(df)})
+            return False
+        return True
+
+    for ticker in universe:
+        df, history_meta = _fetch_history_with_meta(
+            ticker, fetch_start, end_date, schwab_auth=schwab_auth, cache_dir=cache_dir
+        )
+        if not _record_fetch(ticker, df, history_meta):
             continue
         price_data[ticker] = add_indicators(df)
+        if sessions_before_start(df, start_date) < INDICATOR_WARMUP_SESSIONS:
+            data_integrity["history_warmup_short"] = int(data_integrity.get("history_warmup_short", 0) or 0) + 1
         try:
             sector_etf_by_ticker[ticker] = get_ticker_sector_etf(ticker, skill_dir=sd)
         except Exception:
@@ -724,9 +1194,21 @@ def _prepare_context(
 
     sector_perf: dict[str, pd.DataFrame] = {}
     for sym in sorted(set(SECTOR_ETFS + ["SPY"])):
-        sdf, _meta = _fetch_history_with_meta(sym, fetch_start, end_date, schwab_auth=schwab_auth)
-        if not sdf.empty and len(sdf) >= MIN_BARS:
-            sector_perf[sym] = sdf
+        sdf, _sector_meta = _fetch_history_with_meta(
+            sym, fetch_start, end_date, schwab_auth=schwab_auth, cache_dir=cache_dir
+        )
+        if sdf.empty or len(sdf) < MIN_BARS:
+            continue
+        if quality_on:
+            sector_quality = screen_price_quality(sdf, move_pct=quality_move, min_reversals=quality_min_reversals)
+            if sector_quality is not None:
+                record = {"ticker": sym, "role": "sector", **sector_quality}
+                data_integrity["price_quality_excluded"].append(record)
+                data_integrity["price_quality_excluded_count"] = (
+                    int(data_integrity.get("price_quality_excluded_count", 0) or 0) + 1
+                )
+                continue
+        sector_perf[sym] = sdf
 
     return BacktestContext(
         watchlist=sorted(price_data.keys()),
@@ -1029,14 +1511,20 @@ def _simulate_exit(
     *,
     min_hold_before_trail: int | None = None,
     skill_dir: Path | None = None,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
 ) -> tuple[float, pd.Timestamp, str]:
     sd = skill_dir or SKILL_DIR
     if min_hold_before_trail is None:
         min_hold_before_trail = int(get_backtest_min_hold_days_before_trail(sd))
-    entry_price = float(df["close"].iloc[entry_idx])
+    if entry_price is None:
+        entry_price = float(df["close"].iloc[entry_idx])
+    else:
+        entry_price = float(entry_price)
     highest_close = entry_price
     last_idx = min(entry_idx + hold_days, len(df) - 1)
-    for j in range(entry_idx + 1, last_idx + 1):
+    first_j = entry_idx if evaluate_entry_bar else entry_idx + 1
+    for j in range(first_j, last_idx + 1):
         px = float(df["close"].iloc[j])
         highest_close = max(highest_close, px)
         if _stop_triggered(
@@ -1058,6 +1546,9 @@ def _plan_exit_manager_for_entry(
     stop_pct: float,
     skill_dir: Path,
     diagnostics: dict[str, Any],
+    *,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
 ) -> tuple[int | None, str | None]:
     """Run the exit-manager simulator once per entry.
 
@@ -1081,6 +1572,8 @@ def _plan_exit_manager_for_entry(
             float(stop_pct),
             skill_dir=skill_dir,
             mode=mode,
+            entry_price=entry_price,
+            evaluate_entry_bar=evaluate_entry_bar,
         )
     except Exception:
         diagnostics["exit_manager_simulated_errors"] = int(diagnostics.get("exit_manager_simulated_errors", 0) or 0) + 1
@@ -1192,8 +1685,7 @@ def _serialize_equity_curves(
     return {
         "equity_curve": [{"date": d or None, "equity": round(v, 2)} for d, v in pairs],
         "drawdown_curve": [
-            {"date": d or None, "drawdown_pct": round(100.0 * float(dd_i), 3)}
-            for (d, _), dd_i in zip(pairs, dd)
+            {"date": d or None, "drawdown_pct": round(100.0 * float(dd_i), 3)} for (d, _), dd_i in zip(pairs, dd)
         ],
     }
 
@@ -1248,6 +1740,7 @@ def _simulate_portfolio_equity(
             "gross_capped_at_equity": True,
             "starting_equity": float(starting_equity),
             "ending_equity": float(starting_equity),
+            "admitted": [],
         }
 
     parsed: list[dict[str, Any]] = []
@@ -1261,12 +1754,16 @@ def _simulate_portfolio_equity(
             continue
         if xd < ed:
             ed, xd = xd, ed
+        score = _entry_time_score(t)
         parsed.append(
             {
                 "entry_date": ed,
                 "exit_date": xd,
                 "net_return": float(t.get("net_return", 0.0) or 0.0),
                 "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
+                "ticker": str(t.get("ticker") or "").upper(),
+                "signal_score": score,
+                "_score_priority": t.get("_score_priority"),
             }
         )
     if not parsed:
@@ -1283,9 +1780,11 @@ def _simulate_portfolio_equity(
             "gross_capped_at_equity": True,
             "starting_equity": float(starting_equity),
             "ending_equity": float(starting_equity),
+            "admitted": [],
         }
 
-    parsed.sort(key=lambda t: (t["entry_date"], t["exit_date"]))
+    # Exit date is not a tie-break. Same-day order is score, then ticker.
+    parsed.sort(key=portfolio_admission_key)
     equity = float(starting_equity)
     peak = equity
     worst_dd = 0.0
@@ -1298,6 +1797,7 @@ def _simulate_portfolio_equity(
     open_notional = 0.0
     dollar_win = 0.0
     dollar_loss = 0.0
+    admitted: list[dict[str, Any]] = []
     curve: list[tuple[str, float]] = [(parsed[0]["entry_date"].isoformat(), equity)]
 
     def _close_due(now: pd.Timestamp) -> None:
@@ -1356,6 +1856,14 @@ def _simulate_portfolio_equity(
                 "allocated": allocated,
             }
         )
+        score = t.get("signal_score")
+        admitted.append(
+            {
+                "ticker": t.get("ticker") or "",
+                "entry_date": pd.Timestamp(t["entry_date"]).date().isoformat(),
+                "signal_score": None if score is None else float(score),
+            }
+        )
         concurrent_samples.append(len(open_positions))
         if len(open_positions) > peak_concurrent:
             peak_concurrent = len(open_positions)
@@ -1380,6 +1888,7 @@ def _simulate_portfolio_equity(
         "gross_capped_at_equity": True,
         "starting_equity": float(starting_equity),
         "ending_equity": float(equity),
+        "admitted": admitted,
     }
 
 
@@ -1577,10 +2086,13 @@ def _run_backtest_core(
         "exits_vcp_invalidation": 0,
         "exits_final_liquidation": 0,
         "horizon_admit": 0,
+        "entry_fill_skipped_no_next_bar": 0,
     }
 
     entry_family = get_backtest_entry_family(sd)
+    entry_fill = get_backtest_entry_fill(sd)
     diagnostics["entry_family"] = entry_family
+    diagnostics["entry_fill"] = entry_fill
     if selected_ids:
         diagnostics["strategy_ids"] = list(selected_ids)
         try:
@@ -1696,7 +2208,7 @@ def _run_backtest_core(
         for idx, ts in enumerate(df.index):
             t = pd.Timestamp(ts)
             idx_map[t] = idx
-            if idx >= 200:
+            if idx >= REPLAY_MIN_BAR_INDEX:
                 timeline_dates.add(t)
         ticker_date_index[ticker] = idx_map
 
@@ -1745,6 +2257,10 @@ def _run_backtest_core(
             "excluded_count": len(context.excluded_tickers),
             "universe_size": len(context.watchlist),
             "data_integrity": context.data_integrity,
+            "entry_fill": entry_fill,
+            "history_warmup_calendar_days": HISTORY_WARMUP_DAYS,
+            "history_warmup_sessions_required": INDICATOR_WARMUP_SESSIONS,
+            "history_fetch_note": HISTORY_FETCH_NOTE,
             "findings": "No valid timeline generated over the requested window.",
             "trades_sample": [],
             "trade_ranks": rank_closed_trades(all_trades),
@@ -1823,11 +2339,7 @@ def _run_backtest_core(
         diagnostics["prob_rank_mode"] = mode
         if mode == "off" or not candidates:
             return candidates
-        scored = [
-            c
-            for c in candidates
-            if c.signal.get("expected_return_40d") is not None
-        ]
+        scored = [c for c in candidates if c.signal.get("expected_return_40d") is not None]
         diagnostics["prob_rank_scored"] = int(diagnostics.get("prob_rank_scored", 0) or 0) + len(scored)
         if not scored:
             return candidates
@@ -1867,7 +2379,11 @@ def _run_backtest_core(
             if df is None or df.empty:
                 continue
             idx = ticker_date_index.get(ticker, {}).get(day_ts)
-            if idx is None or idx <= pos.entry_idx:
+            # same_close enters on the bar's close, so that bar is not an exit.
+            # next_open enters on the bar's open, so that bar's close can exit.
+            if idx is None or idx < pos.entry_idx:
+                continue
+            if idx == pos.entry_idx and entry_fill != "next_open":
                 continue
             px = float(df["close"].iloc[idx])
             pos.highest_close = max(float(pos.highest_close), px)
@@ -1893,11 +2409,7 @@ def _run_backtest_core(
                 diagnostics["exits_sma50_break"] = int(diagnostics["exits_sma50_break"]) + 1
             elif exit_reason == "vcp_invalidation":
                 diagnostics["exits_vcp_invalidation"] = int(diagnostics["exits_vcp_invalidation"]) + 1
-            if (
-                not exit_reason
-                and pos.exit_manager_exit_idx is not None
-                and int(idx) >= int(pos.exit_manager_exit_idx)
-            ):
+            if not exit_reason and pos.exit_manager_exit_idx is not None and int(idx) >= int(pos.exit_manager_exit_idx):
                 exit_reason = pos.exit_manager_reason or "exit_manager"
                 diagnostics["exits_exit_manager"] = int(diagnostics.get("exits_exit_manager", 0) or 0) + 1
             if not exit_reason:
@@ -1913,7 +2425,13 @@ def _run_backtest_core(
             )
             gross_ret = (float(px) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
             current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
-            mfe, mae = _compute_mfe_mae(df, pos.entry_idx, idx, float(pos.entry_price))
+            mfe, mae = _compute_mfe_mae(
+                df,
+                pos.entry_idx,
+                idx,
+                float(pos.entry_price),
+                include_entry_bar=entry_fill == "next_open",
+            )
             ohlc_path = _build_ohlc_path(df, pos.entry_idx, idx) if _is_ohlc_path_logging_enabled() else []
 
             regime_tags = lookup_regime_at(pos.entry_date, spy_above_200, spy_regime_bucket)
@@ -1922,6 +2440,8 @@ def _run_backtest_core(
                     "ticker": pos.ticker,
                     "entry_date": pd.Timestamp(pos.entry_date).isoformat(),
                     "exit_date": pd.Timestamp(day_ts).isoformat(),
+                    "entry_fill": entry_fill,
+                    "signal_date": pos.signal.get("entry_date"),
                     "entry_price": round(float(pos.entry_price), 4),
                     "exit_price": round(float(px), 4),
                     "return": float(gross_ret),
@@ -1977,7 +2497,7 @@ def _run_backtest_core(
             if df is None or df.empty:
                 continue
             idx = ticker_date_index.get(ticker, {}).get(day_ts)
-            if idx is None or idx < 200 or idx >= len(df) - 1:
+            if idx is None or idx < REPLAY_MIN_BAR_INDEX or idx >= len(df) - 1:
                 continue
             window = df.iloc[: idx + 1]
 
@@ -2023,9 +2543,7 @@ def _run_backtest_core(
 
             entry_shadow = evaluate_entry_timing_shadow(window, sd)
             if str(entry_shadow.get("mode") or "off") != "off":
-                diagnostics["entry_timing_shadow_evaluated"] = (
-                    int(diagnostics["entry_timing_shadow_evaluated"]) + 1
-                )
+                diagnostics["entry_timing_shadow_evaluated"] = int(diagnostics["entry_timing_shadow_evaluated"]) + 1
                 if entry_shadow.get("would_filter"):
                     diagnostics["entry_timing_shadow_would_filter"] = (
                         int(diagnostics["entry_timing_shadow_would_filter"]) + 1
@@ -2079,9 +2597,7 @@ def _run_backtest_core(
             if str(pts_cap.get("mode") or "off") != "off":
                 diagnostics["pts_52w_cap_evaluated"] = int(diagnostics["pts_52w_cap_evaluated"]) + 1
                 if pts_cap.get("would_filter"):
-                    diagnostics["pts_52w_cap_would_filter"] = (
-                        int(diagnostics["pts_52w_cap_would_filter"]) + 1
-                    )
+                    diagnostics["pts_52w_cap_would_filter"] = int(diagnostics["pts_52w_cap_would_filter"]) + 1
                     if pts_52w_cap_blocks_stage_a(pts_cap, sd):
                         diagnostics["pts_52w_cap_blocked"] = int(diagnostics["pts_52w_cap_blocked"]) + 1
                         continue
@@ -2097,9 +2613,7 @@ def _run_backtest_core(
             if str(early_stop_gate.get("mode") or "off") != "off":
                 diagnostics["early_stop_gate_evaluated"] = int(diagnostics["early_stop_gate_evaluated"]) + 1
                 if early_stop_gate.get("would_filter"):
-                    diagnostics["early_stop_gate_would_filter"] = (
-                        int(diagnostics["early_stop_gate_would_filter"]) + 1
-                    )
+                    diagnostics["early_stop_gate_would_filter"] = int(diagnostics["early_stop_gate_would_filter"]) + 1
                     if early_stop_gate_blocks_stage_a(early_stop_gate, sd):
                         diagnostics["early_stop_gate_blocked"] = int(diagnostics["early_stop_gate_blocked"]) + 1
                         continue
@@ -2300,7 +2814,14 @@ def _run_backtest_core(
                 if adaptive_size_mult < 0.999:
                     diagnostics["adaptive_guardrail_downsized"] = int(diagnostics["adaptive_guardrail_downsized"]) + 1
 
-            entry_price = float(df["close"].iloc[idx])
+            fill = resolve_entry_fill(df, idx, entry_fill, era_end=end)
+            if fill is None:
+                diagnostics["entry_fill_skipped_no_next_bar"] = (
+                    int(diagnostics.get("entry_fill_skipped_no_next_bar", 0) or 0) + 1
+                )
+                continue
+            entry_price = float(fill["entry_price"])
+            fill_idx = int(fill["fill_idx"])
             day_volume = float(df["volume"].iloc[idx]) if "volume" in df.columns else 0.0
             qty_hint = _estimate_order_qty(entry_price, day_volume, max_adv_participation=max_adv_participation)
             pm_mult = _safe_telemetry_float(signal.get("prediction_market_size_multiplier"), 1.0)
@@ -2343,7 +2864,7 @@ def _run_backtest_core(
             candidates.append(
                 CandidateSignal(
                     ticker=ticker,
-                    idx=idx,
+                    idx=fill_idx,
                     signal=signal,
                     reasons=reasons,
                     comps=comps,
@@ -2386,7 +2907,9 @@ def _run_backtest_core(
                 if risk_per_trade_pct > 0.0 and candidate.stop_pct > 0.0
                 else None
             )
-            sized_notional = float(size_by_risk) if size_by_risk is not None else float(day_equity) * float(position_size_pct)
+            sized_notional = (
+                float(size_by_risk) if size_by_risk is not None else float(day_equity) * float(position_size_pct)
+            )
             sized_notional = max(0.0, min(float(sized_notional), float(max_position_notional)))
             qty_by_size = int(sized_notional / candidate.entry_price)
             qty_by_cash = int(max(0.0, min(max_position_notional, current_cash)) / candidate.entry_price)
@@ -2404,14 +2927,21 @@ def _run_backtest_core(
                 continue
 
             current_cash -= notional
-            if max_positions_for_candidate > max_concurrent_positions and len(active_positions) >= max_concurrent_positions:
+            if (
+                max_positions_for_candidate > max_concurrent_positions
+                and len(active_positions) >= max_concurrent_positions
+            ):
                 diagnostics["adaptive_guardrail_extra_slot_entries"] = (
                     int(diagnostics["adaptive_guardrail_extra_slot_entries"]) + 1
                 )
+            entry_df = context.price_data.get(candidate.ticker)
+            fill_ts = day_ts
+            if entry_df is not None and 0 <= int(candidate.idx) < len(entry_df):
+                fill_ts = pd.Timestamp(entry_df.index[int(candidate.idx)])
             pos = ActivePosition(
                 ticker=candidate.ticker,
                 entry_idx=candidate.idx,
-                entry_date=day_ts,
+                entry_date=fill_ts,
                 entry_price=float(candidate.entry_price),
                 qty=int(qty),
                 day_volume=float(candidate.day_volume),
@@ -2430,7 +2960,6 @@ def _run_backtest_core(
                 telemetry=candidate.telemetry,
                 highest_close=float(candidate.entry_price),
             )
-            entry_df = context.price_data.get(candidate.ticker)
             if entry_df is not None and not entry_df.empty:
                 exit_idx, mgr_reason = _plan_exit_manager_for_entry(
                     entry_df,
@@ -2439,6 +2968,8 @@ def _run_backtest_core(
                     float(candidate.stop_pct),
                     sd,
                     diagnostics,
+                    entry_price=float(candidate.entry_price),
+                    evaluate_entry_bar=entry_fill == "next_open",
                 )
                 pos.exit_manager_exit_idx = exit_idx
                 pos.exit_manager_reason = mgr_reason
@@ -2476,9 +3007,17 @@ def _run_backtest_core(
             fee_per_share=fee_per_share,
             min_fee_per_order=min_fee_per_order,
         )
-        gross_ret = (float(exit_price) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+        gross_ret = (
+            (float(exit_price) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+        )
         current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
-        mfe, mae = _compute_mfe_mae(df, pos.entry_idx, exit_idx, float(pos.entry_price))
+        mfe, mae = _compute_mfe_mae(
+            df,
+            pos.entry_idx,
+            exit_idx,
+            float(pos.entry_price),
+            include_entry_bar=entry_fill == "next_open",
+        )
         ohlc_path = _build_ohlc_path(df, pos.entry_idx, exit_idx) if _is_ohlc_path_logging_enabled() else []
         regime_tags = lookup_regime_at(pos.entry_date, spy_above_200, spy_regime_bucket)
         all_trades.append(
@@ -2486,6 +3025,8 @@ def _run_backtest_core(
                 "ticker": pos.ticker,
                 "entry_date": pd.Timestamp(pos.entry_date).isoformat(),
                 "exit_date": pd.Timestamp(exit_date).isoformat(),
+                "entry_fill": entry_fill,
+                "signal_date": pos.signal.get("entry_date"),
                 "entry_price": round(float(pos.entry_price), 4),
                 "exit_price": round(float(exit_price), 4),
                 "return": float(gross_ret),
@@ -2589,6 +3130,10 @@ def _run_backtest_core(
             "score_stack_metrics": {},
             "provider_segment_metrics": {},
             "sector_regime_summary": summarize_sector_regime([]),
+            "entry_fill": entry_fill,
+            "history_warmup_calendar_days": HISTORY_WARMUP_DAYS,
+            "history_warmup_sessions_required": INDICATOR_WARMUP_SESSIONS,
+            "history_fetch_note": HISTORY_FETCH_NOTE,
             "findings": "No trades generated over the requested window.",
             "trades_sample": [],
             "trade_ranks": rank_closed_trades(all_trades),
@@ -2697,6 +3242,10 @@ def _run_backtest_core(
         "sector_regime_summary": sector_regime_summary,
         "trades_sample": all_trades[:5],
         "trade_ranks": rank_closed_trades(all_trades),
+        "entry_fill": entry_fill,
+        "history_warmup_calendar_days": HISTORY_WARMUP_DAYS,
+        "history_warmup_sessions_required": INDICATOR_WARMUP_SESSIONS,
+        "history_fetch_note": HISTORY_FETCH_NOTE,
         "findings": findings,
     }
     if include_all_trades:

@@ -368,6 +368,41 @@ def _yfinance_adjusted_raw_close_gap_pct(ticker: str, *, skill_dir: Path | str |
         return None
 
 
+# periodType=month serves at most six months of daily candles. A replay window
+# plus indicator warmup is longer than that. The daily helper that has returned
+# history back to the 1980s sends periodType=year, period=20, frequency=1, and
+# the absolute start/end. Live callers keep periodType=month.
+SCHWAB_DAILY_EXTENDED_PERIOD_YEARS = 20
+
+
+def schwab_daily_pricehistory_params(
+    symbol: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    extended: bool = False,
+) -> dict[str, Any]:
+    """Query string for Schwab daily candles.
+
+    ``extended=False`` is the live/default request (``periodType=month``).
+    Replay passes ``extended=True`` so a multi-year era plus the pre-window
+    warmup is actually returned.
+    """
+    params: dict[str, Any] = {
+        "symbol": str(symbol).upper().strip(),
+        "frequencyType": "daily",
+        "startDate": int(start_ms),
+        "endDate": int(end_ms),
+    }
+    if extended:
+        params["periodType"] = "year"
+        params["period"] = int(SCHWAB_DAILY_EXTENDED_PERIOD_YEARS)
+        params["frequency"] = 1
+    else:
+        params["periodType"] = "month"
+    return params
+
+
 def get_daily_history_with_meta(
     ticker: str,
     days: int = 300,
@@ -376,6 +411,7 @@ def get_daily_history_with_meta(
     *,
     start_date: date | datetime | str | None = None,
     end_date: date | datetime | str | None = None,
+    extended_history: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Fetch daily OHLCV and return provider lineage metadata.
@@ -402,13 +438,7 @@ def get_daily_history_with_meta(
     end_ms = int(end_dt.timestamp() * 1000)
 
     url = f"{SCHWAB_BASE}/marketdata/v1/pricehistory"
-    params = {
-        "symbol": ticker,
-        "periodType": "month",
-        "frequencyType": "daily",
-        "startDate": start_ms,
-        "endDate": end_ms,
-    }
+    params = schwab_daily_pricehistory_params(ticker, start_ms, end_ms, extended=bool(extended_history))
     meta: dict[str, Any] = {
         "provider": "schwab",
         "used_fallback": False,
@@ -416,6 +446,8 @@ def get_daily_history_with_meta(
         "rows": 0,
         "start_date": start_dt.date().isoformat(),
         "end_date": end_dt.date().isoformat(),
+        "period_type": params.get("periodType"),
+        "period": params.get("period"),
     }
 
     try:
@@ -472,6 +504,7 @@ def get_daily_history_with_meta(
         # Keep the fallback behavior safe and non-crashing.
         try:
             from config import get_prefer_schwab_data
+
             if get_prefer_schwab_data(skill_dir):
                 LOG.warning("Schwab data failed for %s (%s), using yfinance fallback", ticker, e)
         except ImportError:
@@ -485,9 +518,7 @@ def get_daily_history_with_meta(
         )
         meta["rows"] = int(len(out))
         meta["fallback_reason"] = f"{meta['fallback_reason']}|{yf_reason}"
-        meta["history_price_basis"] = (
-            "yfinance_adjusted" if _yf_meta_adjusted_flag(skill_dir) else "yfinance_raw_close"
-        )
+        meta["history_price_basis"] = "yfinance_adjusted" if _yf_meta_adjusted_flag(skill_dir) else "yfinance_raw_close"
         _emit_obs("observe_lineage", skill_dir, "market", meta)
         return out, meta
 
@@ -500,6 +531,7 @@ def get_daily_history(
     *,
     start_date: date | datetime | str | None = None,
     end_date: date | datetime | str | None = None,
+    extended_history: bool = False,
 ) -> pd.DataFrame:
     """
     Fetch daily OHLCV using Schwab Market Session. Falls back to yfinance on 401/errors.
@@ -513,6 +545,7 @@ def get_daily_history(
         skill_dir=skill_dir,
         start_date=start_date,
         end_date=end_date,
+        extended_history=extended_history,
     )
     return df
 
@@ -610,9 +643,7 @@ _LIVE_QUOTE_PATHS: tuple[tuple[str, ...], ...] = (
     ("extended", "lastPrice"),
     ("extended", "mark"),
 )
-_PRIOR_CLOSE_QUOTE_PATHS: tuple[tuple[str, ...], ...] = (
-    ("quote", "closePrice"),
-)
+_PRIOR_CLOSE_QUOTE_PATHS: tuple[tuple[str, ...], ...] = (("quote", "closePrice"),)
 
 
 def _extract_quote_path(quote: dict[str, Any] | None, paths: tuple[tuple[str, ...], ...]) -> float | None:

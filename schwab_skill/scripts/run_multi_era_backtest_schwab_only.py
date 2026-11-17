@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""Schwab-only multi-era replay.
+
+Each era is a January-start window. Indicators are only valid on the first
+session when the fetch includes warmup *before* that January. The engine
+fetches ``HISTORY_WARMUP_DAYS`` (420) calendar days early, about 290 sessions,
+which covers the 252 sessions a 52-week high needs and the 200 a 200-day
+average needs. Schwab daily history for that span must use periodType=year,
+period=20. periodType=month returns at most six months, so a series that
+starts on the era's January 1 cannot trade until about the 200th session
+(mid-October). Those books never saw the 2020 crash or the 2022 bear.
+
+Entry fill defaults to the next session's open (``BACKTEST_ENTRY_FILL=next_open``).
+``same_close`` is the old signal-bar close, kept for comparison.
+
+    python scripts/run_multi_era_backtest_schwab_only.py
+
+    BACKTEST_ENTRY_FILL=same_close python scripts/run_multi_era_backtest_schwab_only.py
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -72,6 +91,13 @@ DATA_INTEGRITY_SUM_KEYS = (
     "history_provider_yfinance",
     "history_provider_unknown",
     "history_fallback_used",
+    "history_warmup_short",
+    "history_provider_cache",
+    "history_cache_hit",
+    "history_cache_partial",
+    "history_cache_miss",
+    "price_quality_excluded_count",
+    "no_data_count",
 )
 
 
@@ -208,7 +234,7 @@ def _aggregate_era(
     chunk_payloads: list[dict[str, Any]],
     universe_size: int,
 ) -> dict[str, Any]:
-    from backtest import _simulate_portfolio_equity
+    from backtest import SURVIVORSHIP_NOTE, _simulate_portfolio_equity, portfolio_admission_key
     from config import (
         get_backtest_portfolio_max_positions,
         get_backtest_portfolio_starting_equity,
@@ -219,12 +245,25 @@ def _aggregate_era(
     trades: list[dict[str, Any]] = []
     excluded_total = 0
     integrity_totals: dict[str, int] = {k: 0 for k in DATA_INTEGRITY_SUM_KEYS}
+    price_quality_excluded: list[dict[str, Any]] = []
+    no_data_tickers: list[dict[str, Any]] = []
+    price_cache_enabled = False
+    price_cache_dir: str | None = None
     for p in chunk_payloads:
         excluded_total += int(p.get("excluded_count", 0) or 0)
         chunk_integrity = p.get("data_integrity") or {}
         for k in DATA_INTEGRITY_SUM_KEYS:
             integrity_totals[k] += int(chunk_integrity.get(k, 0) or 0)
+        price_quality_excluded.extend(list(p.get("price_quality_excluded") or []))
+        no_data_tickers.extend(list(p.get("no_data_tickers") or []))
+        if p.get("price_cache_enabled"):
+            price_cache_enabled = True
+        if p.get("price_cache_dir"):
+            price_cache_dir = str(p.get("price_cache_dir"))
         for t in p.get("trades", []) or []:
+            score = t.get("signal_score")
+            if score is None:
+                score = t.get("_score_priority")
             trades.append(
                 {
                     "return": float(t.get("return", 0.0) or 0.0),
@@ -232,9 +271,12 @@ def _aggregate_era(
                     "entry_date": str(t.get("entry_date") or ""),
                     "exit_date": str(t.get("exit_date") or ""),
                     "stop_pct": float(t.get("stop_pct", 0.0) or 0.0),
+                    "ticker": str(t.get("ticker") or ""),
+                    "signal_score": score,
                 }
             )
-    trades.sort(key=lambda t: (t.get("entry_date") or t.get("exit_date") or "", t.get("exit_date") or ""))
+    # Same-day order is entry-time score, then ticker. Not the exit date.
+    trades.sort(key=portfolio_admission_key)
     ret_net = [float(t["net_return"]) for t in trades]
     total = len(trades)
     if total == 0:
@@ -250,6 +292,11 @@ def _aggregate_era(
             "universe_size": universe_size,
             "excluded_count": excluded_total,
             "data_integrity": integrity_totals,
+            "price_quality_excluded": price_quality_excluded,
+            "no_data_tickers": no_data_tickers,
+            "survivorship_note": SURVIVORSHIP_NOTE if no_data_tickers else None,
+            "price_cache_enabled": price_cache_enabled,
+            "price_cache_dir": price_cache_dir,
             "portfolio_summary": None,
         }
     wins_net = sum(1 for r in ret_net if r > 0)
@@ -277,6 +324,11 @@ def _aggregate_era(
         "universe_size": universe_size,
         "excluded_count": excluded_total,
         "data_integrity": integrity_totals,
+        "price_quality_excluded": price_quality_excluded,
+        "no_data_tickers": no_data_tickers,
+        "survivorship_note": SURVIVORSHIP_NOTE if no_data_tickers else None,
+        "price_cache_enabled": price_cache_enabled,
+        "price_cache_dir": price_cache_dir,
         "portfolio_summary": {
             "capacity_filtered": int(portfolio["capacity_filtered"]),
             "avg_concurrent": float(portfolio["avg_concurrent"]),
@@ -385,6 +437,7 @@ def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[di
                 "signal_score": _maybe_float(t.get("signal_score")),
                 "mirofish_conviction": _maybe_float(t.get("mirofish_conviction")),
                 "exit_reason": str(t.get("exit_reason") or ""),
+                "entry_fill": t.get("entry_fill"),
                 "ticker": t.get("ticker"),
                 "entry_price": _maybe_float(t.get("entry_price")),
                 "exit_price": _maybe_float(t.get("exit_price")),
@@ -415,9 +468,9 @@ def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[di
                 row["ohlc_path"] = path
             out.append(row)
         return out
-    # Legacy projection: byte-identical to the pre-augmentation schema so
-    # existing artifacts and downstream consumers (phase1_trade_diagnostics,
-    # phase2_common.load_trades fallback) keep working unchanged.
+    # Legacy projection keeps the pre-augmentation numeric schema, plus the
+    # entry-time fields the portfolio book needs (ticker, signal_score) and
+    # the fill mode. Exit date is stored but is not an admission key.
     return [
         {
             "return": float(t.get("return", 0.0) or 0.0),
@@ -428,6 +481,8 @@ def _project_trades(trades_in: list[dict[str, Any]], augmented: bool) -> list[di
             "signal_score": _maybe_float(t.get("signal_score")),
             "mirofish_conviction": _maybe_float(t.get("mirofish_conviction")),
             "exit_reason": str(t.get("exit_reason") or ""),
+            "ticker": t.get("ticker"),
+            "entry_fill": t.get("entry_fill"),
         }
         for t in trades_in
     ]
@@ -492,6 +547,18 @@ def _run_single_chunk(
         "end": end_date,
         "chunk_size": len(tickers),
         "excluded_count": excluded_count,
+        "entry_fill": metrics.get("entry_fill"),
+        "history_warmup_calendar_days": metrics.get("history_warmup_calendar_days"),
+        "history_warmup_sessions_required": metrics.get("history_warmup_sessions_required"),
+        "history_fetch_note": metrics.get("history_fetch_note"),
+        "history_fetch_start": (metrics.get("data_integrity") or {}).get("history_fetch_start"),
+        "history_period_type": (metrics.get("data_integrity") or {}).get("history_period_type"),
+        "history_period_years": (metrics.get("data_integrity") or {}).get("history_period_years"),
+        "price_cache_enabled": bool(raw_integrity.get("price_cache_enabled")),
+        "price_cache_dir": raw_integrity.get("price_cache_dir"),
+        "price_quality_excluded": list(raw_integrity.get("price_quality_excluded") or []),
+        "no_data_tickers": list(raw_integrity.get("no_data_tickers") or []),
+        "survivorship_note": raw_integrity.get("survivorship_note"),
         "data_integrity": data_integrity,
         "trades": compact_trades,
     }
@@ -922,12 +989,25 @@ def _orchestrate(
         _write_progress(run_id, completed, None, "running", failed, era_state)
         print(f"[multi-era] completed {name}: trades={row.get('total_trades')} oos_pf={row.get('profit_factor_net')}")
 
+    from backtest import HISTORY_FETCH_NOTE, HISTORY_WARMUP_DAYS, INDICATOR_WARMUP_SESSIONS, SURVIVORSHIP_NOTE
+    from config import get_backtest_entry_fill, get_backtest_price_cache_dir
+    from market_data import SCHWAB_DAILY_EXTENDED_PERIOD_YEARS
+
     out = ARTIFACT_DIR / f"multi_era_backtest_schwab_only_{run_id}.json"
     payload = {
         "run_id": run_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schwab_only": True,
         "universe_preset": preset,
+        "entry_fill": get_backtest_entry_fill(_runtime_skill_dir()),
+        "history_warmup_calendar_days": HISTORY_WARMUP_DAYS,
+        "history_warmup_sessions_required": INDICATOR_WARMUP_SESSIONS,
+        "history_period_type": "year",
+        "history_period_years": int(SCHWAB_DAILY_EXTENDED_PERIOD_YEARS),
+        "history_fetch_note": HISTORY_FETCH_NOTE,
+        "price_cache_dir": get_backtest_price_cache_dir(_runtime_skill_dir()) or None,
+        "price_cache_enabled": bool(get_backtest_price_cache_dir(_runtime_skill_dir())),
+        "survivorship_note": SURVIVORSHIP_NOTE,
         "eras": [name for _, _, name in eras],
         "results": completed,
         "failed_eras": failed,
