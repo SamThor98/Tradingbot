@@ -434,13 +434,19 @@ def evaluate_book(
 
 
 def _primary_rank(stats: dict[str, Any]) -> tuple[int, float]:
-    """Higher is better. Unbounded positive ratios outrank every finite score."""
+    """Higher is better. Unbounded positive ratios outrank every finite score.
+
+    A calibration book sets ``lower_is_better`` so a smaller Brier ranks first.
+    """
     if stats.get("primary_unbounded"):
         return (1, float(stats.get("avg_realized_return_pct") or 0.0))
     score = stats.get("primary_score")
     if score is None:
         return (0, float("-inf"))
-    return (0, float(score))
+    value = float(score)
+    if stats.get("lower_is_better"):
+        value = -value
+    return (0, value)
 
 
 def _replay_without_live_floor(stats: dict[str, Any], config: ObjectiveConfig) -> bool:
@@ -461,6 +467,8 @@ def compare_books(
         return "insufficient_sample"
     if _replay_without_live_floor(candidate, config) or _replay_without_live_floor(baseline, config):
         return "insufficient_live_sample"
+    if candidate.get("week_gate") == "insufficient" or baseline.get("week_gate") == "insufficient":
+        return "insufficient_sample"
     if candidate.get("degenerate") or candidate.get("decision_prompt") is False:
         return "no_decision_variance"
     if _primary_rank(candidate) <= _primary_rank(baseline):

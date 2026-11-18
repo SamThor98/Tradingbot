@@ -85,6 +85,16 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "primary_metric": row.get("primary_metric"),
                 "primary_score": row.get("primary_score"),
                 "max_drawdown": row.get("max_drawdown"),
+                "spy_total_return": row.get("spy_total_return"),
+                "excess_vs_spy": row.get("excess_vs_spy"),
+                "selection_vs_pool": row.get("selection_vs_pool"),
+                "sample_status": row.get("sample_status"),
+                "week_gate": row.get("week_gate"),
+                "n_weeks": row.get("n_weeks"),
+                "round_trip_cost_pct": row.get("round_trip_cost_pct"),
+                "sortino_cost_10bps": row.get("sortino_cost_10bps"),
+                "brier": row.get("brier"),
+                "reliability": row.get("reliability"),
                 "win_rate": row.get("win_rate"),
                 "n_longs": row.get("n_longs"),
                 "n_skips": row.get("n_skips"),
@@ -147,10 +157,14 @@ def _lab_report(skill_dir: Path, day: date) -> dict[str, Any] | None:
 
 
 def _markdown(payload: dict[str, Any]) -> str:
+    from core.tab_agent_book import COLUMN_GUIDE
+
     lines = [
         f"# Tab agent digest {payload.get('day')}",
         "",
         str(payload.get("note") or ""),
+        "",
+        COLUMN_GUIDE,
         "",
     ]
     for tab in payload.get("tabs") or []:
@@ -200,14 +214,23 @@ def _markdown(payload: dict[str, Any]) -> str:
             elif row.get("degenerate"):
                 marker = " no-variance"
             skips = f" skips={row.get('n_skips')}" if row.get("n_skips") is not None else ""
+            excess = row.get("excess_vs_spy") if isinstance(row.get("excess_vs_spy"), dict) else {}
+            selection = row.get("selection_vs_pool") if isinstance(row.get("selection_vs_pool"), dict) else {}
             lines.append(
                 f"- {row.get('prompt_key')} {row.get('version_id')} "
                 f"n={row.get('n')} longs={row.get('n_longs')}{skips} "
+                f"weeks={row.get('n_weeks')} sample={row.get('sample_status')} "
                 f"win_rate={row.get('win_rate')} "
                 f"live={row.get('n_live')} replay={row.get('n_replay')} "
                 f"{row.get('primary_metric')}={row.get('primary_score')} "
+                f"spy={row.get('spy_total_return')} "
+                f"excess={excess.get('shrunk')} ({excess.get('status')}, "
+                f"n={excess.get('n')}, weeks={excess.get('n_weeks')}) "
+                f"selection={selection.get('shrunk')} ({selection.get('status')}) "
                 f"edge_vs_baseline={row.get('edge_vs_baseline')} "
-                f"maxDD={row.get('max_drawdown')}{marker}"
+                f"maxDD={row.get('max_drawdown')} "
+                f"cost={row.get('round_trip_cost_pct')} "
+                f"sortino_at_10bps={row.get('sortino_cost_10bps')}{marker}"
             )
         if not tab.get("live"):
             lines.append("- none")

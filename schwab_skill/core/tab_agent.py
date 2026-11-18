@@ -395,18 +395,50 @@ def score_prompt_versions(
         vid = str(row.get("version_id") or "")
         if vid:
             by_version.setdefault(vid, []).append(row)
-    packet_index: dict[tuple[str, str], dict[str, Any]] = {}
+
+    from core.tab_agent_book import (
+        ATTRIBUTION_NOTE,
+        benchmark_series,
+        is_book_excluded,
+        legs_from_series,
+        load_quarantine,
+        overlay_daily_book,
+    )
+    from core.tab_agent_replay import is_decision_prompt, non_decision_book
+
+    quarantine_rows = load_quarantine(skill_dir)
+    spy_daily, cash_daily = benchmark_series(skill_dir)
+    pool: dict[str, list[float]] = {}
+    packet_index = {}
     for packet in packets:
         if not isinstance(packet, dict):
+            continue
+        if is_book_excluded(packet, skill_dir=skill_dir, quarantine=quarantine_rows):
             continue
         ticker = str(packet.get("ticker") or "").upper()
         day = utc_day(packet.get("created_at"))
         if ticker and day and (ticker, day) not in packet_index:
             packet_index[(ticker, day)] = packet
+        parsed = _packet_return(packet, horizon_days=config.horizon_days)
+        if parsed is not None and day:
+            pool.setdefault(day, []).append(parsed[1])
 
-    from core.tab_agent_replay import is_decision_prompt, non_decision_book
+    def _daily(packet: dict[str, Any]) -> list[dict[str, Any]] | None:
+        outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
+        by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
+        chosen = outcome
+        if str(config.horizon_days) in by_horizon and isinstance(by_horizon.get(str(config.horizon_days)), dict):
+            chosen = by_horizon[str(config.horizon_days)]
+        daily = chosen.get("daily_returns")
+        if isinstance(daily, list) and daily:
+            return daily
+        return None
 
     stats: list[dict[str, Any]] = []
+    joined_total = 0
+    unresolved_total = 0
+    excluded_total = 0
+    unresolved_days: list[str] = []
     for version in versions:
         vid = str(version.get("id") or "")
         if not is_decision_prompt(tab_id, str(version.get("prompt_key") or "")):
@@ -415,6 +447,7 @@ def score_prompt_versions(
         returns: list[float] = []
         dates: list[str] = []
         decisions: list[str] = []
+        dailies: list[Any] = []
         seen: set[tuple[str, str]] = set()
         for use in by_version.get(vid, []):
             ticker = str(use.get("ticker") or "").upper()
@@ -424,6 +457,13 @@ def score_prompt_versions(
             if not ticker or not day or (ticker, day) in seen:
                 continue
             seen.add((ticker, day))
+            packet = packet_index.get((ticker, day)) or {}
+            probe = {"ticker": ticker, "as_of": day, "packet_id": use.get("packet_id") or packet.get("packet_id")}
+            if is_book_excluded(probe, skill_dir=skill_dir, quarantine=quarantine_rows) or is_book_excluded(
+                packet, skill_dir=skill_dir, quarantine=quarantine_rows
+            ):
+                excluded_total += 1
+                continue
             decision = str(use.get("decision") or use.get("role") or "").lower()
             if decision in {"short", "option", "put", "call", "inverse"}:
                 continue
@@ -431,13 +471,19 @@ def score_prompt_versions(
                 dates.append(day)
                 returns.append(0.0)
                 decisions.append("cash")
+                dailies.append(None)
+                joined_total += 1
                 continue
-            parsed = _packet_return(packet_index.get((ticker, day)) or {}, horizon_days=config.horizon_days)
+            parsed = _packet_return(packet, horizon_days=config.horizon_days)
             if parsed is None:
+                unresolved_total += 1
+                unresolved_days.append(day)
                 continue
             dates.append(day)
             returns.append(parsed[1])
             decisions.append("long")
+            dailies.append(_daily(packet))
+            joined_total += 1
         from core.tab_agent_replay import attach_replay, decision_flags
 
         merged = attach_replay(
@@ -457,6 +503,23 @@ def score_prompt_versions(
             weights=merged.weights,
             sources=merged.sources,
             decisions=merged.decisions,
+        )
+        combined_dailies = list(dailies)
+        if merged.dailies and len(merged.dailies) > len(dailies):
+            combined_dailies.extend(merged.dailies[len(dailies) :])
+        overlay_daily_book(
+            book,
+            legs_from_series(
+                merged.returns,
+                merged.dates,
+                merged.decisions,
+                weights=merged.weights,
+                horizon_days=config.horizon_days,
+                dailies=combined_dailies,
+            ),
+            spy_daily=spy_daily,
+            cash_daily=cash_daily,
+            pool=pool,
         )
         book.update(
             {
@@ -500,6 +563,13 @@ def score_prompt_versions(
         "versions": stats,
         "comparisons": comparisons,
         "winner_rule": config.as_dict()["statement"],
+        "attribution_join": {
+            "joined": joined_total,
+            "unresolved": unresolved_total,
+            "excluded": excluded_total,
+            "earliest_unresolved_day": min(unresolved_days) if unresolved_days else None,
+            "note": ATTRIBUTION_NOTE,
+        },
     }
     from core.tab_agent_replay import annotate_tab_score
 

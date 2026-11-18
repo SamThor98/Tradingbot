@@ -317,6 +317,7 @@ def _mark_horizon(
             )
             if marked is not None:
                 marked["exit_model"] = "fixed_horizon_no_stop"
+                _attach_book_label(marked, df, packet, horizon_days=horizon_days)
             return marked
         marked = simulate_scale_out(
             df,
@@ -333,6 +334,7 @@ def _mark_horizon(
         marked["realized_slippage_bps"] = slippage
         marked["resolved_at"] = now.isoformat()
         marked["role"] = role
+        _attach_book_label(marked, df, packet, horizon_days=horizon_days)
         return marked
     marked = _mark_fixed(
         df,
@@ -344,7 +346,39 @@ def _mark_horizon(
     )
     if marked is not None:
         marked["role"] = role
+        _attach_book_label(marked, df, packet, horizon_days=horizon_days)
     return marked
+
+
+def _attach_book_label(marked: dict[str, Any], frame: Any, packet: dict[str, Any], *, horizon_days: int) -> None:
+    """Record next-open entry and the round-trip cost. The stored return is unchanged."""
+    from core.tab_agent_book import attach_scale_out_label
+
+    created = _parse_dt(packet.get("created_at"))
+    signal = created.date().isoformat() if created is not None else ""
+    attach_scale_out_label(
+        marked,
+        frame,
+        signal_date=signal,
+        horizon_days=horizon_days,
+        packet=packet,
+    )
+
+
+def _copy_book_fields(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for field in (
+        "entry_convention",
+        "realized_cost_pct",
+        "cost_sensitivity_pct",
+        "stop_fill",
+        "daily_returns",
+        "book_return_pct",
+        "entry_price_used",
+        "book_stop_price",
+        "book_path",
+    ):
+        if source.get(field) is not None:
+            target[field] = source[field]
 
 
 def _stored_horizon(outcome: dict[str, Any], horizon: int) -> bool:
@@ -449,6 +483,7 @@ def label_packet_horizons(
             "exit_model": primary.get("exit_model"),
             "by_horizon": by_horizon,
         }
+        _copy_book_fields(packet["outcome"], primary)
         return "primary" if primary_new else "partial"
     kept = outcome if str(outcome.get("label") or "pending") not in ("pending", "unknown", "") else {}
     packet["outcome"] = {
@@ -637,7 +672,9 @@ def run_local_backfill(
             "skipped": "already_ran_utc_day",
         }
 
-    history_span = horizon if explicit_horizon else max(int(params["early"]), int(params["primary"]), int(params["position"]))
+    history_span = (
+        horizon if explicit_horizon else max(int(params["early"]), int(params["primary"]), int(params["position"]))
+    )
     history_days = needed_history_days(packets, horizon_days=history_span, now=now)
     provider = history_provider or _default_history_provider(skill_dir, days=history_days)
     changed = False

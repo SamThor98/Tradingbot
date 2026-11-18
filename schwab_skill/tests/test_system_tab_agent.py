@@ -55,24 +55,26 @@ def test_low_confidence_is_scored_on_the_missed_return(tmp_path, monkeypatch: py
     agent = SystemTabAgent()
     live = agent.registry(tmp_path).live_version("system", "confidence_wording")
     book = next(row for row in agent.score(tmp_path)["versions"] if row["version_id"] == live["id"])
-    # High takes +8. Low miss of +20 scores -20. Low avoid of -10 scores +10.
-    # The middle band and the pending packet are not samples.
+    # Four matured confidences. The pending packet is not a sample.
+    # Brier = mean of (0.85-1)^2, (0.20-1)^2, (0.15-0)^2, (0.55-1)^2.
     assert book["scored"] is True
-    assert book["n"] == 3
+    assert book["n"] == 4
     assert book["n_longs"] == 1
-    assert book["win_rate"] == 1.0
     assert book["n_abstain"] == 1
     assert book["n_immature"] == 1
-    assert book["avg_realized_return_pct"] == -0.6667
     assert book["n_skips"] == 2
-    assert book["max_drawdown"] == 0.0
+    assert book["primary_metric"] == "brier"
+    assert book["brier"] == pytest.approx(0.221875, abs=1e-6)
+    assert book["sortino"] is None
+    assert book["max_drawdown"] is None
+    assert isinstance(book["reliability"], list)
     assert book["high_confidence_min"] == 0.70
     assert book["low_confidence_max"] == 0.40
-    assert book["scoring"] == "confidence_separation"
+    assert book["scoring"] == "calibration"
 
 
-def test_skip_penalties_do_not_compound_into_the_drawdown(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Takes move the equity curve. Skips stay in cash, so a missed winner is not a position."""
+def test_skips_stay_in_the_calibration_sample(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A skip is a confidence/outcome pair. It is not a negative return in a book."""
     monkeypatch.setenv("TAB_AGENT_SYSTEM_ENABLED", "true")
     overwrite_packets(
         tmp_path,
@@ -93,11 +95,11 @@ def test_skip_penalties_do_not_compound_into_the_drawdown(tmp_path, monkeypatch:
     assert book["n"] == 8
     assert book["n_longs"] == 4
     assert book["n_skips"] == 4
-    assert book["win_rate"] == 0.75
-    assert book["max_drawdown"] > -0.10
-    assert book["max_drawdown"] < 0
-    assert book["sortino"] is not None
-    assert book["drawdown_basis"] == "cash_on_skip"
+    assert book["scoring"] == "calibration"
+    assert book["sortino"] is None
+    assert book["brier"] is not None
+    assert book["brier"] > 0
+    assert book["max_drawdown"] is None
 
 
 def test_all_skips_have_no_drawdown_and_no_longs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,9 +111,10 @@ def test_all_skips_have_no_drawdown_and_no_longs(tmp_path, monkeypatch: pytest.M
     assert book["n"] == 4
     assert book["n_longs"] == 0
     assert book["n_skips"] == 4
-    assert book["win_rate"] is None
-    assert book["max_drawdown"] == 0.0
-    assert book["sortino"] == -1.0
+    assert book["scoring"] == "calibration"
+    assert book["sortino"] is None
+    assert book["brier"] == pytest.approx(0.64, abs=1e-6)
+    assert book["max_drawdown"] is None
 
 
 def test_no_matured_packets_are_not_scored(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
