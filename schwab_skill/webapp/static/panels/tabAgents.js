@@ -18,7 +18,7 @@ function versionLine(row, actions) {
     ? `<span class="pill">${escapeHtml(row.review.verdict)}</span> <span class="muted small">${escapeHtml(row.review.reviewer || "")}</span>`
     : "<span class='muted small'>No verdict yet</span>";
   return `<p><span class="pill">${escapeHtml(row.status || "")}</span> <code>${escapeHtml(row.id || "")}</code></p>
-    <p class="muted small">n=${row.n ?? "—"} (live ${row.n_live ?? row.n ?? "—"}, replay ${row.n_replay ?? 0}) ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} sample=${escapeHtml(row.sample_status || "")} spy=${num(row.spy_total_return)} excess=${num(row.excess_vs_spy && row.excess_vs_spy.shrunk, 4)} selection=${num(row.selection_vs_pool && row.selection_vs_pool.shrunk, 4)} edge=${num(row.edge_vs_baseline)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}${row.decision_prompt === false ? " non-decision" : row.degenerate ? " no-variance" : ""}${row.sample_status === "insufficient" || (row.excess_vs_spy && row.excess_vs_spy.status === "insufficient") ? " insufficient" : ""}</p>
+    <p class="muted small">n=${row.n ?? "—"} (live ${row.n_live ?? row.n ?? "—"}, replay ${row.n_replay ?? 0}) ${escapeHtml(row.primary_metric || "score")}=${num(row.primary_score)} spy_sortino=${num(row.spy_sortino)} spy_maxDD=${num(row.spy_max_drawdown)} sample=${escapeHtml(row.sample_status || "")} spy=${num(row.spy_total_return)} excess=${num(row.excess_vs_spy && row.excess_vs_spy.shrunk, 4)} selection=${num(row.selection_vs_pool && row.selection_vs_pool.shrunk, 4)} edge=${num(row.edge_vs_baseline)} maxDD=${num(row.max_drawdown)} ${escapeHtml(row.edge_vs_live || "")}${row.decision_prompt === false ? " non-decision" : row.not_scored_reason ? " " + escapeHtml(row.not_scored_reason) : row.degenerate ? " no-variance" : ""}${row.sample_status === "insufficient" || (row.excess_vs_spy && row.excess_vs_spy.status === "insufficient") ? " insufficient" : ""}</p>
     <p class="muted small">${review}</p>
     <p class="muted small">${escapeHtml(row.rationale || "")}</p>
     <div class="inline-form compact">${actions}</div>`;
@@ -91,7 +91,7 @@ function render(board) {
       </section>`;
     })
     .join("");
-  const guide = `<p class="muted small">Score is the annualized daily Sortino of an equal-weight book, beside SPY over the same dates. Excess and selection are shrunk by n/(n+10). Fewer than 8 distinct weeks is insufficient. The system tab shows a Brier score.</p>`;
+  const guide = `<p class="muted small">Score is the annualized daily Sortino of an equal-weight book, beside SPY Sortino and SPY max DD on the same sessions. A missing price path is unscored. Excess and selection are shrunk by n/(n+10). Fewer than 8 distinct weeks is insufficient. The system tab shows a Brier score.</p>`;
   return `${guide}${renderDigest(board.digest)}<div id="tabAgentsStatus" class="muted small" aria-live="polite"></div>${tabs}`;
 }
 

@@ -232,6 +232,7 @@ def _version_book(
     returns: list[float] = []
     dates: list[str] = []
     decisions: list[str] = []
+    tickers: list[str] = []
     for packet in packets:
         if is_book_excluded(packet, skill_dir=skill_dir):
             continue
@@ -253,6 +254,7 @@ def _version_book(
         dates.append(parsed[0])
         returns.append(parsed[1])
         decisions.append("cash" if str(verdict or "").upper() in CASH_VERDICTS else "long")
+        tickers.append(str(packet.get("ticker") or "").upper())
     from core.tab_agent_replay import attach_replay, decision_flags
 
     merged = attach_replay(
@@ -264,6 +266,7 @@ def _version_book(
         weight=config.replay_weight,
         since_ts=since_ts,
         live_decisions=decisions,
+        live_tickers=tickers,
     )
     book = evaluate_book(
         merged.returns,
@@ -280,6 +283,9 @@ def _version_book(
     for day, value, decision in zip(merged.dates, merged.returns, merged.decisions or [], strict=False):
         if decision == "long":
             pool.setdefault(str(day)[:10], []).append(float(value))
+    merged_tickers = list(merged.tickers) if merged.tickers else list(tickers)
+    if len(merged_tickers) < len(merged.returns):
+        merged_tickers.extend([""] * (len(merged.returns) - len(merged_tickers)))
     overlay_daily_book(
         book,
         legs_from_series(
@@ -289,10 +295,12 @@ def _version_book(
             weights=merged.weights,
             horizon_days=config.horizon_days,
             dailies=merged.dailies,
+            tickers=merged_tickers,
         ),
         spy_daily=spy_daily,
         cash_daily=cash_daily,
         pool=pool,
+        skill_dir=skill_dir,
     )
     book.update(decision_flags(merged.decisions))
     book.update(

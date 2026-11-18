@@ -448,6 +448,7 @@ def score_prompt_versions(
         dates: list[str] = []
         decisions: list[str] = []
         dailies: list[Any] = []
+        tickers: list[str] = []
         seen: set[tuple[str, str]] = set()
         for use in by_version.get(vid, []):
             ticker = str(use.get("ticker") or "").upper()
@@ -472,6 +473,7 @@ def score_prompt_versions(
                 returns.append(0.0)
                 decisions.append("cash")
                 dailies.append(None)
+                tickers.append(ticker)
                 joined_total += 1
                 continue
             parsed = _packet_return(packet, horizon_days=config.horizon_days)
@@ -483,6 +485,7 @@ def score_prompt_versions(
             returns.append(parsed[1])
             decisions.append("long")
             dailies.append(_daily(packet))
+            tickers.append(ticker)
             joined_total += 1
         from core.tab_agent_replay import attach_replay, decision_flags
 
@@ -495,6 +498,7 @@ def score_prompt_versions(
             weight=config.replay_weight,
             since_ts=since_ts,
             live_decisions=decisions,
+            live_tickers=tickers,
         )
         book = evaluate_book(
             merged.returns,
@@ -507,6 +511,9 @@ def score_prompt_versions(
         combined_dailies = list(dailies)
         if merged.dailies and len(merged.dailies) > len(dailies):
             combined_dailies.extend(merged.dailies[len(dailies) :])
+        merged_tickers = list(merged.tickers) if merged.tickers else list(tickers)
+        if len(merged_tickers) < len(merged.returns):
+            merged_tickers.extend([""] * (len(merged.returns) - len(merged_tickers)))
         overlay_daily_book(
             book,
             legs_from_series(
@@ -516,10 +523,12 @@ def score_prompt_versions(
                 weights=merged.weights,
                 horizon_days=config.horizon_days,
                 dailies=combined_dailies,
+                tickers=merged_tickers,
             ),
             spy_daily=spy_daily,
             cash_daily=cash_daily,
             pool=pool,
+            skill_dir=skill_dir,
         )
         book.update(
             {

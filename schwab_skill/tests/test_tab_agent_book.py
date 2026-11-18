@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 
 from core.tab_agent_book import (
+    MISSING_PATHS,
+    NEAR_ZERO_DOWNSIDE,
     apply_round_trip,
     calibration_from_pairs,
     score_book_rows,
+    score_legs,
     stop_fill,
     walk_long_position,
     week_cluster_stats,
@@ -269,3 +272,177 @@ def test_scale_out_label_records_cost_without_changing_the_stored_return(tmp_pat
     assert stored["realized_cost_pct"] == pytest.approx(0.34)
     assert stored["stop_fill"] == "min_stop_open"
     assert stored["entry_price_used"] == pytest.approx(100.0)
+
+
+def _spy_sessions(start: date, end: date, holidays: set[str]) -> dict[str, float]:
+    """Weekday SPY returns, with the named holidays left out of the cache."""
+    out: dict[str, float] = {}
+    cursor = start
+    while cursor <= end:
+        iso = cursor.isoformat()
+        if cursor.weekday() < 5 and iso not in holidays:
+            out[iso] = -0.01 if cursor.day % 5 == 0 else 0.002
+        cursor += timedelta(days=1)
+    return out
+
+
+def test_market_holidays_keep_spy_on_the_same_sessions() -> None:
+    """A weekday holiday must not wipe the SPY comparison, and SPY Sortino uses those sessions."""
+    holidays = {"2026-06-19", "2026-07-03", "2026-09-07"}
+    daily = [
+        {"date": "2026-06-18", "return": 0.02},
+        {"date": "2026-06-22", "return": -0.03},
+        {"date": "2026-07-02", "return": 0.01},
+        {"date": "2026-07-06", "return": -0.02},
+        {"date": "2026-09-04", "return": 0.01},
+        {"date": "2026-09-08", "return": -0.04},
+    ]
+    spy = _spy_sessions(date(2026, 6, 18), date(2026, 9, 8), holidays)
+    rows = [
+        {
+            "ticker": "MSFT",
+            "date": "2026-06-17",
+            "return_pct": 1.0,
+            "decision": "long",
+            "daily": daily,
+        }
+    ]
+    book = score_book_rows(rows, config=_config(), spy_daily=spy, apply_cost=False)
+    for holiday in holidays:
+        assert holiday not in book["daily_dates"]
+    assert "2026-06-18" in book["daily_dates"]
+    assert "2026-06-22" in book["daily_dates"]
+    assert "2026-06-23" in book["daily_dates"]
+    equity = 1.0
+    for day in book["daily_dates"]:
+        assert day in spy
+        equity *= 1.0 + spy[day]
+    assert book["spy_total_return"] == pytest.approx(round(equity - 1.0, 6))
+    assert book["spy_sortino"] is not None
+    assert book["spy_max_drawdown"] is not None
+    assert book["spy_max_drawdown"] < 0
+    bare = score_book_rows(rows, config=_config(), apply_cost=False)
+    assert "2026-06-19" not in bare["daily_dates"]
+    assert bare["daily_dates"][0] == "2026-06-18"
+    assert "2026-07-03" not in bare["daily_dates"]
+    assert "2026-09-07" not in bare["daily_dates"]
+
+
+def test_digest_prints_spy_sortino_beside_the_book() -> None:
+    from core.tab_agent_digest import _markdown
+
+    text = _markdown(
+        {
+            "day": "2026-11-18",
+            "note": "Analysis prompts only. No order, size, or execution setting is changed by this digest.",
+            "tabs": [
+                {
+                    "tab_id": "today",
+                    "live": [
+                        {
+                            "prompt_key": "mean_reversion",
+                            "version_id": "v1",
+                            "n": 3,
+                            "n_longs": 2,
+                            "n_weeks": 3,
+                            "sample_status": "insufficient",
+                            "win_rate": 0.5,
+                            "n_live": 3,
+                            "n_replay": 0,
+                            "primary_metric": "sortino",
+                            "primary_score": 1.2,
+                            "spy_sortino": 0.8,
+                            "spy_max_drawdown": -0.11,
+                            "spy_total_return": 0.05,
+                            "max_drawdown": -0.2,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert "sortino=1.2 spy_sortino=0.8 spy_maxDD=-0.11" in text
+
+
+def test_price_cache_fills_a_pathless_long(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    index = pd.bdate_range("2026-06-01", periods=8)
+    closes = [101.0, 110.0, 105.0, 100.0, 102.0, 101.0, 103.0, 104.0]
+    frame = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 110.0, 105.0, 100.0, 102.0, 101.0, 103.0],
+            "high": [price + 1.0 for price in closes],
+            "low": [price - 1.0 for price in closes],
+            "close": closes,
+            "volume": [1_000_000.0] * len(closes),
+        },
+        index=index,
+    )
+    frame.to_csv(cache / "AAAA.csv", index_label="date")
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(cache))
+    walked = walk_long_position(frame, signal_date="2026-06-01", horizon_days=20, stop_price=None)
+    assert walked is not None
+    spy = {row["date"]: (0.01 if index % 2 == 0 else -0.02) for index, row in enumerate(walked["daily_returns"])}
+    rows = [{"ticker": "AAAA", "date": "2026-06-01", "return_pct": 80.0, "decision": "long"}]
+    book = score_book_rows(rows, config=_config(), skill_dir=tmp_path, spy_daily=spy, apply_cost=False)
+    assert book.get("not_scored_reason") is None
+    assert book["daily_returns"] == pytest.approx([row["return"] for row in walked["daily_returns"]])
+    assert book["daily_returns"][0] == pytest.approx(0.10)
+    assert book["sortino"] is not None
+    assert book["max_drawdown"] is not None
+    assert book["spy_total_return"] is not None
+    assert book["spy_sortino"] is not None
+    assert book["spy_max_drawdown"] is not None
+
+
+def test_pathless_longs_do_not_report_a_sortino(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No daily path and no cache bar: the book must not invent a Sortino or a max DD."""
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    (cache / "SPY.csv").write_text(
+        "date,open,high,low,close,volume\n2026-06-01,100,101,99,100,1\n2026-06-02,100,101,99,101,1\n",
+        encoding="utf-8",
+    )
+    (cache / "BIL.csv").write_text(
+        "date,open,high,low,close,volume\n2026-06-01,100,100,100,100,1\n2026-06-02,100,100,100,100.01,1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(cache))
+    rows = [
+        {"ticker": "AAAA", "date": "2026-06-01", "return_pct": 12.0, "decision": "long"},
+        {"ticker": "BBBB", "date": "2026-07-01", "return_pct": 4.0, "decision": "long"},
+    ]
+    book = score_book_rows(rows, config=_config(), skill_dir=tmp_path, apply_cost=False)
+    assert book["not_scored_reason"] == MISSING_PATHS
+    assert book["sample_status"] == MISSING_PATHS
+    assert book["sortino"] is None
+    assert book["primary_score"] is None
+    assert book["max_drawdown"] is None
+    assert book["sortino_cost_10bps"] is None
+    assert book["max_drawdown_cost_10bps"] is None
+
+
+def test_cash_at_bil_does_not_print_an_inflated_sortino() -> None:
+    cash: dict[str, float] = {}
+    cursor = date(2026, 1, 5)
+    step = 0
+    while cursor <= date(2026, 3, 27):
+        if cursor.weekday() < 5:
+            cash[cursor.isoformat()] = -0.00002 if step % 11 == 0 else 0.0001
+            step += 1
+        cursor += timedelta(days=1)
+    book = score_legs(
+        [
+            {"date": "2026-01-05", "decision": "cash", "return_pct": 0.0, "horizon_days": 1},
+            {"date": "2026-03-27", "decision": "cash", "return_pct": 0.0, "horizon_days": 1},
+        ],
+        cash_daily=cash,
+        apply_cost=False,
+    )
+    assert book["invested_days"] == 0
+    assert book["sortino"] is None
+    assert book["primary_score"] is None
+    assert book["primary_unbounded"] is False
+    assert book["not_scored_reason"] == NEAR_ZERO_DOWNSIDE
+    assert book["sortino_cost_10bps"] is None
