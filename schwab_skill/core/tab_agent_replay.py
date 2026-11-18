@@ -81,6 +81,7 @@ class ReplayBook:
     sources: list[str] | None
     decisions: list[str] | None = None
     dailies: list[Any] | None = None
+    tickers: list[str] | None = None
 
 
 # These prompts explain, review, or falsify. They do not choose long versus cash.
@@ -170,18 +171,21 @@ def attach_replay(
     weight: float,
     since_ts: str | None = None,
     live_decisions: list[str] | None = None,
+    live_tickers: list[str] | None = None,
 ) -> ReplayBook:
     """Append stored replay rows for one prompt version. Live rows stay at weight 1."""
     live_returns = list(returns)
     live_dates = list(dates)
+    base_tickers = list(live_tickers) if live_tickers is not None else None
     if skill_dir is None or not version_id:
-        return ReplayBook(live_returns, live_dates, None, None, live_decisions)
+        return ReplayBook(live_returns, live_dates, None, None, live_decisions, None, base_tickers)
     cutoff = str(since_ts or "")[:10]
     clipped = max(0.0, min(1.0, float(weight)))
     extra_returns: list[float] = []
     extra_dates: list[str] = []
     extra_decisions: list[str] = []
     extra_dailies: list[Any] = []
+    extra_tickers: list[str] = []
     from core.tab_agent_book import is_book_excluded
 
     for sample in load_samples(skill_dir):
@@ -204,9 +208,14 @@ def attach_replay(
         extra_decisions.append(str(sample.get("decision") or "long").lower())
         daily = sample.get("daily_returns")
         extra_dailies.append(daily if isinstance(daily, list) and daily else None)
+        extra_tickers.append(str(sample.get("ticker") or "").upper())
     if not extra_returns:
-        return ReplayBook(live_returns, live_dates, None, None, live_decisions, None)
+        return ReplayBook(live_returns, live_dates, None, None, live_decisions, None, base_tickers)
     base_decisions = list(live_decisions) if live_decisions is not None else ["long"] * len(live_returns)
+    if base_tickers is None:
+        combined_tickers = [""] * len(live_returns) + extra_tickers
+    else:
+        combined_tickers = list(base_tickers) + extra_tickers
     return ReplayBook(
         live_returns + extra_returns,
         live_dates + extra_dates,
@@ -214,6 +223,7 @@ def attach_replay(
         ["live"] * len(live_returns) + ["replay"] * len(extra_returns),
         base_decisions + extra_decisions,
         [None] * len(live_returns) + extra_dailies,
+        combined_tickers,
     )
 
 
@@ -260,8 +270,9 @@ def attach_replay_combination(
     extra_returns: list[float] = []
     extra_dates: list[str] = []
     extra_decisions: list[str] = []
+    extra_tickers: list[str] = []
     members = {str(item) for item in member_ids if str(item)}
-    for (_ticker, as_of), rows in grouped.items():
+    for (ticker, as_of), rows in grouped.items():
         chosen = next((row for row in rows if str(row.get("version_id") or "") == combination_id), None)
         if chosen is None:
             ids = {str(row.get("version_id") or "") for row in rows}
@@ -274,6 +285,7 @@ def attach_replay_combination(
             continue
         extra_dates.append(as_of)
         extra_decisions.append(str(chosen.get("decision") or "long").lower())
+        extra_tickers.append(str(chosen.get("ticker") or ticker).upper())
     if not extra_returns:
         return ReplayBook(live_returns, live_dates, None, None, live_decisions)
     base_decisions = list(live_decisions) if live_decisions is not None else ["long"] * len(live_returns)
@@ -283,6 +295,8 @@ def attach_replay_combination(
         [1.0] * len(live_returns) + [clipped] * len(extra_returns),
         ["live"] * len(live_returns) + ["replay"] * len(extra_returns),
         base_decisions + extra_decisions,
+        None,
+        extra_tickers,
     )
 
 
@@ -1979,6 +1993,7 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
         dailies[key] = daily if isinstance(daily, list) and daily else None
     dates = [key[1] for key in chosen]
     returns = list(chosen.values())
+    tickers = [key[0] for key in chosen]
     book = evaluate_book(returns, dates, config=config)
     pool: dict[str, list[float]] = {}
     for key, value in chosen.items():
@@ -1992,10 +2007,12 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
             ["long"] * len(returns),
             horizon_days=getattr(config, "horizon_days", 20),
             dailies=[dailies[key] for key in chosen],
+            tickers=tickers,
         ),
         spy_daily=spy_daily,
         cash_daily=cash_daily,
         pool=pool,
+        skill_dir=skill_dir,
     )
     book["name"] = "buy_every_scan"
     book["prompt_key"] = "buy_every_scan"

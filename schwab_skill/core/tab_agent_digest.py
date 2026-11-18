@@ -85,6 +85,8 @@ def build_digest(skill_dir: Path | str, day: date | None = None) -> dict[str, An
                 "primary_metric": row.get("primary_metric"),
                 "primary_score": row.get("primary_score"),
                 "max_drawdown": row.get("max_drawdown"),
+                "spy_sortino": row.get("spy_sortino"),
+                "spy_max_drawdown": row.get("spy_max_drawdown"),
                 "spy_total_return": row.get("spy_total_return"),
                 "excess_vs_spy": row.get("excess_vs_spy"),
                 "selection_vs_pool": row.get("selection_vs_pool"),
@@ -181,7 +183,9 @@ def _markdown(payload: dict[str, Any]) -> str:
         if baseline.get("name"):
             lines.append(
                 f"Buy-every-scan baseline: n={baseline.get('n')} "
-                f"{baseline.get('primary_metric')}={baseline.get('primary_score')}"
+                f"{baseline.get('primary_metric')}={baseline.get('primary_score')} "
+                f"spy_sortino={baseline.get('spy_sortino')} "
+                f"spy_maxDD={baseline.get('spy_max_drawdown')}"
             )
         fallback = tab.get("exit_fallback") if isinstance(tab.get("exit_fallback"), dict) else {}
         if fallback.get("n"):
@@ -213,6 +217,8 @@ def _markdown(payload: dict[str, Any]) -> str:
                 marker = " not-scored"
             elif row.get("degenerate"):
                 marker = " no-variance"
+            elif row.get("not_scored_reason"):
+                marker = " " + str(row.get("not_scored_reason"))
             skips = f" skips={row.get('n_skips')}" if row.get("n_skips") is not None else ""
             excess = row.get("excess_vs_spy") if isinstance(row.get("excess_vs_spy"), dict) else {}
             selection = row.get("selection_vs_pool") if isinstance(row.get("selection_vs_pool"), dict) else {}
@@ -223,6 +229,8 @@ def _markdown(payload: dict[str, Any]) -> str:
                 f"win_rate={row.get('win_rate')} "
                 f"live={row.get('n_live')} replay={row.get('n_replay')} "
                 f"{row.get('primary_metric')}={row.get('primary_score')} "
+                f"spy_sortino={row.get('spy_sortino')} "
+                f"spy_maxDD={row.get('spy_max_drawdown')} "
                 f"spy={row.get('spy_total_return')} "
                 f"excess={excess.get('shrunk')} ({excess.get('status')}, "
                 f"n={excess.get('n')}, weeks={excess.get('n_weeks')}) "

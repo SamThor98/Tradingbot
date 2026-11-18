@@ -506,6 +506,7 @@ def _combination_book(
     """Score every call of one prompt-version set as a single book."""
     endorsed: list[float] = []
     endorsed_dates: list[str] = []
+    endorsed_tickers: list[str] = []
     decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
@@ -534,11 +535,13 @@ def _combination_book(
         if score >= bar:
             endorsed.append(ret)
             endorsed_dates.append(day)
+            endorsed_tickers.append(ticker)
             decisions.append("long")
         else:
             # Under the bar the book stays in cash and keeps the skipped long as a counterfactual.
             endorsed.append(0.0)
             endorsed_dates.append(day)
+            endorsed_tickers.append(ticker)
             decisions.append("cash")
             passes.append(ret)
             passes_dates.append(day)
@@ -549,6 +552,7 @@ def _combination_book(
     replay_returns: list[float] = []
     replay_dates: list[str] = []
     replay_decisions: list[str] = []
+    replay_tickers: list[str] = []
     for case in replay_cases:
         key = (str(case["ticker"]), str(case["as_of"])[:10])
         if key in seen or is_book_excluded(case, skill_dir=skill_dir):
@@ -563,6 +567,7 @@ def _combination_book(
             passes.append(float(case["counterfactual_return_pct"]))
             passes_dates.append(str(case["as_of"]))
         replay_dates.append(str(case["as_of"]))
+        replay_tickers.append(str(case.get("ticker") or "").upper())
     from core.tab_agent_replay import attach_replay_combination
 
     legacy = attach_replay_combination(
@@ -578,6 +583,9 @@ def _combination_book(
     legacy_returns = list(legacy.returns)
     legacy_dates = list(legacy.dates)
     legacy_decisions = list(legacy.decisions or [])
+    legacy_tickers = list(legacy.tickers or [])
+    if len(legacy_tickers) < len(legacy_returns):
+        legacy_tickers.extend([""] * (len(legacy_returns) - len(legacy_tickers)))
     weights = None
     sources = None
     if replay_returns or legacy_returns:
@@ -590,6 +598,7 @@ def _combination_book(
     combined_returns = endorsed + replay_returns + legacy_returns
     combined_dates = endorsed_dates + replay_dates + legacy_dates
     combined_decisions = decisions + replay_decisions + legacy_decisions
+    combined_tickers = endorsed_tickers + replay_tickers + legacy_tickers
     book = evaluate_book(
         combined_returns,
         combined_dates,
@@ -609,9 +618,11 @@ def _combination_book(
             combined_decisions,
             weights=weights,
             horizon_days=config.horizon_days,
+            tickers=combined_tickers,
         ),
         spy_daily=spy_daily,
         cash_daily=cash_daily,
+        skill_dir=skill_dir,
     )
     book.update(decision_flags(combined_decisions))
     book.update(
