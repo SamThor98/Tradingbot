@@ -328,17 +328,17 @@ def test_night_defaults_are_sized_for_max_usage(tmp_path: Path, monkeypatch: pyt
     assert loaded.candidates == 8
 
 
-def test_system_skip_is_scored_on_the_missed_return() -> None:
+def test_system_text_is_a_calibration_score() -> None:
     cases = [
         LabCase("a", "2026-01-01", "AAA", 10.0, stated_confidence=0.2),
         LabCase("b", "2026-01-02", "BBB", -4.0, stated_confidence=0.9),
     ]
     book = score_system_text(cases, BUILTIN_WORDING, config=_objective(), live_text=BUILTIN_WORDING)
-    # Low confidence skips the +10 winner, which is a -10 penalty. The equity path stays in cash.
+    # (0.2-1)^2 and (0.9-0)^2. A skip is not scored as -10.
     assert book["n"] == 2
-    assert book["n_longs"] == 1
-    assert book["n_skips"] == 1
-    assert book["avg_realized_return_pct"] == pytest.approx((-10.0 + -4.0) / 2, abs=0.02)
+    assert book["scoring"] == "calibration"
+    assert book["sortino"] is None
+    assert book["brier"] == pytest.approx((0.64 + 0.81) / 2, abs=1e-6)
 
 
 def test_win_rate_excludes_cash_rows() -> None:

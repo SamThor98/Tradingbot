@@ -470,6 +470,26 @@ def _threshold_edge(
     return "no_separation"
 
 
+def _daily_pass_book(
+    returns: list[float],
+    dates: list[str],
+    config: Any,
+    spy_daily: dict[str, float] | None,
+    cash_daily: dict[str, float] | None,
+) -> dict[str, Any]:
+    from core.tab_agent_book import legs_from_series, overlay_daily_book
+    from core.tab_agent_objective import evaluate_book
+
+    book = evaluate_book(returns, dates, config=config)
+    overlay_daily_book(
+        book,
+        legs_from_series(returns, dates, ["long"] * len(returns), horizon_days=config.horizon_days),
+        spy_daily=spy_daily,
+        cash_daily=cash_daily,
+    )
+    return book
+
+
 def _combination_book(
     combo_id: str,
     status: str,
@@ -489,12 +509,16 @@ def _combination_book(
     decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
+    from core.tab_agent_book import is_book_excluded
+
     seen: set[tuple[str, str]] = set()
     bar = float(threshold if threshold is not None else config.quality_threshold)
     for event in events:
         ticker = str(event.get("ticker") or "").upper()
         day = str(event.get("as_of") or "")[:10]
         if not ticker or len(day) < 10 or (ticker, day) in seen:
+            continue
+        if is_book_excluded({"ticker": ticker, "as_of": day, "packet_id": event.get("packet_id")}, skill_dir=skill_dir):
             continue
         seen.add((ticker, day))
         ret = _joined_return(event, packets, horizon_days=config.horizon_days)
@@ -527,7 +551,7 @@ def _combination_book(
     replay_decisions: list[str] = []
     for case in replay_cases:
         key = (str(case["ticker"]), str(case["as_of"])[:10])
-        if key in seen:
+        if key in seen or is_book_excluded(case, skill_dir=skill_dir):
             continue
         seen.add(key)
         if float(case["debate_score"]) >= bar:
@@ -563,15 +587,33 @@ def _combination_book(
             + [float(config.replay_weight)] * len(legacy_returns)
         )
         sources = ["live"] * len(endorsed) + ["replay"] * len(replay_returns) + ["replay"] * len(legacy_returns)
+    combined_returns = endorsed + replay_returns + legacy_returns
+    combined_dates = endorsed_dates + replay_dates + legacy_dates
+    combined_decisions = decisions + replay_decisions + legacy_decisions
     book = evaluate_book(
-        endorsed + replay_returns + legacy_returns,
-        endorsed_dates + replay_dates + legacy_dates,
+        combined_returns,
+        combined_dates,
         config=config,
         weights=weights,
         sources=sources,
-        decisions=decisions + replay_decisions + legacy_decisions,
+        decisions=combined_decisions,
     )
-    book.update(decision_flags(decisions + replay_decisions + legacy_decisions))
+    from core.tab_agent_book import benchmark_series, legs_from_series, overlay_daily_book
+
+    spy_daily, cash_daily = benchmark_series(skill_dir)
+    overlay_daily_book(
+        book,
+        legs_from_series(
+            combined_returns,
+            combined_dates,
+            combined_decisions,
+            weights=weights,
+            horizon_days=config.horizon_days,
+        ),
+        spy_daily=spy_daily,
+        cash_daily=cash_daily,
+    )
+    book.update(decision_flags(combined_decisions))
     book.update(
         {
             "version_id": combo_id,
@@ -581,7 +623,7 @@ def _combination_book(
             "quality_threshold": bar,
             "status": status,
             "parent": parent,
-            "pass_book": evaluate_book(passes, passes_dates, config=config),
+            "pass_book": _daily_pass_book(passes, passes_dates, config, spy_daily, cash_daily),
         }
     )
     return book

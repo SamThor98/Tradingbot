@@ -1,12 +1,10 @@
 """System tab agent: stated confidence versus realized outcomes.
 
-Brier score and reliability bins are reported in the daily digest. The
-wording prompt may move the high and low confidence cutoffs only inside
-configured bounds. Only matured packets are samples. High confidence takes
-the labeled return. Low confidence is scored on the return it missed: a
-skipped winner is a penalty and a skipped loser is a credit. The band
-between the cutoffs is not a sample. A book with no matured packets is not
-scored. No orders.
+The score is calibration: a Brier score and a reliability table. It is not
+a book Sortino, and a skip is not credited with the negative of the return.
+The wording prompt may move the high and low confidence cutoffs only inside
+configured bounds. Only matured packets are samples. Quarantined fixtures
+are not samples. A book with no matured packets is not scored. No orders.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from typing import Any, Callable
 
 from core.tab_agent import STATUS_PENDING, TabAgent
 from core.tab_agent_contract import KEEP_CONTRACT, anchor_reminder, contract_skip
-from core.tab_agent_objective import OBJECTIVE_ID, compare_books, evaluate_book, load_objective
+from core.tab_agent_objective import OBJECTIVE_ID, compare_books, load_objective
 
 LOG = logging.getLogger(__name__)
 
@@ -33,19 +31,18 @@ BUILTIN_WORDING = (
     "State confidence as a probability between 0 and 1. "
     "Do not invent a probability the checklist does not support. "
     "Long-only. A low-confidence name is a skip, not a short. "
-    "HIGH_CONFIDENCE_MIN=0.70 means the book takes the labeled long return. "
-    "LOW_CONFIDENCE_MAX=0.40 means the book skips the name and is scored on the "
-    "return it missed: a missed winner is a penalty and an avoided loser is a credit. "
-    "Confidence between the cutoffs is not a sample. Only matured outcomes count. "
+    "HIGH_CONFIDENCE_MIN=0.70 is the cutoff the wording may use for a take. "
+    "LOW_CONFIDENCE_MAX=0.40 is the cutoff the wording may use for a skip. "
+    "The score is calibration: Brier score and a reliability table on matured "
+    "outcomes. A skip is not a short and is not scored as the negative of the return. "
     "Do not penalize market cap. A catalyst is only a tiebreaker."
 )
 
 IMPROVER_SYSTEM = (
     "You revise the confidence-wording prompt. "
     "Keep HIGH_CONFIDENCE_MIN=<number> and LOW_CONFIDENCE_MAX=<number> inside the stated bounds. "
-    "The objective is a higher Sortino of the confidence book and a lower Brier score. "
-    "High confidence takes the matured return. Low confidence is penalized for missed "
-    "winners and credited for avoided losers. Do not score a skip as zero. "
+    "The objective is a lower Brier score and a tighter reliability table. "
+    "Do not score a skip as the negative of the missed return. "
     "Long-only. Never suggest a short or an option. You do not place orders. "
     "Return JSON with keys text and rationale. rationale must say when the sample is too small."
 ) + KEEP_CONTRACT
@@ -159,15 +156,6 @@ def calibration_report(packets: list[dict[str, Any]]) -> dict[str, Any]:
     return {"by_tab": by_tab, "bin_width": _BIN, "gap_flag": _GAP}
 
 
-def _labeled_return(packet: dict[str, Any], horizon_days: int) -> float | None:
-    from core.tab_agent import _packet_return
-
-    parsed = _packet_return(packet, horizon_days=horizon_days)
-    if parsed is None:
-        return None
-    return parsed[1]
-
-
 class SystemTabAgent(TabAgent):
     tab_id = "system"
     metric_name = OBJECTIVE_ID
@@ -183,10 +171,12 @@ class SystemTabAgent(TabAgent):
         since_ts: str | None = None,
     ) -> dict[str, Any]:
         from core.decision_packet import load_packets
+        from core.tab_agent_book import is_book_excluded
 
         reg = registry or self.registry(skill_dir)
         config = load_objective(skill_dir)
-        packets = load_packets(skill_dir)
+        packets = [row for row in load_packets(skill_dir) if isinstance(row, dict)]
+        packets = [row for row in packets if not is_book_excluded(row, skill_dir=skill_dir)]
         if since_ts:
             packets = [row for row in packets if str(row.get("created_at") or "") >= since_ts]
         versions = reg.versions(self.tab_id)
@@ -226,13 +216,10 @@ class SystemTabAgent(TabAgent):
             "comparisons": comparisons,
             "calibration": calibration_report(packets),
             "join_note": (
-                "Only matured packets are samples. High confidence takes the labeled return. "
-                "Low confidence is scored as the negative of that return, so missed winners "
-                "penalize Sortino and avoided losers credit it. The equity curve stays in cash "
-                "on a skip: those penalties are not compounded as positions. "
-                "n counts scored samples. n_longs counts only the high-confidence takes. "
-                "Confidence between the cutoffs is not a sample. "
-                "No matured packets means the book is not scored."
+                "The system tab is a calibration score: Brier plus a reliability table. "
+                "It is not a book Sortino. A skipped name is not credited with the negative "
+                "of its return. Only matured packets count, and quarantined fixtures are excluded. "
+                "No matured packets means the version is not scored."
             ),
         }
 
@@ -320,65 +307,41 @@ def _version_book(
     config: Any,
     skill_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Score one wording on matured returns.
+    """Score one wording as calibration of stated confidence against the matured outcome.
 
-    High confidence takes the realized percent on both the ratio and the equity
-    curve. Low confidence contributes the negative of that return to Sortino,
-    and cash (0) to the equity curve. A skip is not a position, so missed
-    winners cannot compound into a near-total drawdown. The open band between
-    the cutoffs is abstain. Pending packets are not samples. An empty matured
-    book is not scored.
-
-    ``n`` is every scored sample. ``n_longs`` is only the high-confidence
-    takes, so a book of skips has ``n_longs`` 0 while ``n`` is the skip count.
+    Every matured packet with a confidence in [0, 1] is a sample. The cutoffs
+    are reported and do not turn a skip into the negative of the return.
+    Pending packets are not samples. An empty matured set is not scored.
     """
+    from core.tab_agent_book import calibration_from_pairs
+
     high, low = parse_thresholds(str(version.get("text") or ""), skill_dir)
-    returns: list[float] = []
-    path_returns: list[float] = []
-    dates: list[str] = []
-    decisions: list[str] = []
+    pairs: list[tuple[float, float, str]] = []
     n_abstain = 0
     n_immature = 0
     n_missing_confidence = 0
+    n_skips = 0
+    n_longs = 0
     for packet in packets:
         confidence = _confidence(packet)
         if confidence is None:
             n_missing_confidence += 1
             continue
-        realized = _labeled_return(packet, config.horizon_days)
-        if realized is None:
+        outcome = _outcome_bit(packet)
+        if outcome is None:
             n_immature += 1
             continue
         day = str(packet.get("created_at") or "")[:10]
+        pairs.append((confidence, outcome, day))
         if confidence >= high:
-            dates.append(day)
-            returns.append(realized)
-            path_returns.append(realized)
-            decisions.append("long")
+            n_longs += 1
         elif confidence <= low:
-            dates.append(day)
-            returns.append(-float(realized))
-            path_returns.append(0.0)
-            decisions.append("cash")
+            n_skips += 1
         else:
             n_abstain += 1
-    if not returns:
-        book = evaluate_book([], [], config=config, decisions=[])
-        book["scored"] = False
-        book["not_scored_reason"] = "no_matured_packets"
-        book["primary_score"] = None
-        book["sortino"] = None
-        book["sharpe"] = None
-    else:
-        book = evaluate_book(
-            returns,
-            dates,
-            config=config,
-            decisions=decisions,
-            path_returns_pct=path_returns,
-        )
-        book["scored"] = True
-        book["not_scored_reason"] = None
+    book = calibration_from_pairs(pairs)
+    if not book.get("scored"):
+        book["primary_metric"] = "brier"
     book.update(
         {
             "version_id": version.get("id"),
@@ -387,12 +350,13 @@ def _version_book(
             "parent": version.get("parent"),
             "high_confidence_min": high,
             "low_confidence_max": low,
-            "scoring": "confidence_separation",
-            "drawdown_basis": "cash_on_skip",
-            "n_skips": sum(1 for decision in decisions if decision == "cash"),
+            "n_longs": n_longs,
+            "n_skips": n_skips,
             "n_abstain": n_abstain,
             "n_immature": n_immature,
             "n_missing_confidence": n_missing_confidence,
+            "win_rate": None,
+            "avg_realized_return_pct": None,
         }
     )
     return book

@@ -155,17 +155,27 @@ def _with_penalty(
         shrunk = conservative_sortino(scored_returns)
         adjusted = None if shrunk is None else round(shrunk - penalty, 6)
         method = "shrunk"
+    elif scored.get("sortino_unit") == "annualized_daily" and scored.get("sortino_daily") is not None:
+        adjusted_daily = round(float(scored["sortino_daily"]) - penalty, 6)
+        adjusted = round(adjusted_daily * math.sqrt(252), 6)
+        scored["sortino_daily"] = adjusted_daily
+        scored["primary_score"] = adjusted
+        scored["sortino"] = adjusted
     elif raw is None:
         adjusted = None
     else:
         adjusted = round(float(raw) - penalty, 6)
-    fractions = [float(value) / 100.0 for value in path_returns]
+    if scored.get("book_method") == "daily_mtm" and scored.get("smoothness_daily") is not None:
+        smooth = scored.get("smoothness_daily")
+    else:
+        fractions = [float(value) / 100.0 for value in path_returns]
+        smooth = equity_smoothness(equity_path(fractions))
     scored.update(
         {
             "penalty": round(penalty, 6),
             "sortino_adj": adjusted,
             "sortino_method": method,
-            "smoothness": equity_smoothness(equity_path(fractions)),
+            "smoothness": smooth,
             "primary_unbounded": unbounded,
         }
     )
@@ -194,6 +204,16 @@ def score_long_cash(
     returns = [row[1] for row in rows]
     labels = [row[2] for row in rows]
     book = evaluate_book(returns, dates, config=config, decisions=labels)
+    from core.tab_agent_book import legs_from_series, overlay_daily_book
+
+    pool: dict[str, list[float]] = {}
+    for case, _decision in zip(cases, decisions, strict=False):
+        pool.setdefault(case.as_of[:10], []).append(float(case.long_return_pct))
+    overlay_daily_book(
+        book,
+        legs_from_series(returns, dates, labels, horizon_days=config.horizon_days),
+        pool=pool,
+    )
     penalty = length_penalty(text, live_text, drift_weight=drift_weight)
     return _with_penalty(book, penalty, returns, returns)
 
@@ -207,40 +227,59 @@ def score_system_text(
     drift_weight: float = 0.15,
     skill_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """High confidence takes the return. A low-confidence skip is scored on the return it missed.
-
-    The equity curve stays in cash on a skip, matching the system tab agent.
-    """
+    """Calibration of stated confidence. A skip is not the negative of the return."""
     from core.system_tab_agent import parse_thresholds
+    from core.tab_agent_book import calibration_from_pairs
 
     high, low = parse_thresholds(text, skill_dir)
-    rows: list[tuple[str, float, float, str]] = []
+    pairs: list[tuple[float, float, str]] = []
     for case in cases:
         if case.stated_confidence is None:
             continue
-        confidence = float(case.stated_confidence)
-        if confidence >= high:
-            rows.append((case.as_of, float(case.long_return_pct), float(case.long_return_pct), "long"))
-        elif confidence <= low:
-            rows.append((case.as_of, -float(case.long_return_pct), 0.0, "cash"))
-    rows.sort(key=lambda item: item[0])
-    dates = [row[0] for row in rows]
-    returns = [row[1] for row in rows]
-    path = [row[2] for row in rows]
-    labels = [row[3] for row in rows]
-    book = evaluate_book(returns, dates, config=config, decisions=labels, path_returns_pct=path)
-    book["n_skips"] = sum(1 for label in labels if label == "cash")
+        ret = float(case.long_return_pct)
+        if ret > 0.5:
+            outcome = 1.0
+        elif ret < -0.5:
+            outcome = 0.0
+        else:
+            outcome = 0.5
+        pairs.append((float(case.stated_confidence), outcome, case.as_of[:10]))
+    book = calibration_from_pairs(pairs)
     book["high_confidence_min"] = high
     book["low_confidence_max"] = low
-    book["scoring"] = "confidence_separation"
+    book["n_longs"] = sum(
+        1 for case in cases if case.stated_confidence is not None and float(case.stated_confidence) >= high
+    )
+    book["n_skips"] = sum(
+        1 for case in cases if case.stated_confidence is not None and float(case.stated_confidence) <= low
+    )
     penalty = length_penalty(text, live_text, drift_weight=drift_weight)
-    return _with_penalty(book, penalty, path, returns)
+    if book.get("brier") is not None:
+        book["brier"] = round(float(book["brier"]) + penalty, 6)
+        book["primary_score"] = book["brier"]
+    book["penalty"] = round(penalty, 6)
+    book["sortino_adj"] = None if book.get("brier") is None else round(-float(book["brier"]), 6)
+    book["sortino_method"] = "brier"
+    return book
 
 
 def beats(candidate: dict[str, Any], baseline: dict[str, Any], margin: float) -> bool:
-    """True when the adjusted Sortino clears the baseline by ``margin``."""
-    left = candidate.get("sortino_adj")
-    right = baseline.get("sortino_adj")
+    """True when the candidate clears the baseline by ``margin``.
+
+    A calibration book wins by a lower Brier. A daily book compares the
+    unannualized daily Sortino, so the existing margin stays on that scale.
+    """
+    if candidate.get("scoring") == "calibration" or candidate.get("primary_metric") == "brier":
+        left = candidate.get("brier", candidate.get("primary_score"))
+        right = baseline.get("brier", baseline.get("primary_score"))
+        if left is None or right is None:
+            return False
+        return float(left) <= float(right) - float(margin)
+    left = candidate.get("sortino_daily")
+    right = baseline.get("sortino_daily")
+    if left is None or right is None:
+        left = candidate.get("sortino_adj")
+        right = baseline.get("sortino_adj")
     if left is None or right is None:
         return False
     return float(left) >= float(right) + float(margin)
@@ -281,6 +320,16 @@ def holdout_gate(
     min_longs: int = DEFAULT_MIN_LONGS,
 ) -> tuple[bool, str]:
     """A winner beats live on both windows, with enough trades and a tolerable drawdown."""
+    if train.get("scoring") == "calibration" or train.get("primary_metric") == "brier":
+        if int(train.get("n") or 0) < int(min_train):
+            return False, "insufficient_train_sample"
+        if int(holdout.get("n") or 0) < int(min_holdout):
+            return False, "insufficient_holdout_sample"
+        if not beats(train, live_train, margin):
+            return False, "train_margin"
+        if not beats(holdout, live_holdout, margin):
+            return False, "holdout_margin"
+        return True, "winner"
     if int(train.get("n") or 0) < int(min_train):
         return False, "insufficient_train_sample"
     if int(holdout.get("n") or 0) < int(min_holdout):
@@ -303,6 +352,9 @@ def holdout_gate(
 
 def rank_key(book: dict[str, Any]) -> tuple[float, float, float]:
     """Train order: adjusted Sortino, then a smoother curve, then a shallower drawdown."""
+    if book.get("scoring") == "calibration" or book.get("primary_metric") == "brier":
+        brier = book.get("brier", book.get("primary_score"))
+        return (float("-inf") if brier is None else -float(brier), 0.0, 0.0)
     sortino = book.get("sortino_adj")
     smooth = book.get("smoothness")
     drawdown = book.get("max_drawdown")
@@ -373,7 +425,7 @@ def load_lab_book(skill_dir: Path | str, *, horizon_days: int) -> LabLoad:
     for packet in load_packets(root):
         if not isinstance(packet, dict):
             continue
-        if is_fixture_packet(packet) or _row_is_fixture(packet):
+        if is_fixture_packet(packet) or _row_is_fixture(packet) or _quarantine_row(packet, root):
             fixtures += 1
             key = _packet_key(packet)
             if key is not None:
@@ -390,7 +442,7 @@ def load_lab_book(skill_dir: Path | str, *, horizon_days: int) -> LabLoad:
     for row in load_samples(root):
         if not isinstance(row, dict):
             continue
-        if _row_is_fixture(row):
+        if _row_is_fixture(row) or _quarantine_row(row, root):
             fixtures += 1
             continue
         case = _case_from_replay(row)
@@ -474,6 +526,12 @@ def _packet_key(packet: dict[str, Any]) -> tuple[str, str] | None:
     if not ticker or len(as_of) < 10:
         return None
     return ticker, as_of
+
+
+def _quarantine_row(row: dict[str, Any], skill_dir: Path) -> bool:
+    from core.tab_agent_book import is_book_excluded
+
+    return is_book_excluded(row, skill_dir=skill_dir)
 
 
 def _row_is_fixture(row: dict[str, Any]) -> bool:

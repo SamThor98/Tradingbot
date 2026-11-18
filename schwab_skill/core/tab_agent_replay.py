@@ -80,6 +80,7 @@ class ReplayBook:
     weights: list[float] | None
     sources: list[str] | None
     decisions: list[str] | None = None
+    dailies: list[Any] | None = None
 
 
 # These prompts explain, review, or falsify. They do not choose long versus cash.
@@ -180,8 +181,13 @@ def attach_replay(
     extra_returns: list[float] = []
     extra_dates: list[str] = []
     extra_decisions: list[str] = []
+    extra_dailies: list[Any] = []
+    from core.tab_agent_book import is_book_excluded
+
     for sample in load_samples(skill_dir):
         if sample.get("scored") is False:
+            continue
+        if is_book_excluded(sample, skill_dir=skill_dir):
             continue
         if str(sample.get("tab_id") or "") != str(tab_id):
             continue
@@ -196,8 +202,10 @@ def attach_replay(
             continue
         extra_dates.append(as_of)
         extra_decisions.append(str(sample.get("decision") or "long").lower())
+        daily = sample.get("daily_returns")
+        extra_dailies.append(daily if isinstance(daily, list) and daily else None)
     if not extra_returns:
-        return ReplayBook(live_returns, live_dates, None, None, live_decisions)
+        return ReplayBook(live_returns, live_dates, None, None, live_decisions, None)
     base_decisions = list(live_decisions) if live_decisions is not None else ["long"] * len(live_returns)
     return ReplayBook(
         live_returns + extra_returns,
@@ -205,6 +213,7 @@ def attach_replay(
         [1.0] * len(live_returns) + [clipped] * len(extra_returns),
         ["live"] * len(live_returns) + ["replay"] * len(extra_returns),
         base_decisions + extra_decisions,
+        [None] * len(live_returns) + extra_dailies,
     )
 
 
@@ -232,7 +241,11 @@ def attach_replay_combination(
     cutoff = str(since_ts or "")[:10]
     clipped = max(0.0, min(1.0, float(weight)))
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    from core.tab_agent_book import is_book_excluded
+
     for sample in load_samples(skill_dir):
+        if is_book_excluded(sample, skill_dir=skill_dir):
+            continue
         if sample.get("scored") is False or str(sample.get("tab_id") or "") != "debate":
             continue
         # Rows with a median are re-labeled at the active quality bar instead of
@@ -689,6 +702,13 @@ def scale_out_return(
             "realized_return_pct": float(outcome["realized_return_pct"]),
             "exit_model": str(outcome.get("exit_model") or "scale_out"),
             "stop_source": stop_source,
+            "entry_convention": outcome.get("entry_convention") or "next_open",
+            "realized_cost_pct": outcome.get("realized_cost_pct"),
+            "cost_sensitivity_pct": outcome.get("cost_sensitivity_pct"),
+            "stop_fill": outcome.get("stop_fill") or "min_stop_open",
+            "daily_returns": outcome.get("daily_returns"),
+            "book_return_pct": outcome.get("book_return_pct"),
+            "entry_price_used": outcome.get("entry_price_used"),
         }
     except (TypeError, ValueError, KeyError):
         return None
@@ -1486,6 +1506,13 @@ def _store_sample(
         "horizon_days": config.horizon_days,
         "exit_model": labeled.get("exit_model") or "scale_out",
         "stop_source": labeled.get("stop_source") or "stored",
+        "entry_convention": labeled.get("entry_convention") or "next_open",
+        "realized_cost_pct": labeled.get("realized_cost_pct"),
+        "cost_sensitivity_pct": labeled.get("cost_sensitivity_pct"),
+        "stop_fill": labeled.get("stop_fill") or "min_stop_open",
+        "daily_returns": labeled.get("daily_returns"),
+        "book_return_pct": labeled.get("book_return_pct"),
+        "entry_price_used": labeled.get("entry_price_used"),
         "scored": True,
         "weight": config.replay_weight,
         "input_hash": str(case.get("input_hash") or ""),
@@ -1903,10 +1930,14 @@ def decision_flags(decisions: list[str] | None) -> dict[str, Any]:
 
 
 def exit_fallback_stats(skill_dir: Path | None, tab_id: str) -> dict[str, Any]:
+    from core.tab_agent_book import is_book_excluded
+
     rows = [
         row
         for row in load_samples(skill_dir)
-        if str(row.get("tab_id") or "") == tab_id and row.get("scored") is not False
+        if str(row.get("tab_id") or "") == tab_id
+        and row.get("scored") is not False
+        and not is_book_excluded(row, skill_dir=skill_dir)
     ]
     count = len(rows)
     if not count:
@@ -1922,11 +1953,15 @@ def exit_fallback_stats(skill_dir: Path | None, tab_id: str) -> dict[str, Any]:
 
 def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) -> dict[str, Any]:
     """One long per scan date, using the scale-out the prompt could have taken."""
+    from core.tab_agent_book import benchmark_series, is_book_excluded, legs_from_series, overlay_daily_book
     from core.tab_agent_objective import evaluate_book
 
     chosen: dict[tuple[str, str], float] = {}
+    dailies: dict[tuple[str, str], Any] = {}
     for row in load_samples(skill_dir):
         if str(row.get("tab_id") or "") != tab_id or row.get("scored") is False:
+            continue
+        if is_book_excluded(row, skill_dir=skill_dir):
             continue
         key = (str(row.get("ticker") or ""), str(row.get("as_of") or "")[:10])
         if not key[0] or len(key[1]) < 10 or key in chosen:
@@ -1940,9 +1975,28 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
             chosen[key] = float(raw)
         except (TypeError, ValueError):
             continue
+        daily = row.get("daily_returns")
+        dailies[key] = daily if isinstance(daily, list) and daily else None
     dates = [key[1] for key in chosen]
     returns = list(chosen.values())
     book = evaluate_book(returns, dates, config=config)
+    pool: dict[str, list[float]] = {}
+    for key, value in chosen.items():
+        pool.setdefault(key[1], []).append(value)
+    spy_daily, cash_daily = benchmark_series(skill_dir)
+    overlay_daily_book(
+        book,
+        legs_from_series(
+            returns,
+            dates,
+            ["long"] * len(returns),
+            horizon_days=getattr(config, "horizon_days", 20),
+            dailies=[dailies[key] for key in chosen],
+        ),
+        spy_daily=spy_daily,
+        cash_daily=cash_daily,
+        pool=pool,
+    )
     book["name"] = "buy_every_scan"
     book["prompt_key"] = "buy_every_scan"
     return book
@@ -2054,6 +2108,17 @@ def rescore_replay(
         row["counterfactual_return_pct"] = labeled["realized_return_pct"]
         row["exit_model"] = labeled["exit_model"]
         row["stop_source"] = labeled.get("stop_source")
+        for field in (
+            "entry_convention",
+            "realized_cost_pct",
+            "cost_sensitivity_pct",
+            "stop_fill",
+            "daily_returns",
+            "book_return_pct",
+            "entry_price_used",
+        ):
+            if labeled.get(field) is not None:
+                row[field] = labeled[field]
         if str(row.get("decision") or "") == "long":
             row["realized_return_pct"] = labeled["realized_return_pct"]
         summary["relabeled"] += 1

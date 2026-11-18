@@ -11,6 +11,12 @@ function num(value, digits = 3) {
   return Number.isFinite(n) ? n.toFixed(digits) : "—";
 }
 
+function statCell(block) {
+  if (!block || block.mean == null) return "—";
+  const weeks = block.n_weeks ?? "—";
+  return `${num(block.shrunk, 4)} <span class="muted small">${escapeHtml(block.status || "")} w${weeks}</span>`;
+}
+
 function renderInto(panelId, data, changes, onText) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
@@ -21,8 +27,11 @@ function renderInto(panelId, data, changes, onText) {
       <td><code>${escapeHtml(row.version_id)}</code></td>
       <td>${escapeHtml(row.prompt_key || "")}</td>
       <td>${row.n ?? "—"} <span class="muted small">live ${row.n_live ?? row.n ?? "—"} / replay ${row.n_replay ?? 0}</span></td>
-      <td>${row.sufficient ? "readable" : "insufficient"}</td>
-      <td>${row.primary_unbounded ? "unbounded" : num(row.primary_score)}</td>
+      <td>${escapeHtml(row.sample_status || (row.sufficient ? "readable" : "insufficient"))}</td>
+      <td>${row.primary_unbounded ? "unbounded" : num(row.primary_score)} <span class="muted small">${escapeHtml(row.primary_metric || "")}</span></td>
+      <td>${num(row.spy_total_return, 3)}</td>
+      <td>${statCell(row.excess_vs_spy)}</td>
+      <td>${statCell(row.selection_vs_pool)}</td>
       <td>${num(row.max_drawdown, 3)}</td>
       <td>${row.max_drawdown_duration_days ?? "—"}</td>
       <td>${row.win_rate == null ? "—" : `${(Number(row.win_rate) * 100).toFixed(1)}%`}</td>
@@ -63,10 +72,11 @@ function renderInto(panelId, data, changes, onText) {
     .map((row) => `<pre class="small">${escapeHtml(row.summary || "")}</pre>`)
     .join("");
   panel.innerHTML = `<p class="muted small">${escapeHtml(on)} ${escapeHtml((data.score && data.score.winner_rule) || "")} Manual approve and rollback stay available.</p>
+    <p class="muted small">Score is the annualized daily Sortino of an equal-weight book, or Brier on the system tab. SPY is the cached total return over the same dates. Excess and selection are shrunk toward zero; fewer than 8 weeks is insufficient.</p>
     <h4>Change reports</h4>
     ${feed || "<p class='muted small'>No promotions or rollbacks yet.</p>"}
     <div class="table-wrap"><table>
-      <thead><tr><th>Version</th><th>Prompt</th><th>n</th><th>Sample</th><th>Sortino/Sharpe</th><th>Max DD</th><th>DD days</th><th>Win rate</th><th>Avg return</th></tr></thead>
+      <thead><tr><th>Version</th><th>Prompt</th><th>n</th><th>Sample</th><th>Score</th><th>SPY</th><th>Excess</th><th>Selection</th><th>Max DD</th><th>DD days</th><th>Win rate</th><th>Avg return</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     <p class="muted small">${escapeHtml(comparisons || "No comparison yet.")}</p>

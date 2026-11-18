@@ -227,10 +227,14 @@ def _version_book(
 
     if key == "rationale":
         return non_decision_book(version)
+    from core.tab_agent_book import is_book_excluded
+
     returns: list[float] = []
     dates: list[str] = []
     decisions: list[str] = []
     for packet in packets:
+        if is_book_excluded(packet, skill_dir=skill_dir):
+            continue
         refs = packet.get("refs") if isinstance(packet.get("refs"), dict) else {}
         if key == "rationale":
             matched = str(refs.get("rationale_version") or "") == vid
@@ -268,6 +272,27 @@ def _version_book(
         weights=merged.weights,
         sources=merged.sources,
         decisions=merged.decisions,
+    )
+    from core.tab_agent_book import benchmark_series, legs_from_series, overlay_daily_book
+
+    spy_daily, cash_daily = benchmark_series(skill_dir)
+    pool: dict[str, list[float]] = {}
+    for day, value, decision in zip(merged.dates, merged.returns, merged.decisions or [], strict=False):
+        if decision == "long":
+            pool.setdefault(str(day)[:10], []).append(float(value))
+    overlay_daily_book(
+        book,
+        legs_from_series(
+            merged.returns,
+            merged.dates,
+            merged.decisions,
+            weights=merged.weights,
+            horizon_days=config.horizon_days,
+            dailies=merged.dailies,
+        ),
+        spy_daily=spy_daily,
+        cash_daily=cash_daily,
+        pool=pool,
     )
     book.update(decision_flags(merged.decisions))
     book.update(

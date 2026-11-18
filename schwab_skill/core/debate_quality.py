@@ -65,12 +65,15 @@ def grid(low: float = TUNE_LOW, high: float = TUNE_HIGH, step: int = TUNE_STEP) 
 def load_debate_cases(skill_dir: Path | None, prompt_versions: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """One row per ticker and day, using the stored median and the scale-out return."""
     from core.debate_tab_agent import DEBATE_PROMPT_KEYS, combination_id
+    from core.tab_agent_book import is_book_excluded
     from core.tab_agent_replay import load_samples
 
     wanted = prompt_versions or {}
     prompt_key = combination_id(wanted) if wanted else ""
     chosen: dict[tuple[str, str], dict[str, Any]] = {}
     for sample in load_samples(skill_dir):
+        if is_book_excluded(sample, skill_dir=skill_dir):
+            continue
         if str(sample.get("tab_id") or "") != "debate" or sample.get("scored") is False:
             continue
         if not _matches_prompts(sample, wanted, prompt_key, DEBATE_PROMPT_KEYS):
@@ -120,6 +123,13 @@ def book_at_threshold(cases: list[dict[str, Any]], threshold: float, config: Obj
             returns.append(0.0)
             decisions.append("cash")
     book = evaluate_book(returns, dates, config=config, decisions=decisions)
+    from core.tab_agent_book import legs_from_series, overlay_daily_book
+
+    overlay_daily_book(
+        book,
+        legs_from_series(returns, dates, decisions, horizon_days=config.horizon_days),
+        apply_cost=True,
+    )
     book["quality_threshold"] = float(threshold)
     return book
 
@@ -172,6 +182,7 @@ def sweep_thresholds(
                 "tune_unbounded": bool(trained.get("primary_unbounded")),
                 "tune_longs": trained.get("n_longs"),
                 "holdout_sortino": None if held is None else held.get("primary_score"),
+                "holdout_sortino_daily": None if held is None else held.get("sortino_daily"),
                 "holdout_unbounded": False if held is None else bool(held.get("primary_unbounded")),
                 "holdout_longs": None if held is None else held.get("n_longs"),
                 "holdout_drawdown": None if held is None else held.get("max_drawdown"),
@@ -228,8 +239,12 @@ def _holdout_reason(row: dict[str, Any], live_hold: dict[str, Any] | None, confi
     hold_dd = row.get("holdout_drawdown")
     if hold_dd is None or float(hold_dd) < -float(config.drawdown_tolerance):
         return "drawdown_worse"
-    hold_score = row.get("holdout_sortino")
-    live_score = live_hold.get("primary_score")
+    hold_score = row.get("holdout_sortino_daily")
+    if hold_score is None:
+        hold_score = row.get("holdout_sortino")
+    live_score = live_hold.get("sortino_daily")
+    if live_score is None:
+        live_score = live_hold.get("primary_score")
     if row.get("holdout_unbounded"):
         if live_hold.get("primary_unbounded"):
             return "no_separation"
