@@ -875,6 +875,84 @@ def _run_bot_async(env: dict) -> None:
             async def resume(interaction: discord.Interaction):
                 await _slash(interaction, OperatorIntent("resume", True))
 
+
+            # Read-only phone views: /top, /picks, /levels. They do not place or approve orders.
+            @self.tree.command(name="top", description="Ranked names from the latest scan (read-only)")
+            @app_commands.describe(n="How many names to show (1-15, default 10)")
+            async def top_cmd(interaction: discord.Interaction, n: int = 10):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Top: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_top
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    text = await asyncio.to_thread(render_top, db_path, n=n)
+                    await interaction.followup.send(text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Top command failed: %s", e)
+                    try:
+                        await interaction.followup.send(_friendly_error("Top list failed."), ephemeral=False)
+                    except Exception:
+                        pass
+
+            @self.tree.command(name="picks", description="Past scan picks vs SPY (read-only)")
+            @app_commands.describe(days="How many calendar days of picks to score (1-90, default 10)")
+            async def picks_cmd(interaction: discord.Interaction, days: int = 10):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Picks: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_picks
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    text = await asyncio.to_thread(render_picks, db_path, days=days, skill_dir=SKILL_DIR)
+                    await interaction.followup.send(text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Picks command failed: %s", e)
+                    try:
+                        await interaction.followup.send(_friendly_error("Picks lookup failed."), ephemeral=False)
+                    except Exception:
+                        pass
+
+            @self.tree.command(name="levels", description="Price, SMAs, ATR, and scan stop (read-only)")
+            @app_commands.describe(ticker="Stock ticker symbol (e.g. AAPL)")
+            async def levels_cmd(interaction: discord.Interaction, ticker: str):
+                try:
+                    await interaction.response.defer(ephemeral=False, thinking=True)
+                except discord.InteractionResponded:
+                    return
+                except Exception as e:
+                    LOG.exception("Levels: defer failed: %s", e)
+                    return
+                try:
+                    from discord_operator_reads import render_levels
+
+                    db_path = SKILL_DIR / "webapp" / "webapp.db"
+                    view = await asyncio.to_thread(render_levels, ticker, db_path, skill_dir=SKILL_DIR)
+                    if view.embed:
+                        embed = discord.Embed.from_dict(view.embed)
+                        await interaction.followup.send(embed=embed, ephemeral=False)
+                    else:
+                        await interaction.followup.send(view.text, ephemeral=False)
+                except Exception as e:
+                    LOG.exception("Levels command failed: %s", e)
+                    try:
+                        await interaction.followup.send(
+                            _friendly_error(f"Levels failed for **{ticker.upper()}**."),
+                            ephemeral=False,
+                        )
+                    except Exception:
+                        pass
+
             @self.tree.command(name="scan", description="Run a new signal scan (Stage 2 + VCP)")
             async def scan(interaction: discord.Interaction):
                 await _slash(interaction, OperatorIntent("scan", True))

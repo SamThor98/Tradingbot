@@ -215,6 +215,9 @@ def test_pending_embed_states_market_buy():
 def test_help_lists_the_desk():
     text = help_text()
     assert "`today`" in text
+    assert "`/top" in text
+    assert "`/picks" in text
+    assert "`/levels" in text
     assert "pause buys" in text
     assert "resume buys" in text
     assert "`pending`" in text
