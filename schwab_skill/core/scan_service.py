@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from core.scan_catalog import annotate_passed_strategies, filter_signals_for_scan_selection
-from signal_scanner import scan_for_signals_detailed
+from signal_scanner import record_strategy_selection_drops, scan_for_signals_detailed
 
 
 @dataclass(frozen=True)
@@ -49,9 +49,11 @@ def run_scan(
         diagnostics["strategy_ids_requested"] = list(selected)
         diagnostics.setdefault("universe_preset", universe_preset or "sp1500")
         if selected:
+            before_signals = [row for row in signals if isinstance(row, dict)]
             before = len(signals)
             signals = filter_signals_for_scan_selection(signals, selected)
             diagnostics["strategy_id_filter_dropped"] = max(0, before - len(signals))
+            record_strategy_selection_drops(before_signals, signals, diagnostics)
             shortlist[:] = filter_signals_for_scan_selection(shortlist, selected)
         else:
             diagnostics["strategy_id_filter_dropped"] = 0
