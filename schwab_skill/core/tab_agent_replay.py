@@ -1965,6 +1965,33 @@ def exit_fallback_stats(skill_dir: Path | None, tab_id: str) -> dict[str, Any]:
     }
 
 
+def _sample_stop(row: dict[str, Any]) -> float | None:
+    """Absolute stop for the baseline walk. A percent stop uses the recorded entry."""
+    from core.tab_agent_book import stop_for_book
+
+    for key in ("stop_price", "book_stop_price"):
+        raw = row.get(key)
+        try:
+            if raw is None or raw == "":
+                continue
+            stop = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if stop > 0:
+            return stop
+    entry: float | None = None
+    for key in ("entry_price_used", "entry_price"):
+        raw = row.get(key)
+        try:
+            if raw is None or raw == "":
+                continue
+            entry = float(raw)
+            break
+        except (TypeError, ValueError):
+            continue
+    return stop_for_book({"stop_pct": row.get("stop_pct")}, entry)
+
+
 def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) -> dict[str, Any]:
     """One long per scan name. Selection uses the same path as this book."""
     from core.tab_agent_book import benchmark_series, is_book_excluded, legs_from_series, overlay_daily_book
@@ -1972,6 +1999,7 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
 
     chosen: dict[tuple[str, str], float] = {}
     dailies: dict[tuple[str, str], Any] = {}
+    stops: dict[tuple[str, str], Any] = {}
     for row in load_samples(skill_dir):
         if str(row.get("tab_id") or "") != tab_id or row.get("scored") is False:
             continue
@@ -1991,6 +2019,7 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
             continue
         daily = row.get("daily_returns")
         dailies[key] = daily if isinstance(daily, list) and daily else None
+        stops[key] = _sample_stop(row)
     dates = [key[1] for key in chosen]
     returns = list(chosen.values())
     tickers = [key[0] for key in chosen]
@@ -2002,6 +2031,7 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
         horizon_days=getattr(config, "horizon_days", 20),
         dailies=[dailies[key] for key in chosen],
         tickers=tickers,
+        stops=[stops[key] for key in chosen],
     )
     spy_daily, cash_daily = benchmark_series(skill_dir)
     overlay_daily_book(

@@ -40,7 +40,10 @@ COLUMN_GUIDE = (
     "The book calendar is the SPY cache when it covers the span, otherwise the NYSE session calendar. "
     "Cash earns the cached BIL daily return, or zero when BIL is not cached. "
     "Excess is the mean 20-session return minus SPY over those same sessions. "
-    "Selection is that return minus the same-day pool, and the pool uses this same path. "
+    "Selection is that excess minus the same-day pool's excess over SPY. "
+    "Every name uses this same path, and each name's SPY window is its own hold. "
+    "Raw excess minus raw selection is that pool excess, weighted by the prompt's longs. "
+    "When SPY is cached, a long with no covered SPY path, or no priced pool row that day, is left out of both. "
     "Each reports n, distinct days, distinct weeks, a 95% week-clustered interval, "
     "and a value shrunk toward zero by n/(n+10). Fewer than 8 distinct weeks is insufficient. "
     "A book with no daily path on a meaningful share of its longs is unscored: missing price paths, "
@@ -733,6 +736,29 @@ def _near_zero_downside(returns: list[float], invested: list[bool], metrics: dic
     return False
 
 
+def _covered_net_and_spy(
+    path: list[tuple[date, float]],
+    calendar: _Calendar,
+    spy_daily: dict[str, float] | None,
+) -> tuple[float, float | None]:
+    """Compound the hold, and SPY over those same sessions.
+
+    SPY is missing when the cache does not cover every session of the hold.
+    The return is still the hold. Callers that need both must check the SPY.
+    """
+    sessions = [(day, ret) for day, ret in path if calendar.is_session(day)]
+    net = _compound([ret for _day, ret in sessions])
+    if not sessions or not spy_daily:
+        return net, None
+    growth = 1.0
+    for day, _ret in sessions:
+        key = day.isoformat()
+        if key not in spy_daily:
+            return net, None
+        growth *= 1.0 + float(spy_daily[key])
+    return net, growth - 1.0
+
+
 def _price_pool_legs(
     legs: list[dict[str, Any]],
     *,
@@ -740,26 +766,82 @@ def _price_pool_legs(
     apply_cost: bool,
     calendar: _Calendar,
     lookup: Callable[[str], Any] | None,
-) -> dict[str, list[float]]:
-    """Percent return of each scan leg, on the same path a prompt long uses.
+    spy_daily: dict[str, float] | None,
+) -> dict[str, list[Any]]:
+    """Each scan long, on the same path a prompt long uses.
 
     A stored daily path wins, then a cache walk (next open, the leg's stop,
     the leg's horizon, and the same round-trip cost). The stored scale-out
-    percent is only the smear fallback when neither path exists.
+    percent is only the smear fallback when neither path exists. The first
+    row for a ticker on a day is the one that counts. ``net`` and ``spy`` are
+    fractions. ``spy`` is null when that hold is not covered.
     """
-    pool: dict[str, list[float]] = {}
+    pool: dict[str, list[Any]] = {}
+    seen: set[tuple[str, str]] = set()
     for leg in legs:
         if str(leg.get("decision") or "long") != "long":
             continue
         day = str(leg.get("date") or "")[:10]
         if len(day) < 10:
             continue
+        ticker = str(leg.get("ticker") or "").upper().strip()
+        if ticker:
+            key = (day, ticker)
+            if key in seen:
+                continue
+            seen.add(key)
         path, source = _resolve_leg(leg, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup)
         if not path or source in {"missing", "cash"}:
             continue
-        net = _compound([ret for session, ret in path if calendar.is_session(session)])
-        pool.setdefault(day, []).append(net * 100.0)
+        net, spy = _covered_net_and_spy(path, calendar, spy_daily)
+        pool.setdefault(day, []).append({"net": net, "spy": spy})
     return pool
+
+
+def _pool_benchmark(peers: list[Any]) -> tuple[float | None, float | None, bool]:
+    """Mean hold and mean excess over SPY for one signal day.
+
+    Rich rows carry a fraction and that row's own SPY. Covered rows are the
+    benchmark. When none of them have a SPY window, the mean hold is still
+    returned so a book with no SPY cache can score selection. A bare number is
+    the legacy percent pool and has no per-name window: the third value is
+    False and the caller pairs it with the prompt's SPY.
+    """
+    legacy: list[float] = []
+    holds: list[float] = []
+    covered: list[tuple[float, float]] = []
+    rich = False
+    for peer in peers:
+        if isinstance(peer, dict):
+            rich = True
+            try:
+                net = float(peer["net"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            holds.append(net)
+            spy = peer.get("spy")
+            if spy is None:
+                continue
+            try:
+                covered.append((net, net - float(spy)))
+            except (TypeError, ValueError):
+                continue
+            continue
+        try:
+            legacy.append(float(peer) / 100.0)
+        except (TypeError, ValueError):
+            continue
+    if rich:
+        if covered:
+            nets = [net for net, _excess in covered]
+            excesses = [excess for _net, excess in covered]
+            return sum(nets) / len(nets), sum(excesses) / len(excesses), True
+        if not holds:
+            return None, None, True
+        return sum(holds) / len(holds), None, True
+    if not legacy:
+        return None, None, False
+    return sum(legacy) / len(legacy), None, False
 
 
 def _prompt_stats(
@@ -767,9 +849,19 @@ def _prompt_stats(
     paths: list[list[tuple[date, float]]],
     *,
     spy_daily: dict[str, float] | None,
-    pool: dict[str, list[float]] | None,
+    pool: dict[str, list[Any]] | None,
     calendar: _Calendar,
 ) -> tuple[dict[str, Any], dict[str, Any], int]:
+    """Excess and selection on the same prompt longs.
+
+    For each long, excess is its hold minus SPY over that hold. The same-day
+    pool excess is the mean of each scan name's hold minus SPY over that
+    name's hold. Selection is the prompt excess minus that pool excess, so
+    the raw means satisfy excess - selection = the prompt-weighted pool excess.
+    A legacy percent pool has no per-name window, so it borrows the prompt's SPY.
+    When a pool is supplied, a long with no covered SPY or no covered peer is
+    in neither sample.
+    """
     excess_values: list[float] = []
     excess_days: list[date] = []
     selection_values: list[float] = []
@@ -782,29 +874,30 @@ def _prompt_stats(
         if signal is None:
             signal = path[0][0]
         signal_weeks.add(_iso_week(signal))
-        net = _compound([ret for day, ret in path if calendar.is_session(day)])
-        if spy_daily is not None:
-            spy_ret = 1.0
-            covered = True
-            saw = False
-            for day, _ret in path:
-                if not calendar.is_session(day):
-                    continue
-                key = day.isoformat()
-                if key not in spy_daily:
-                    covered = False
-                    break
-                saw = True
-                spy_ret *= 1.0 + float(spy_daily[key])
-            if covered and saw:
-                excess_values.append(net - (spy_ret - 1.0))
+        net, spy = _covered_net_and_spy(path, calendar, spy_daily)
+        if pool is None:
+            if spy is not None:
+                excess_values.append(net - spy)
                 excess_days.append(signal)
-        if pool is not None:
-            peers = pool.get(signal.isoformat()) or []
-            if peers:
-                peer_mean = sum(float(value) for value in peers) / len(peers)
-                selection_values.append(net - peer_mean / 100.0)
+            continue
+        peers = pool.get(signal.isoformat()) or []
+        mean_net, mean_excess, rich = _pool_benchmark(peers)
+        if spy_daily is None:
+            if mean_net is not None:
+                selection_values.append(net - mean_net)
                 selection_days.append(signal)
+            continue
+        if spy is None or mean_net is None:
+            continue
+        if mean_excess is None:
+            if rich:
+                continue
+            mean_excess = mean_net - spy
+        prompt_excess = net - spy
+        excess_values.append(prompt_excess)
+        excess_days.append(signal)
+        selection_values.append(prompt_excess - mean_excess)
+        selection_days.append(signal)
     return (
         week_cluster_stats(excess_values, excess_days),
         week_cluster_stats(selection_values, selection_days),
@@ -817,7 +910,7 @@ def score_legs(
     *,
     spy_daily: dict[str, float] | None = None,
     cash_daily: dict[str, float] | None = None,
-    pool: dict[str, list[float]] | None = None,
+    pool: dict[str, list[Any]] | None = None,
     pool_legs: list[dict[str, Any]] | None = None,
     apply_cost: bool = True,
     cost: float = ROUND_TRIP_COST,
@@ -833,7 +926,14 @@ def score_legs(
     calendar = _Calendar(spy_daily)
     lookup = price_lookup if price_lookup is not None else _price_lookup(skill_dir)
     if pool_legs is not None:
-        pool = _price_pool_legs(pool_legs, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup)
+        pool = _price_pool_legs(
+            pool_legs,
+            cost=cost,
+            apply_cost=apply_cost,
+            calendar=calendar,
+            lookup=lookup,
+            spy_daily=spy_daily,
+        )
     resolved = [_resolve_leg(leg, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup) for leg in legs]
     paths = [path for path, _source in resolved]
     sources = [source for _path, source in resolved]
@@ -907,7 +1007,7 @@ def overlay_daily_book(
     *,
     spy_daily: dict[str, float] | None = None,
     cash_daily: dict[str, float] | None = None,
-    pool: dict[str, list[float]] | None = None,
+    pool: dict[str, list[Any]] | None = None,
     pool_legs: list[dict[str, Any]] | None = None,
     apply_cost: bool = True,
     skill_dir: Path | str | None = None,
@@ -1042,7 +1142,7 @@ def score_book_rows(
     skill_dir: Path | str | None = None,
     spy_daily: dict[str, float] | None = None,
     cash_daily: dict[str, float] | None = None,
-    pool: dict[str, list[float]] | None = None,
+    pool: dict[str, list[Any]] | None = None,
     apply_cost: bool = True,
 ) -> dict[str, Any]:
     """Score rows after quarantine. A quarantined packet is not a leg."""

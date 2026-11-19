@@ -549,3 +549,239 @@ def test_selection_pool_uses_the_cache_walk_not_the_stored_return(tmp_path, monk
     assert abs(selection["mean"] - stored_mix) > 0.2
     assert book["n"] == 1
     assert book["avg_realized_return_pct"] == 40.0
+
+
+def _ohlc(
+    index: pd.DatetimeIndex, closes: list[float], *, opens: list[float] | None = None, lows: list[float] | None = None
+) -> pd.DataFrame:
+    if opens is None:
+        opens = [closes[0], *closes[:-1]]
+    if lows is None:
+        lows = [min(open_, close) - 0.5 for open_, close in zip(opens, closes, strict=True)]
+    highs = [max(open_, close) + 0.5 for open_, close in zip(opens, closes, strict=True)]
+    return pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": [1_000_000.0] * len(closes)},
+        index=index,
+    )
+
+
+def _spy_map(index: pd.DatetimeIndex, closes: list[float]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    previous: float | None = None
+    for stamp, price in zip(index, closes, strict=True):
+        if previous is not None and previous > 0:
+            out[str(stamp)[:10]] = price / previous - 1.0
+        previous = price
+    return out
+
+
+def _hold_excess(leg: dict, lookup, spy: dict[str, float]) -> tuple[float, float]:
+    """Hold minus SPY over that hold. Same walk the book uses, outside the aggregator."""
+    from core.tab_agent_book import ROUND_TRIP_COST, _Calendar, _covered_net_and_spy, _resolve_leg
+
+    calendar = _Calendar(spy)
+    path, source = _resolve_leg(leg, cost=ROUND_TRIP_COST, apply_cost=True, calendar=calendar, lookup=lookup)
+    assert source == "cache"
+    net, spy_ret = _covered_net_and_spy(path, calendar, spy)
+    assert spy_ret is not None
+    return net, spy_ret
+
+
+def test_raw_excess_minus_selection_is_the_prompt_weighted_pool_excess() -> None:
+    """Different hold lengths must not make pool-minus-SPY depend on the prompt's window.
+
+    A stopped name and a full hold on the same day have different SPY paths.
+    Subtracting the day's average return from the prompt's own SPY is not the
+    pool's excess. An orphan long, and a second row for a ticker, stay out.
+    """
+    index = pd.bdate_range("2026-06-01", periods=24)
+    days = [str(stamp)[:10] for stamp in index]
+    n = len(index)
+    spy = _spy_map(index, [100.0 + step * 0.45 for step in range(n)])
+    bbb_opens = [100.0] * n
+    bbb_lows = [99.0] * n
+    bbb_closes = [100.0 + step * 0.2 for step in range(n)]
+    bbb_opens[1] = 94.0
+    bbb_lows[1] = 80.0
+    bbb_closes[1] = 96.0
+    frames = {
+        "AAA": _ohlc(index, [50.0 + step * 0.35 for step in range(n)]),
+        "BBB": _ohlc(index, bbb_closes, opens=bbb_opens, lows=bbb_lows),
+        "CCC": _ohlc(index, [80.0] * n),
+        "DDD": _ohlc(index, [40.0 + step * 0.7 for step in range(n)]),
+        "EEE": _ohlc(index, [70.0 - step * 0.15 for step in range(n)]),
+        "ZZZ": _ohlc(index, [30.0 + step * 0.1 for step in range(n)]),
+    }
+
+    def leg(ticker: str, day: str, stop: float) -> dict:
+        return {
+            "date": day,
+            "ticker": ticker,
+            "decision": "long",
+            "return_pct": 1.0,
+            "horizon_days": 4,
+            "stop_price": stop,
+        }
+
+    day_a, day_b, day_c, orphan_day = days[0], days[6], days[12], days[18]
+    pool_legs = [
+        leg("AAA", day_a, 10.0),
+        leg("BBB", day_a, 90.0),
+        leg("CCC", day_a, 10.0),
+        leg("BBB", day_a, 10.0),
+        leg("AAA", day_b, 10.0),
+        leg("DDD", day_b, 10.0),
+        leg("EEE", day_b, 10.0),
+        leg("CCC", day_c, 10.0),
+        leg("DDD", day_c, 10.0),
+    ]
+    prompt_legs = [
+        leg("BBB", day_a, 90.0),
+        leg("AAA", day_b, 10.0),
+        leg("EEE", day_b, 10.0),
+        leg("ZZZ", orphan_day, 10.0),
+    ]
+    lookup = frames.get
+    stopped_net, stopped_spy = _hold_excess(leg("BBB", day_a, 90.0), lookup, spy)
+    full_net, full_spy = _hold_excess(leg("AAA", day_a, 10.0), lookup, spy)
+    assert stopped_spy != pytest.approx(full_spy)
+    assert abs(stopped_net - full_net) > 0.01
+
+    peers: dict[str, list[float]] = {}
+    peer_nets: dict[str, list[float]] = {}
+    seen: set[tuple[str, str]] = set()
+    for row in pool_legs:
+        key = (row["date"], row["ticker"])
+        if key in seen:
+            continue
+        seen.add(key)
+        net, spy_ret = _hold_excess(row, lookup, spy)
+        peers.setdefault(row["date"], []).append(net - spy_ret)
+        peer_nets.setdefault(row["date"], []).append(net)
+
+    prompt_excess: list[float] = []
+    pool_excess: list[float] = []
+    old_gap: list[float] = []
+    for row in prompt_legs:
+        day_peers = peers.get(row["date"])
+        if not day_peers:
+            continue
+        net, spy_ret = _hold_excess(row, lookup, spy)
+        prompt_excess.append(net - spy_ret)
+        pool_excess.append(sum(day_peers) / len(day_peers))
+        old_gap.append(sum(peer_nets[row["date"]]) / len(peer_nets[row["date"]]) - spy_ret)
+    true_pool = sum(pool_excess) / len(pool_excess)
+    assert abs(true_pool - sum(old_gap) / len(old_gap)) > 1e-3
+
+    book = score_legs(prompt_legs, pool_legs=pool_legs, spy_daily=spy, price_lookup=lookup)
+    excess = book["excess_vs_spy"]
+    selection = book["selection_vs_pool"]
+    assert excess["n"] == selection["n"] == len(prompt_excess)
+    assert excess["n"] < len(prompt_legs)
+    assert excess["mean"] - selection["mean"] == pytest.approx(true_pool, abs=1e-5)
+    assert excess["mean"] == pytest.approx(sum(prompt_excess) / len(prompt_excess), abs=1e-5)
+    assert selection["mean"] == pytest.approx(
+        sum(prompt - pool for prompt, pool in zip(prompt_excess, pool_excess, strict=True)) / len(prompt_excess),
+        abs=1e-5,
+    )
+
+
+def test_buy_every_scan_excess_matches_the_pool_when_every_row_is_picked(tmp_path, monkeypatch) -> None:
+    """Buying every scan row is the pool. Its excess over SPY is the baseline's excess."""
+    from core.tab_agent import scan_leg, score_prompt_versions
+    from core.tab_agent_book import _price_lookup
+    from core.tab_agent_replay import append_sample
+
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "4")
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(tmp_path / "prices"))
+    index = pd.bdate_range("2026-06-01", periods=16)
+    n = len(index)
+    days = [str(stamp)[:10] for stamp in index]
+    bbb_opens = [100.0] * n
+    bbb_lows = [99.0] * n
+    bbb_closes = [100.0 + step * 0.15 for step in range(n)]
+    bbb_opens[1] = 94.0
+    bbb_lows[1] = 80.0
+    bbb_closes[1] = 96.0
+    frames = {
+        "SPY": _ohlc(index, [100.0 + step * 0.4 for step in range(n)]),
+        "AAA": _ohlc(index, [50.0 + step * 0.3 for step in range(n)]),
+        "BBB": _ohlc(index, bbb_closes, opens=bbb_opens, lows=bbb_lows),
+        "CCC": _ohlc(index, [60.0 + step * 0.05 for step in range(n)]),
+        "DDD": _ohlc(index, [42.0 + step * 0.55 for step in range(n)]),
+    }
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    for ticker, frame in frames.items():
+        frame.to_csv(cache / f"{ticker}.csv", index_label="date")
+
+    specs = [
+        ("AAA", days[0], 10.0),
+        ("BBB", days[0], 90.0),
+        ("CCC", days[0], 10.0),
+        ("AAA", days[5], 10.0),
+        ("DDD", days[5], 10.0),
+        ("CCC", days[8], 10.0),
+    ]
+    packets = []
+    attributions = []
+    for ticker, day, stop in specs:
+        packets.append(
+            {
+                "ticker": ticker,
+                "created_at": f"{day}T15:00:00+00:00",
+                "side": "long",
+                "stop_price": stop,
+                "outcome": {"label": "win", "realized_return_pct": 9.0, "horizon_days": 4},
+            }
+        )
+        attributions.append({"version_id": "v1", "ticker": ticker, "day": day, "decision": "long"})
+        append_sample(
+            tmp_path,
+            {
+                "source": "replay",
+                "tab_id": "today",
+                "prompt_key": "buy_every_scan",
+                "version_id": "baseline-only",
+                "ticker": ticker,
+                "as_of": day,
+                "decision": "long",
+                "counterfactual_return_pct": 9.0,
+                "stop_price": stop,
+                "horizon_days": 4,
+                "scored": True,
+            },
+        )
+    versions = [{"id": "v1", "prompt_key": "institutional_trend", "status": "live", "parent": None}]
+    report = score_prompt_versions(
+        versions=versions,
+        packets=packets,
+        attributions=attributions,
+        skill_dir=tmp_path,
+        tab_id="today",
+    )
+    book = report["versions"][0]
+    baseline = report["baseline"]
+    lookup = _price_lookup(tmp_path)
+    assert lookup is not None
+    from core.tab_agent_book import benchmark_series
+
+    spy_daily, _cash = benchmark_series(tmp_path)
+    assert spy_daily
+    row_excess = []
+    for packet in packets:
+        net, spy_ret = _hold_excess(scan_leg(packet, horizon_days=4), lookup, spy_daily)
+        row_excess.append(net - spy_ret)
+    pool_excess = sum(row_excess) / len(row_excess)
+    stopped, _spy = _hold_excess(scan_leg(packets[1], horizon_days=4), lookup, spy_daily)
+    held, _held_spy = _hold_excess(scan_leg(packets[0], horizon_days=4), lookup, spy_daily)
+    assert abs(stopped - held) > 0.01
+    excess = book["excess_vs_spy"]
+    selection = book["selection_vs_pool"]
+    base_excess = baseline["excess_vs_spy"]
+    assert excess["n"] == base_excess["n"] == len(specs)
+    assert selection["n"] == len(specs)
+    assert selection["mean"] == pytest.approx(0.0, abs=1e-5)
+    assert excess["mean"] == pytest.approx(pool_excess, abs=1e-5)
+    assert base_excess["mean"] == pytest.approx(pool_excess, abs=1e-5)
+    assert excess["mean"] - selection["mean"] == pytest.approx(base_excess["mean"], abs=1e-5)
