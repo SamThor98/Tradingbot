@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core.debate_committee import maybe_attach_committee
 from core.debate_grade import attach_debate_grade
 from core.debate_tab_agent import DebateTabAgent
@@ -221,3 +223,123 @@ def test_shadow_debate_combination_promotes_together(tmp_path, monkeypatch) -> N
     assert "Stay in cash" in reg.live_version("debate", "system")["text"]
     assert "Stay in cash" in reg.live_version("debate", "round1")["text"]
     assert "Stay in cash" not in reg.live_version("debate", "round2")["text"]
+
+
+def test_debate_selection_uses_the_same_day_scan_pool(tmp_path, monkeypatch) -> None:
+    """Debate selection is the cache-walked long minus that day's scan rows, not n=0."""
+    import pandas as pd
+
+    from core.tab_agent import scan_leg
+    from core.tab_agent_book import ROUND_TRIP_COST, _Calendar, _compound, _price_lookup, _resolve_leg
+
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    index = pd.bdate_range("2026-06-01", periods=40)
+    held = [100.0 + step * 0.35 for step in range(len(index))]
+    aaa = pd.DataFrame(
+        {
+            "open": [100.0] * len(index),
+            "high": [price + 1.0 for price in held],
+            "low": [max(price - 0.5, 91.0) for price in held],
+            "close": held,
+            "volume": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+    ran = [100.0 * (1.04**step) for step in range(len(index))]
+    bbb = pd.DataFrame(
+        {
+            "open": [100.0] * len(index),
+            "high": [price + 1.0 for price in ran],
+            "low": [90.0] * len(index),
+            "close": ran,
+            "volume": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+    aaa.to_csv(cache / "AAA.csv", index_label="date")
+    bbb.to_csv(cache / "BBB.csv", index_label="date")
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(cache))
+
+    agent = DebateTabAgent()
+    reg = agent.registry(tmp_path)
+    versions = {key: reg.live_version("debate", key)["id"] for key in ("system", "round1", "round2")}
+    packets = []
+    events = []
+    for day in ("2026-06-01", "2026-06-08"):
+        packets.append(
+            {
+                "ticker": "AAA",
+                "created_at": f"{day}T15:00:00+00:00",
+                "side": "long",
+                "stop_price": 80.0,
+                "outcome": {
+                    "label": "win",
+                    "realized_return_pct": 40.0,
+                    "horizon_days": 20,
+                    "exit_model": "scale_out",
+                },
+            }
+        )
+        packets.append(
+            {
+                "ticker": "BBB",
+                "created_at": f"{day}T15:00:00+00:00",
+                "side": "long",
+                "stop_price": 110.0,
+                "outcome": {
+                    "label": "win",
+                    "realized_return_pct": 50.0,
+                    "horizon_days": 20,
+                    "exit_model": "scale_out",
+                },
+            }
+        )
+        events.append(
+            {
+                "ts": f"{day}T20:00:00+00:00",
+                "as_of": day,
+                "ticker": "AAA",
+                "debate_score": 80,
+                "prompt_versions": versions,
+                "side": "long",
+            }
+        )
+    overwrite_packets(tmp_path, packets)
+    (tmp_path / ".debate_committee_log.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in events),
+        encoding="utf-8",
+    )
+    book = next(row for row in agent.score(tmp_path)["versions"] if row.get("status") == "live")
+    lookup = _price_lookup(tmp_path)
+    assert lookup is not None
+    calendar = _Calendar(None)
+
+    def net(packet: dict) -> float:
+        path, source = _resolve_leg(
+            scan_leg(packet, horizon_days=20),
+            cost=ROUND_TRIP_COST,
+            apply_cost=True,
+            calendar=calendar,
+            lookup=lookup,
+        )
+        assert source == "cache"
+        return _compound([ret for session, ret in path if calendar.is_session(session)])
+
+    values = []
+    for offset in (0, 2):
+        chosen = net(packets[offset])
+        peer = net(packets[offset + 1])
+        values.append(chosen - (chosen + peer) / 2.0)
+    expected = sum(values) / len(values)
+    stored_mix = sum(net(packets[offset]) - 0.45 for offset in (0, 2)) / 2.0
+    selection = book["selection_vs_pool"]
+    assert book["n_longs"] == 2
+    assert book["avg_realized_return_pct"] == 40.0
+    assert selection["n"] == 2
+    assert selection["n_weeks"] == 2
+    assert selection["ci_low"] is not None
+    assert selection["ci_high"] is not None
+    assert selection["mean"] == pytest.approx(expected, abs=1e-6)
+    assert selection["shrunk"] == pytest.approx(expected * 2.0 / 12.0, abs=1e-6)
+    assert abs(selection["mean"] - stored_mix) > 0.2

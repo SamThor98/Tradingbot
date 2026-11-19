@@ -378,6 +378,77 @@ def _packet_return(packet: dict[str, Any], *, horizon_days: int) -> tuple[str, f
     return label, ret
 
 
+def _daily_returns(packet: dict[str, Any], *, horizon_days: int) -> list[dict[str, Any]] | None:
+    outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
+    by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
+    chosen = outcome
+    nested = by_horizon.get(str(horizon_days))
+    if isinstance(nested, dict):
+        chosen = nested
+    daily = chosen.get("daily_returns")
+    if isinstance(daily, list) and daily:
+        return daily
+    return None
+
+
+def packet_stop(packet: dict[str, Any], *, horizon_days: int) -> float | None:
+    """Absolute stop for the cache walk. A percent stop uses the recorded entry."""
+    from core.tab_agent_book import stop_for_book
+
+    outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
+    by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
+    nested = by_horizon.get(str(horizon_days))
+    chosen = nested if isinstance(nested, dict) else outcome
+    for source in (chosen, outcome, packet):
+        if not isinstance(source, dict):
+            continue
+        for key in ("book_stop_price", "stop_price"):
+            raw = source.get(key)
+            try:
+                if raw is None or raw == "":
+                    continue
+                stop = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if stop > 0:
+                return stop
+    entry: float | None = None
+    for source in (chosen, outcome, packet):
+        if not isinstance(source, dict):
+            continue
+        for key in ("entry_price_used", "entry_price"):
+            raw = source.get(key)
+            try:
+                if raw is None or raw == "":
+                    continue
+                entry = float(raw)
+                break
+            except (TypeError, ValueError):
+                continue
+        if entry is not None and entry > 0:
+            break
+    return stop_for_book(packet, entry)
+
+
+def scan_leg(packet: dict[str, Any], *, horizon_days: int) -> dict[str, Any] | None:
+    """One matured scan row, ready for the same path the prompt book uses."""
+    parsed = _packet_return(packet, horizon_days=horizon_days)
+    day = utc_day(packet.get("created_at"))
+    ticker = str(packet.get("ticker") or "").upper().strip()
+    if parsed is None or not day or not ticker:
+        return None
+    return {
+        "date": day,
+        "ticker": ticker,
+        "return_pct": parsed[1],
+        "decision": "long",
+        "horizon_days": int(horizon_days),
+        "daily": _daily_returns(packet, horizon_days=horizon_days),
+        "stop_price": packet_stop(packet, horizon_days=horizon_days),
+        "cost_applied": False,
+    }
+
+
 def score_prompt_versions(
     *,
     versions: list[dict[str, Any]],
@@ -408,7 +479,7 @@ def score_prompt_versions(
 
     quarantine_rows = load_quarantine(skill_dir)
     spy_daily, cash_daily = benchmark_series(skill_dir)
-    pool: dict[str, list[float]] = {}
+    pool_legs: list[dict[str, Any]] = []
     packet_index = {}
     for packet in packets:
         if not isinstance(packet, dict):
@@ -419,20 +490,9 @@ def score_prompt_versions(
         day = utc_day(packet.get("created_at"))
         if ticker and day and (ticker, day) not in packet_index:
             packet_index[(ticker, day)] = packet
-        parsed = _packet_return(packet, horizon_days=config.horizon_days)
-        if parsed is not None and day:
-            pool.setdefault(day, []).append(parsed[1])
-
-    def _daily(packet: dict[str, Any]) -> list[dict[str, Any]] | None:
-        outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
-        by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
-        chosen = outcome
-        if str(config.horizon_days) in by_horizon and isinstance(by_horizon.get(str(config.horizon_days)), dict):
-            chosen = by_horizon[str(config.horizon_days)]
-        daily = chosen.get("daily_returns")
-        if isinstance(daily, list) and daily:
-            return daily
-        return None
+        leg = scan_leg(packet, horizon_days=config.horizon_days)
+        if leg is not None:
+            pool_legs.append(leg)
 
     stats: list[dict[str, Any]] = []
     joined_total = 0
@@ -448,6 +508,7 @@ def score_prompt_versions(
         dates: list[str] = []
         decisions: list[str] = []
         dailies: list[Any] = []
+        stops: list[Any] = []
         tickers: list[str] = []
         seen: set[tuple[str, str]] = set()
         for use in by_version.get(vid, []):
@@ -473,6 +534,7 @@ def score_prompt_versions(
                 returns.append(0.0)
                 decisions.append("cash")
                 dailies.append(None)
+                stops.append(None)
                 tickers.append(ticker)
                 joined_total += 1
                 continue
@@ -484,7 +546,8 @@ def score_prompt_versions(
             dates.append(day)
             returns.append(parsed[1])
             decisions.append("long")
-            dailies.append(_daily(packet))
+            dailies.append(_daily_returns(packet, horizon_days=config.horizon_days))
+            stops.append(packet_stop(packet, horizon_days=config.horizon_days))
             tickers.append(ticker)
             joined_total += 1
         from core.tab_agent_replay import attach_replay, decision_flags
@@ -511,6 +574,9 @@ def score_prompt_versions(
         combined_dailies = list(dailies)
         if merged.dailies and len(merged.dailies) > len(dailies):
             combined_dailies.extend(merged.dailies[len(dailies) :])
+        combined_stops = list(stops)
+        if len(merged.returns) > len(stops):
+            combined_stops.extend([None] * (len(merged.returns) - len(stops)))
         merged_tickers = list(merged.tickers) if merged.tickers else list(tickers)
         if len(merged_tickers) < len(merged.returns):
             merged_tickers.extend([""] * (len(merged.returns) - len(merged_tickers)))
@@ -524,10 +590,11 @@ def score_prompt_versions(
                 horizon_days=config.horizon_days,
                 dailies=combined_dailies,
                 tickers=merged_tickers,
+                stops=combined_stops,
             ),
             spy_daily=spy_daily,
             cash_daily=cash_daily,
-            pool=pool,
+            pool_legs=pool_legs,
             skill_dir=skill_dir,
         )
         book.update(

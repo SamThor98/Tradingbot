@@ -36,18 +36,14 @@ from typing import Any
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent / "scripts" / "validate_all.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "validate_all.py"
 
 
 @pytest.fixture
 def validate_all(monkeypatch: pytest.MonkeyPatch):
     """Load ``validate_all.py`` as a module with a unique name per test
     so monkeypatches to its globals don't leak across tests."""
-    spec = importlib.util.spec_from_file_location(
-        f"validate_all_under_test_{id(monkeypatch)}", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location(f"validate_all_under_test_{id(monkeypatch)}", SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -113,13 +109,9 @@ def _run_main(
     from ``latest_validation_report.json`` so we exercise the real
     serialisation path."""
     monkeypatch.setattr(validate_all, "ARTIFACT_DIR", tmp_path)
-    monkeypatch.setattr(
-        sys, "argv", ["validate_all.py", "--profile", "local", *extra_args]
-    )
+    monkeypatch.setattr(sys, "argv", ["validate_all.py", "--profile", "local", *extra_args])
     rc = validate_all.main()
-    summary = json.loads(
-        (tmp_path / "latest_validation_report.json").read_text(encoding="utf-8")
-    )
+    summary = json.loads((tmp_path / "latest_validation_report.json").read_text(encoding="utf-8"))
     return rc, summary
 
 
@@ -147,12 +139,8 @@ def test_head_runs_before_middle_and_tail_runs_after(
     assert tail_indices, "expected at least one tail step (observability) in any profile"
     assert middle_indices, "expected middle parallel steps"
 
-    assert max(head_indices) < min(middle_indices), (
-        "all _SEQUENTIAL_HEAD steps must finish before middle work starts"
-    )
-    assert max(middle_indices) < min(tail_indices), (
-        "tail steps must wait for every middle step to complete"
-    )
+    assert max(head_indices) < min(middle_indices), "all _SEQUENTIAL_HEAD steps must finish before middle work starts"
+    assert max(middle_indices) < min(tail_indices), "tail steps must wait for every middle step to complete"
 
 
 def test_max_parallel_actually_overlaps_middle_steps(
@@ -201,18 +189,12 @@ def test_max_parallel_one_runs_strictly_sequential(
             f"sequential mode produced overlap between {prev['name']} and {cur['name']}"
         )
     threads = {c["thread"] for c in calls}
-    assert len(threads) == 1, (
-        f"sequential mode should stay on the main thread, got {threads}"
-    )
+    assert len(threads) == 1, f"sequential mode should stay on the main thread, got {threads}"
 
 
-def test_strict_failure_aborts_and_skips_tail(
-    validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_strict_failure_aborts_and_skips_tail(validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     failing = "validate_plugin_modes"  # known middle-group step
-    calls, _ = _install_fake_run_step(
-        validate_all, monkeypatch, fail={failing}
-    )
+    calls, _ = _install_fake_run_step(validate_all, monkeypatch, fail={failing})
     rc, summary = _run_main(
         validate_all,
         monkeypatch,
@@ -224,14 +206,27 @@ def test_strict_failure_aborts_and_skips_tail(
 
     ran = {c["name"] for c in calls}
     for tail_name in validate_all._SEQUENTIAL_TAIL:
-        assert tail_name not in ran, (
-            f"tail step {tail_name!r} should not run after a strict-mode failure"
-        )
+        assert tail_name not in ran, f"tail step {tail_name!r} should not run after a strict-mode failure"
 
 
-def test_results_emitted_in_canonical_step_order(
-    validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_order_ledger_validators_do_not_overlap(validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """place_order validators share .order_ambiguity.json and must not run together."""
+    calls, _ = _install_fake_run_step(validate_all, monkeypatch, sleep=0.05)
+    rc, _summary = _run_main(
+        validate_all,
+        monkeypatch,
+        tmp_path,
+        ["--max-parallel", "4"],
+    )
+    assert rc == 0
+    ledger = [c for c in calls if c["name"] in validate_all._SEQUENTIAL_ORDER_LEDGER]
+    assert len(ledger) >= 2
+    ledger.sort(key=lambda row: row["started"])
+    for prev, cur in zip(ledger, ledger[1:]):
+        assert prev["ended"] <= cur["started"] + 1e-3, f"{prev['name']} overlapped {cur['name']}"
+
+
+def test_results_emitted_in_canonical_step_order(validate_all, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Even when middle steps complete out-of-order under a thread pool,
     the artifact must list them in the original schedule order so
     diff-tools and the baseline-delta logic stay stable."""
@@ -256,26 +251,17 @@ def test_results_emitted_in_canonical_step_order(
         }
 
     monkeypatch.setattr(validate_all, "_run_step", fake_run_step)
-    rc, summary = _run_main(
-        validate_all, monkeypatch, tmp_path, ["--max-parallel", "4"]
-    )
+    rc, summary = _run_main(validate_all, monkeypatch, tmp_path, ["--max-parallel", "4"])
     assert rc == 0
 
-    expected = [
-        s[0]
-        for s in validate_all._steps_for_profile("local", "", False, False, False, False, {})
-    ]
+    expected = [s[0] for s in validate_all._steps_for_profile("local", "", False, False, False, False, {})]
     actual = [r["name"] for r in summary["results"]]
     assert actual == expected, (
-        f"results were emitted out of canonical step order:\n"
-        f"  expected: {expected}\n"
-        f"  actual:   {actual}"
+        f"results were emitted out of canonical step order:\n  expected: {expected}\n  actual:   {actual}"
     )
 
 
-def test_baseline_delta_flags_regressions_and_recoveries(
-    validate_all, tmp_path: Path
-) -> None:
+def test_baseline_delta_flags_regressions_and_recoveries(validate_all, tmp_path: Path) -> None:
     """Smoke test the existing #10 baseline-delta plumbing: the same
     summaries we now emit must round-trip cleanly."""
     baseline = {
@@ -344,9 +330,7 @@ def test_baseline_latest_alias_resolves_to_stable_artifact(
         ],
         "passed": True,
     }
-    (tmp_path / "latest_validation_report.json").write_text(
-        json.dumps(prior), encoding="utf-8"
-    )
+    (tmp_path / "latest_validation_report.json").write_text(json.dumps(prior), encoding="utf-8")
 
     rc, summary = _run_main(
         validate_all,
@@ -374,17 +358,13 @@ def test_fail_on_regression_promotes_clean_run_to_failure(
     via env-conditional steps), --fail-on-regression should flip the
     exit code to 1 even though the run looks healthy."""
     failing_step = "validate_plugin_modes"
-    _install_fake_run_step(
-        validate_all, monkeypatch, fail={failing_step}
-    )
+    _install_fake_run_step(validate_all, monkeypatch, fail={failing_step})
     monkeypatch.setattr(validate_all, "ARTIFACT_DIR", tmp_path)
     prior = {
         "results": [{"name": failing_step, "returncode": 0}],
         "passed": True,
     }
-    (tmp_path / "latest_validation_report.json").write_text(
-        json.dumps(prior), encoding="utf-8"
-    )
+    (tmp_path / "latest_validation_report.json").write_text(json.dumps(prior), encoding="utf-8")
 
     # Without --fail-on-regression: rc reflects the failed step (1).
     rc_plain, summary_plain = _run_main(
@@ -408,9 +388,7 @@ def test_fail_on_regression_promotes_clean_run_to_failure(
         ],
         "passed": True,
     }
-    (tmp_path / "latest_validation_report.json").write_text(
-        json.dumps(prior), encoding="utf-8"
-    )
+    (tmp_path / "latest_validation_report.json").write_text(json.dumps(prior), encoding="utf-8")
     rc_clean, _ = _run_main(
         validate_all,
         monkeypatch,
@@ -443,9 +421,7 @@ def test_fail_on_regression_flips_otherwise_clean_run(
     _install_fake_run_step(validate_all, monkeypatch, fail={failing})
     monkeypatch.setattr(validate_all, "ARTIFACT_DIR", tmp_path)
     (tmp_path / "latest_validation_report.json").write_text(
-        json.dumps(
-            {"results": [{"name": failing, "returncode": 0}], "passed": True}
-        ),
+        json.dumps({"results": [{"name": failing, "returncode": 0}], "passed": True}),
         encoding="utf-8",
     )
 
@@ -462,9 +438,7 @@ def test_fail_on_regression_flips_otherwise_clean_run(
     # message path is exercised but doesn't double-count).
     _install_fake_run_step(validate_all, monkeypatch, fail={failing})
     (tmp_path / "latest_validation_report.json").write_text(
-        json.dumps(
-            {"results": [{"name": failing, "returncode": 0}], "passed": True}
-        ),
+        json.dumps({"results": [{"name": failing, "returncode": 0}], "passed": True}),
         encoding="utf-8",
     )
     rc_flag, _ = _run_main(
