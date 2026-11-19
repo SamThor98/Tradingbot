@@ -14,12 +14,13 @@ import os
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from zoneinfo import ZoneInfo
 
 LOG = logging.getLogger(__name__)
 
 CHECKPOINT_NAME = ".stage_a_checkpoint.json"
+CHECKPOINT_FRAMES_SUFFIX = ".frames"
 CHECKPOINT_VERSION = 1
 # Live quotes move. Reuse a same-session breakout decision only briefly.
 QUOTE_REFRESH_SEC = 1200
@@ -80,6 +81,11 @@ def universe_key(
 
 def checkpoint_path(skill_dir: Path) -> Path:
     return Path(skill_dir) / CHECKPOINT_NAME
+
+
+def checkpoint_frames_path(path: Path) -> Path:
+    """Binary sibling of the JSON checkpoint. One numeric matrix per kept frame."""
+    return Path(str(path) + CHECKPOINT_FRAMES_SUFFIX)
 
 
 def checkpoint_writes_enabled(skill_dir: Path | None = None) -> bool:
@@ -166,7 +172,12 @@ def _to_jsonable(value: Any) -> Any:
     return str(value)
 
 
-def _freeze_frame(df: Any) -> tuple[list[dict[str, Any]] | None, str]:
+def _freeze_frame_records(df: Any) -> tuple[list[dict[str, Any]] | None, str]:
+    """Legacy per-bar dicts. Used only when a frame is not a numeric date index.
+
+    A broad universe of these dicts is what pinned the dashboard heap. Numeric
+    Stage A frames go through ``_encode_frame`` instead.
+    """
     try:
         import pandas as pd
     except Exception:
@@ -181,7 +192,7 @@ def _freeze_frame(df: Any) -> tuple[list[dict[str, Any]] | None, str]:
     return [_to_jsonable(row) for row in records], index_name
 
 
-def _thaw_frame(records: Any, index_name: str) -> Any:
+def _thaw_frame_records(records: Any, index_name: str) -> Any:
     if not isinstance(records, list) or not records:
         return None
     import pandas as pd
@@ -194,34 +205,151 @@ def _thaw_frame(records: Any, index_name: str) -> Any:
     return frame
 
 
+def _encode_frame(df: Any) -> tuple[bytes, dict[str, Any]] | None:
+    """Pack a numeric date-indexed frame into one little-endian buffer.
+
+    Layout is ``int64`` index nanoseconds followed by column-major ``float64``
+    values. One buffer per frame, written straight to the frames file, so a
+    1,500-name wave does not build a Python object per bar.
+    """
+    try:
+        import numpy as np
+        import pandas as pd
+    except Exception:
+        return None
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+    if df.index is None or not pd.api.types.is_datetime64_any_dtype(df.index):
+        return None
+    if getattr(df.index, "tz", None) is not None:
+        return None
+    if any(not pd.api.types.is_numeric_dtype(df[col]) for col in df.columns):
+        return None
+    index = pd.DatetimeIndex(df.index)
+    if bool(index.isna().any()):
+        return None
+    try:
+        index_ns = np.ascontiguousarray(index.astype("datetime64[ns]").asi8, dtype="<i8")
+    except (TypeError, ValueError):
+        return None
+    columns = [str(col) for col in df.columns]
+    arrays: list[Any] = []
+    for col in df.columns:
+        try:
+            arrays.append(np.ascontiguousarray(df[col].to_numpy(dtype="<f8", copy=True), dtype="<f8"))
+        except (TypeError, ValueError):
+            return None
+    packed = np.concatenate(arrays) if arrays else np.empty(0, dtype="<f8")
+    raw = index_ns.tobytes() + packed.tobytes()
+    meta = {
+        "rows": int(len(df)),
+        "columns": columns,
+        "index_name": str(df.index.name or "date"),
+    }
+    return raw, meta
+
+
+def _decode_frame(raw: bytes, meta: Mapping[str, Any]) -> Any:
+    import numpy as np
+    import pandas as pd
+
+    rows = int(meta.get("rows") or 0)
+    columns = [str(col) for col in (meta.get("columns") or [])]
+    index_name = str(meta.get("index_name") or "date")
+    if rows <= 0:
+        return None
+    index_bytes = rows * 8
+    value_bytes = rows * len(columns) * 8
+    if len(raw) != index_bytes + value_bytes:
+        return None
+    index_ns = np.frombuffer(raw[:index_bytes], dtype="<i8").copy()
+    values = np.frombuffer(raw[index_bytes:], dtype="<f8")
+    if columns:
+        values = values.reshape(len(columns), rows).copy()
+    index = pd.to_datetime(index_ns, unit="ns")
+    frame = pd.DataFrame({col: values[i] for i, col in enumerate(columns)}, index=index)
+    frame.index.name = index_name
+    return frame
+
+
+def _attach_frame_payload(frozen_candidate: dict[str, Any], df: Any) -> tuple[bytes | None, dict[str, Any] | None]:
+    """Remember how to restore ``df``. Returns raw bytes when the numeric path fits."""
+    encoded = _encode_frame(df)
+    if encoded is not None:
+        return encoded
+    records, index_name = _freeze_frame_records(df)
+    if records:
+        frozen_candidate["ohlcv_records"] = records
+        frozen_candidate["ohlcv_index_name"] = index_name
+    return None, None
+
+
 def freeze_result(result: dict[str, Any]) -> dict[str, Any]:
+    """JSON-safe copy of one Stage A result, with a numeric frame inlined as base64.
+
+    Checkpoint saves do not use this. They stream frames to the sibling file so
+    a full universe never holds a base64 string per ticker at once.
+    """
+    import base64
+
     frozen = _to_jsonable(result)
     if not isinstance(frozen, dict):
         return {"ok": False, "reason": "exceptions"}
     candidate = result.get("candidate")
-    if isinstance(candidate, dict) and isinstance(frozen.get("candidate"), dict):
-        records, index_name = _freeze_frame(candidate.get("df"))
-        if records:
-            frozen["candidate"]["ohlcv_records"] = records
-            frozen["candidate"]["ohlcv_index_name"] = index_name
+    frozen_candidate = frozen.get("candidate")
+    if isinstance(candidate, dict) and isinstance(frozen_candidate, dict):
+        raw, meta = _attach_frame_payload(frozen_candidate, candidate.get("df"))
+        if raw is not None and meta is not None:
+            frozen_candidate.pop("ohlcv_records", None)
+            frozen_candidate.pop("ohlcv_index_name", None)
+            frozen_candidate["ohlcv_b64"] = base64.b64encode(raw).decode("ascii")
+            frozen_candidate["ohlcv_meta"] = meta
     return frozen
 
 
-def thaw_result(result: dict[str, Any]) -> dict[str, Any]:
+def thaw_result(result: dict[str, Any], *, frame_blob: bytes = b"") -> dict[str, Any]:
     thawed = dict(result)
     candidate = thawed.get("candidate")
-    if isinstance(candidate, dict):
-        cand = dict(candidate)
-        records = cand.pop("ohlcv_records", None)
-        index_name = str(cand.pop("ohlcv_index_name", "date") or "date")
-        frame = _thaw_frame(records, index_name)
-        if frame is not None:
-            cand["df"] = frame
-        thawed["candidate"] = cand
+    if not isinstance(candidate, dict):
+        return thawed
+    cand = dict(candidate)
+    span = cand.pop("ohlcv_span", None)
+    inline = cand.pop("ohlcv_b64", None)
+    meta = cand.pop("ohlcv_meta", None)
+    records = cand.pop("ohlcv_records", None)
+    index_name = str(cand.pop("ohlcv_index_name", "date") or "date")
+    frame = None
+    if isinstance(span, dict) and frame_blob:
+        try:
+            offset = int(span.get("offset") or 0)
+            length = int(span.get("length") or 0)
+        except (TypeError, ValueError):
+            offset, length = 0, 0
+        if length > 0 and offset >= 0 and offset + length <= len(frame_blob):
+            frame = _decode_frame(frame_blob[offset : offset + length], span)
+    elif isinstance(inline, str) and inline:
+        import base64
+
+        try:
+            raw = base64.b64decode(inline)
+        except Exception:
+            raw = b""
+        if raw and isinstance(meta, dict):
+            frame = _decode_frame(raw, meta)
+    elif records is not None:
+        frame = _thaw_frame_records(records, index_name)
+    if frame is not None:
+        cand["df"] = frame
+    thawed["candidate"] = cand
     return thawed
 
 
-def persistable_results(results: Mapping[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _write_result_bucket(
+    results: Mapping[str, dict[str, Any]],
+    handle: BinaryIO,
+    hasher: Any,
+    cursor: int,
+) -> tuple[dict[str, dict[str, Any]], int]:
     kept: dict[str, dict[str, Any]] = {}
     for ticker, result in results.items():
         if not isinstance(result, dict):
@@ -229,8 +357,20 @@ def persistable_results(results: Mapping[str, dict[str, Any]]) -> dict[str, dict
         reason = str(result.get("reason") or "")
         if reason in _RETRY_REASONS:
             continue
-        kept[str(ticker).upper()] = freeze_result(result)
-    return kept
+        frozen = _to_jsonable(result)
+        if not isinstance(frozen, dict):
+            continue
+        candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else None
+        frozen_candidate = frozen.get("candidate") if isinstance(frozen.get("candidate"), dict) else None
+        if candidate is not None and frozen_candidate is not None:
+            raw, meta = _attach_frame_payload(frozen_candidate, candidate.get("df"))
+            if raw is not None and meta is not None:
+                handle.write(raw)
+                hasher.update(raw)
+                frozen_candidate["ohlcv_span"] = {"offset": cursor, "length": len(raw), **meta}
+                cursor += len(raw)
+        kept[str(ticker).upper()] = frozen
+    return kept, cursor
 
 
 def _age_seconds(saved_at: str, now: datetime) -> float | None:
@@ -266,20 +406,57 @@ def save_checkpoint(
     horizon_started: bool,
     now: datetime | None = None,
 ) -> None:
+    """Persist Stage A decisions. Numeric bars go to a sibling ``.frames`` file.
+
+    The JSON file keeps the decisions and byte spans. Writing one frame at a
+    time avoids the per-bar dict graph that previously stayed resident after
+    the scan returned.
+    """
     moment = now or datetime.now(timezone.utc)
-    payload = {
-        "version": CHECKPOINT_VERSION,
-        "universe_key": universe_key_value,
-        "session_date": session_date,
-        "saved_at": moment.astimezone(timezone.utc).isoformat(),
-        "horizon_started": bool(horizon_started),
-        "executable": persistable_results(executable),
-        "horizon": persistable_results(horizon),
-    }
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    os.replace(tmp, path)
+    frames_path = checkpoint_frames_path(path)
+    frames_tmp = Path(str(frames_path) + ".tmp")
+    json_tmp = path.with_suffix(path.suffix + ".tmp")
+    hasher = hashlib.sha256()
+    try:
+        with frames_tmp.open("wb") as handle:
+            executable_kept, cursor = _write_result_bucket(executable, handle, hasher, 0)
+            horizon_kept, cursor = _write_result_bucket(horizon, handle, hasher, cursor)
+        wrote_frames = cursor > 0
+        payload: dict[str, Any] = {
+            "version": CHECKPOINT_VERSION,
+            "universe_key": universe_key_value,
+            "session_date": session_date,
+            "saved_at": moment.astimezone(timezone.utc).isoformat(),
+            "horizon_started": bool(horizon_started),
+            "executable": executable_kept,
+            "horizon": horizon_kept,
+        }
+        if wrote_frames:
+            payload["frame_sha256"] = hasher.hexdigest()
+        json_tmp.write_text(json.dumps(payload), encoding="utf-8")
+        del payload, executable_kept, horizon_kept
+        if wrote_frames:
+            os.replace(frames_tmp, frames_path)
+        else:
+            frames_tmp.unlink(missing_ok=True)
+            if frames_path.exists():
+                frames_path.unlink()
+        os.replace(json_tmp, path)
+    except Exception:
+        for temp in (frames_tmp, json_tmp):
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    finally:
+        try:
+            from core.process_memory import release_process_memory
+
+            release_process_memory()
+        except Exception:
+            LOG.debug("Checkpoint memory release skipped", exc_info=True)
 
 
 def load_checkpoint(path: Path) -> dict[str, Any] | None:
@@ -292,7 +469,29 @@ def load_checkpoint(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict) or int(payload.get("version") or 0) != CHECKPOINT_VERSION:
         return None
+    payload["_frames_path"] = str(checkpoint_frames_path(path))
     return payload
+
+
+def _read_frame_blob(payload: dict[str, Any]) -> bytes:
+    """Load the frames sibling when its hash matches. Empty means no numeric bars."""
+    frames_path = str(payload.pop("_frames_path", "") or "")
+    digest = str(payload.get("frame_sha256") or "")
+    if not digest:
+        return b""
+    if not frames_path:
+        LOG.warning("Stage A checkpoint names frames but has no frames path")
+        return b""
+    path = Path(frames_path)
+    try:
+        blob = path.read_bytes()
+    except OSError as exc:
+        LOG.warning("Stage A frame checkpoint unreadable: %s", exc)
+        return b""
+    if hashlib.sha256(blob).hexdigest() != digest:
+        LOG.warning("Stage A frame checkpoint hash mismatch: %s", path)
+        return b""
+    return blob
 
 
 def reusable_from_checkpoint(
@@ -308,6 +507,11 @@ def reusable_from_checkpoint(
         return {}, {}, False
     if str(payload.get("session_date") or "") != session_date:
         return {}, {}, False
+    frame_blob = _read_frame_blob(payload)
+    if payload.get("frame_sha256") and not frame_blob:
+        # A mismatched bar file would feed Stage B a different history than the
+        # one that produced the saved decision. Drop the resume and recompute.
+        return {}, {}, False
     moment = now or datetime.now(timezone.utc)
     saved_at = str(payload.get("saved_at") or "")
 
@@ -320,7 +524,7 @@ def reusable_from_checkpoint(
                 continue
             if not result_is_reusable(result, saved_at=saved_at, now=moment):
                 continue
-            out[str(ticker).upper()] = thaw_result(result)
+            out[str(ticker).upper()] = thaw_result(result, frame_blob=frame_blob)
         return out
 
     return (
@@ -331,10 +535,11 @@ def reusable_from_checkpoint(
 
 
 def clear_checkpoint(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError as exc:
-        LOG.warning("Stage A checkpoint clear failed: %s", exc)
+    for target in (path, checkpoint_frames_path(path)):
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            LOG.warning("Stage A checkpoint clear failed: %s", exc)
 
 
 def merge_horizon_candidates(
