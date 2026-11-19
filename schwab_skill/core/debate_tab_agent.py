@@ -386,24 +386,28 @@ def _filter_since(events: list[dict[str, Any]], since_ts: str | None) -> list[di
     return [row for row in events if str(row.get("ts") or "") >= since_ts]
 
 
-def _joined_return(event: dict[str, Any], packets: list[dict[str, Any]], *, horizon_days: int) -> float | None:
+def _joined_packet(event: dict[str, Any], packets: list[dict[str, Any]]) -> dict[str, Any] | None:
     from core.tab_agent import utc_day
 
-    packet = None
     packet_id = str(event.get("packet_id") or "").strip()
     if packet_id:
-        packet = next((row for row in packets if str(row.get("packet_id") or "") == packet_id), None)
-    if packet is None:
-        ticker = str(event.get("ticker") or "").upper()
-        day = str(event.get("as_of") or "")[:10]
-        packet = next(
-            (
-                row
-                for row in packets
-                if str(row.get("ticker") or "").upper() == ticker and utc_day(row.get("created_at")) == day
-            ),
-            None,
-        )
+        found = next((row for row in packets if str(row.get("packet_id") or "") == packet_id), None)
+        if found is not None:
+            return found
+    ticker = str(event.get("ticker") or "").upper()
+    day = str(event.get("as_of") or "")[:10]
+    return next(
+        (
+            row
+            for row in packets
+            if str(row.get("ticker") or "").upper() == ticker and utc_day(row.get("created_at")) == day
+        ),
+        None,
+    )
+
+
+def _joined_return(event: dict[str, Any], packets: list[dict[str, Any]], *, horizon_days: int) -> float | None:
+    packet = _joined_packet(event, packets)
     if packet is None:
         return None
     outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
@@ -507,10 +511,21 @@ def _combination_book(
     endorsed: list[float] = []
     endorsed_dates: list[str] = []
     endorsed_tickers: list[str] = []
+    endorsed_dailies: list[Any] = []
+    endorsed_stops: list[Any] = []
     decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
+    from core.tab_agent import scan_leg
     from core.tab_agent_book import is_book_excluded
+
+    pool_legs: list[dict[str, Any]] = []
+    for packet in packets:
+        if not isinstance(packet, dict) or is_book_excluded(packet, skill_dir=skill_dir):
+            continue
+        leg = scan_leg(packet, horizon_days=config.horizon_days)
+        if leg is not None:
+            pool_legs.append(leg)
 
     seen: set[tuple[str, str]] = set()
     bar = float(threshold if threshold is not None else config.quality_threshold)
@@ -532,16 +547,24 @@ def _combination_book(
         side = str(event.get("side") or "long").lower()
         if side in {"short", "option", "put", "call", "inverse"}:
             continue
+        joined = _joined_packet(event, packets)
+        joined_leg = None if joined is None else scan_leg(joined, horizon_days=config.horizon_days)
+        daily = None if joined_leg is None else joined_leg.get("daily")
+        stop = None if joined_leg is None else joined_leg.get("stop_price")
         if score >= bar:
             endorsed.append(ret)
             endorsed_dates.append(day)
             endorsed_tickers.append(ticker)
+            endorsed_dailies.append(daily)
+            endorsed_stops.append(stop)
             decisions.append("long")
         else:
             # Under the bar the book stays in cash and keeps the skipped long as a counterfactual.
             endorsed.append(0.0)
             endorsed_dates.append(day)
             endorsed_tickers.append(ticker)
+            endorsed_dailies.append(None)
+            endorsed_stops.append(None)
             decisions.append("cash")
             passes.append(ret)
             passes_dates.append(day)
@@ -599,6 +622,8 @@ def _combination_book(
     combined_dates = endorsed_dates + replay_dates + legacy_dates
     combined_decisions = decisions + replay_decisions + legacy_decisions
     combined_tickers = endorsed_tickers + replay_tickers + legacy_tickers
+    combined_dailies = endorsed_dailies + [None] * (len(replay_returns) + len(legacy_returns))
+    combined_stops = endorsed_stops + [None] * (len(replay_returns) + len(legacy_returns))
     book = evaluate_book(
         combined_returns,
         combined_dates,
@@ -618,10 +643,13 @@ def _combination_book(
             combined_decisions,
             weights=weights,
             horizon_days=config.horizon_days,
+            dailies=combined_dailies,
             tickers=combined_tickers,
+            stops=combined_stops,
         ),
         spy_daily=spy_daily,
         cash_daily=cash_daily,
+        pool_legs=pool_legs,
         skill_dir=skill_dir,
     )
     book.update(decision_flags(combined_decisions))

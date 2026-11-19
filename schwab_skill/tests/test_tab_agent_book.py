@@ -446,3 +446,106 @@ def test_cash_at_bil_does_not_print_an_inflated_sortino() -> None:
     assert book["primary_unbounded"] is False
     assert book["not_scored_reason"] == NEAR_ZERO_DOWNSIDE
     assert book["sortino_cost_10bps"] is None
+
+
+def _write_price(cache, ticker: str, frame: pd.DataFrame) -> None:
+    frame.to_csv(cache / f"{ticker}.csv", index_label="date")
+
+
+def _path_net(leg: dict, lookup) -> float:
+    from core.tab_agent_book import ROUND_TRIP_COST, _Calendar, _compound, _resolve_leg
+
+    calendar = _Calendar(None)
+    path, source = _resolve_leg(leg, cost=ROUND_TRIP_COST, apply_cost=True, calendar=calendar, lookup=lookup)
+    assert source == "cache"
+    return _compound([ret for day, ret in path if calendar.is_session(day)])
+
+
+def test_selection_pool_uses_the_cache_walk_not_the_stored_return(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scale-out percent must not be the same-day pool once the cache can walk the hold."""
+    from core.tab_agent import scan_leg, score_prompt_versions
+    from core.tab_agent_book import _price_lookup
+
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    index = pd.bdate_range("2026-06-01", periods=25)
+    held = [100.0 + index_ * 0.4 for index_ in range(len(index))]
+    aaa = pd.DataFrame(
+        {
+            "open": [100.0] * len(index),
+            "high": [price + 1.0 for price in held],
+            "low": [price - 0.4 for price in held],
+            "close": held,
+            "volume": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+    ran = [100.0 * (1.05**index_) for index_ in range(len(index))]
+    bbb = pd.DataFrame(
+        {
+            "open": [100.0] * len(index),
+            "high": [price + 1.0 for price in ran],
+            "low": [90.0] * len(index),
+            "close": ran,
+            "volume": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+    qqq = aaa.copy()
+    qqq["close"] = qqq["close"] * 3.0
+    qqq["high"] = qqq["close"] + 1.0
+    _write_price(cache, "AAA", aaa)
+    _write_price(cache, "BBB", bbb)
+    _write_price(cache, "QQQQ", qqq)
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(cache))
+    quarantine = {"packets": [{"packet_id": "q-1", "ticker": "QQQQ", "created_at": "2026-06-01T15:00:00+00:00"}]}
+    (tmp_path / "decision_packets.fixture_quarantine.json").write_text(json.dumps(quarantine), encoding="utf-8")
+    day = "2026-06-01T15:00:00+00:00"
+    packets = [
+        {
+            "ticker": "AAA",
+            "created_at": day,
+            "side": "long",
+            "stop_price": 90.0,
+            "outcome": {"label": "win", "realized_return_pct": 40.0, "horizon_days": 20, "exit_model": "scale_out"},
+        },
+        {
+            "ticker": "BBB",
+            "created_at": day,
+            "side": "long",
+            "stop_price": 110.0,
+            "outcome": {"label": "win", "realized_return_pct": 50.0, "horizon_days": 20, "exit_model": "scale_out"},
+        },
+        {
+            "packet_id": "q-1",
+            "ticker": "QQQQ",
+            "created_at": day,
+            "side": "long",
+            "outcome": {"label": "win", "realized_return_pct": 99.0, "horizon_days": 20},
+        },
+    ]
+    versions = [{"id": "v1", "prompt_key": "institutional_trend", "status": "live", "parent": None}]
+    attributions = [{"version_id": "v1", "ticker": "AAA", "day": "2026-06-01", "decision": "long"}]
+    report = score_prompt_versions(
+        versions=versions,
+        packets=packets,
+        attributions=attributions,
+        skill_dir=tmp_path,
+        tab_id="today",
+    )
+    book = report["versions"][0]
+    lookup = _price_lookup(tmp_path)
+    assert lookup is not None
+    net_aaa = _path_net(scan_leg(packets[0], horizon_days=20), lookup)
+    net_bbb = _path_net(scan_leg(packets[1], horizon_days=20), lookup)
+    assert net_aaa < 0.2
+    assert abs(net_bbb) < 0.02
+    expected = net_aaa - (net_aaa + net_bbb) / 2.0
+    stored_mix = net_aaa - (40.0 + 50.0) / 200.0
+    selection = book["selection_vs_pool"]
+    assert selection["n"] == 1
+    assert selection["mean"] == pytest.approx(expected, abs=1e-6)
+    assert selection["shrunk"] == pytest.approx(expected / 11.0, abs=1e-6)
+    assert abs(selection["mean"] - stored_mix) > 0.2
+    assert book["n"] == 1
+    assert book["avg_realized_return_pct"] == 40.0

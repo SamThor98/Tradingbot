@@ -40,7 +40,7 @@ COLUMN_GUIDE = (
     "The book calendar is the SPY cache when it covers the span, otherwise the NYSE session calendar. "
     "Cash earns the cached BIL daily return, or zero when BIL is not cached. "
     "Excess is the mean 20-session return minus SPY over those same sessions. "
-    "Selection is that return minus the same-day pool. "
+    "Selection is that return minus the same-day pool, and the pool uses this same path. "
     "Each reports n, distinct days, distinct weeks, a 95% week-clustered interval, "
     "and a value shrunk toward zero by n/(n+10). Fewer than 8 distinct weeks is insufficient. "
     "A book with no daily path on a meaningful share of its longs is unscored: missing price paths, "
@@ -733,6 +733,35 @@ def _near_zero_downside(returns: list[float], invested: list[bool], metrics: dic
     return False
 
 
+def _price_pool_legs(
+    legs: list[dict[str, Any]],
+    *,
+    cost: float,
+    apply_cost: bool,
+    calendar: _Calendar,
+    lookup: Callable[[str], Any] | None,
+) -> dict[str, list[float]]:
+    """Percent return of each scan leg, on the same path a prompt long uses.
+
+    A stored daily path wins, then a cache walk (next open, the leg's stop,
+    the leg's horizon, and the same round-trip cost). The stored scale-out
+    percent is only the smear fallback when neither path exists.
+    """
+    pool: dict[str, list[float]] = {}
+    for leg in legs:
+        if str(leg.get("decision") or "long") != "long":
+            continue
+        day = str(leg.get("date") or "")[:10]
+        if len(day) < 10:
+            continue
+        path, source = _resolve_leg(leg, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup)
+        if not path or source in {"missing", "cash"}:
+            continue
+        net = _compound([ret for session, ret in path if calendar.is_session(session)])
+        pool.setdefault(day, []).append(net * 100.0)
+    return pool
+
+
 def _prompt_stats(
     legs: list[dict[str, Any]],
     paths: list[list[tuple[date, float]]],
@@ -789,15 +818,22 @@ def score_legs(
     spy_daily: dict[str, float] | None = None,
     cash_daily: dict[str, float] | None = None,
     pool: dict[str, list[float]] | None = None,
+    pool_legs: list[dict[str, Any]] | None = None,
     apply_cost: bool = True,
     cost: float = ROUND_TRIP_COST,
     sensitivity: float = ROUND_TRIP_COST_SENSITIVITY,
     skill_dir: Path | str | None = None,
     price_lookup: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
-    """Daily book for one set of long and cash legs. Returns are percents on each leg."""
+    """Daily book for one set of long and cash legs. Returns are percents on each leg.
+
+    ``pool_legs`` are same-day scan rows. They are priced with this call's
+    cost, calendar, and price cache, and they replace ``pool`` when present.
+    """
     calendar = _Calendar(spy_daily)
     lookup = price_lookup if price_lookup is not None else _price_lookup(skill_dir)
+    if pool_legs is not None:
+        pool = _price_pool_legs(pool_legs, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup)
     resolved = [_resolve_leg(leg, cost=cost, apply_cost=apply_cost, calendar=calendar, lookup=lookup) for leg in legs]
     paths = [path for path, _source in resolved]
     sources = [source for _path, source in resolved]
@@ -872,6 +908,7 @@ def overlay_daily_book(
     spy_daily: dict[str, float] | None = None,
     cash_daily: dict[str, float] | None = None,
     pool: dict[str, list[float]] | None = None,
+    pool_legs: list[dict[str, Any]] | None = None,
     apply_cost: bool = True,
     skill_dir: Path | str | None = None,
     price_lookup: Callable[[str], Any] | None = None,
@@ -884,6 +921,7 @@ def overlay_daily_book(
         spy_daily=spy_daily,
         cash_daily=cash_daily,
         pool=pool,
+        pool_legs=pool_legs,
         apply_cost=apply_cost,
         skill_dir=skill_dir,
         price_lookup=price_lookup,

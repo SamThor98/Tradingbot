@@ -1966,7 +1966,7 @@ def exit_fallback_stats(skill_dir: Path | None, tab_id: str) -> dict[str, Any]:
 
 
 def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) -> dict[str, Any]:
-    """One long per scan date, using the scale-out the prompt could have taken."""
+    """One long per scan name. Selection uses the same path as this book."""
     from core.tab_agent_book import benchmark_series, is_book_excluded, legs_from_series, overlay_daily_book
     from core.tab_agent_objective import evaluate_book
 
@@ -1995,23 +1995,21 @@ def buy_every_scan_baseline(skill_dir: Path | None, tab_id: str, config: Any) ->
     returns = list(chosen.values())
     tickers = [key[0] for key in chosen]
     book = evaluate_book(returns, dates, config=config)
-    pool: dict[str, list[float]] = {}
-    for key, value in chosen.items():
-        pool.setdefault(key[1], []).append(value)
+    legs = legs_from_series(
+        returns,
+        dates,
+        ["long"] * len(returns),
+        horizon_days=getattr(config, "horizon_days", 20),
+        dailies=[dailies[key] for key in chosen],
+        tickers=tickers,
+    )
     spy_daily, cash_daily = benchmark_series(skill_dir)
     overlay_daily_book(
         book,
-        legs_from_series(
-            returns,
-            dates,
-            ["long"] * len(returns),
-            horizon_days=getattr(config, "horizon_days", 20),
-            dailies=[dailies[key] for key in chosen],
-            tickers=tickers,
-        ),
+        legs,
         spy_daily=spy_daily,
         cash_daily=cash_daily,
-        pool=pool,
+        pool_legs=legs,
         skill_dir=skill_dir,
     )
     book["name"] = "buy_every_scan"
