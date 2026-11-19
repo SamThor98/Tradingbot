@@ -378,19 +378,6 @@ def _packet_return(packet: dict[str, Any], *, horizon_days: int) -> tuple[str, f
     return label, ret
 
 
-def _daily_returns(packet: dict[str, Any], *, horizon_days: int) -> list[dict[str, Any]] | None:
-    outcome = packet.get("outcome") if isinstance(packet.get("outcome"), dict) else {}
-    by_horizon = outcome.get("by_horizon") if isinstance(outcome.get("by_horizon"), dict) else {}
-    chosen = outcome
-    nested = by_horizon.get(str(horizon_days))
-    if isinstance(nested, dict):
-        chosen = nested
-    daily = chosen.get("daily_returns")
-    if isinstance(daily, list) and daily:
-        return daily
-    return None
-
-
 def packet_stop(packet: dict[str, Any], *, horizon_days: int) -> float | None:
     """Absolute stop for the cache walk. A percent stop uses the recorded entry."""
     from core.tab_agent_book import stop_for_book
@@ -431,7 +418,13 @@ def packet_stop(packet: dict[str, Any], *, horizon_days: int) -> float | None:
 
 
 def scan_leg(packet: dict[str, Any], *, horizon_days: int) -> dict[str, Any] | None:
-    """One matured scan row, ready for the same path the prompt book uses."""
+    """One matured scan row, ready for the book walk.
+
+    The walk is the next open, the stored stop, and this horizon. A frozen
+    ``daily_returns`` series is not copied: the price cache is the path, and
+    the book adds the round-trip cost. Pending and other-horizon labels are
+    not rows.
+    """
     parsed = _packet_return(packet, horizon_days=horizon_days)
     day = utc_day(packet.get("created_at"))
     ticker = str(packet.get("ticker") or "").upper().strip()
@@ -443,10 +436,44 @@ def scan_leg(packet: dict[str, Any], *, horizon_days: int) -> dict[str, Any] | N
         "return_pct": parsed[1],
         "decision": "long",
         "horizon_days": int(horizon_days),
-        "daily": _daily_returns(packet, horizon_days=horizon_days),
+        "daily": None,
         "stop_price": packet_stop(packet, horizon_days=horizon_days),
         "cost_applied": False,
     }
+
+
+def scan_pool_legs(
+    packets: list[dict[str, Any]],
+    *,
+    horizon_days: int,
+    skill_dir: Path | str | None = None,
+    quarantine: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Eligible scan longs for the pool and the buy-every-scan baseline.
+
+    One row per ticker and day. Quarantine and fixtures stay out. A label that
+    is still pending, or matured at another horizon, stays out. The leg carries
+    the stored stop and this horizon so both books walk the same path.
+    """
+    from core.tab_agent_book import is_book_excluded, load_quarantine
+
+    rows = quarantine if quarantine is not None else load_quarantine(skill_dir)
+    legs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for packet in packets:
+        if not isinstance(packet, dict):
+            continue
+        if is_book_excluded(packet, skill_dir=skill_dir, quarantine=rows):
+            continue
+        leg = scan_leg(packet, horizon_days=horizon_days)
+        if leg is None:
+            continue
+        key = (str(leg["ticker"]), str(leg["date"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        legs.append(leg)
+    return legs
 
 
 def score_prompt_versions(
@@ -479,7 +506,12 @@ def score_prompt_versions(
 
     quarantine_rows = load_quarantine(skill_dir)
     spy_daily, cash_daily = benchmark_series(skill_dir)
-    pool_legs: list[dict[str, Any]] = []
+    pool_legs = scan_pool_legs(
+        packets,
+        horizon_days=config.horizon_days,
+        skill_dir=skill_dir,
+        quarantine=quarantine_rows,
+    )
     packet_index = {}
     for packet in packets:
         if not isinstance(packet, dict):
@@ -490,9 +522,6 @@ def score_prompt_versions(
         day = utc_day(packet.get("created_at"))
         if ticker and day and (ticker, day) not in packet_index:
             packet_index[(ticker, day)] = packet
-        leg = scan_leg(packet, horizon_days=config.horizon_days)
-        if leg is not None:
-            pool_legs.append(leg)
 
     stats: list[dict[str, Any]] = []
     joined_total = 0
@@ -538,17 +567,17 @@ def score_prompt_versions(
                 tickers.append(ticker)
                 joined_total += 1
                 continue
-            parsed = _packet_return(packet, horizon_days=config.horizon_days)
-            if parsed is None:
+            leg = scan_leg(packet, horizon_days=config.horizon_days)
+            if leg is None:
                 unresolved_total += 1
                 unresolved_days.append(day)
                 continue
-            dates.append(day)
-            returns.append(parsed[1])
+            dates.append(str(leg["date"]))
+            returns.append(float(leg["return_pct"]))
             decisions.append("long")
-            dailies.append(_daily_returns(packet, horizon_days=config.horizon_days))
-            stops.append(packet_stop(packet, horizon_days=config.horizon_days))
-            tickers.append(ticker)
+            dailies.append(leg.get("daily"))
+            stops.append(leg.get("stop_price"))
+            tickers.append(str(leg["ticker"]))
             joined_total += 1
         from core.tab_agent_replay import attach_replay, decision_flags
 
