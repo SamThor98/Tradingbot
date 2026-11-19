@@ -20,6 +20,16 @@ from typing import Any
 # other step has completed. Keeping observability last guarantees its baseline
 # counters reflect the full run rather than a partial one.
 _SEQUENTIAL_TAIL = {"validate_observability_gates"}
+# These call place_order on the shared skill directory and write
+# .order_ambiguity.json. The file lock is per process, so a parallel peer can
+# observe "entry_bracket sent; result not recorded yet" and fail closed.
+_SEQUENTIAL_ORDER_LEDGER = {
+    "validate_execution_quality",
+    "validate_exit_manager",
+    "validate_event_risk",
+    "validate_regime_v2",
+    "validate_shadow_mode",
+}
 # Steps that must run before parallel work because downstream scripts depend
 # on artifacts they emit (e.g. healthcheck token refresh).
 _SEQUENTIAL_HEAD = {"healthcheck"}
@@ -376,8 +386,10 @@ def main() -> int:
         _read_baseline_execution_events(),
     )
 
+    reserved = _SEQUENTIAL_HEAD | _SEQUENTIAL_TAIL | _SEQUENTIAL_ORDER_LEDGER
     head_steps = [s for s in steps if s[0] in _SEQUENTIAL_HEAD]
-    middle_steps = [s for s in steps if s[0] not in _SEQUENTIAL_HEAD and s[0] not in _SEQUENTIAL_TAIL]
+    middle_steps = [s for s in steps if s[0] not in reserved]
+    order_steps = [s for s in steps if s[0] in _SEQUENTIAL_ORDER_LEDGER]
     tail_steps = [s for s in steps if s[0] in _SEQUENTIAL_TAIL]
 
     aborted = False
@@ -412,8 +424,7 @@ def main() -> int:
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {
-                    pool.submit(_run_step, name, cmd, env_overrides): name
-                    for name, cmd, env_overrides in middle_steps
+                    pool.submit(_run_step, name, cmd, env_overrides): name for name, cmd, env_overrides in middle_steps
                 }
                 for fut in as_completed(futures):
                     step = fut.result()
@@ -426,6 +437,9 @@ def main() -> int:
                             if not pending.done():
                                 pending.cancel()
                         break
+
+    if not aborted:
+        _run_sequential(order_steps)
 
     if not aborted:
         _run_sequential(tail_steps)
@@ -475,20 +489,12 @@ def main() -> int:
     latest.write_text(blob, encoding="utf-8")
     print(f"Latest summary (stable path): {latest}")
 
-    if (
-        args.fail_on_regression
-        and delta
-        and delta.get("regressed")
-        and summary["passed"]
-    ):
+    if args.fail_on_regression and delta and delta.get("regressed") and summary["passed"]:
         # Don't double-fail: when summary is already failing we let the
         # regular non-zero exit take precedence. Only override the exit
         # code when the run looked clean but a regression vs. baseline
         # snuck in.
-        print(
-            "Exiting non-zero due to --fail-on-regression with regressed steps: "
-            + ", ".join(delta["regressed"])
-        )
+        print("Exiting non-zero due to --fail-on-regression with regressed steps: " + ", ".join(delta["regressed"]))
         return 1
 
     return 0 if summary["passed"] else 1
@@ -504,6 +510,7 @@ def _baseline_delta(baseline_path: str, summary: dict[str, Any]) -> dict[str, An
         prev = json.loads(p.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+
     def _status_map(rows: list[dict[str, Any]]) -> dict[str, str]:
         # NB: ``r.get("returncode", 1) or 1`` was the previous form here
         # and silently treated successful steps (returncode == 0) as
@@ -556,4 +563,3 @@ def _format_delta(delta: dict[str, Any]) -> list[str]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
