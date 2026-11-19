@@ -688,6 +688,7 @@ def test_raw_excess_minus_selection_is_the_prompt_weighted_pool_excess() -> None
 
 def test_buy_every_scan_excess_matches_the_pool_when_every_row_is_picked(tmp_path, monkeypatch) -> None:
     """Buying every scan row is the pool. Its excess over SPY is the baseline's excess."""
+    from core.decision_packet import overwrite_packets
     from core.tab_agent import scan_leg, score_prompt_versions
     from core.tab_agent_book import _price_lookup
     from core.tab_agent_replay import append_sample
@@ -747,11 +748,27 @@ def test_buy_every_scan_excess_matches_the_pool_when_every_row_is_picked(tmp_pat
                 "as_of": day,
                 "decision": "long",
                 "counterfactual_return_pct": 9.0,
-                "stop_price": stop,
-                "horizon_days": 4,
+                "stop_price": None,
+                "horizon_days": 20,
                 "scored": True,
             },
         )
+    append_sample(
+        tmp_path,
+        {
+            "source": "replay",
+            "tab_id": "today",
+            "prompt_key": "institutional_trend",
+            "version_id": "v-other",
+            "ticker": "ZZZ",
+            "as_of": days[10],
+            "decision": "long",
+            "counterfactual_return_pct": 40.0,
+            "horizon_days": 20,
+            "scored": True,
+        },
+    )
+    overwrite_packets(tmp_path, packets)
     versions = [{"id": "v1", "prompt_key": "institutional_trend", "status": "live", "parent": None}]
     report = score_prompt_versions(
         versions=versions,
@@ -785,3 +802,199 @@ def test_buy_every_scan_excess_matches_the_pool_when_every_row_is_picked(tmp_pat
     assert excess["mean"] == pytest.approx(pool_excess, abs=1e-5)
     assert base_excess["mean"] == pytest.approx(pool_excess, abs=1e-5)
     assert excess["mean"] - selection["mean"] == pytest.approx(base_excess["mean"], abs=1e-5)
+
+
+def test_pool_and_baseline_use_the_stored_stop_and_horizon(tmp_path, monkeypatch) -> None:
+    """A frozen daily path and the default 20-day hold are not the book walk.
+
+    The stored stop hits inside the stored horizon. A 20-session hold with no
+    stop, and the daily series saved on the packet, are different prices.
+    """
+    from core.decision_packet import overwrite_packets
+    from core.tab_agent import scan_leg, scan_pool_legs, score_prompt_versions
+    from core.tab_agent_book import benchmark_series
+
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "6")
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(tmp_path / "prices"))
+    index = pd.bdate_range("2026-06-01", periods=30)
+    days = [str(stamp)[:10] for stamp in index]
+    n = len(index)
+    stop_opens = [100.0] * n
+    stop_lows = [99.0] * n
+    stop_closes = [100.0 + step * 0.8 for step in range(n)]
+    stop_opens[1] = 100.0
+    stop_lows[1] = 70.0
+    stop_closes[1] = 104.0
+    hold_closes = [40.0 + step * 0.6 for step in range(n)]
+    frames = {
+        "SPY": _ohlc(index, [100.0 + step * 0.25 for step in range(n)]),
+        "STOP": _ohlc(index, stop_closes, opens=stop_opens, lows=stop_lows),
+        "HOLD": _ohlc(index, hold_closes),
+    }
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    for ticker, frame in frames.items():
+        frame.to_csv(cache / f"{ticker}.csv", index_label="date")
+    bogus = [{"date": days[min(step + 1, n - 1)], "return": 0.04} for step in range(20)]
+
+    def packet(ticker: str, day: str, stop: float) -> dict:
+        return {
+            "ticker": ticker,
+            "created_at": f"{day}T15:00:00+00:00",
+            "side": "long",
+            "stop_price": stop,
+            "outcome": {
+                "label": "win",
+                "realized_return_pct": 12.0,
+                "horizon_days": 6,
+                "daily_returns": bogus,
+            },
+        }
+
+    packets = [packet("STOP", days[0], 92.0), packet("HOLD", days[0], 10.0)]
+    overwrite_packets(tmp_path, packets)
+    report = score_prompt_versions(
+        versions=[{"id": "v1", "prompt_key": "institutional_trend", "status": "live", "parent": None}],
+        packets=packets,
+        attributions=[
+            {"version_id": "v1", "ticker": "STOP", "day": days[0], "decision": "long"},
+            {"version_id": "v1", "ticker": "HOLD", "day": days[0], "decision": "long"},
+        ],
+        skill_dir=tmp_path,
+        tab_id="today",
+    )
+    spy_daily, _cash = benchmark_series(tmp_path)
+    assert spy_daily
+    legs = scan_pool_legs(packets, horizon_days=6, skill_dir=tmp_path)
+    assert [leg["daily"] for leg in legs] == [None, None]
+    assert [leg["horizon_days"] for leg in legs] == [6, 6]
+    assert [leg["stop_price"] for leg in legs] == [92.0, 10.0]
+    from core.tab_agent_book import _price_lookup
+
+    lookup = _price_lookup(tmp_path)
+    assert lookup is not None
+    correct = [_hold_excess(leg, lookup, spy_daily) for leg in legs]
+    correct_excess = sum(net - spy for net, spy in correct) / len(correct)
+    default_legs = [
+        {
+            "date": days[0],
+            "ticker": "STOP",
+            "decision": "long",
+            "horizon_days": 20,
+            "stop_price": None,
+            "return_pct": 1,
+        },
+        {
+            "date": days[0],
+            "ticker": "HOLD",
+            "decision": "long",
+            "horizon_days": 20,
+            "stop_price": None,
+            "return_pct": 1,
+        },
+    ]
+    default_excess = sum(net - spy for net, spy in (_hold_excess(leg, lookup, spy_daily) for leg in default_legs)) / 2
+    assert abs(correct_excess - default_excess) > 0.02
+    stopped = _hold_excess(scan_leg(packets[0], horizon_days=6), lookup, spy_daily)
+    unstopped = _hold_excess(
+        {"date": days[0], "ticker": "STOP", "decision": "long", "horizon_days": 6, "stop_price": None, "return_pct": 1},
+        lookup,
+        spy_daily,
+    )
+    assert abs(stopped[0] - unstopped[0]) > 0.02
+    book = report["versions"][0]
+    baseline = report["baseline"]
+    assert book["excess_vs_spy"]["mean"] == pytest.approx(correct_excess, abs=1e-5)
+    assert baseline["excess_vs_spy"]["mean"] == pytest.approx(correct_excess, abs=1e-5)
+    assert book["excess_vs_spy"]["n"] == baseline["excess_vs_spy"]["n"] == 2
+    assert baseline["excess_vs_spy"]["mean"] != pytest.approx(default_excess, abs=1e-3)
+
+
+def test_pool_eligibility_matches_the_baseline(tmp_path, monkeypatch) -> None:
+    """Pending, quarantined, duplicate, and replay-only rows are not a second book."""
+    from core.decision_packet import overwrite_packets
+    from core.tab_agent import scan_pool_legs, score_prompt_versions
+    from core.tab_agent_replay import append_sample
+
+    monkeypatch.setenv("DECISION_PACKET_HORIZON_DAYS", "4")
+    monkeypatch.setenv("BACKTEST_PRICE_CACHE_DIR", str(tmp_path / "prices"))
+    index = pd.bdate_range("2026-06-01", periods=16)
+    days = [str(stamp)[:10] for stamp in index]
+    n = len(index)
+    frames = {
+        "SPY": _ohlc(index, [100.0 + step * 0.2 for step in range(n)]),
+        "AAA": _ohlc(index, [50.0 + step * 0.3 for step in range(n)]),
+        "BBB": _ohlc(index, [40.0 + step * 0.25 for step in range(n)]),
+        "CCC": _ohlc(index, [70.0 + step * 0.1 for step in range(n)]),
+        "QQQ": _ohlc(index, [30.0 + step * 0.4 for step in range(n)]),
+    }
+    cache = tmp_path / "prices"
+    cache.mkdir()
+    for ticker, frame in frames.items():
+        frame.to_csv(cache / f"{ticker}.csv", index_label="date")
+    quarantine = {"packets": [{"packet_id": "q-1", "ticker": "QQQ", "created_at": f"{days[0]}T15:00:00+00:00"}]}
+    (tmp_path / "decision_packets.fixture_quarantine.json").write_text(json.dumps(quarantine), encoding="utf-8")
+
+    def matured(ticker: str, day: str, *, packet_id: str | None = None, stop: float = 10.0) -> dict:
+        row = {
+            "ticker": ticker,
+            "created_at": f"{day}T15:00:00+00:00",
+            "side": "long",
+            "stop_price": stop,
+            "outcome": {"label": "win", "realized_return_pct": 3.0, "horizon_days": 4},
+        }
+        if packet_id:
+            row["packet_id"] = packet_id
+        return row
+
+    packets = [
+        matured("AAA", days[0], stop=15.0),
+        matured("AAA", days[0], stop=80.0),
+        matured("BBB", days[0]),
+        matured("CCC", days[6]),
+        {
+            "ticker": "AAA",
+            "created_at": f"{days[6]}T15:00:00+00:00",
+            "side": "long",
+            "stop_price": 10.0,
+            "outcome": {"label": "pending", "horizon_days": 4},
+        },
+        matured("QQQ", days[0], packet_id="q-1"),
+        matured("AAA", days[2], stop=12.0)
+        | {"outcome": {"label": "win", "realized_return_pct": 3.0, "horizon_days": 20}},
+    ]
+    overwrite_packets(tmp_path, packets)
+    append_sample(
+        tmp_path,
+        {
+            "source": "replay",
+            "tab_id": "today",
+            "prompt_key": "institutional_trend",
+            "version_id": "v-replay",
+            "ticker": "ZZZ",
+            "as_of": days[4],
+            "decision": "long",
+            "counterfactual_return_pct": 25.0,
+            "horizon_days": 20,
+            "scored": True,
+        },
+    )
+    legs = scan_pool_legs(packets, horizon_days=4, skill_dir=tmp_path)
+    keys = [(leg["ticker"], leg["date"]) for leg in legs]
+    assert keys == [("AAA", days[0]), ("BBB", days[0]), ("CCC", days[6])]
+    assert legs[0]["stop_price"] == 15.0
+    report = score_prompt_versions(
+        versions=[{"id": "v1", "prompt_key": "mean_reversion", "status": "live", "parent": None}],
+        packets=packets,
+        attributions=[{"version_id": "v1", "ticker": ticker, "day": day, "decision": "long"} for ticker, day in keys],
+        skill_dir=tmp_path,
+        tab_id="today",
+    )
+    baseline = report["baseline"]
+    book = report["versions"][0]
+    assert baseline["n"] == len(legs)
+    assert baseline["excess_vs_spy"]["n"] == len(legs)
+    assert baseline["excess_vs_spy"]["n_days"] == 2
+    assert book["excess_vs_spy"]["n"] == len(legs)
+    assert book["selection_vs_pool"]["mean"] == pytest.approx(0.0, abs=1e-5)
+    assert book["excess_vs_spy"]["mean"] == pytest.approx(baseline["excess_vs_spy"]["mean"], abs=1e-5)

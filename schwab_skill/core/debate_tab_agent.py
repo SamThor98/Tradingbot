@@ -516,16 +516,10 @@ def _combination_book(
     decisions: list[str] = []
     passes: list[float] = []
     passes_dates: list[str] = []
-    from core.tab_agent import scan_leg
+    from core.tab_agent import scan_leg, scan_pool_legs
     from core.tab_agent_book import is_book_excluded
 
-    pool_legs: list[dict[str, Any]] = []
-    for packet in packets:
-        if not isinstance(packet, dict) or is_book_excluded(packet, skill_dir=skill_dir):
-            continue
-        leg = scan_leg(packet, horizon_days=config.horizon_days)
-        if leg is not None:
-            pool_legs.append(leg)
+    pool_legs = scan_pool_legs(packets, horizon_days=config.horizon_days, skill_dir=skill_dir)
 
     seen: set[tuple[str, str]] = set()
     bar = float(threshold if threshold is not None else config.quality_threshold)

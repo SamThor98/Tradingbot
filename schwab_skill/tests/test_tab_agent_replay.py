@@ -720,8 +720,8 @@ def test_constant_long_is_flagged_and_non_decision_is_not_scored(tmp_path, monke
     assert rules["degenerate"] is True
     assert rules["degenerate_reason"] == "all_long"
     assert score["baseline"]["name"] == "buy_every_scan"
-    assert score["baseline"]["n"] == 8
-    assert rules["edge_vs_baseline"] == 0.0
+    assert score["baseline"]["n"] == 0
+    assert rules["edge_vs_baseline"] is None
     assert rules["decision_variance"] == 0
     rationale = next(row for row in score["versions"] if row["prompt_key"] == "rationale")
     assert rationale["scored"] is False
