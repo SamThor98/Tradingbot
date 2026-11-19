@@ -21,6 +21,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -410,6 +411,7 @@ app = FastAPI(
 
 allowed_origins = build_allowed_origins()
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -461,6 +463,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         return JSONResponse(status_code=500, content=payload)
     LOG.exception("Unhandled non-API error on %s: %s", request.url.path, exc)
     return PlainTextResponse("Internal server error.", status_code=500)
+
 
 
 _metrics_lock = threading.Lock()
