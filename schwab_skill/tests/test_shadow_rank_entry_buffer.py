@@ -49,7 +49,7 @@ def test_default_modes_are_shadow(tmp_path, monkeypatch: pytest.MonkeyPatch) -> 
 def test_shadow_rank_logs_both_orders_without_reordering(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     _clear(monkeypatch, "NEUTRAL_RANK_MODE")
     monkeypatch.setenv("RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2", "76")
-    signals = [
+    signals: list[dict[str, Any]] = [
         {
             "ticker": "CHASE",
             "entry_family": "stage2",
@@ -116,7 +116,7 @@ def test_live_flag_is_opt_in_for_the_sort_helper(tmp_path, monkeypatch: pytest.M
     from core.neutral_rank import apply_neutral_sort
 
     monkeypatch.setenv("NEUTRAL_RANK_MODE", "live")
-    signals = [
+    signals: list[dict[str, Any]] = [
         {
             "ticker": "CHASE",
             "entry_family": "stage2",
