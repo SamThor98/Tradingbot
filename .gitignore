@@ -23,6 +23,7 @@ guardrail_trades.json
 .signal_alert_history.json
 .positions_tracker.json
 .signal_quality_metrics.json
+.shadow_signal_tags.jsonl
 .sec_cache.json
 .sec_filing_cache.json
 .sector_map_cache.json

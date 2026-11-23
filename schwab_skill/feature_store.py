@@ -172,6 +172,26 @@ def log_stage_a_result(
                 record.volume_ratio = float(candidate["latest_volume"]) / float(candidate["avg_vol_50"])
             except (TypeError, ValueError, ZeroDivisionError):
                 pass
+        weekly = candidate.get("weekly_swing_entry_buffer") if ok else result.get("weekly_swing_entry_buffer")
+        penalties = list(candidate.get("stage_a_penalties") or []) if ok else []
+        tags: list[str] = []
+        if "stage2_shadow_would_filter" in penalties:
+            tags.append("stage2")
+        if any(str(item).startswith("entry_shadow_") for item in penalties):
+            tags.append("entry_timing")
+        if isinstance(weekly, dict) and weekly.get("would_cut") and "entry_timing" not in tags:
+            tags.append("entry_timing")
+        record.raw_features_json = json.dumps(
+            {
+                "shadow_tags": tags,
+                "stage_a_penalties": penalties,
+                "weekly_swing_entry_buffer": weekly if isinstance(weekly, dict) else None,
+                "entry_timing_shadow": candidate.get("entry_timing_shadow") if ok else None,
+                "horizon_hits": list(candidate.get("horizon_hits") or []) if ok else [],
+                "record_type": "stage_a",
+            },
+            default=str,
+        )
 
         db.add(record)
         db.commit()
@@ -257,6 +277,13 @@ def log_stage_b_signal(
             "ret_5d_prev", "ret_20d_prev", "sector_rel_21d", "sec_risk_score",
         }
         raw = {k: v for k, v in signal.items() if k in safe_keys}
+        try:
+            from core.shadow_tags import shadow_persistence_fields
+
+            raw.update(shadow_persistence_fields(signal))
+            raw["record_type"] = "stage_b"
+        except Exception as shadow_exc:
+            LOG.debug("Shadow tag persistence skipped: %s", shadow_exc)
         # Align overlapping fields to research feature_registry canonical names.
         try:
             from research.registry import extract_registry_aligned_from_signal

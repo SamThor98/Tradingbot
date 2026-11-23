@@ -48,6 +48,7 @@ trading_bot.log*
 .self_study.json
 .signal_alert_history.json
 .signal_quality_metrics.json
+.shadow_signal_tags.jsonl
 .trade_outcomes.json
 .watchlist_cache.json
 .prediction_market_*.json

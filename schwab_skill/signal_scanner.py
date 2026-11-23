@@ -395,9 +395,19 @@ def _record_quality_snapshot(skill_dir: Path, diagnostics: dict[str, Any], signa
     avg_conv = (
         round(sum(float(s.get("mirofish_conviction", 0) or 0) for s in signals) / len(signals), 2) if signals else 0.0
     )
+    try:
+        from core.shadow_tags import merge_signal_shadow_tickers
+
+        merge_signal_shadow_tickers(diagnostics, signals)
+    except Exception:
+        LOG.debug("Shadow ticker merge skipped", exc_info=True)
+    signal_tickers = sorted({str(s.get("ticker") or "").upper() for s in signals if str(s.get("ticker") or "").strip()})
+    shadow_tickers = diagnostics.get("shadow_tickers") if isinstance(diagnostics.get("shadow_tickers"), dict) else {}
     day_bucket.setdefault("scans", []).append(
         {
             "signals_found": len(signals),
+            "signal_tickers": signal_tickers,
+            "shadow_tickers": shadow_tickers,
             "avg_score": avg_score,
             "avg_conviction": avg_conv,
             "diagnostics": diagnostics,
@@ -462,6 +472,9 @@ def get_signal_quality_summary(skill_dir: Path | str | None = None, days: int = 
     score_sum = 0.0
     conv_sum = 0.0
     diag_sum: dict[str, int] = {}
+    signal_tickers: set[str] = set()
+    scans_with_signal_tickers = 0
+    shadow_union: dict[str, set[str]] = {}
     for k in keys:
         scans = (day_map.get(k, {}) or {}).get("scans", [])
         for scan in scans:
@@ -472,14 +485,31 @@ def get_signal_quality_summary(skill_dir: Path | str | None = None, days: int = 
             for dk, dv in (scan.get("diagnostics", {}) or {}).items():
                 if isinstance(dv, (int, float)):
                     diag_sum[dk] = diag_sum.get(dk, 0) + int(dv)
+            listed = scan.get("signal_tickers")
+            if isinstance(listed, list):
+                scans_with_signal_tickers += 1
+                signal_tickers.update(str(item).upper() for item in listed if str(item).strip())
+            buckets = scan.get("shadow_tickers")
+            if not isinstance(buckets, dict):
+                nested = scan.get("diagnostics") if isinstance(scan.get("diagnostics"), dict) else {}
+                buckets = nested.get("shadow_tickers") if isinstance(nested, dict) else None
+            if isinstance(buckets, dict):
+                for tag, names in buckets.items():
+                    if not isinstance(names, list):
+                        continue
+                    shadow_union.setdefault(str(tag), set()).update(
+                        str(item).upper() for item in names if str(item).strip()
+                    )
 
     return {
         "window_days": max(1, int(days)),
         "scan_count": total_scans,
         "signals_total": total_signals,
+        "signals_unique": len(signal_tickers) if scans_with_signal_tickers else None,
         "avg_signal_score": round(score_sum / total_scans, 2) if total_scans else 0.0,
         "avg_conviction": round(conv_sum / total_scans, 2) if total_scans else 0.0,
         "diagnostics": diag_sum,
+        "shadow_tickers_unique": {tag: len(names) for tag, names in sorted(shadow_union.items())},
     }
 
 
@@ -1753,6 +1783,32 @@ def _scan_stage_a_one(
         except Exception as _e:
             LOG.debug("Entry timing shadow skipped for %s: %s", ticker, _e)
             candidate_entry_shadow = None
+        candidate_weekly_swing_buffer = None
+        try:
+            from stage_analysis import evaluate_weekly_swing_entry_buffer, weekly_swing_entry_buffer_blocks
+
+            candidate_weekly_swing_buffer = evaluate_weekly_swing_entry_buffer(
+                horizon_hits=horizon_hits,
+                entry_shadow=candidate_entry_shadow if isinstance(candidate_entry_shadow, dict) else None,
+                df=df,
+                skill_dir=skill_dir,
+            )
+            if candidate_weekly_swing_buffer.get("applies") and candidate_weekly_swing_buffer.get("would_cut"):
+                stage_a_penalties.append("weekly_swing_entry_buffer_would_cut")
+            if weekly_swing_entry_buffer_blocks(candidate_weekly_swing_buffer):
+                return _with_stage2_shadow(
+                    {
+                        "ok": False,
+                        "reason": "weekly_swing_entry_buffer_blocked",
+                        "provider": provider,
+                        "used_fallback": used_fallback,
+                        "fallback_reason": history_meta.get("fallback_reason"),
+                        "weekly_swing_entry_buffer": candidate_weekly_swing_buffer,
+                    }
+                )
+        except Exception as _e:
+            LOG.debug("Weekly swing entry buffer skipped for %s: %s", ticker, _e)
+            candidate_weekly_swing_buffer = None
         candidate_pts_52w_cap = None
         try:
             from config import get_pts_52w_cap_mode
@@ -1850,6 +1906,7 @@ def _scan_stage_a_one(
             "score_components_stage_a": components,
             "stage_a_penalties": stage_a_penalties,
             "entry_timing_shadow": candidate_entry_shadow,
+            "weekly_swing_entry_buffer": candidate_weekly_swing_buffer,
             "pts_52w_cap": candidate_pts_52w_cap,
             "early_stop_gate": candidate_early_stop_gate,
             "entry_family": entry_family,
@@ -1904,6 +1961,47 @@ def _scan_stage_a_one(
         }
 
 
+def _note_shadow_ticker(diagnostics: dict[str, Any], tag: str, ticker: str) -> None:
+    from core.shadow_tags import note_shadow_ticker
+
+    note_shadow_ticker(diagnostics, tag, ticker)
+
+
+def _persist_stage_a_shadow_row(skill_dir: Path, scan_id: str, ticker: str, out: dict[str, Any]) -> None:
+    """Write a JSONL row when a Stage A admit trips a shadow filter."""
+    from core.shadow_tags import append_shadow_tag_rows
+
+    candidate = out.get("candidate") if isinstance(out.get("candidate"), dict) else {}
+    penalties = [str(item) for item in (candidate.get("stage_a_penalties") or [])]
+    weekly = candidate.get("weekly_swing_entry_buffer")
+    if not isinstance(weekly, dict):
+        weekly = out.get("weekly_swing_entry_buffer") if isinstance(out.get("weekly_swing_entry_buffer"), dict) else {}
+    tags: list[str] = []
+    if "stage2_shadow_would_filter" in penalties:
+        tags.append("stage2")
+    if any(item.startswith("entry_shadow_") for item in penalties) or bool(weekly.get("would_cut")):
+        tags.append("entry_timing")
+    if not tags and not weekly.get("would_cut"):
+        return
+    append_shadow_tag_rows(
+        skill_dir,
+        [
+            {
+                "record_type": "stage_a",
+                "scan_id": scan_id,
+                "ticker": str(ticker or "").upper(),
+                "entry_family": candidate.get("entry_family"),
+                "horizon_hits": list(candidate.get("horizon_hits") or []),
+                "shadow_tags": tags,
+                "stage_a_penalties": penalties,
+                "weekly_swing_entry_buffer_would_cut": bool(weekly.get("would_cut")),
+                "admitted": bool(out.get("ok")),
+                "reason": None if out.get("ok") else out.get("reason"),
+            }
+        ],
+    )
+
+
 def _note_stage_a_outcome(
     ticker: str,
     out: dict[str, Any],
@@ -1948,6 +2046,7 @@ def _note_stage_a_outcome(
                 diagnostics["stage2_shadow_would_filter"] = (
                     int(diagnostics.get("stage2_shadow_would_filter", 0) or 0) + 1
                 )
+                _note_shadow_ticker(diagnostics, "stage2", ticker)
             elif penalty == "entry_shadow_sma50_cushion_low":
                 diagnostics["entry_shadow_would_filter_sma50_low"] = (
                     int(diagnostics.get("entry_shadow_would_filter_sma50_low", 0) or 0) + 1
@@ -1960,6 +2059,7 @@ def _note_stage_a_outcome(
                 diagnostics["entry_shadow_would_filter_breakout_buffer"] = (
                     int(diagnostics.get("entry_shadow_would_filter_breakout_buffer", 0) or 0) + 1
                 )
+                _note_shadow_ticker(diagnostics, "entry_timing", ticker)
             elif penalty == "pts_52w_cap_high":
                 diagnostics["pts_52w_cap_would_filter"] = int(diagnostics.get("pts_52w_cap_would_filter", 0) or 0) + 1
             elif str(penalty).startswith("early_stop_"):
@@ -1973,6 +2073,32 @@ def _note_stage_a_outcome(
             diagnostics["entry_shadow_would_filter_any"] = (
                 int(diagnostics.get("entry_shadow_would_filter_any", 0) or 0) + 1
             )
+            if not any(str(item) == "entry_shadow_breakout_buffer_low" for item in entry_shadow_hits):
+                _note_shadow_ticker(diagnostics, "entry_timing", ticker)
+        weekly_buffer = candidate.get("weekly_swing_entry_buffer")
+        if isinstance(weekly_buffer, dict) and weekly_buffer.get("applies"):
+            diagnostics["weekly_swing_entry_buffer_mode"] = weekly_buffer.get("mode")
+            diagnostics["weekly_swing_entry_buffer_evaluated"] = (
+                int(diagnostics.get("weekly_swing_entry_buffer_evaluated", 0) or 0) + 1
+            )
+            if weekly_buffer.get("would_cut"):
+                diagnostics["weekly_swing_entry_buffer_would_cut"] = (
+                    int(diagnostics.get("weekly_swing_entry_buffer_would_cut", 0) or 0) + 1
+                )
+                _note_shadow_ticker(diagnostics, "weekly_swing_entry_buffer", ticker)
+                _note_shadow_ticker(diagnostics, "entry_timing", ticker)
+    elif count_decision and reason == "weekly_swing_entry_buffer_blocked":
+        diagnostics["weekly_swing_entry_buffer_blocked"] = (
+            int(diagnostics.get("weekly_swing_entry_buffer_blocked", 0) or 0) + 1
+        )
+        diagnostics["weekly_swing_entry_buffer_evaluated"] = (
+            int(diagnostics.get("weekly_swing_entry_buffer_evaluated", 0) or 0) + 1
+        )
+        diagnostics["weekly_swing_entry_buffer_would_cut"] = (
+            int(diagnostics.get("weekly_swing_entry_buffer_would_cut", 0) or 0) + 1
+        )
+        _note_shadow_ticker(diagnostics, "weekly_swing_entry_buffer", ticker)
+        _note_shadow_ticker(diagnostics, "entry_timing", ticker)
     elif count_decision and reason == "stage_a_timeout":
         diagnostics["stage_a_timeouts"] += 1
         diagnostics["exceptions"] += 1
@@ -1988,6 +2114,10 @@ def _note_stage_a_outcome(
             diagnostics[reason] += 1
         if out.get("error"):
             data_failures.append(str(out["error"]))
+    try:
+        _persist_stage_a_shadow_row(skill_dir, scan_id, ticker, out)
+    except Exception:
+        LOG.debug("Stage A shadow tag log skipped for %s", ticker, exc_info=True)
     try:
         from feature_store import log_stage_a_result
 
@@ -2244,6 +2374,10 @@ def _run_coverage_stage_a(
             continue
         ticker = str(candidate.get("ticker") or "")
         _note(ticker, {"ok": True, "candidate": candidate}, count_decision=False)
+    for ticker, result in horizon_results.items():
+        if str(result.get("reason") or "") != "weekly_swing_entry_buffer_blocked":
+            continue
+        _note(ticker, result)
     LOG.info(
         "Stage A coverage: executable_complete=%s horizon_complete=%s unresolved=%s waves=%s",
         int(executable_complete or not run_executable),
@@ -2523,14 +2657,18 @@ def _scan_stage_b_enrich(
                 if guidance_score_delta != 0:
                     diag_delta["guidance_boosted"] += 1
 
+        weak_breakout_volume_shadow = False
         if avg_vol_50 and latest_volume and latest_volume < avg_vol_50:
             diag_delta["low_breakout_volume"] += 1
+            weak_breakout_volume_shadow = True
+        weak_mirofish_shadow = False
         if mirofish_result:
             bt = mirofish_result.get("bull_trap_probability")
             cont = mirofish_result.get("continuation_probability")
             try:
                 if bt is not None and cont is not None and float(bt) >= float(cont):
                     diag_delta["weak_mirofish_alignment"] += 1
+                    weak_mirofish_shadow = True
             except (TypeError, ValueError):
                 pass
 
@@ -2580,6 +2718,11 @@ def _scan_stage_b_enrich(
             "fallback_reason": candidate.get("fallback_reason"),
             "_data_quality": session_data_quality or candidate.get("data_quality"),
             "entry_timing_shadow": candidate.get("entry_timing_shadow"),
+            "weekly_swing_entry_buffer": candidate.get("weekly_swing_entry_buffer"),
+            "horizon_hits": list(candidate.get("horizon_hits") or []),
+            "stage_a_penalties": list(candidate.get("stage_a_penalties") or []),
+            "weak_breakout_volume_shadow": weak_breakout_volume_shadow,
+            "weak_mirofish_shadow": weak_mirofish_shadow,
             "pts_52w_cap": candidate.get("pts_52w_cap"),
             "early_stop_gate": candidate.get("early_stop_gate"),
             "sec_score_hint_applied": bool(sec_score_hint_delta) and not sec_shadow_mode,
@@ -3012,6 +3155,7 @@ def _apply_signal_edge_shadow_diagnostics(
         if any(bool(per_signal.get(f"{col}_would_drop")) for col, _, _ in specs):
             per_signal["would_drop_any"] = True
             would_drop_any += 1
+            _note_shadow_ticker(diagnostics, "rank", str(signal.get("ticker") or ""))
     diagnostics["rank_filter_would_drop_any"] = (
         int(diagnostics.get("rank_filter_would_drop_any", 0) or 0) + would_drop_any
     )
@@ -3350,6 +3494,8 @@ def _apply_post_stage_b_chain(
                 # Preserve legacy counter names consumed by older digests and scripts.
                 if r == "weak_breakout_volume":
                     diagnostics["low_breakout_volume"] += 1
+                    s["weak_breakout_volume_shadow"] = True
+                    _note_shadow_ticker(diagnostics, "weak_breakout_volume", str(s.get("ticker") or ""))
                 elif r == "forensic_sloan_high":
                     diagnostics["forensic_sloan_flags"] += 1
                 elif r == "forensic_beneish_manipulator":
@@ -3556,12 +3702,27 @@ def _apply_post_stage_b_chain(
         _apply_signal_edge_shadow_diagnostics(signals, diagnostics, skill_dir)
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Signal-edge shadow diagnostics skipped: %s", e)
+    pre_rank_v2 = list(signals)
     try:
         before_rank_v2 = list(signals)
         signals = _apply_rank_v2_percentile_filter(signals, diagnostics, skill_dir)
         _tag_shortlist_drop(before_rank_v2, signals, "filtered_rank_v2")
+        pre_rank_v2 = before_rank_v2
     except Exception as e:
         record_nonfatal("chain_layer_failures", "Rank-v2 percentile filter skipped: %s", e)
+    try:
+        from core.neutral_rank import stamp_neutral_rank
+
+        stamp_neutral_rank(
+            pre_rank_v2,
+            diagnostics,
+            skill_dir,
+            scan_id=scan_id,
+            persist=True,
+            exempt_research=True,
+        )
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Neutral rank shadow skipped: %s", e)
     try:
         from research.runtime import apply_prob_rank_cohort
 
@@ -3598,8 +3759,16 @@ def _apply_post_stage_b_chain(
         apply_pead_extension_drop_shadow(signals, diagnostics, skill_dir)
     except Exception as e:
         record_nonfatal("chain_layer_failures", "PEAD extension drop shadow skipped: %s", e)
+    neutral_sort_live = False
+    try:
+        from core.neutral_rank import apply_neutral_sort
+
+        neutral_sort_live = apply_neutral_sort(signals, diagnostics, skill_dir)
+    except Exception as e:
+        record_nonfatal("chain_layer_failures", "Neutral rank sort skipped: %s", e)
     try:
         from core.horizon_strategies import partition_live_and_research, research_score_from_plugins
+        from core.neutral_rank import neutral_secondary_score
 
         live_book, research_book = partition_live_and_research(signals)
         for row in research_book:
@@ -3607,15 +3776,14 @@ def _apply_post_stage_b_chain(
             row["research_score"] = research_score_from_plugins(plugins)
             row["sort_score"] = float(row.get("research_score") or 0.0)
             row["rank_basis"] = "research_score"
+
         # Deterministic order within each book: primary book score, then the
         # live signal_score, then ticker. Research scores saturate at 100 for
         # whole sleeves (e.g. weekly_swing), so without the secondary keys the
         # desk order was just Stage B arrival order on a tied sort_score.
+        # NEUTRAL_RANK_MODE=live swaps that secondary key for the neutral score.
         def _book_sort_key(s: dict[str, Any], primary: float) -> tuple[float, float, str]:
-            try:
-                secondary = float(s.get("signal_score") or 0.0)
-            except (TypeError, ValueError):
-                secondary = 0.0
+            secondary = neutral_secondary_score(s, enabled=neutral_sort_live)
             return (-float(primary or 0.0), -secondary, str(s.get("ticker") or ""))
 
         live_book.sort(
@@ -3964,6 +4132,15 @@ def scan_for_signals_detailed(
             "entry_shadow_would_filter_sma50_high": 0,
             "entry_shadow_would_filter_breakout_buffer": 0,
             "entry_shadow_would_filter_any": 0,
+            "weekly_swing_entry_buffer_mode": None,
+            "weekly_swing_entry_buffer_evaluated": 0,
+            "weekly_swing_entry_buffer_would_cut": 0,
+            "weekly_swing_entry_buffer_blocked": 0,
+            "neutral_rank_mode": None,
+            "neutral_rank_scored": 0,
+            "neutral_rank_would_drop": 0,
+            "neutral_rank_applied": 0,
+            "neutral_rank_cut_enforced": 0,
             "entry_shadow_stage2_evaluated": 0,
             "entry_shadow_stage2_would_filter_any": 0,
             "entry_shadow_stage2_would_filter_breakout_buffer": 0,
@@ -4507,6 +4684,10 @@ def scan_for_signals_detailed(
         diagnostics["entry_timing_shadow_mode"] = get_entry_timing_shadow_mode(skill_dir)
         diagnostics["entry_timing_shadow_profile"] = get_entry_timing_shadow_profile(skill_dir)
         diagnostics["entry_timing_live_enforced"] = int(diagnostics.get("entry_timing_shadow_mode") == "live")
+        from config import get_neutral_rank_mode, get_weekly_swing_entry_buffer_mode
+
+        diagnostics["neutral_rank_mode"] = get_neutral_rank_mode(skill_dir)
+        diagnostics["weekly_swing_entry_buffer_mode"] = get_weekly_swing_entry_buffer_mode(skill_dir)
     except Exception:
         diagnostics["entry_timing_shadow_mode"] = "off"
         diagnostics["entry_timing_shadow_profile"] = "off"
@@ -4791,6 +4972,10 @@ def scan_for_signals_detailed(
                         sig = dict(out["signal"])
                         sig["_data_quality"] = diagnostics.get("data_quality")
                         signals.append(sig)
+                        if sig.get("weak_breakout_volume_shadow"):
+                            _note_shadow_ticker(diagnostics, "weak_breakout_volume", ticker)
+                        if sig.get("weak_mirofish_shadow"):
+                            _note_shadow_ticker(diagnostics, "weak_mirofish", ticker)
                     else:
                         diagnostics["exceptions"] += 1
                         diagnostics["stage_b_exceptions"] += 1
