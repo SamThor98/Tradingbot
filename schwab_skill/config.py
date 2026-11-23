@@ -861,6 +861,30 @@ def get_extension_sort_mode(skill_dir: Path | None = None) -> str:
     return _get_mode("EXTENSION_SORT_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
 
 
+def get_neutral_rank_mode(skill_dir: Path | None = None) -> str:
+    """Ordering that does not reward 52-week-high or volume points.
+
+    off — do not score. shadow (default) — log live rank, shadow rank, and
+    whether each name survives the live rank-v2 cut and the same percentile
+    cut on the neutral score. live — sort the book by that neutral score.
+
+    The shadow percentile cut stays observational in every mode. It does not
+    change ``SCAN_LIVE_SORT_KEY`` or ``RANK_FILTER_V2_MODE``.
+    """
+    return _get_mode("NEUTRAL_RANK_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
+def get_weekly_swing_entry_buffer_mode(skill_dir: Path | None = None) -> str:
+    """1% breakout-buffer check for weekly_swing admits.
+
+    off — skip. shadow (default) — log ``would_cut`` and keep the name.
+    live — drop weekly_swing admits whose close is under 1% above the prior
+    high. Daily Stage 2 keeps using ``ENTRY_TIMING_SHADOW_MODE``. The
+    threshold is ``ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT``.
+    """
+    return _get_mode("WEEKLY_SWING_ENTRY_BUFFER_MODE", PLUGIN_MODE_VALUES, "shadow", skill_dir)
+
+
 def get_pead_extension_drop_mode(skill_dir: Path | None = None) -> str:
     """PEAD-only extended-name mark: off | shadow | live.
 

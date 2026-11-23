@@ -568,6 +568,17 @@ Guardrails:
 - Roll back immediately if signal throughput drops below acceptable floor.
 - Roll back if weekly signal quality metrics degrade for two consecutive weeks.
 
+## Stage 2m: Neutral rank and weekly_swing buffer (shadow, 2026-11-23)
+
+Price-only replay found `pts_52w + pts_volume` ranks both daily Stage 2 breakouts and weekly_swing admits backwards, and the 1% breakout buffer is only suggestive on weekly_swing. Both changes default to `shadow`. Live scan membership and order stay on `signal_score` plus rank-v2 p76 until an operator sets a flag.
+
+- `NEUTRAL_RANK_MODE=shadow` (default). Each ranked signal records `neutral_rank.live_rank`, `neutral_rank.shadow_rank`, `survives_live_rank_v2`, and `survives_shadow_rank_v2`. The neutral score is `signal_score - pts_52w - pts_volume` (clamped 0–100). The shadow cut uses `RANK_FILTER_SHADOW_MIN_PERCENTILE_RANK_V2` on that score and does not drop names. `NEUTRAL_RANK_MODE=live` sorts the book by the neutral score. `off` skips the log.
+- `WEEKLY_SWING_ENTRY_BUFFER_MODE=shadow` (default). Weekly_swing admits record `weekly_swing_entry_buffer.would_cut` using `ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT` (1%). `live` drops those admits. Daily Stage 2 still uses `ENTRY_TIMING_SHADOW_MODE`.
+- Per-signal `shadow_tags` (`stage2`, `entry_timing`, `rank`, `weak_breakout_volume`, `weak_mirofish`) are stored on the signal, in `feature_store.raw_features_json`, and appended to `.shadow_signal_tags.jsonl`.
+- `get_signal_quality_summary` still returns summed `diagnostics` and `signals_total`. It also returns `signals_unique` and `shadow_tickers_unique` for scans recorded after this change.
+
+Do not promote either flag to `live` from this stage alone. Compare the JSONL ranks to forward returns first.
+
 ## Pre-Deploy Validation
 
 Run:

@@ -468,6 +468,72 @@ def entry_timing_blocks_stage_a(entry_shadow: dict[str, Any] | None, skill_dir: 
     return get_entry_timing_shadow_mode(skill_dir) == "live" and bool(entry_shadow.get("would_filter"))
 
 
+def is_weekly_swing_hit(hits: Any) -> bool:
+    """True when a horizon admit list contains the weekly_swing plugin."""
+    if isinstance(hits, str):
+        return hits.strip().lower() == "weekly_swing"
+    if not isinstance(hits, list):
+        return False
+    for hit in hits:
+        if isinstance(hit, str) and hit.strip().lower() == "weekly_swing":
+            return True
+        if isinstance(hit, dict) and str(hit.get("name") or "").strip().lower() == "weekly_swing":
+            return True
+    return False
+
+
+def evaluate_weekly_swing_entry_buffer(
+    *,
+    horizon_hits: Any,
+    entry_shadow: dict[str, Any] | None = None,
+    df: pd.DataFrame | None = None,
+    skill_dir: Path | None = None,
+) -> dict[str, Any]:
+    """1% breakout buffer on weekly_swing admits. Shadow never blocks.
+
+    Uses the same threshold as the daily entry-timing rule
+    (``ENTRY_SHADOW_MIN_BREAKOUT_BUFFER_PCT``). Names that are not weekly_swing
+    admits get ``applies=False``. A missing buffer fails open.
+    """
+    from config import get_entry_shadow_min_breakout_buffer_pct, get_weekly_swing_entry_buffer_mode
+
+    mode = get_weekly_swing_entry_buffer_mode(skill_dir)
+    out: dict[str, Any] = {
+        "applies": False,
+        "mode": mode,
+        "would_cut": False,
+        "breakout_buffer_pct": None,
+        "min_breakout_buffer_pct": None,
+        "reason": None,
+    }
+    if mode == "off" or not is_weekly_swing_hit(horizon_hits):
+        return out
+    out["applies"] = True
+    min_buffer = float(get_entry_shadow_min_breakout_buffer_pct(skill_dir))
+    out["min_breakout_buffer_pct"] = min_buffer
+    buffer = None
+    if isinstance(entry_shadow, dict) and entry_shadow.get("breakout_buffer_pct") is not None:
+        buffer = entry_shadow.get("breakout_buffer_pct")
+    elif df is not None:
+        buffer = compute_entry_timing_metrics(df, skill_dir).get("breakout_buffer_pct")
+    try:
+        buffer_f = float(buffer) if buffer is not None else None
+    except (TypeError, ValueError):
+        buffer_f = None
+    out["breakout_buffer_pct"] = None if buffer_f is None else round(buffer_f, 4)
+    if buffer_f is not None and buffer_f < min_buffer:
+        out["would_cut"] = True
+        out["reason"] = "breakout_buffer_low"
+    return out
+
+
+def weekly_swing_entry_buffer_blocks(block: dict[str, Any] | None) -> bool:
+    """True only when the weekly_swing buffer mode is live and the name would be cut."""
+    if not isinstance(block, dict):
+        return False
+    return str(block.get("mode") or "") == "live" and bool(block.get("applies")) and bool(block.get("would_cut"))
+
+
 def evaluate_pts_52w_cap(
     pts_52w: float | None,
     skill_dir: Path | None = None,

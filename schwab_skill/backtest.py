@@ -2065,6 +2065,12 @@ def _run_backtest_core(
         "entry_timing_shadow_evaluated": 0,
         "entry_timing_shadow_would_filter": 0,
         "entry_timing_blocked": 0,
+        "weekly_swing_entry_buffer_evaluated": 0,
+        "weekly_swing_entry_buffer_would_cut": 0,
+        "weekly_swing_entry_buffer_blocked": 0,
+        "neutral_rank_scored": 0,
+        "neutral_rank_would_drop": 0,
+        "neutral_rank_cut_enforced": 0,
         "pts_52w_cap_evaluated": 0,
         "pts_52w_cap_would_filter": 0,
         "pts_52w_cap_blocked": 0,
@@ -2289,10 +2295,15 @@ def _run_backtest_core(
         return mark
 
     def _candidate_rank_key(candidate: CandidateSignal) -> tuple[float, float, float, float]:
-        from config import get_scan_live_sort_key
+        from config import get_neutral_rank_mode, get_scan_live_sort_key
 
         sort_key = get_scan_live_sort_key(sd)
         primary = _safe_telemetry_float(candidate.signal.get(sort_key))
+        if get_neutral_rank_mode(sd) == "live":
+            block = candidate.signal.get("neutral_rank")
+            if isinstance(block, dict) and block.get("neutral_score") is not None:
+                primary = _safe_telemetry_float(block.get("neutral_score"))
+                block["applied_to_sort"] = True
         rank_v2 = _safe_telemetry_float(candidate.signal.get("rank_score_v2"))
         composite_score = _safe_telemetry_float(candidate.signal.get("composite_score"))
         rank_score = _safe_telemetry_float(candidate.signal.get("rank_score"))
@@ -2542,6 +2553,28 @@ def _run_backtest_core(
                     continue
 
             entry_shadow = evaluate_entry_timing_shadow(window, sd)
+            from stage_analysis import evaluate_weekly_swing_entry_buffer
+
+            weekly_buffer = evaluate_weekly_swing_entry_buffer(
+                horizon_hits=admit.horizon_hits,
+                entry_shadow=entry_shadow,
+                df=window,
+                skill_dir=sd,
+            )
+            if weekly_buffer.get("applies"):
+                diagnostics["weekly_swing_entry_buffer_evaluated"] = (
+                    int(diagnostics.get("weekly_swing_entry_buffer_evaluated", 0) or 0) + 1
+                )
+                diagnostics["weekly_swing_entry_buffer_mode"] = weekly_buffer.get("mode")
+                if weekly_buffer.get("would_cut"):
+                    diagnostics["weekly_swing_entry_buffer_would_cut"] = (
+                        int(diagnostics.get("weekly_swing_entry_buffer_would_cut", 0) or 0) + 1
+                    )
+                    if str(weekly_buffer.get("mode") or "") == "live":
+                        diagnostics["weekly_swing_entry_buffer_blocked"] = (
+                            int(diagnostics.get("weekly_swing_entry_buffer_blocked", 0) or 0) + 1
+                        )
+                        continue
             if str(entry_shadow.get("mode") or "off") != "off":
                 diagnostics["entry_timing_shadow_evaluated"] = int(diagnostics["entry_timing_shadow_evaluated"]) + 1
                 if entry_shadow.get("would_filter"):
@@ -2640,6 +2673,11 @@ def _run_backtest_core(
                 "forensic_flags": list((forensic_snapshot or {}).get("forensic_flags", []) or []),
                 "breakout_confirmed": True,
                 "entry_family": candidate_family,
+                "weekly_swing_entry_buffer": weekly_buffer,
+                "horizon_hits": [
+                    str(hit.get("name") or hit) if isinstance(hit, dict) else str(hit)
+                    for hit in (admit.horizon_hits or [])
+                ],
             }
             try:
                 from core.debate_grade import stamp_checklist_fields
@@ -2885,6 +2923,19 @@ def _run_backtest_core(
                 )
             )
 
+        try:
+            from core.neutral_rank import stamp_neutral_rank
+
+            stamp_neutral_rank(
+                [candidate.signal for candidate in candidates],
+                diagnostics,
+                sd,
+                scan_id="backtest",
+                persist=False,
+                exempt_research=False,
+            )
+        except Exception:
+            LOG.debug("Backtest neutral rank shadow skipped", exc_info=True)
         candidates = _apply_candidate_rank_v2_filter(candidates)
         candidates = _apply_candidate_prob_rank(candidates)
         day_equity = _equity_at(day_ts)
