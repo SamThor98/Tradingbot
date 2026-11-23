@@ -2944,8 +2944,36 @@ def get_tab_agent_lab_candidates(skill_dir: Path | None = None) -> int:
 
 
 def get_tab_agent_lab_model(skill_dir: Path | None = None) -> str:
-    """Model id for lab calls. Empty keeps ``LLM_MODEL_NAME``."""
+    """Model id for lab calls. Empty keeps ``LLM_MODEL_NAME``.
+
+    This does not write ``LLM_MODEL_NAME``. Scan-time MiroFish ignores it.
+    """
     return _env_value("TAB_AGENT_LAB_MODEL", _load_env(skill_dir)).strip()
+
+
+def get_tab_agent_lab_base_url(skill_dir: Path | None = None) -> str:
+    """Lab-only base URL. Empty leaves the provider default.
+
+    This does not write ``LLM_BASE_URL``. Scan-time MiroFish ignores it.
+    """
+    return _env_value("TAB_AGENT_LAB_BASE_URL", _load_env(skill_dir)).strip()
+
+
+def get_tab_agent_lab_provider(skill_dir: Path | None = None) -> str:
+    """Lab provider: ``xai``, ``openai``, or empty.
+
+    An empty ``TAB_AGENT_LAB_PROVIDER`` infers ``xai`` when the lab model
+    starts with ``grok`` or the lab base URL contains ``x.ai``. Any other
+    value falls through to that same inference. Scan-time routing is unchanged.
+    """
+    raw = _env_value("TAB_AGENT_LAB_PROVIDER", _load_env(skill_dir)).strip().lower()
+    if raw in ("xai", "openai"):
+        return raw
+    model = get_tab_agent_lab_model(skill_dir).lower()
+    base = get_tab_agent_lab_base_url(skill_dir).lower()
+    if model.startswith("grok") or "x.ai" in base:
+        return "xai"
+    return ""
 
 
 def get_tab_agent_lab_token_cap(skill_dir: Path | None = None) -> int:

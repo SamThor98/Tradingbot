@@ -9,6 +9,12 @@ never replaced here.
 The loop is resumable: one state file per night is replaced atomically after
 each generation. A crash retries the unfinished generation and does not
 install a second shadow for a night that already finished.
+
+Lab model calls can target xAI through ``TAB_AGENT_LAB_MODEL``,
+``TAB_AGENT_LAB_BASE_URL``, and ``TAB_AGENT_LAB_PROVIDER``. Those values are
+applied to an in-memory env copy. ``LLM_MODEL_NAME`` and ``LLM_BASE_URL`` are
+not written to ``.env``, so scan-time MiroFish keeps its own route when those
+two are unset.
 """
 
 from __future__ import annotations
@@ -59,6 +65,8 @@ class LabConfig:
     concurrency: int = 6
     candidates: int = 8
     model: str = ""
+    base_url: str = ""
+    provider: str = ""
     token_cap: int = 0
     holdout_weeks: int = 6
     holdout_days: int = 0
@@ -83,6 +91,7 @@ class LabConfig:
     @classmethod
     def load(cls, skill_dir: Path | None = None) -> LabConfig:
         from config import (
+            get_tab_agent_lab_base_url,
             get_tab_agent_lab_candidates,
             get_tab_agent_lab_concurrency,
             get_tab_agent_lab_drift_weight,
@@ -101,6 +110,7 @@ class LabConfig:
             get_tab_agent_lab_min_train_cases,
             get_tab_agent_lab_min_train_dates,
             get_tab_agent_lab_model,
+            get_tab_agent_lab_provider,
             get_tab_agent_lab_rebuild_enabled,
             get_tab_agent_lab_reveal_live_ticker,
             get_tab_agent_lab_tabs,
@@ -114,6 +124,8 @@ class LabConfig:
             concurrency=get_tab_agent_lab_concurrency(skill_dir),
             candidates=get_tab_agent_lab_candidates(skill_dir),
             model=get_tab_agent_lab_model(skill_dir),
+            base_url=get_tab_agent_lab_base_url(skill_dir),
+            provider=get_tab_agent_lab_provider(skill_dir),
             token_cap=get_tab_agent_lab_token_cap(skill_dir),
             holdout_weeks=get_tab_agent_lab_holdout_weeks(skill_dir),
             holdout_days=get_tab_agent_lab_holdout_days(skill_dir),
@@ -779,6 +791,29 @@ def _record_model_stop(bucket: dict[str, Any], guard: ModelFailureGuard) -> None
         errors.append(reason)
 
 
+def _lab_targets_xai(config: LabConfig) -> bool:
+    """True when this lab call should use xAI. Explicit ``openai`` wins."""
+    provider = (config.provider or "").strip().lower()
+    if provider == "openai":
+        return False
+    if provider == "xai":
+        return True
+    model = (config.model or "").strip().lower()
+    base = (config.base_url or "").strip().lower()
+    return model.startswith("grok") or "x.ai" in base
+
+
+def _openai_route_key(env: dict[str, str]) -> str:
+    """Key order used when the lab is not calling xAI. Never prefers ``XAI_API_KEY``."""
+    return (
+        env.get("MIROFISH_API_KEY")
+        or os.environ.get("MIROFISH_API_KEY", "")
+        or os.environ.get("OPENAI_API_KEY", "")
+        or os.environ.get("OPENAI_KEY", "")
+        or ""
+    )
+
+
 def _model_call(
     skill_dir: Path,
     config: LabConfig,
@@ -795,11 +830,43 @@ def _model_call(
         import config as skill_config
         from engine_analysis import _call_llm
 
-        # Copy: config._load_env caches the parsed dict, and the lab may set the model.
+        # Copy: config._load_env caches the parsed dict. Model and base URL are
+        # set on this copy only. Never write LLM_MODEL_NAME or LLM_BASE_URL
+        # back to .env; those keys change scan-time MiroFish.
         env = dict(skill_config._load_env(skill_dir))
         if config.model:
             env["LLM_MODEL_NAME"] = config.model
-        return _call_llm(user, system, env, max_tokens=700)
+        if not _lab_targets_xai(config):
+            # A grok model with provider=openai must keep the OpenAI key order.
+            # _call_llm would otherwise treat the model id as an xAI route.
+            routed_model = str(env.get("LLM_MODEL_NAME") or os.environ.get("LLM_MODEL_NAME") or "")
+            routed_base = str(env.get("LLM_BASE_URL") or os.environ.get("LLM_BASE_URL") or "")
+            if routed_model.lower().startswith("grok") or "x.ai" in routed_base.lower():
+                return _call_llm(
+                    user,
+                    system,
+                    env,
+                    max_tokens=700,
+                    api_key=_openai_route_key(env),
+                )
+            return _call_llm(user, system, env, max_tokens=700)
+        from core.llm_endpoint import XAI_DEFAULT_BASE_URL, resolve_llm_endpoint
+
+        base = (config.base_url or "").strip() or XAI_DEFAULT_BASE_URL
+        env["LLM_BASE_URL"] = base
+        overrides = {"LLM_BASE_URL": base}
+        if config.model:
+            overrides["LLM_MODEL_NAME"] = config.model
+        endpoint = resolve_llm_endpoint(env, overrides=overrides)
+        return _call_llm(
+            user,
+            system,
+            env,
+            max_tokens=700,
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            model=endpoint.model,
+        )
 
     failed = False
 

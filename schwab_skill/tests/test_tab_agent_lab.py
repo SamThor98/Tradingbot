@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -528,6 +529,256 @@ def test_model_call_loads_skill_dotenv_and_charges_only_a_returned_call(
     assert budget.spend_usd == round(budget.tokens / 1000.0 * 0.01, 4)
 
 
+def test_lab_grok_model_uses_xai_key_and_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A grok lab model calls api.x.ai with XAI_API_KEY. MiroFish and OpenAI keys stay unused."""
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-process-openai")
+    text = "\n".join(
+        [
+            "XAI_API_KEY=xai-lab-key",
+            "MIROFISH_API_KEY=miro-lab-key",
+            "OPENAI_API_KEY=sk-file-openai",
+            "TAB_AGENT_LAB_MODEL=grok-4.3",
+            "",
+        ]
+    )
+    path = _write_env_text(tmp_path, text)
+    before = path.read_text(encoding="utf-8")
+    constructed, created = _patch_openai(monkeypatch, content="lab-ok")
+
+    reply = _model_call(
+        tmp_path,
+        LabConfig.load(tmp_path),
+        "system",
+        "user",
+        _budget(),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert reply == "lab-ok"
+    assert constructed[0]["api_key"] == "xai-lab-key"
+    assert constructed[0]["api_key"] != "miro-lab-key"
+    assert constructed[0]["base_url"] == "https://api.x.ai/v1"
+    assert "api.openai.com" not in str(constructed[0]["base_url"])
+    assert created[0]["model"] == "grok-4.3"
+    assert path.read_text(encoding="utf-8") == before
+    assert "LLM_MODEL_NAME" not in before
+    assert "LLM_BASE_URL" not in before
+
+
+def test_lab_base_url_override_stays_in_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """TAB_AGENT_LAB_BASE_URL replaces the xAI host on the call and is not written to .env."""
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    monkeypatch.setenv("LLM_MODEL_NAME", "gpt-4o-mini")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-process-openai")
+    text = "\n".join(
+        [
+            "XAI_API_KEY=xai-lab-key",
+            "MIROFISH_API_KEY=miro-lab-key",
+            "TAB_AGENT_LAB_MODEL=grok-4.3",
+            "TAB_AGENT_LAB_BASE_URL=https://proxy.x.ai/v1",
+            "",
+        ]
+    )
+    path = _write_env_text(tmp_path, text)
+    before = path.read_text(encoding="utf-8")
+    constructed, created = _patch_openai(monkeypatch, content="proxied")
+
+    reply = _model_call(
+        tmp_path,
+        LabConfig.load(tmp_path),
+        "system",
+        "user",
+        _budget(),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert reply == "proxied"
+    assert constructed[0]["base_url"] == "https://proxy.x.ai/v1"
+    assert constructed[0]["api_key"] == "xai-lab-key"
+    assert created[0]["model"] == "grok-4.3"
+    assert "api.openai.com" not in str(constructed[0]["base_url"])
+    assert path.read_text(encoding="utf-8") == before
+    assert os.environ["LLM_BASE_URL"] == "https://api.openai.com/v1"
+    assert "LLM_MODEL_NAME" not in before
+    assert "LLM_BASE_URL" not in before
+
+
+def test_scan_call_llm_keeps_default_openai_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset LLM_MODEL_NAME and an empty LLM_BASE_URL stay on the OpenAI host.
+
+    An XAI_API_KEY in the same env must not pull scan-time MiroFish onto xAI.
+    """
+    from engine_analysis import _call_llm
+
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    monkeypatch.setenv("XAI_API_KEY", "xai-process-key")
+    constructed, created = _patch_openai(monkeypatch, content="scan-ok")
+    env = {
+        "MIROFISH_API_KEY": "miro-scan-key",
+        "XAI_API_KEY": "xai-file-key",
+        "OPENAI_API_KEY": "sk-file-openai",
+        "LLM_BASE_URL": "",
+    }
+
+    reply = _call_llm("prompt", "system", env)
+
+    assert reply == "scan-ok"
+    assert constructed[0]["api_key"] == "miro-scan-key"
+    assert constructed[0]["base_url"] is None
+    assert "x.ai" not in str(constructed[0]["base_url"] or "")
+    assert created[0]["model"] == "gpt-4o-mini"
+
+
+def test_lab_call_does_not_rewrite_dotenv_llm_routing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    text = "\n".join(
+        [
+            "XAI_API_KEY=xai-lab-key",
+            "MIROFISH_API_KEY=miro-lab-key",
+            "TAB_AGENT_LAB_MODEL=grok-4.3",
+            "TAB_AGENT_LAB_BASE_URL=https://api.x.ai/v1",
+            "",
+        ]
+    )
+    path = _write_env_text(tmp_path, text)
+    before = path.read_bytes()
+    _patch_openai(monkeypatch, content="ok")
+
+    _model_call(
+        tmp_path,
+        LabConfig.load(tmp_path),
+        "system",
+        "user",
+        _budget(),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert path.read_bytes() == before
+    assert b"LLM_MODEL_NAME" not in before
+    assert b"LLM_BASE_URL" not in before
+    assert os.environ.get("LLM_MODEL_NAME") in (None, "")
+    assert os.environ.get("LLM_BASE_URL") in (None, "")
+
+
+def test_lab_xai_falls_back_to_mirofish_not_openai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-process-openai")
+    path = _write_env_text(
+        tmp_path,
+        "MIROFISH_API_KEY=miro-lab-key\nOPENAI_API_KEY=sk-file-openai\nTAB_AGENT_LAB_MODEL=grok-4.3\n",
+    )
+    before = path.read_text(encoding="utf-8")
+    constructed, created = _patch_openai(monkeypatch, content="fallback")
+
+    _model_call(
+        tmp_path,
+        LabConfig.load(tmp_path),
+        "system",
+        "user",
+        _budget(),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert constructed[0]["api_key"] == "miro-lab-key"
+    assert constructed[0]["base_url"] == "https://api.x.ai/v1"
+    assert created[0]["model"] == "grok-4.3"
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_call_llm_grok_does_not_send_openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from engine_analysis import _call_llm
+
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-process-openai")
+    constructed, created = _patch_openai(monkeypatch, content="grok")
+    env = {
+        "XAI_API_KEY": "xai-direct-key",
+        "MIROFISH_API_KEY": "miro-direct-key",
+        "OPENAI_API_KEY": "sk-file-openai",
+        "LLM_MODEL_NAME": "grok-4.3",
+        "LLM_BASE_URL": "https://api.x.ai/v1",
+    }
+
+    _call_llm("prompt", "system", env, max_tokens=32)
+
+    assert constructed[0]["api_key"] == "xai-direct-key"
+    assert constructed[0]["base_url"] == "https://api.x.ai/v1"
+    assert created[0]["model"] == "grok-4.3"
+
+    _reset_llm_circuit()
+    missing_xai, _created = _patch_openai(monkeypatch, content="miro")
+    fallback_env = {
+        "MIROFISH_API_KEY": "miro-direct-key",
+        "OPENAI_API_KEY": "sk-file-openai",
+        "LLM_MODEL_NAME": "grok-4.3",
+        "LLM_BASE_URL": "https://api.x.ai/v1",
+    }
+    _call_llm("prompt", "system", fallback_env)
+    assert missing_xai[0]["api_key"] == "miro-direct-key"
+
+
+def test_explicit_openai_provider_keeps_openai_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _clear_routing_env(monkeypatch)
+    _write_env_text(
+        tmp_path,
+        "\n".join(
+            [
+                "XAI_API_KEY=xai-lab-key",
+                "MIROFISH_API_KEY=miro-lab-key",
+                "OPENAI_API_KEY=sk-file-openai",
+                "TAB_AGENT_LAB_MODEL=grok-4.3",
+                "TAB_AGENT_LAB_PROVIDER=openai",
+                "",
+            ]
+        ),
+    )
+    constructed, created = _patch_openai(monkeypatch, content="openai-route")
+
+    _model_call(
+        tmp_path,
+        LabConfig.load(tmp_path),
+        "system",
+        "user",
+        _budget(),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert constructed[0]["api_key"] == "miro-lab-key"
+    assert constructed[0]["base_url"] is None
+    assert created[0]["model"] == "grok-4.3"
+
+
+def test_lab_provider_infers_xai_from_model_or_base(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from config import clear_env_cache, get_tab_agent_lab_base_url, get_tab_agent_lab_provider
+
+    _clear_routing_env(monkeypatch)
+    _write_env_text(tmp_path, "TAB_AGENT_LAB_MODEL=grok-4.3\n")
+    assert get_tab_agent_lab_provider(tmp_path) == "xai"
+    assert get_tab_agent_lab_base_url(tmp_path) == ""
+
+    monkeypatch.setenv("TAB_AGENT_LAB_PROVIDER", "openai")
+    assert get_tab_agent_lab_provider(tmp_path) == "openai"
+
+    monkeypatch.delenv("TAB_AGENT_LAB_PROVIDER", raising=False)
+    monkeypatch.setenv("TAB_AGENT_LAB_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("TAB_AGENT_LAB_BASE_URL", "https://api.x.ai/v1")
+    assert get_tab_agent_lab_provider(tmp_path) == "xai"
+    assert get_tab_agent_lab_base_url(tmp_path) == "https://api.x.ai/v1"
+
+    monkeypatch.setenv("TAB_AGENT_LAB_BASE_URL", "https://api.openai.com/v1")
+    assert get_tab_agent_lab_provider(tmp_path) == ""
+    clear_env_cache()
+
+
 def test_failed_model_call_does_not_charge_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _reset_llm_circuit()
     _write_lab_env(tmp_path)
@@ -915,10 +1166,34 @@ def _budget() -> Budget:
 
 
 def _write_lab_env(skill_dir: Path) -> None:
+    _write_env_text(skill_dir, "MIROFISH_API_KEY=sk-lab-test-key\n")
+
+
+_ROUTING_ENV_KEYS = (
+    "MIROFISH_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_KEY",
+    "XAI_API_KEY",
+    "LLM_MODEL_NAME",
+    "LLM_BASE_URL",
+    "TAB_AGENT_LAB_MODEL",
+    "TAB_AGENT_LAB_BASE_URL",
+    "TAB_AGENT_LAB_PROVIDER",
+)
+
+
+def _clear_routing_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _ROUTING_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+
+def _write_env_text(skill_dir: Path, text: str) -> Path:
     from config import clear_env_cache
 
-    (skill_dir / ".env").write_text("MIROFISH_API_KEY=sk-lab-test-key\n", encoding="utf-8")
+    path = skill_dir / ".env"
+    path.write_text(text, encoding="utf-8")
     clear_env_cache()
+    return path
 
 
 def _reset_llm_circuit() -> None:
