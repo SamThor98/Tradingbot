@@ -199,18 +199,58 @@ def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
 _LLM_CIRCUIT: dict[str, float] = {"consecutive_failures": 0.0, "open_until": 0.0}
 
 
-def _call_llm(prompt: str, system: str, env: dict, max_tokens: int = 200) -> str:
-    """Call LLM (OpenAI/Qwen) following env config."""
-    api_key = (
-        env.get("MIROFISH_API_KEY")
-        or os.environ.get("MIROFISH_API_KEY", "")
-        or os.environ.get("OPENAI_API_KEY", "")
-        or os.environ.get("OPENAI_KEY", "")
-    )
-    base_url = (env.get("LLM_BASE_URL") or os.environ.get("LLM_BASE_URL") or "").strip()
-    model = env.get("LLM_MODEL_NAME") or os.environ.get("LLM_MODEL_NAME") or "gpt-4o-mini"
+def _llm_targets_xai(base_url: str, model: str) -> bool:
+    """True when this call is aimed at xAI. Unset model and base stay on OpenAI."""
+    return "x.ai" in base_url.lower() or str(model).lower().startswith("grok")
+
+
+def _call_llm(
+    prompt: str,
+    system: str,
+    env: dict,
+    max_tokens: int = 200,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Call an OpenAI-compatible chat endpoint.
+
+    Scan-time callers omit ``api_key``, ``base_url``, and ``model``. With
+    ``LLM_MODEL_NAME`` and ``LLM_BASE_URL`` unset, the key order stays
+    MiroFish, then ``OPENAI_API_KEY``, then ``OPENAI_KEY``, and the host
+    stays the OpenAI default. A Grok model or an ``x.ai`` host prefers
+    ``XAI_API_KEY`` and falls back to ``MIROFISH_API_KEY`` only. An OpenAI
+    key is never sent to xAI. Explicit arguments win over env lookup.
+    """
+    if base_url is None:
+        resolved_base = (env.get("LLM_BASE_URL") or os.environ.get("LLM_BASE_URL") or "").strip()
+    else:
+        resolved_base = str(base_url).strip()
+    if model is None:
+        resolved_model = env.get("LLM_MODEL_NAME") or os.environ.get("LLM_MODEL_NAME") or "gpt-4o-mini"
+    else:
+        resolved_model = str(model).strip() or "gpt-4o-mini"
+    if api_key is None:
+        if _llm_targets_xai(resolved_base, str(resolved_model)):
+            api_key = (
+                env.get("XAI_API_KEY")
+                or os.environ.get("XAI_API_KEY", "")
+                or env.get("MIROFISH_API_KEY")
+                or os.environ.get("MIROFISH_API_KEY", "")
+            )
+        else:
+            api_key = (
+                env.get("MIROFISH_API_KEY")
+                or os.environ.get("MIROFISH_API_KEY", "")
+                or os.environ.get("OPENAI_API_KEY", "")
+                or os.environ.get("OPENAI_KEY", "")
+            )
     if not api_key:
-        LOG.warning("MIROFISH_API_KEY / OPENAI_API_KEY / OPENAI_KEY not set, using fallback score")
+        if _llm_targets_xai(resolved_base, str(resolved_model)):
+            LOG.warning("XAI_API_KEY / MIROFISH_API_KEY not set, using fallback score")
+        else:
+            LOG.warning("MIROFISH_API_KEY / OPENAI_API_KEY / OPENAI_KEY not set, using fallback score")
         return ""
 
     now = time.monotonic()
@@ -233,12 +273,12 @@ def _call_llm(prompt: str, system: str, env: dict, max_tokens: int = 200) -> str
         # unreachable endpoint cannot multiply scan latency.
         client = OpenAI(
             api_key=api_key,
-            base_url=base_url if base_url else None,
+            base_url=resolved_base if resolved_base else None,
             timeout=timeout_s,
             max_retries=0,
         )
         resp = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},

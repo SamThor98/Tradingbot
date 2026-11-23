@@ -43,6 +43,22 @@ def test_resolve_openai_default(monkeypatch) -> None:
     assert endpoint.api_key == "sk-openai"
 
 
+def test_overrides_win_over_process_llm_routing(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_MODEL_NAME", "gpt-4o-mini")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    monkeypatch.delenv("MIROFISH_API_KEY", raising=False)
+    endpoint = resolve_llm_endpoint(
+        {},
+        overrides={"LLM_MODEL_NAME": "grok-4.3", "LLM_BASE_URL": "https://proxy.x.ai/v1"},
+    )
+    assert endpoint.provider == "xai"
+    assert endpoint.model == "grok-4.3"
+    assert endpoint.base_url == "https://proxy.x.ai/v1"
+    assert endpoint.api_key == "xai-test"
+
+
 def test_xai_key_alone_selects_grok(monkeypatch) -> None:
     monkeypatch.delenv("LLM_MODEL_NAME", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)

@@ -46,14 +46,31 @@ def _lookup(key: str, file_env: Mapping[str, str]) -> str:
     return str(file_env.get(key, "") or "").strip()
 
 
-def resolve_llm_endpoint(file_env: Mapping[str, str] | None = None) -> LlmEndpoint:
-    """Pick provider, model, base URL, and key from file env + process env."""
+def resolve_llm_endpoint(
+    file_env: Mapping[str, str] | None = None,
+    *,
+    overrides: Mapping[str, str] | None = None,
+) -> LlmEndpoint:
+    """Pick provider, model, base URL, and key from file env + process env.
+
+    ``overrides`` are in-memory values. A key that is present there wins over
+    process env and ``file_env``, including when the value is empty. The tab
+    agent lab uses this so ``LLM_MODEL_NAME`` and ``LLM_BASE_URL`` stay off
+    the ``.env`` file. Omit ``overrides`` for scan-time resolution.
+    """
     env = file_env or {}
-    model = _lookup("LLM_MODEL_NAME", env)
-    base_url = _lookup("LLM_BASE_URL", env)
-    xai_key = _lookup("XAI_API_KEY", env)
-    miro_key = _lookup("MIROFISH_API_KEY", env)
-    openai_key = _first(_lookup("OPENAI_API_KEY", env), _lookup("OPENAI_KEY", env))
+    forced = overrides or {}
+
+    def pick(key: str) -> str:
+        if key in forced:
+            return str(forced.get(key) or "").strip()
+        return _lookup(key, env)
+
+    model = pick("LLM_MODEL_NAME")
+    base_url = pick("LLM_BASE_URL")
+    xai_key = pick("XAI_API_KEY")
+    miro_key = pick("MIROFISH_API_KEY")
+    openai_key = _first(pick("OPENAI_API_KEY"), pick("OPENAI_KEY"))
 
     grok_model = bool(model) and model.lower().startswith("grok")
     xai_host = "x.ai" in base_url.lower()
