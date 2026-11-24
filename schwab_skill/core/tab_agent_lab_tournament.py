@@ -267,7 +267,9 @@ def texts_for_spec(
                 operator=str(spec["operator"]),
                 history=history,
             )
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "lab_hold", False):
+                raise
             return None
         if not text:
             return None
@@ -329,7 +331,9 @@ def score_texts(
     for case in cases:
         try:
             side = decide(tab=tab, texts=texts, case=case)
-        except Exception:
+        except Exception as exc:
+            if getattr(exc, "lab_hold", False):
+                raise
             side = None
         if side not in {"long", "cash"}:
             continue

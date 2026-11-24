@@ -199,6 +199,23 @@ def _get_news_seed(ticker: str, skill_dir: Path | None = None) -> str:
 _LLM_CIRCUIT: dict[str, float] = {"consecutive_failures": 0.0, "open_until": 0.0}
 
 
+class LLMCircuitOpenError(Exception):
+    """The shared LLM circuit is open. Scan callers never see this.
+
+    The overnight lab asks ``_call_llm(..., raise_on_error=True)`` so it can
+    wait out the cooldown. The default path still returns an empty string.
+    """
+
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = max(0.0, float(retry_after))
+        super().__init__(f"LLM circuit is open for {self.retry_after:.0f}s")
+
+
+def llm_circuit_remaining() -> float:
+    """Seconds until the shared LLM circuit allows another call. Zero when closed."""
+    return max(0.0, _LLM_CIRCUIT["open_until"] - time.monotonic())
+
+
 def _llm_targets_xai(base_url: str, model: str) -> bool:
     """True when this call is aimed at xAI. Unset model and base stay on OpenAI."""
     return "x.ai" in base_url.lower() or str(model).lower().startswith("grok")
@@ -213,6 +230,7 @@ def _call_llm(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    raise_on_error: bool = False,
 ) -> str:
     """Call an OpenAI-compatible chat endpoint.
 
@@ -255,6 +273,8 @@ def _call_llm(
 
     now = time.monotonic()
     if _LLM_CIRCUIT["open_until"] > now:
+        if raise_on_error:
+            raise LLMCircuitOpenError(_LLM_CIRCUIT["open_until"] - now)
         return ""
 
     def _env_float(key: str, default: float) -> float:
@@ -297,6 +317,8 @@ def _call_llm(
                 cb_cooldown,
             )
         LOG.warning("LLM call failed: %s", e)
+        if raise_on_error:
+            raise
         return ""
 
 
