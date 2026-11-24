@@ -8,7 +8,9 @@ never replaced here.
 
 The loop is resumable: one state file per night is replaced atomically after
 each generation. A crash retries the unfinished generation and does not
-install a second shadow for a night that already finished.
+install a second shadow for a night that already finished. A transient model
+failure (429, timeout, 5xx, or an open circuit) waits and retries. It does
+not finish the night or fall through to an empty generation.
 
 Lab model calls can target xAI through ``TAB_AGENT_LAB_MODEL``,
 ``TAB_AGENT_LAB_BASE_URL``, and ``TAB_AGENT_LAB_PROVIDER``. Those values are
@@ -28,6 +30,7 @@ import random
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -253,8 +256,72 @@ def _chicago(now: datetime) -> datetime:
 
 def _retryable(exc: Exception) -> bool:
     text = f"{exc.__class__.__name__} {exc}".lower()
-    markers = ("429", "rate limit", "ratelimit", "timeout", "timed out", "502", "503", "overloaded")
+    markers = (
+        "429",
+        "rate limit",
+        "ratelimit",
+        "resource-exhausted",
+        "resource exhausted",
+        "at capacity",
+        "timeout",
+        "timed out",
+        "500",
+        "502",
+        "503",
+        "504",
+        "overloaded",
+        "circuit",
+    )
     return any(marker in text for marker in markers)
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Numeric ``Retry-After`` seconds, or an exception's ``retry_after`` attribute."""
+    raw = getattr(exc, "retry_after", None)
+    if raw is None:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None) if response is not None else None
+        getter = getattr(headers, "get", None) if headers is not None else None
+        if callable(getter):
+            raw = getter("Retry-After")
+            if raw is None:
+                raw = getter("retry-after")
+    if raw is None or raw == "":
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _backoff_seconds(delay: float, exc: Exception, rng: random.Random) -> float:
+    """Exponential delay plus jitter. A Retry-After header is a floor, not a hint."""
+    header = _retry_after_seconds(exc)
+    if header is None:
+        return delay + rng.uniform(0.0, delay * 0.25)
+    base = max(delay, header)
+    return base + rng.uniform(0.0, min(1.0, base * 0.1))
+
+
+class LLMUnavailable(Exception):
+    """The lab model could not be called. The night waits instead of scoring blanks.
+
+    ``lab_hold`` is how the tournament re-raises this without importing the lab
+    module (that import would be circular).
+    """
+
+    lab_hold = True
+
+    def __init__(self, retry_after: float = 30.0, reason: str = "llm_unavailable") -> None:
+        self.retry_after = max(0.0, float(retry_after))
+        self.reason = reason or "llm_unavailable"
+        super().__init__(self.reason)
+
+
+def _transient_llm_failure(exc: Exception) -> bool:
+    if getattr(exc, "lab_hold", False):
+        return True
+    return _retryable(exc)
 
 
 def call_with_backoff(
@@ -263,31 +330,86 @@ def call_with_backoff(
     sleeper: Callable[[float], None] | None = None,
     attempts: int = 6,
     on_failure: Callable[[Exception], None] | None = None,
+    rng: random.Random | None = None,
 ) -> str:
     """Call the model. Rate limits and transient API errors wait and retry.
 
     A hard failure returns an empty string so the night loop keeps going.
     ``on_failure`` owns that log line when the caller is tallying the generation.
+    ``LLMUnavailable`` propagates so the night can wait instead of scoring a blank.
     """
     pause = sleeper or (lambda _seconds: None)
+    draw = rng or random.Random()
     delay = 1.0
     for attempt in range(max(1, attempts)):
         try:
             return str(fn() or "")
         except Exception as exc:
+            if getattr(exc, "lab_hold", False):
+                raise
             if not _retryable(exc) or attempt >= attempts - 1:
                 if on_failure is not None:
                     on_failure(exc)
                 else:
                     LOG.warning("Lab model call failed: %s", exc)
                 return ""
-            LOG.info("Lab model call retrying after %s seconds: %s", delay, exc)
+            sleep_for = _backoff_seconds(delay, exc, draw)
+            LOG.info("Lab model call retrying after %.1f seconds: %s", sleep_for, exc)
             try:
-                pause(delay)
+                pause(sleep_for)
             except Exception as sleep_exc:
                 LOG.warning("Lab backoff sleep failed: %s", sleep_exc)
             delay = min(delay * 2, 30.0)
     return ""
+
+
+def _seconds_until_window_end(now: datetime) -> float:
+    """Seconds until 07:00 America/Chicago. Zero once the window has closed."""
+    local = _chicago(now)
+    if not in_lab_window(local):
+        return 0.0
+    end = local.replace(hour=7, minute=0, second=0, microsecond=0)
+    if local.hour >= 18:
+        end = end + timedelta(days=1)
+    return max(0.0, (end - local).total_seconds())
+
+
+def _wait_out_circuit(sleeper: Callable[[float], None], now_fn: Callable[[], datetime]) -> None:
+    """Sleep until the shared LLM circuit closes, or until the lab window ends.
+
+    An open circuit used to return an empty string. The generator then stored
+    a contract drop and, after three of those, finished the night.
+    """
+    from engine_analysis import llm_circuit_remaining
+
+    remaining = llm_circuit_remaining()
+    if remaining <= 0:
+        return
+    left = _seconds_until_window_end(now_fn())
+    if left <= 0:
+        raise LLMUnavailable(0.0, "llm_unavailable")
+    pause_for = min(remaining, left)
+    LOG.info("Lab waiting %.0fs for the LLM circuit to close", pause_for)
+    try:
+        sleeper(pause_for)
+    except Exception as exc:
+        LOG.warning("Lab circuit wait failed: %s", exc)
+    if _seconds_until_window_end(now_fn()) <= 0:
+        raise LLMUnavailable(0.0, "llm_unavailable")
+    still = llm_circuit_remaining()
+    if still > 0.25:
+        raise LLMUnavailable(still, "circuit_open")
+
+
+def _silent_llm_generation(use_llm: bool, produced: list[dict[str, Any]], tokens_before: int, budget: Budget) -> bool:
+    """True when a generation dropped every candidate without receiving model text.
+
+    A real reply that fails the contract still charges tokens, so the three-strike
+    rule still applies to those. An empty reply does not.
+    """
+    if not use_llm or budget.exhausted or budget.tokens != tokens_before:
+        return False
+    return bool(produced) and all(bool(row.get("dropped")) for row in produced)
 
 
 def _state_path(skill_dir: Path) -> Path:
@@ -472,7 +594,11 @@ def run_night(
     finalize: bool = True,
     hooks: tuple[Callable[..., str | None], Callable[..., str | None]] | None = None,
 ) -> dict[str, Any]:
-    """Run generations until the window, a cap, or a broken model stops the night."""
+    """Run generations until the window, the token cap, or a broken model stops the night.
+
+    Rate limits, timeouts, server errors, and an open LLM circuit wait and
+    retry. They do not mark the night finished.
+    """
     root = Path(skill_dir)
     cfg = config or LabConfig.load(root)
     now_fn = clock or (lambda: datetime.now(CHICAGO))
@@ -516,14 +642,25 @@ def run_night(
     state["decision_cache"] = cache
     lock = threading.Lock()
     guard = ModelFailureGuard()
+    pause = sleeper if sleeper is not None else time.sleep
     if hooks is None:
-        propose, decide_inner = _hooks(root, cfg, use_llm=use_llm, budget=budget, sleeper=sleeper, guard=guard)
+        propose, decide_inner = _hooks(
+            root,
+            cfg,
+            use_llm=use_llm,
+            budget=budget,
+            sleeper=pause,
+            guard=guard,
+            clock=now_fn,
+        )
     else:
         propose, decide_inner = hooks
     decide = _caching_decide(decide_inner, cache, lock)
+    llm_blocked = False
 
     while in_lab_window(now_fn()) and not budget.exhausted:
         progressed = False
+        hold: LLMUnavailable | None = None
         for tab in cfg.tabs:
             if not in_lab_window(now_fn()) or budget.exhausted or guard.aborted:
                 break
@@ -573,6 +710,7 @@ def run_night(
                 if guard.aborted:
                     _record_model_stop(bucket, guard)
                 else:
+                    tokens_before = budget.tokens
                     rng = random.Random(f"{night}:{tab}:{generation}")
                     produced = run_generation(
                         tab=tab,
@@ -590,7 +728,14 @@ def run_night(
                         skill_dir=root,
                         workers=cfg.concurrency,
                     )
+                    if _silent_llm_generation(use_llm, produced, tokens_before, budget):
+                        raise LLMUnavailable(30.0, "llm_unavailable")
                     ran_generation = True
+            except LLMUnavailable as exc:
+                hold = exc
+                llm_blocked = True
+                LOG.warning("Lab model unavailable for %s; holding this generation: %s", tab, exc.reason)
+                break
             except Exception as exc:
                 LOG.warning("Lab generation failed for %s: %s", tab, exc)
                 bucket.setdefault("errors", []).append(str(exc))
@@ -629,6 +774,21 @@ def run_night(
             )
             if guard.aborted:
                 break
+        if hold is not None:
+            state["tokens"] = budget.tokens
+            save_state(root, state)
+            if not in_lab_window(now_fn()):
+                break
+            left = _seconds_until_window_end(now_fn())
+            if left <= 0:
+                break
+            wait = min(left, max(hold.retry_after, 1.0))
+            LOG.info("Lab backing off %.0fs before retrying the model", wait)
+            try:
+                pause(wait)
+            except Exception as sleep_exc:
+                LOG.warning("Lab backoff sleep failed: %s", sleep_exc)
+            continue
         if guard.aborted or not progressed:
             break
 
@@ -647,6 +807,14 @@ def run_night(
     report = finalize_night(root, state, config=cfg, objective=objective_cfg, promote=promote, budget=budget)
     report["stopped_early"] = bool(guard.aborted)
     report["stop_reason"] = guard.reason if guard.aborted else ""
+    if llm_blocked and budget.tokens == 0 and not guard.aborted and not in_lab_window(now_fn()):
+        report["status"] = "llm_unavailable"
+        report["stop_reason"] = "llm_unavailable"
+        report["stopped_early"] = False
+        report["note"] = (
+            "The model stayed unavailable until the window ended. "
+            "No prompt was scored. Spend is $0. Shadow only. Live prompts were not changed."
+        )
     state["finished"] = True
     state["tokens"] = budget.tokens
     state["report"] = report
@@ -678,6 +846,7 @@ def _hooks(
     budget: Budget,
     sleeper: Callable[[float], None] | None,
     guard: ModelFailureGuard | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> tuple[Callable[..., str | None], Callable[..., str | None]]:
     if not use_llm:
         return offline_propose, offline_decide
@@ -708,6 +877,7 @@ def _hooks(
             budget,
             sleeper,
             guard,
+            clock,
         )
         parsed = parse_prompt_proposal(draft)
         if parsed is None:
@@ -720,6 +890,7 @@ def _hooks(
             budget,
             sleeper,
             guard,
+            clock,
         )
         revised = parse_prompt_proposal(critique) or parsed
         text = str(revised.get("text") or "")
@@ -742,6 +913,7 @@ def _hooks(
                 budget,
                 sleeper,
                 guard,
+                clock,
             )
         )
         if repaired and keeps_contract(str(kwargs["tab"]), str(kwargs["prompt_key"]), str(repaired.get("text") or "")):
@@ -766,6 +938,7 @@ def _hooks(
                 budget,
                 sleeper,
                 guard,
+                clock,
             )
             second = _model_call(
                 skill_dir,
@@ -775,10 +948,11 @@ def _hooks(
                 budget,
                 sleeper,
                 guard,
+                clock,
             )
             return parse_decision(second or first, tab="debate", quality_threshold=60.0, prompt_key="round2")
         key = next(iter(texts))
-        raw = _model_call(skill_dir, config, texts[key], json.dumps(payload), budget, sleeper, guard)
+        raw = _model_call(skill_dir, config, texts[key], json.dumps(payload), budget, sleeper, guard, clock)
         return parse_decision(raw, tab=tab, quality_threshold=60.0, prompt_key=key)
 
     return propose, decide
@@ -822,13 +996,20 @@ def _model_call(
     budget: Budget,
     sleeper: Callable[[float], None] | None,
     guard: ModelFailureGuard | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> str:
     if budget.exhausted or (guard is not None and guard.aborted):
         return ""
+    now_fn = clock or (lambda: datetime.now(CHICAGO))
+    pause = sleeper or (lambda _seconds: None)
 
     def _once() -> str:
         import config as skill_config
         from engine_analysis import _call_llm
+
+        # An open circuit must wait here. Returning "" is what let the night
+        # store contract drops and finish during the 2026-11-23 outage.
+        _wait_out_circuit(pause, now_fn)
 
         # Copy: config._load_env caches the parsed dict. Model and base URL are
         # set on this copy only. Never write LLM_MODEL_NAME or LLM_BASE_URL
@@ -848,8 +1029,9 @@ def _model_call(
                     env,
                     max_tokens=700,
                     api_key=_openai_route_key(env),
+                    raise_on_error=True,
                 )
-            return _call_llm(user, system, env, max_tokens=700)
+            return _call_llm(user, system, env, max_tokens=700, raise_on_error=True)
         from core.llm_endpoint import XAI_DEFAULT_BASE_URL, resolve_llm_endpoint
 
         base = (config.base_url or "").strip() or XAI_DEFAULT_BASE_URL
@@ -866,19 +1048,30 @@ def _model_call(
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             model=endpoint.model,
+            raise_on_error=True,
         )
 
     failed = False
+    last_exc: Exception | None = None
 
     def _on_failure(exc: Exception) -> None:
-        nonlocal failed
+        nonlocal failed, last_exc
         failed = True
+        last_exc = exc
+        # Transient outages must not trip the hard-failure guard. That guard
+        # stops the night after two identical loader errors.
+        if _transient_llm_failure(exc):
+            LOG.warning("Lab model call failed: %s", exc)
+            return
         if guard is not None:
             guard.note_failure(exc)
         else:
             LOG.warning("Lab model call failed: %s", exc)
 
-    text = call_with_backoff(_once, sleeper=sleeper, on_failure=_on_failure)
+    text = call_with_backoff(_once, sleeper=pause, on_failure=_on_failure)
+    if last_exc is not None and _transient_llm_failure(last_exc):
+        header = _retry_after_seconds(last_exc)
+        raise LLMUnavailable(30.0 if header is None else max(header, 1.0), "llm_unavailable")
     if failed:
         return text
     if guard is not None:
@@ -1072,6 +1265,8 @@ def render_report_md(report: dict[str, Any]) -> str:
         f"Tokens: {report.get('tokens')} spend_usd={report.get('spend_usd')} cap={report.get('token_cap')}",
         f"Orders touched: {report.get('orders_touched')}",
     ]
+    if report.get("status"):
+        lines.append(f"Status: {report.get('status')}")
     if report.get("stopped_early"):
         lines.append(f"Stopped early: {report.get('stop_reason')}")
     if report.get("trust_reason"):

@@ -16,6 +16,7 @@ from core.tab_agent_lab import (
     CHICAGO,
     Budget,
     LabConfig,
+    LLMUnavailable,
     ModelFailureGuard,
     _model_call,
     call_with_backoff,
@@ -868,12 +869,270 @@ def test_backoff_retries_rate_limits_and_returns_empty_on_hard_failure() -> None
 
     assert call_with_backoff(_flaky, sleeper=sleeps.append) == "ok"
     assert attempts["n"] == 3
-    assert sleeps == [1.0, 2.0]
+    assert len(sleeps) == 2
+    assert 1.0 <= sleeps[0] <= 1.25
+    assert 2.0 <= sleeps[1] <= 2.5
 
     def _boom() -> str:
         raise RuntimeError("bad request")
 
     assert call_with_backoff(_boom, sleeper=sleeps.append) == ""
+    assert len(sleeps) == 2
+
+    limited = {"n": 0}
+
+    def _limited() -> str:
+        limited["n"] += 1
+        if limited["n"] < 2:
+            raise _RetryAfter("HTTP 429 resource-exhausted")
+        return "ok"
+
+    honored: list[float] = []
+    assert call_with_backoff(_limited, sleeper=honored.append) == "ok"
+    assert honored[0] >= 9.0
+
+    def _always(message: str) -> int:
+        seen = {"n": 0}
+
+        def _fn() -> str:
+            seen["n"] += 1
+            raise RuntimeError(message)
+
+        assert call_with_backoff(_fn, sleeper=lambda _seconds: None) == ""
+        return seen["n"]
+
+    assert _always("model is currently at capacity") == 6
+    assert _always("HTTP 500") == 6
+    assert _always("HTTP 504") == 6
+    assert _always("takes 0 positional arguments") == 1
+
+    def _hold() -> str:
+        raise LLMUnavailable(12.0, "circuit_open")
+
+    with pytest.raises(LLMUnavailable):
+        call_with_backoff(_hold, sleeper=sleeps.append)
+    assert len(sleeps) == 2
+
+
+def test_rate_limit_then_success_finishes_a_normal_night(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 on the first calls retries, then the night scores prompts and finishes."""
+    _reset_llm_circuit()
+    _seed(tmp_path)
+    _write_lab_env(tmp_path)
+    calls = {"n": 0}
+    reply = _proposal_reply()
+
+    def _llm(*_args: object, **_kwargs: object) -> str:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise _RetryAfter("HTTP 429 resource-exhausted: model is currently at capacity", "5")
+        return reply
+
+    monkeypatch.setattr("engine_analysis._call_llm", _llm)
+    start = datetime(2026, 11, 23, 18, 0, 51, tzinfo=CHICAGO)
+    when, _mono, clock, sleeper = _moving_window(start)
+    sleeps: list[float] = []
+
+    def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        sleeper(seconds)
+
+    report = run_night(
+        tmp_path,
+        config=_config(generations=1),
+        clock=clock,
+        promote=False,
+        use_llm=True,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        sleeper=_sleep,
+    )
+
+    assert calls["n"] > 2
+    assert any(seconds >= 5 for seconds in sleeps)
+    assert report["tokens"] > 0
+    assert report["spend_usd"] == round(report["tokens"] / 1000.0 * 0.01, 4)
+    assert report["stopped_early"] is False
+    assert report.get("status") != "llm_unavailable"
+    assert report.get("stop_reason") != "llm_unavailable"
+    assert report["orders_touched"] is False
+    assert report["tabs"]["today"]["generations"] == 1
+    assert report["tabs"]["today"]["candidates_tried"] > 0
+    assert "no_candidates" not in report["tabs"]["today"]["errors"]
+    assert when["t"] < start + timedelta(hours=1)
+    done = calls["n"]
+    again = run_night(
+        tmp_path,
+        config=_config(generations=3),
+        clock=clock,
+        promote=False,
+        use_llm=True,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        sleeper=_sleep,
+    )
+    assert calls["n"] == done
+    assert again["tabs"]["today"]["generations"] == 1
+    _reset_llm_circuit()
+
+
+def test_open_circuit_recovers_and_the_night_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three timeouts open the circuit. The lab waits it out instead of scoring blanks."""
+    _reset_llm_circuit()
+    try:
+        _seed(tmp_path)
+        _write_lab_env(tmp_path)
+        monkeypatch.setenv("LLM_CIRCUIT_FAILS", "3")
+        monkeypatch.setenv("LLM_CIRCUIT_COOLDOWN_SECONDS", "300")
+        start = datetime(2026, 11, 23, 18, 0, 51, tzinfo=CHICAGO)
+        when, mono, clock, sleeper = _moving_window(start)
+        _patch_circuit_clock(monkeypatch, mono)
+        sleeps: list[float] = []
+
+        def _sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            sleeper(seconds)
+
+        timeout = TimeoutError("Request timed out.")
+        counter = _install_scripted_client(monkeypatch, [timeout, timeout, timeout, _proposal_reply()])
+        report = run_night(
+            tmp_path,
+            config=_config(generations=1),
+            clock=clock,
+            promote=False,
+            use_llm=True,
+            cases=synthetic_cases("today"),
+            objective=_objective(),
+            sleeper=_sleep,
+        )
+
+        assert counter["n"] > 3
+        assert max(sleeps) >= 250
+        assert report["tokens"] > 0
+        assert report["spend_usd"] == round(report["tokens"] / 1000.0 * 0.01, 4)
+        assert report.get("status") != "llm_unavailable"
+        assert report["stopped_early"] is False
+        assert report["orders_touched"] is False
+        assert report["tabs"]["today"]["generations"] >= 1
+        assert "no_candidates" not in report["tabs"]["today"]["errors"]
+        assert when["t"] < start + timedelta(minutes=20)
+    finally:
+        _reset_llm_circuit()
+
+
+def test_llm_down_all_window_ends_unavailable_with_zero_spend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The night stays open through the outage and closes at 07:00 as llm_unavailable."""
+    _reset_llm_circuit()
+    try:
+        _seed(tmp_path)
+        _write_lab_env(tmp_path)
+        monkeypatch.setenv("LLM_CIRCUIT_FAILS", "3")
+        monkeypatch.setenv("LLM_CIRCUIT_COOLDOWN_SECONDS", "300")
+        start = datetime(2026, 11, 23, 18, 0, 51, tzinfo=CHICAGO)
+        when, mono, clock, sleeper = _moving_window(start)
+        _patch_circuit_clock(monkeypatch, mono)
+        _install_scripted_client(monkeypatch, [TimeoutError("Request timed out.")])
+        report = run_night(
+            tmp_path,
+            config=_config(generations=0),
+            clock=clock,
+            promote=False,
+            use_llm=True,
+            cases=synthetic_cases("today"),
+            objective=_objective(),
+            sleeper=sleeper,
+        )
+        window_end = datetime(2026, 11, 24, 7, 0, tzinfo=CHICAGO)
+        assert when["t"] >= window_end
+        assert when["t"] < window_end + timedelta(hours=1)
+        assert report["night_id"] == "2026-11-23"
+        assert report["status"] == "llm_unavailable"
+        assert report["stop_reason"] == "llm_unavailable"
+        assert report["stopped_early"] is False
+        assert report["tokens"] == 0
+        assert report["spend_usd"] == 0.0
+        assert report["orders_touched"] is False
+        assert report["candidates_tried"] == 0
+        assert report["tabs"]["today"]["generations"] == 0
+        assert "no_candidates" not in report["tabs"]["today"]["errors"]
+        text = (tmp_path / ".tab_agent_lab" / "reports" / "2026-11-23.md").read_text(encoding="utf-8")
+        assert "llm_unavailable" in text
+        assert "Spend is $0" in text
+        state = json.loads((tmp_path / ".tab_agent_lab" / "state.json").read_text(encoding="utf-8"))
+        assert state["finished"] is True
+    finally:
+        _reset_llm_circuit()
+
+
+def test_retries_do_not_bypass_or_double_count_the_token_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failed attempts charge nothing. One success charges once, then the cap stops the night."""
+    _reset_llm_circuit()
+    _seed(tmp_path)
+    _write_lab_env(tmp_path)
+    reply = _proposal_reply()
+    calls = {"fail": 0, "ok": 0}
+    charged = {"tokens": 0}
+
+    def _llm(user: str, system: str, *_args: object, **_kwargs: object) -> str:
+        if calls["fail"] < 3:
+            calls["fail"] += 1
+            raise RuntimeError("HTTP 429 resource-exhausted")
+        calls["ok"] += 1
+        charged["tokens"] = (len(system) + len(user) + len(reply)) // 4
+        return reply
+
+    monkeypatch.setattr("engine_analysis._call_llm", _llm)
+    start = datetime(2026, 11, 23, 18, 0, 51, tzinfo=CHICAGO)
+    when, _mono, clock, sleeper = _moving_window(start)
+    config = _config(generations=5)
+    config.token_cap = 1
+    config.usd_per_1k = 0.01
+    report = run_night(
+        tmp_path,
+        config=config,
+        clock=clock,
+        promote=False,
+        use_llm=True,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        sleeper=sleeper,
+    )
+
+    assert calls["fail"] == 3
+    assert calls["ok"] == 1
+    assert charged["tokens"] > config.token_cap
+    assert report["tokens"] == charged["tokens"]
+    assert report["token_cap"] == 1
+    assert report["spend_usd"] == round(report["tokens"] / 1000.0 * config.usd_per_1k, 4)
+    assert report.get("status") != "llm_unavailable"
+    assert report["orders_touched"] is False
+    assert when["t"] < start + timedelta(hours=1)
+    _reset_llm_circuit()
+
+
+def test_scan_call_still_returns_empty_when_the_circuit_is_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opening the circuit for the lab must not make scan-time calls raise or build a client."""
+    import time
+
+    from engine_analysis import _LLM_CIRCUIT, LLMCircuitOpenError, _call_llm
+
+    _reset_llm_circuit()
+    try:
+        _LLM_CIRCUIT["open_until"] = time.monotonic() + 60
+        built = {"n": 0}
+
+        class _Client:
+            def __init__(self, **_kwargs: object) -> None:
+                built["n"] += 1
+
+        monkeypatch.setattr("openai.OpenAI", _Client)
+        assert _call_llm("prompt", "system", {"MIROFISH_API_KEY": "scan-key"}) == ""
+        with pytest.raises(LLMCircuitOpenError) as caught:
+            _call_llm("prompt", "system", {"MIROFISH_API_KEY": "scan-key"}, raise_on_error=True)
+        assert caught.value.retry_after > 0
+        assert built["n"] == 0
+    finally:
+        _reset_llm_circuit()
 
 
 def test_scheduler_respects_the_kill_switch_and_a_live_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1236,3 +1495,64 @@ def _evening_clock():
         return when
 
     return clock
+
+
+class _RetryAfter(RuntimeError):
+    def __init__(self, message: str, retry_after: str = "9") -> None:
+        super().__init__(message)
+        self.response = type("Resp", (), {"headers": {"Retry-After": retry_after}})()
+
+
+def _proposal_reply() -> str:
+    body = (
+        TODAY["institutional_trend"]
+        + " "
+        + TODAY["mean_reversion"]
+        + " "
+        + TODAY["retail_fomo"]
+        + " Stay in cash when the setup is weak."
+    )
+    return json.dumps({"text": body, "rationale": "Kept the contract after the model returned."})
+
+
+def _moving_window(start: datetime):
+    """Lab clock and the LLM circuit clock. Sleep moves both, so a missed recovery still ends."""
+    when = {"t": start}
+    mono = {"t": 1_000.0}
+
+    def clock() -> datetime:
+        return when["t"]
+
+    def sleeper(seconds: float) -> None:
+        step = float(seconds)
+        mono["t"] += step
+        when["t"] = when["t"] + timedelta(seconds=step)
+
+    return when, mono, clock, sleeper
+
+
+def _patch_circuit_clock(monkeypatch: pytest.MonkeyPatch, mono: dict[str, float]) -> None:
+    monkeypatch.setattr("engine_analysis.time.monotonic", lambda: mono["t"])
+
+
+def _install_scripted_client(monkeypatch: pytest.MonkeyPatch, replies: list[BaseException | str]) -> dict[str, int]:
+    import openai
+
+    counter = {"n": 0}
+
+    class _Completions:
+        def create(self, **_kwargs: object) -> object:
+            counter["n"] += 1
+            item = replies[min(counter["n"] - 1, len(replies) - 1)]
+            if isinstance(item, BaseException):
+                raise item.__class__(str(item))
+            message = type("Msg", (), {"content": item})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Resp", (), {"choices": [choice]})()
+
+    class _Client:
+        def __init__(self, **_kwargs: object) -> None:
+            self.chat = type("Chat", (), {"completions": _Completions()})()
+
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    return counter

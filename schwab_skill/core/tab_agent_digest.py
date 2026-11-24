@@ -298,6 +298,8 @@ def _lab_markdown(lab: Any) -> list[str]:
         f"tokens={lab.get('tokens')} spend_usd={lab.get('spend_usd')} "
         f"orders_touched={lab.get('orders_touched')}"
     )
+    if lab.get("status") == "llm_unavailable":
+        lines.append("Status: llm_unavailable. The model never answered, so nothing was scored.")
     trust = lab.get("trust_gate") if isinstance(lab.get("trust_gate"), dict) else {}
     reason = lab.get("trust_reason") or trust.get("reason")
     if reason:
