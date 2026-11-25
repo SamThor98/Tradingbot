@@ -19,13 +19,17 @@ from core.tab_agent_lab import (
     LLMUnavailable,
     ModelFailureGuard,
     _model_call,
+    baseline_cache_key,
     call_with_backoff,
     in_lab_window,
+    lab_model_id,
     launch_lab_process,
+    load_live_texts,
     night_id,
     pid_alive,
     run_night,
     scheduler_tick,
+    select_baseline_sample,
 )
 from core.tab_agent_lab_score import (
     LabCase,
@@ -325,9 +329,17 @@ def test_skipping_down_to_half_the_live_book_cannot_win() -> None:
 def test_night_defaults_are_sized_for_max_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TAB_AGENT_LAB_CONCURRENCY", raising=False)
     monkeypatch.delenv("TAB_AGENT_LAB_CANDIDATES", raising=False)
+    monkeypatch.delenv("TAB_AGENT_LAB_BASELINE_SAMPLE", raising=False)
     loaded = LabConfig.load(tmp_path)
     assert loaded.concurrency == 6
     assert loaded.candidates == 8
+    # 40 cases per window clears the 30-sample floor and stays a minority of a
+    # night that previously spent ~2,281 decide calls on the full book.
+    assert loaded.baseline_sample == 40
+    monkeypatch.setenv("TAB_AGENT_LAB_BASELINE_SAMPLE", "0")
+    assert LabConfig.load(tmp_path).baseline_sample == 0
+    monkeypatch.setenv("TAB_AGENT_LAB_BASELINE_SAMPLE", "12")
+    assert LabConfig.load(tmp_path).baseline_sample == 12
 
 
 def test_system_text_is_a_calibration_score() -> None:
@@ -1329,6 +1341,357 @@ def test_holdout_gate_first_clears_on_nov_17_given_the_october_schedule() -> Non
     assert projected["holdout"]["cases"] >= 200
 
 
+def test_baseline_cache_key_changes_with_prompt_sample_and_model() -> None:
+    cases = synthetic_cases("today")
+    train, holdout = split_walk_forward(cases, 6)
+    sample = select_baseline_sample(train, 4)
+    again = select_baseline_sample(train, 4)
+    assert [case.case_id for case in sample] == [case.case_id for case in again]
+    assert sample[0].as_of == min(case.as_of for case in train)
+    assert sample[-1].as_of == max(case.as_of for case in train)
+    assert [case.case_id for case in select_baseline_sample(train, 0)] == [case.case_id for case in train]
+    assert len(select_baseline_sample(train, 10_000)) == len(train)
+
+    base = baseline_cache_key("today", TODAY, sample, holdout[:4], "grok-4.3", provider="xai")
+    assert base == baseline_cache_key("today", TODAY, sample, holdout[:4], "grok-4.3", provider="xai")
+    changed_prompt = dict(TODAY)
+    changed_prompt["institutional_trend"] = TODAY["institutional_trend"] + " EXTRA."
+    changed_case = LabCase(
+        sample[0].case_id,
+        sample[0].as_of,
+        sample[0].ticker,
+        sample[0].long_return_pct + 1,
+        signal_score=sample[0].signal_score,
+    )
+    assert base != baseline_cache_key("today", changed_prompt, sample, holdout[:4], "grok-4.3", provider="xai")
+    assert base != baseline_cache_key(
+        "today", TODAY, [changed_case, *sample[1:]], holdout[:4], "grok-4.3", provider="xai"
+    )
+    assert base != baseline_cache_key("today", TODAY, sample, holdout[:4], "grok-other", provider="xai")
+    assert base != baseline_cache_key(
+        "today", TODAY, select_baseline_sample(train, 6), holdout[:4], "grok-4.3", provider="xai"
+    )
+    assert lab_model_id(LabConfig()) == "default"
+    assert lab_model_id(LabConfig(model="grok-4.3")) == "grok-4.3"
+
+
+def _live_decider(skill_dir: Path, seen: list[str]):
+    def decide(*, tab: str, texts: dict[str, str], case: LabCase) -> str:
+        if texts == load_live_texts(skill_dir, tab):
+            seen.append(case.case_id)
+        return offline_decide(tab=tab, texts=texts, case=case)
+
+    return decide
+
+
+def test_baseline_cache_hits_then_invalidates_on_prompt_and_model(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    seen: list[str] = []
+    decide = _live_decider(tmp_path, seen)
+    first = run_night(
+        tmp_path,
+        config=_config(generations=1),
+        clock=_clock_at(datetime(2026, 11, 11, 18, 30, tzinfo=CHICAGO)),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    usage = first["usage"]
+    assert usage["baseline_cache_misses"] == 1
+    assert usage["baseline_cache_hits"] == 0
+    assert usage["baseline_calls"] > 0
+    assert usage["generation_calls"] > 0
+    assert first["spend_usd"] == 0.0
+    scored = len(seen)
+    assert scored > 0
+
+    second = run_night(
+        tmp_path,
+        config=_config(generations=1),
+        clock=_clock_at(datetime(2026, 11, 12, 18, 30, tzinfo=CHICAGO)),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    assert len(seen) == scored
+    assert second["usage"]["baseline_cache_hits"] == 1
+    assert second["usage"]["baseline_cache_misses"] == 0
+    assert second["usage"]["baseline_calls"] == 0
+    text = (tmp_path / ".tab_agent_lab" / "reports" / "2026-11-12.md").read_text(encoding="utf-8")
+    assert "Baseline cache: hits=1" in text
+    assert "spend_usd=0.0" in text
+
+    shifted = _config(generations=1)
+    shifted.model = "grok-4.3"
+    third = run_night(
+        tmp_path,
+        config=shifted,
+        clock=_clock_at(datetime(2026, 11, 13, 18, 30, tzinfo=CHICAGO)),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    assert len(seen) > scored
+    assert third["usage"]["baseline_cache_misses"] == 1
+    assert third["usage"]["baseline_cache_hits"] == 0
+    after_model = len(seen)
+
+    registry = tmp_path / ".tab_agent_registry.json"
+    payload = json.loads(registry.read_text(encoding="utf-8"))
+    for bucket in payload["tabs"]["today"]["keys"].values():
+        for row in bucket["versions"]:
+            row["text"] = str(row["text"]) + " EXTRA."
+    registry.write_text(json.dumps(payload), encoding="utf-8")
+    fourth = run_night(
+        tmp_path,
+        config=shifted,
+        clock=_clock_at(datetime(2026, 11, 14, 18, 30, tzinfo=CHICAGO)),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    assert len(seen) > after_model
+    assert fourth["usage"]["baseline_cache_misses"] == 1
+    assert fourth["tabs"]["today"]["live_train"]["n"] == third["tabs"]["today"]["live_train"]["n"]
+
+
+def test_partial_baseline_checkpoint_resumes(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    seen: list[str] = []
+
+    def decide(*, tab: str, texts: dict[str, str], case: LabCase) -> str:
+        if texts == load_live_texts(tmp_path, tab):
+            seen.append(case.case_id)
+            if len(seen) == 4:
+                raise SystemExit("crash during baseline")
+        return "long"
+
+    with pytest.raises(SystemExit):
+        run_night(
+            tmp_path,
+            config=_config(generations=1),
+            clock=_evening_clock(),
+            promote=False,
+            cases=synthetic_cases("today"),
+            objective=_objective(),
+            hooks=(offline_propose, decide),
+        )
+    stored = seen[:3]
+    assert len(stored) == 3
+    cache = json.loads((tmp_path / ".tab_agent_lab" / "baseline_cache.json").read_text(encoding="utf-8"))
+    entry = next(iter(cache["entries"].values()))
+    assert entry["complete"] is False
+    assert set(entry["decisions"]["train"]) == set(stored)
+    state = json.loads((tmp_path / ".tab_agent_lab" / "state.json").read_text(encoding="utf-8"))
+    assert state["finished"] is False
+    assert "spend_usd" in state
+
+    resumed: list[str] = []
+
+    def resume(*, tab: str, texts: dict[str, str], case: LabCase) -> str:
+        if texts == load_live_texts(tmp_path, tab):
+            resumed.append(case.case_id)
+        return "long"
+
+    report = run_night(
+        tmp_path,
+        config=_config(generations=1),
+        clock=_evening_clock(),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, resume),
+    )
+    assert stored[0] not in resumed
+    assert set(stored).isdisjoint(resumed)
+    assert report["usage"]["baseline_cache_resumes"] == 1
+    assert report["usage"]["baseline_cache_hits"] == 0
+    assert report["tabs"]["today"]["generations"] == 1
+    done = json.loads((tmp_path / ".tab_agent_lab" / "baseline_cache.json").read_text(encoding="utf-8"))
+    finished = next(iter(done["entries"].values()))
+    assert finished["complete"] is True
+
+
+def test_window_end_stops_during_baseline_and_writes_the_report(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    calls = {"n": 0}
+
+    def clock() -> datetime:
+        if calls["n"] >= 3:
+            return datetime(2026, 11, 12, 7, 0, tzinfo=CHICAGO)
+        return datetime(2026, 11, 11, 18, 30, tzinfo=CHICAGO)
+
+    def decide(*, tab: str, texts: dict[str, str], case: LabCase) -> str:
+        _ = tab, texts, case
+        calls["n"] += 1
+        return "long"
+
+    report = run_night(
+        tmp_path,
+        config=_config(generations=5),
+        clock=clock,
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    assert calls["n"] == 3
+    assert report["stop_reason"] == "window_end"
+    assert report["stopped_early"] is True
+    assert report["tabs"]["today"]["generations"] == 0
+    assert report["spend_usd"] == 0.0
+    assert report["orders_touched"] is False
+    state = json.loads((tmp_path / ".tab_agent_lab" / "state.json").read_text(encoding="utf-8"))
+    assert state["finished"] is True
+    assert state["spend_usd"] == 0.0
+    assert state["tokens"] == 0
+    cache = json.loads((tmp_path / ".tab_agent_lab" / "baseline_cache.json").read_text(encoding="utf-8"))
+    entry = next(iter(cache["entries"].values()))
+    assert entry["complete"] is False
+    assert len(entry["decisions"]["train"]) == 3
+    text = (tmp_path / ".tab_agent_lab" / "reports" / "2026-11-11.md").read_text(encoding="utf-8")
+    assert "window_end" in text
+    assert "Baseline cache:" in text
+
+
+def test_window_end_stops_during_evaluation(tmp_path: Path) -> None:
+    """Baseline can finish and the night still stops on the next decide."""
+    _seed(tmp_path)
+    calls = {"n": 0}
+
+    def clock() -> datetime:
+        if calls["n"] >= 5:
+            return datetime(2026, 11, 12, 7, 0, tzinfo=CHICAGO)
+        return datetime(2026, 11, 11, 18, 30, tzinfo=CHICAGO)
+
+    def decide(*, tab: str, texts: dict[str, str], case: LabCase) -> str:
+        _ = tab, texts, case
+        calls["n"] += 1
+        return "long"
+
+    config = _config(generations=3)
+    config.baseline_sample = 2
+    report = run_night(
+        tmp_path,
+        config=config,
+        clock=clock,
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+        hooks=(offline_propose, decide),
+    )
+    assert calls["n"] == 5
+    assert report["stop_reason"] == "window_end"
+    assert report["tabs"]["today"]["generations"] == 0
+    assert report["usage"]["baseline_calls"] == 4
+    assert report["usage"]["generation_calls"] == 1
+    assert report["orders_touched"] is False
+
+
+def test_budget_cap_stops_during_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _seed(tmp_path)
+    _write_lab_env(tmp_path)
+    calls = {"n": 0}
+
+    def _llm(*_args: object, **_kwargs: object) -> str:
+        calls["n"] += 1
+        return '{"conviction_score": 80, "continuation_probability": 0.7}'
+
+    monkeypatch.setattr("engine_analysis._call_llm", _llm)
+    config = _config(generations=4)
+    config.token_cap = 1
+    config.usd_per_1k = 0.01
+    report = run_night(
+        tmp_path,
+        config=config,
+        clock=_evening_clock(),
+        promote=False,
+        use_llm=True,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+    )
+    assert calls["n"] == 1
+    assert report["stop_reason"] == "budget_cap"
+    assert report["tokens"] > config.token_cap
+    assert report["spend_usd"] == round(report["tokens"] / 1000.0 * config.usd_per_1k, 4)
+    assert report["spend_usd"] > 0
+    assert report["tabs"]["today"]["generations"] == 0
+    assert report["orders_touched"] is False
+    state = json.loads((tmp_path / ".tab_agent_lab" / "state.json").read_text(encoding="utf-8"))
+    assert state["finished"] is True
+    assert state["tokens"] == report["tokens"]
+    assert state["spend_usd"] == report["spend_usd"]
+    _reset_llm_circuit()
+
+
+def test_spend_is_recorded_before_the_next_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_llm_circuit()
+    _seed(tmp_path)
+    _write_lab_env(tmp_path)
+    seen: dict[str, float | int] = {}
+    calls = {"n": 0}
+
+    def _llm(*_args: object, **_kwargs: object) -> str:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            state = json.loads((tmp_path / ".tab_agent_lab" / "state.json").read_text(encoding="utf-8"))
+            seen["tokens"] = int(state["tokens"])
+            seen["spend_usd"] = float(state["spend_usd"])
+        return '{"conviction_score": 80, "continuation_probability": 0.7}'
+
+    monkeypatch.setattr("engine_analysis._call_llm", _llm)
+    config = _config(generations=1)
+    config.baseline_sample = 2
+    config.candidates = 2
+    config.usd_per_1k = 0.01
+    report = run_night(
+        tmp_path,
+        config=config,
+        clock=_evening_clock(),
+        promote=False,
+        use_llm=True,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+    )
+    assert calls["n"] >= 2
+    assert int(seen["tokens"]) > 0
+    assert float(seen["spend_usd"]) == round(int(seen["tokens"]) / 1000.0 * 0.01, 4)
+    assert report["spend_usd"] >= float(seen["spend_usd"])
+    assert report["usage"]["baseline_tokens"] > 0
+    assert report["orders_touched"] is False
+    _reset_llm_circuit()
+
+
+def test_candidate_and_baseline_share_the_sample(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    config = _config(generations=1)
+    config.baseline_sample = 4
+    report = run_night(
+        tmp_path,
+        config=config,
+        clock=_evening_clock(),
+        promote=False,
+        cases=synthetic_cases("today"),
+        objective=_objective(),
+    )
+    usage = report["usage"]
+    assert usage["baseline_sample"] == 4
+    assert len(usage["baseline_sample_ids"]["train"]) == 4
+    assert len(usage["baseline_sample_ids"]["holdout"]) == 4
+    live_train = report["tabs"]["today"]["live_train"]
+    live_holdout = report["tabs"]["today"]["live_holdout"]
+    assert live_train["n"] == 4
+    assert live_holdout["n"] == 4
+    assert report["tabs"]["today"]["best_train"]["n"] == 4
+    assert report["tabs"]["today"]["best_holdout"]["n"] == 4
+    assert report["tabs"]["today"]["generations"] == 1
+
+
 def test_digest_includes_the_lab_section(tmp_path: Path) -> None:
     from core.tab_agent_digest import write_daily_digest
     from core.tab_agent_lab import write_night_report
@@ -1489,8 +1852,10 @@ def _patch_openai(
 
 
 def _evening_clock():
-    when = datetime(2026, 11, 11, 18, 30, tzinfo=CHICAGO)
+    return _clock_at(datetime(2026, 11, 11, 18, 30, tzinfo=CHICAGO))
 
+
+def _clock_at(when: datetime):
     def clock() -> datetime:
         return when
 

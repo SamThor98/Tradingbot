@@ -3103,6 +3103,26 @@ def get_tab_agent_lab_usd_per_1k(skill_dir: Path | None = None) -> float:
     return max(0.0, min(10.0, val))
 
 
+def get_tab_agent_lab_baseline_sample(skill_dir: Path | None = None) -> int:
+    """Cases per window for the live baseline and for every candidate.
+
+    Default 40. The 2026-11-24 night spent the whole window rescoring the full
+    book (about 2,281 decide calls, nothing checkpointed) and stored zero
+    generations. Forty cases still clears ``TAB_AGENT_MIN_SAMPLES`` (30) and
+    the holdout floor (8). A cold baseline across the five tabs is then a few
+    hundred calls, a minority of the 13-hour night, and candidates are scored
+    on that same draw so the gate compares like with like. ``0`` keeps the
+    full window. The $50 token cap is a separate setting and is unchanged.
+    """
+    raw = _env_value("TAB_AGENT_LAB_BASELINE_SAMPLE", _load_env(skill_dir)).strip()
+    if not raw:
+        return 40
+    try:
+        return max(0, min(5000, int(float(raw))))
+    except (TypeError, ValueError):
+        return 40
+
+
 def get_tab_agent_lab_tabs(skill_dir: Path | None = None) -> tuple[str, ...]:
     """Tabs the night loop visits. Unknown names are dropped."""
     raw = _env_value("TAB_AGENT_LAB_TABS", _load_env(skill_dir)).strip()
