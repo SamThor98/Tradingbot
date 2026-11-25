@@ -244,6 +244,7 @@ def texts_for_spec(
     parents: list[dict[str, Any]],
     propose: Propose,
     history: list[dict[str, Any]],
+    stop: Callable[[], None] | None = None,
 ) -> dict[str, str] | None:
     """Build the candidate's prompt map. None when the contract does not survive."""
     tab = str(spec["tab"])
@@ -253,6 +254,8 @@ def texts_for_spec(
     focus = str(spec.get("focus_key") or keys[0])
     targets = keys if tab == "debate" else (focus,)
     for key in keys:
+        if stop is not None:
+            stop()
         parent_text = str(live_texts.get(key) or "")
         if key not in targets:
             revised[key] = parent_text
@@ -268,7 +271,7 @@ def texts_for_spec(
                 history=history,
             )
         except Exception as exc:
-            if getattr(exc, "lab_hold", False):
+            if getattr(exc, "lab_hold", False) or getattr(exc, "night_boundary", False):
                 raise
             return None
         if not text:
@@ -298,12 +301,22 @@ def score_texts(
     decide: Decide,
     drift_weight: float,
     skill_dir: Any = None,
+    stop: Callable[[], None] | None = None,
+    remembered: dict[str, str] | None = None,
+    on_side: Callable[[LabCase, str | None], None] | None = None,
 ) -> dict[str, Any]:
-    """Score one candidate on one window. The decider does not receive returns."""
+    """Score one candidate on one window. The decider does not receive returns.
+
+    ``stop`` runs before every case so a night can end between calls.
+    ``remembered`` skips cases already checkpointed. ``on_side`` sees each
+    fresh decision, including a miss, so the caller can persist it.
+    """
     keys = DECISION_KEYS[tab]
     live_blob = bundle_text(live_texts, keys)
     blob = bundle_text(texts, keys)
     if tab == "system":
+        if stop is not None:
+            stop()
         key = keys[0]
         from core.tab_agent_lab_plan import prepare_scoring_cases
 
@@ -329,12 +342,20 @@ def score_texts(
     decisions: list[str] = []
     kept: list[LabCase] = []
     for case in cases:
-        try:
-            side = decide(tab=tab, texts=texts, case=case)
-        except Exception as exc:
-            if getattr(exc, "lab_hold", False):
-                raise
-            side = None
+        if stop is not None:
+            stop()
+        stored = remembered.get(case.case_id) if remembered is not None else None
+        if stored in {"long", "cash"}:
+            side = stored
+        else:
+            try:
+                side = decide(tab=tab, texts=texts, case=case)
+            except Exception as exc:
+                if getattr(exc, "lab_hold", False) or getattr(exc, "night_boundary", False):
+                    raise
+                side = None
+            if on_side is not None:
+                on_side(case, side)
         if side not in {"long", "cash"}:
             continue
         decisions.append(str(side))
@@ -411,6 +432,7 @@ def run_generation(
     rng: Any,
     skill_dir: Any = None,
     workers: int = 1,
+    stop: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Score ``count`` rivals. Holdout books are sealed under ``sealed``."""
     history = public_train_rows(parents)
@@ -422,44 +444,31 @@ def run_generation(
         parents=parents,
         rng=rng,
     )
+
+    def _run(spec: dict[str, Any]) -> dict[str, Any]:
+        if stop is not None:
+            stop()
+        return _one_candidate(
+            spec,
+            live_texts=live_texts,
+            parents=parents,
+            history=history,
+            train_cases=train_cases,
+            holdout_cases=holdout_cases,
+            config=config,
+            propose=propose,
+            decide=decide,
+            drift_weight=drift_weight,
+            skill_dir=skill_dir,
+            stop=stop,
+        )
+
     if workers <= 1 or len(specs) <= 1:
-        return [
-            _one_candidate(
-                spec,
-                live_texts=live_texts,
-                parents=parents,
-                history=history,
-                train_cases=train_cases,
-                holdout_cases=holdout_cases,
-                config=config,
-                propose=propose,
-                decide=decide,
-                drift_weight=drift_weight,
-                skill_dir=skill_dir,
-            )
-            for spec in specs
-        ]
+        return [_run(spec) for spec in specs]
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        return list(
-            pool.map(
-                lambda spec: _one_candidate(
-                    spec,
-                    live_texts=live_texts,
-                    parents=parents,
-                    history=history,
-                    train_cases=train_cases,
-                    holdout_cases=holdout_cases,
-                    config=config,
-                    propose=propose,
-                    decide=decide,
-                    drift_weight=drift_weight,
-                    skill_dir=skill_dir,
-                ),
-                specs,
-            )
-        )
+        return list(pool.map(_run, specs))
 
 
 def _one_candidate(
@@ -475,6 +484,7 @@ def _one_candidate(
     decide: Decide,
     drift_weight: float,
     skill_dir: Any,
+    stop: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     tab = str(spec["tab"])
     user = generator_user(
@@ -494,11 +504,13 @@ def _one_candidate(
         "focus_key": spec["focus_key"],
         "generator_user": user,
     }
-    texts = texts_for_spec(spec, live_texts, parents, propose, history)
+    texts = texts_for_spec(spec, live_texts, parents, propose, history, stop=stop)
     if texts is None:
         missing = _missing_for_live(tab, live_texts)
         base.update({"dropped": "contract", "missing": missing, "texts": {}, "train": None, "sealed": None})
         return base
+    if stop is not None:
+        stop()
     train = score_texts(
         tab,
         texts,
@@ -508,7 +520,10 @@ def _one_candidate(
         decide=decide,
         drift_weight=drift_weight,
         skill_dir=skill_dir,
+        stop=stop,
     )
+    if stop is not None:
+        stop()
     sealed = score_texts(
         tab,
         texts,
@@ -518,6 +533,7 @@ def _one_candidate(
         decide=decide,
         drift_weight=drift_weight,
         skill_dir=skill_dir,
+        stop=stop,
     )
     base.update({"dropped": None, "texts": texts, "train": _brief(train), "sealed": _brief(sealed)})
     _copy_views(base, train, sealed)

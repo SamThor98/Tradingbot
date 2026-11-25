@@ -17,6 +17,13 @@ Lab model calls can target xAI through ``TAB_AGENT_LAB_MODEL``,
 applied to an in-memory env copy. ``LLM_MODEL_NAME`` and ``LLM_BASE_URL`` are
 not written to ``.env``, so scan-time MiroFish keeps its own route when those
 two are unset.
+
+The live baseline is scored on ``TAB_AGENT_LAB_BASELINE_SAMPLE`` cases per
+window (default 40), and candidates are scored on that same draw. Completed
+baseline scores live in ``.tab_agent_lab/baseline_cache.json``, keyed by the
+prompt, the sample, and the lab model. A partial pass checkpoints after each
+decided case and resumes. The window end and the nightly token cap are checked
+between calls, and spend is written to ``state.json`` as each call is charged.
 """
 
 from __future__ import annotations
@@ -59,6 +66,8 @@ STATE_FILE = ".tab_agent_lab/state.json"
 REPORT_DIR = ".tab_agent_lab/reports"
 PID_FILE = ".tab_agent_lab/lab.pid"
 LOG_FILE = ".tab_agent_lab/lab.log"
+BASELINE_CACHE_FILE = ".tab_agent_lab/baseline_cache.json"
+DEFAULT_BASELINE_SAMPLE = 40
 TABS = ("today", "debate", "research", "backtest", "system")
 
 
@@ -89,12 +98,14 @@ class LabConfig:
     drift_weight: float = 0.15
     max_generations: int = 0
     usd_per_1k: float = 0.01
+    baseline_sample: int = DEFAULT_BASELINE_SAMPLE
     tabs: tuple[str, ...] = TABS
 
     @classmethod
     def load(cls, skill_dir: Path | None = None) -> LabConfig:
         from config import (
             get_tab_agent_lab_base_url,
+            get_tab_agent_lab_baseline_sample,
             get_tab_agent_lab_candidates,
             get_tab_agent_lab_concurrency,
             get_tab_agent_lab_drift_weight,
@@ -148,6 +159,7 @@ class LabConfig:
             drift_weight=get_tab_agent_lab_drift_weight(skill_dir),
             max_generations=get_tab_agent_lab_max_generations(skill_dir),
             usd_per_1k=get_tab_agent_lab_usd_per_1k(skill_dir),
+            baseline_sample=get_tab_agent_lab_baseline_sample(skill_dir),
             tabs=get_tab_agent_lab_tabs(skill_dir),
         )
 
@@ -160,13 +172,23 @@ class Budget:
         self.usd_per_1k = float(usd_per_1k)
         self.tokens = 0
         self._lock = threading.Lock()
+        self._on_charge: Callable[[int], None] | None = None
+
+    def set_on_charge(self, fn: Callable[[int], None] | None) -> None:
+        """Called after a successful charge with the running token total."""
+        self._on_charge = fn
 
     def charge(self, *parts: str) -> bool:
         used = sum(len(part or "") for part in parts) // 4
         with self._lock:
             if used:
                 self.tokens += used
-            return self.cap <= 0 or self.tokens < self.cap
+            tokens = self.tokens
+            allowed = self.cap <= 0 or self.tokens < self.cap
+        listener = self._on_charge
+        if used and listener is not None:
+            listener(tokens)
+        return allowed
 
     @property
     def exhausted(self) -> bool:
@@ -303,6 +325,20 @@ def _backoff_seconds(delay: float, exc: Exception, rng: random.Random) -> float:
     return base + rng.uniform(0.0, min(1.0, base * 0.1))
 
 
+class NightBoundary(Exception):
+    """The window ended or the nightly cap was hit between calls.
+
+    ``night_boundary`` is how the tournament re-raises this without importing
+    the lab module (that import would be circular).
+    """
+
+    night_boundary = True
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason if reason in {"window_end", "budget_cap"} else "window_end"
+        super().__init__(self.reason)
+
+
 class LLMUnavailable(Exception):
     """The lab model could not be called. The night waits instead of scoring blanks.
 
@@ -434,18 +470,151 @@ def save_state(skill_dir: Path, state: dict[str, Any]) -> None:
     atomic_write_json(_state_path(skill_dir), state, indent=2)
 
 
+def _blank_phase() -> dict[str, Any]:
+    return {
+        "seconds": 0.0,
+        "tokens": 0,
+        "calls": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "cache_resumes": 0,
+    }
+
+
 def _blank_state(night: str, tabs: tuple[str, ...]) -> dict[str, Any]:
     return {
         "night_id": night,
         "finished": False,
         "orders_touched": False,
         "tokens": 0,
+        "spend_usd": 0.0,
+        "phases": {"baseline": _blank_phase(), "generations": _blank_phase()},
+        "baseline_sample": DEFAULT_BASELINE_SAMPLE,
+        "baseline_sample_ids": {},
         "tabs": {
             tab: {"next_generation": 0, "completed": [], "candidates": [], "installed": False, "errors": []}
             for tab in tabs
         },
         "decision_cache": {},
     }
+
+
+def select_baseline_sample(cases: list[LabCase], size: int) -> list[LabCase]:
+    """Return ``size`` cases spread across the window, in the original order.
+
+    ``size`` <= 0 keeps every case. The draw depends only on case order,
+    ``as_of``, ``case_id``, and ``size``, so the same book hashes to the same
+    baseline cache key on a later night.
+    """
+    if size <= 0 or len(cases) <= size:
+        return list(cases)
+    order = sorted(range(len(cases)), key=lambda index: (cases[index].as_of, cases[index].case_id, index))
+    last = len(order) - 1
+    chosen: list[int] = []
+    seen: set[int] = set()
+    for step in range(size):
+        slot = round(step * last / (size - 1)) if size > 1 else 0
+        index = order[min(last, max(0, slot))]
+        if index in seen:
+            continue
+        seen.add(index)
+        chosen.append(index)
+    if len(chosen) < size:
+        for index in order:
+            if index in seen:
+                continue
+            seen.add(index)
+            chosen.append(index)
+            if len(chosen) == size:
+                break
+    chosen.sort()
+    return [cases[index] for index in chosen]
+
+
+def _case_fingerprint(case: LabCase) -> list[Any]:
+    return [
+        case.case_id,
+        case.as_of,
+        case.ticker,
+        case.long_return_pct,
+        case.signal_score,
+        case.stated_confidence,
+        case.avg_dollar_volume,
+        case.spread_pct,
+        case.source,
+        bool(case.pre_cutoff),
+        case.era,
+        case.cohort_return_pct,
+    ]
+
+
+def lab_model_id(config: LabConfig) -> str:
+    """Lab model id for the baseline cache. Does not read or write ``LLM_MODEL_NAME``."""
+    return (config.model or "").strip() or "default"
+
+
+def baseline_cache_key(
+    tab: str,
+    texts: dict[str, str],
+    train: list[LabCase],
+    holdout: list[LabCase],
+    model_id: str,
+    *,
+    provider: str = "",
+    base_url: str = "",
+) -> str:
+    """Hash of the prompt, the eval sample, and the lab model identity."""
+    payload = {
+        "tab": tab,
+        "texts": {key: str(texts.get(key) or "") for key in sorted(texts)},
+        "model": model_id or "default",
+        "provider": (provider or "").strip().lower(),
+        "base_url": (base_url or "").strip(),
+        "train": [_case_fingerprint(case) for case in train],
+        "holdout": [_case_fingerprint(case) for case in holdout],
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _baseline_cache_path(skill_dir: Path) -> Path:
+    return skill_dir / BASELINE_CACHE_FILE
+
+
+def load_baseline_cache(skill_dir: Path) -> dict[str, Any]:
+    path = _baseline_cache_path(skill_dir)
+    empty: dict[str, Any] = {"version": 1, "entries": {}}
+    if not path.exists():
+        return empty
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOG.warning("Lab baseline cache unreadable, scoring again: %s", exc)
+        return empty
+    if not isinstance(data, dict) or int(data.get("version") or 0) != 1:
+        return empty
+    entries = data.get("entries")
+    if not isinstance(entries, dict):
+        return empty
+    data["entries"] = entries
+    return data
+
+
+def save_baseline_cache(skill_dir: Path, cache: dict[str, Any]) -> None:
+    from _io_utils import atomic_write_json
+
+    payload = {"version": 1, "entries": cache.get("entries") if isinstance(cache.get("entries"), dict) else {}}
+    atomic_write_json(_baseline_cache_path(skill_dir), payload, indent=2)
+
+
+def _resolve_sample(cases: list[LabCase], stored_ids: Any, size: int) -> list[LabCase]:
+    """Reuse a night's stored ids when every one is still in the book."""
+    if isinstance(stored_ids, list) and stored_ids:
+        by_id = {case.case_id: case for case in cases}
+        picked = [by_id[case_id] for case_id in stored_ids if isinstance(case_id, str) and case_id in by_id]
+        if len(picked) == len(stored_ids):
+            return picked
+    return select_baseline_sample(cases, size)
 
 
 def _persistable_candidate(row: dict[str, Any]) -> dict[str, Any]:
@@ -498,6 +667,9 @@ def _score_live(
     decide: Callable[..., str | None],
     drift_weight: float,
     skill_dir: Path,
+    stop: Callable[[], None] | None = None,
+    remembered: dict[str, str] | None = None,
+    on_side: Callable[[LabCase, str | None], None] | None = None,
 ) -> dict[str, Any]:
     book = score_texts(
         tab,
@@ -508,6 +680,9 @@ def _score_live(
         decide=decide,
         drift_weight=drift_weight,
         skill_dir=skill_dir,
+        stop=stop,
+        remembered=remembered,
+        on_side=on_side,
     )
     from core.tab_agent_lab_tournament import _brief
 
@@ -655,159 +830,387 @@ def run_night(
         )
     else:
         propose, decide_inner = hooks
-    decide = _caching_decide(decide_inner, cache, lock)
+    state_lock = threading.Lock()
+    phase: dict[str, Any] = {"name": "", "mark": now_fn()}
+    halt = {"reason": ""}
     llm_blocked = False
+    forced_reason = ""
 
-    while in_lab_window(now_fn()) and not budget.exhausted:
-        progressed = False
-        hold: LLMUnavailable | None = None
-        for tab in cfg.tabs:
-            if not in_lab_window(now_fn()) or budget.exhausted or guard.aborted:
-                break
-            bucket = state["tabs"].setdefault(
-                tab, {"next_generation": 0, "completed": [], "candidates": [], "installed": False, "errors": []}
+    def _phase_bucket(name: str) -> dict[str, Any]:
+        phases = state.setdefault("phases", {})
+        if not isinstance(phases, dict):
+            phases = {}
+            state["phases"] = phases
+        bucket = phases.get(name)
+        if not isinstance(bucket, dict):
+            bucket = _blank_phase()
+            phases[name] = bucket
+        return bucket
+
+    def _flush_seconds() -> None:
+        name = str(phase.get("name") or "")
+        if not name:
+            return
+        elapsed = (now_fn() - phase["mark"]).total_seconds()
+        bucket = _phase_bucket(name)
+        bucket["seconds"] = round(float(bucket.get("seconds") or 0.0) + max(0.0, elapsed), 3)
+        phase["mark"] = now_fn()
+
+    def _save_unlocked() -> None:
+        state["tokens"] = budget.tokens
+        state["spend_usd"] = round(budget.tokens / 1000.0 * float(cfg.usd_per_1k), 4)
+        try:
+            save_state(root, state)
+        except OSError as exc:
+            LOG.warning("Lab state checkpoint failed: %s", exc)
+
+    def _persist_state() -> None:
+        with state_lock:
+            _flush_seconds()
+            _save_unlocked()
+
+    def _on_charge(tokens: int) -> None:
+        with state_lock:
+            previous = int(state.get("tokens") or 0)
+            added = max(0, int(tokens) - previous)
+            name = str(phase.get("name") or "") or "generations"
+            bucket = _phase_bucket(name)
+            bucket["tokens"] = int(bucket.get("tokens") or 0) + added
+            state["tokens"] = int(tokens)
+            state["spend_usd"] = round(int(tokens) / 1000.0 * float(cfg.usd_per_1k), 4)
+            _flush_seconds()
+            _save_unlocked()
+
+    def _enter(name: str) -> None:
+        with state_lock:
+            _flush_seconds()
+            phase["name"] = name
+            phase["mark"] = now_fn()
+
+    def _note_call() -> None:
+        name = str(phase.get("name") or "")
+        if not name:
+            return
+        with state_lock:
+            bucket = _phase_bucket(name)
+            bucket["calls"] = int(bucket.get("calls") or 0) + 1
+
+    def _bump_cache(field: str) -> None:
+        with state_lock:
+            bucket = _phase_bucket("baseline")
+            bucket[field] = int(bucket.get(field) or 0) + 1
+
+    def stop() -> None:
+        reason = str(halt.get("reason") or "")
+        if not reason and not in_lab_window(now_fn()):
+            reason = "window_end"
+        if not reason and budget.exhausted:
+            reason = "budget_cap"
+        if reason:
+            halt["reason"] = reason
+            raise NightBoundary(reason)
+
+    def _metered(**kwargs: Any) -> str | None:
+        _note_call()
+        return decide_inner(**kwargs)
+
+    decide = _caching_decide(_metered, cache, lock)
+    budget.set_on_charge(_on_charge)
+    stored_ids = state.get("baseline_sample_ids") if isinstance(state.get("baseline_sample_ids"), dict) else {}
+    train_sample = _resolve_sample(train, stored_ids.get("train"), cfg.baseline_sample)
+    holdout_sample = _resolve_sample(holdout, stored_ids.get("holdout"), cfg.baseline_sample)
+    sample_ids = {
+        "train": [case.case_id for case in train_sample],
+        "holdout": [case.case_id for case in holdout_sample],
+    }
+    state["baseline_sample"] = cfg.baseline_sample
+    state["baseline_sample_ids"] = sample_ids
+    state["spend_usd"] = round(budget.tokens / 1000.0 * float(cfg.usd_per_1k), 4)
+    cache_doc = load_baseline_cache(root)
+    _persist_state()
+
+    def _checkpoint_baseline(entry: dict[str, Any]) -> None:
+        entries = cache_doc.setdefault("entries", {})
+        if isinstance(entries, dict):
+            entries[str(entry.get("key") or "")] = entry
+        try:
+            save_baseline_cache(root, cache_doc)
+        except OSError as exc:
+            LOG.warning("Lab baseline checkpoint failed: %s", exc)
+
+    def _store_side(entry: dict[str, Any], split: str, case: LabCase, side: str | None) -> None:
+        if side in {"long", "cash"}:
+            decisions = entry.setdefault("decisions", {})
+            if not isinstance(decisions, dict):
+                decisions = {}
+                entry["decisions"] = decisions
+            split_rows = decisions.setdefault(split, {})
+            if not isinstance(split_rows, dict):
+                split_rows = {}
+                decisions[split] = split_rows
+            split_rows[case.case_id] = side
+            entry["complete"] = False
+            _checkpoint_baseline(entry)
+        _persist_state()
+
+    def _ensure_baseline(tab: str, texts: dict[str, str]) -> None:
+        live_key = f"live_{tab}"
+        stored = state.get(live_key) if isinstance(state.get(live_key), dict) else None
+        if (
+            isinstance(stored, dict)
+            and isinstance(stored.get("train"), dict)
+            and isinstance(stored.get("holdout"), dict)
+            and stored.get("sample_ids") == sample_ids
+        ):
+            return
+        state.pop(live_key, None)
+        _enter("baseline")
+        model_id = lab_model_id(cfg)
+        key = baseline_cache_key(
+            tab,
+            texts,
+            train_sample,
+            holdout_sample,
+            model_id,
+            provider=cfg.provider,
+            base_url=cfg.base_url,
+        )
+        entries = cache_doc.setdefault("entries", {})
+        raw_entry = entries.get(key) if isinstance(entries, dict) else None
+        entry: dict[str, Any]
+        if isinstance(raw_entry, dict):
+            entry = raw_entry
+        else:
+            entry = {
+                "key": key,
+                "tab": tab,
+                "model_id": model_id,
+                "complete": False,
+                "train_ids": list(sample_ids["train"]),
+                "holdout_ids": list(sample_ids["holdout"]),
+                "decisions": {"train": {}, "holdout": {}},
+                "train": None,
+                "holdout": None,
+            }
+        decisions = entry.get("decisions") if isinstance(entry.get("decisions"), dict) else {}
+        train_decisions = decisions.get("train") if isinstance(decisions.get("train"), dict) else {}
+        holdout_decisions = decisions.get("holdout") if isinstance(decisions.get("holdout"), dict) else {}
+        entry["decisions"] = {"train": dict(train_decisions), "holdout": dict(holdout_decisions)}
+        entry["key"] = key
+        if entry.get("complete") and isinstance(entry.get("train"), dict) and isinstance(entry.get("holdout"), dict):
+            state[live_key] = {
+                "train": entry["train"],
+                "holdout": entry["holdout"],
+                "sample_ids": sample_ids,
+                "cache": "hit",
+            }
+            _bump_cache("cache_hits")
+            _persist_state()
+            LOG.info("Lab baseline cache hit for %s", tab)
+            return
+        prior = len(entry["decisions"]["train"]) + len(entry["decisions"]["holdout"])
+        if prior:
+            _bump_cache("cache_resumes")
+            LOG.info("Lab baseline resume for %s stored=%s", tab, prior)
+        else:
+            _bump_cache("cache_misses")
+        _checkpoint_baseline(entry)
+
+        def _on_train(case: LabCase, side: str | None) -> None:
+            _store_side(entry, "train", case, side)
+
+        def _on_holdout(case: LabCase, side: str | None) -> None:
+            _store_side(entry, "holdout", case, side)
+
+        try:
+            train_brief = _score_live(
+                tab,
+                texts,
+                train_sample,
+                config=objective_cfg,
+                decide=decide,
+                drift_weight=cfg.drift_weight,
+                skill_dir=root,
+                stop=stop,
+                remembered=entry["decisions"]["train"],
+                on_side=_on_train,
             )
-            generation = int(bucket.get("next_generation") or 0)
-            if bucket.get("stalled"):
-                continue
-            if cfg.max_generations and generation >= cfg.max_generations:
-                continue
-            if generation in set(bucket.get("completed") or []):
-                bucket["next_generation"] = generation + 1
-                continue
-            guard.begin_generation()
-            ran_generation = False
-            produced: list[dict[str, Any]] = []
-            try:
-                live_texts = load_live_texts(root, tab)
-                if not any(live_texts.values()):
-                    bucket["errors"].append("no_live_prompt")
-                    bucket["completed"].append(generation)
-                    bucket["next_generation"] = generation + 1
-                    continue
-                live_key = f"live_{tab}"
-                if live_key not in state:
-                    state[live_key] = {
-                        "train": _score_live(
-                            tab,
-                            live_texts,
-                            train,
-                            config=objective_cfg,
-                            decide=decide,
-                            drift_weight=cfg.drift_weight,
-                            skill_dir=root,
-                        ),
-                        "holdout": _score_live(
-                            tab,
-                            live_texts,
-                            holdout,
-                            config=objective_cfg,
-                            decide=decide,
-                            drift_weight=cfg.drift_weight,
-                            skill_dir=root,
-                        ),
-                    }
-                if guard.aborted:
-                    _record_model_stop(bucket, guard)
-                else:
-                    tokens_before = budget.tokens
-                    rng = random.Random(f"{night}:{tab}:{generation}")
-                    produced = run_generation(
-                        tab=tab,
-                        generation=generation,
-                        count=cfg.candidates,
-                        live_texts=live_texts,
-                        parents=list(bucket.get("candidates") or []),
-                        train_cases=train,
-                        holdout_cases=holdout,
-                        config=objective_cfg,
-                        propose=propose,
-                        decide=decide,
-                        drift_weight=cfg.drift_weight,
-                        rng=rng,
-                        skill_dir=root,
-                        workers=cfg.concurrency,
-                    )
-                    if _silent_llm_generation(use_llm, produced, tokens_before, budget):
-                        raise LLMUnavailable(30.0, "llm_unavailable")
-                    ran_generation = True
-            except LLMUnavailable as exc:
-                hold = exc
-                llm_blocked = True
-                LOG.warning("Lab model unavailable for %s; holding this generation: %s", tab, exc.reason)
-                break
-            except Exception as exc:
-                LOG.warning("Lab generation failed for %s: %s", tab, exc)
-                bucket.setdefault("errors", []).append(str(exc))
-                save_state(root, state)
+            holdout_brief = _score_live(
+                tab,
+                texts,
+                holdout_sample,
+                config=objective_cfg,
+                decide=decide,
+                drift_weight=cfg.drift_weight,
+                skill_dir=root,
+                stop=stop,
+                remembered=entry["decisions"]["holdout"],
+                on_side=_on_holdout,
+            )
+        except NightBoundary:
+            entry["complete"] = False
+            _checkpoint_baseline(entry)
+            raise
+        if guard.aborted:
+            entry["complete"] = False
+            _checkpoint_baseline(entry)
+            _persist_state()
+            return
+        entry["train"] = train_brief
+        entry["holdout"] = holdout_brief
+        entry["complete"] = True
+        _checkpoint_baseline(entry)
+        state[live_key] = {
+            "train": train_brief,
+            "holdout": holdout_brief,
+            "sample_ids": sample_ids,
+            "cache": "scored",
+        }
+        _persist_state()
+
+    try:
+        while in_lab_window(now_fn()) and not budget.exhausted and not halt["reason"]:
+            progressed = False
+            hold: LLMUnavailable | None = None
+            for tab in cfg.tabs:
                 if guard.aborted:
                     break
+                if not in_lab_window(now_fn()):
+                    raise NightBoundary("window_end")
+                if budget.exhausted:
+                    raise NightBoundary("budget_cap")
+                bucket = state["tabs"].setdefault(
+                    tab, {"next_generation": 0, "completed": [], "candidates": [], "installed": False, "errors": []}
+                )
+                generation = int(bucket.get("next_generation") or 0)
+                if bucket.get("stalled"):
+                    continue
+                if cfg.max_generations and generation >= cfg.max_generations:
+                    continue
+                if generation in set(bucket.get("completed") or []):
+                    bucket["next_generation"] = generation + 1
+                    continue
+                guard.begin_generation()
+                ran_generation = False
+                produced: list[dict[str, Any]] = []
+                try:
+                    live_texts = load_live_texts(root, tab)
+                    if not any(live_texts.values()):
+                        bucket["errors"].append("no_live_prompt")
+                        bucket["completed"].append(generation)
+                        bucket["next_generation"] = generation + 1
+                        continue
+                    _ensure_baseline(tab, live_texts)
+                    if guard.aborted:
+                        _record_model_stop(bucket, guard)
+                    else:
+                        _enter("generations")
+                        tokens_before = budget.tokens
+                        rng = random.Random(f"{night}:{tab}:{generation}")
+                        produced = run_generation(
+                            tab=tab,
+                            generation=generation,
+                            count=cfg.candidates,
+                            live_texts=live_texts,
+                            parents=list(bucket.get("candidates") or []),
+                            train_cases=train_sample,
+                            holdout_cases=holdout_sample,
+                            config=objective_cfg,
+                            propose=propose,
+                            decide=decide,
+                            drift_weight=cfg.drift_weight,
+                            rng=rng,
+                            skill_dir=root,
+                            workers=cfg.concurrency,
+                            stop=stop,
+                        )
+                        if _silent_llm_generation(use_llm, produced, tokens_before, budget):
+                            raise LLMUnavailable(30.0, "llm_unavailable")
+                        ran_generation = True
+                except NightBoundary:
+                    raise
+                except LLMUnavailable as exc:
+                    hold = exc
+                    llm_blocked = True
+                    LOG.warning("Lab model unavailable for %s; holding this generation: %s", tab, exc.reason)
+                    break
+                except Exception as exc:
+                    LOG.warning("Lab generation failed for %s: %s", tab, exc)
+                    bucket.setdefault("errors", []).append(str(exc))
+                    _persist_state()
+                    if guard.aborted:
+                        break
+                    continue
+                if not ran_generation:
+                    _persist_state()
+                    break
+                for row in produced:
+                    _log_candidate(row)
+                    bucket.setdefault("candidates", []).append(_persistable_candidate(row))
+                bucket.setdefault("completed", []).append(generation)
+                bucket["next_generation"] = generation + 1
+                if produced and all(row.get("dropped") for row in produced):
+                    bucket["empty_streak"] = int(bucket.get("empty_streak") or 0) + 1
+                else:
+                    bucket["empty_streak"] = 0
+                if int(bucket.get("empty_streak") or 0) >= 3:
+                    bucket.setdefault("errors", []).append("no_candidates")
+                    bucket["stalled"] = True
+                    LOG.warning("Lab stopped %s after three generations with no usable prompt", tab)
+                if guard.aborted:
+                    _record_model_stop(bucket, guard)
+                _persist_state()
+                progressed = True
+                LOG.info(
+                    "Lab %s generation %s stored %s candidates tokens=%s",
+                    tab,
+                    generation,
+                    len(produced),
+                    budget.tokens,
+                )
+                if guard.aborted:
+                    break
+            if hold is not None:
+                _enter("")
+                _persist_state()
+                if not in_lab_window(now_fn()):
+                    break
+                left = _seconds_until_window_end(now_fn())
+                if left <= 0:
+                    break
+                wait = min(left, max(hold.retry_after, 1.0))
+                LOG.info("Lab backing off %.0fs before retrying the model", wait)
+                try:
+                    pause(wait)
+                except Exception as sleep_exc:
+                    LOG.warning("Lab backoff sleep failed: %s", sleep_exc)
                 continue
-            if not ran_generation:
-                state["tokens"] = budget.tokens
-                save_state(root, state)
+            if guard.aborted or not progressed:
                 break
-            for row in produced:
-                _log_candidate(row)
-                bucket.setdefault("candidates", []).append(_persistable_candidate(row))
-            bucket.setdefault("completed", []).append(generation)
-            bucket["next_generation"] = generation + 1
-            if produced and all(row.get("dropped") for row in produced):
-                bucket["empty_streak"] = int(bucket.get("empty_streak") or 0) + 1
-            else:
-                bucket["empty_streak"] = 0
-            if int(bucket.get("empty_streak") or 0) >= 3:
-                bucket.setdefault("errors", []).append("no_candidates")
-                bucket["stalled"] = True
-                LOG.warning("Lab stopped %s after three generations with no usable prompt", tab)
-            if guard.aborted:
-                _record_model_stop(bucket, guard)
-            state["tokens"] = budget.tokens
-            save_state(root, state)
-            progressed = True
-            LOG.info(
-                "Lab %s generation %s stored %s candidates tokens=%s",
-                tab,
-                generation,
-                len(produced),
-                budget.tokens,
-            )
-            if guard.aborted:
-                break
-        if hold is not None:
-            state["tokens"] = budget.tokens
-            save_state(root, state)
-            if not in_lab_window(now_fn()):
-                break
-            left = _seconds_until_window_end(now_fn())
-            if left <= 0:
-                break
-            wait = min(left, max(hold.retry_after, 1.0))
-            LOG.info("Lab backing off %.0fs before retrying the model", wait)
-            try:
-                pause(wait)
-            except Exception as sleep_exc:
-                LOG.warning("Lab backoff sleep failed: %s", sleep_exc)
-            continue
-        if guard.aborted or not progressed:
-            break
+    except NightBoundary as boundary:
+        forced_reason = boundary.reason
+        finalize = True
+        LOG.info("Lab stopped between calls: %s", boundary.reason)
+
+    _enter("")
+    _persist_state()
 
     if not finalize:
-        state["tokens"] = budget.tokens
-        save_state(root, state)
         return {
             "night_id": night,
             "finished": False,
             "orders_touched": False,
             "tokens": budget.tokens,
+            "spend_usd": round(budget.tokens / 1000.0 * float(cfg.usd_per_1k), 4),
             "stopped_early": bool(guard.aborted),
             "stop_reason": guard.reason if guard.aborted else "",
         }
 
     report = finalize_night(root, state, config=cfg, objective=objective_cfg, promote=promote, budget=budget)
-    report["stopped_early"] = bool(guard.aborted)
-    report["stop_reason"] = guard.reason if guard.aborted else ""
-    if llm_blocked and budget.tokens == 0 and not guard.aborted and not in_lab_window(now_fn()):
+    outage = llm_blocked and budget.tokens == 0 and not guard.aborted and not in_lab_window(now_fn())
+    if outage and forced_reason == "window_end":
+        forced_reason = ""
+    if outage:
         report["status"] = "llm_unavailable"
         report["stop_reason"] = "llm_unavailable"
         report["stopped_early"] = False
@@ -815,8 +1218,21 @@ def run_night(
             "The model stayed unavailable until the window ended. "
             "No prompt was scored. Spend is $0. Shadow only. Live prompts were not changed."
         )
+    elif forced_reason:
+        report["stopped_early"] = True
+        report["stop_reason"] = forced_reason
+    elif guard.aborted:
+        report["stopped_early"] = True
+        report["stop_reason"] = guard.reason
+    elif budget.exhausted:
+        report["stopped_early"] = True
+        report["stop_reason"] = "budget_cap"
+    else:
+        report["stopped_early"] = False
+        report["stop_reason"] = ""
     state["finished"] = True
     state["tokens"] = budget.tokens
+    state["spend_usd"] = report.get("spend_usd")
     state["report"] = report
     save_state(root, state)
     write_night_report(root, report)
@@ -998,10 +1414,28 @@ def _model_call(
     guard: ModelFailureGuard | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> str:
-    if budget.exhausted or (guard is not None and guard.aborted):
+    if guard is not None and guard.aborted:
         return ""
     now_fn = clock or (lambda: datetime.now(CHICAGO))
     pause = sleeper or (lambda _seconds: None)
+    # A direct call with no night clock (routing tests) is not a windowed night.
+    # Production always passes the Chicago clock from ``run_night``.
+    if clock is not None and not in_lab_window(now_fn()):
+        raise NightBoundary("window_end")
+    if budget.exhausted:
+        raise NightBoundary("budget_cap")
+
+    def _bounded_pause(seconds: float) -> None:
+        """Retry sleep stops at 07:00. It does not run the clock past the window."""
+        if clock is None:
+            pause(seconds)
+            return
+        if not in_lab_window(now_fn()):
+            raise LLMUnavailable(0.0, "llm_unavailable")
+        left = _seconds_until_window_end(now_fn())
+        pause(min(max(0.0, float(seconds)), left))
+        if not in_lab_window(now_fn()):
+            raise LLMUnavailable(0.0, "llm_unavailable")
 
     def _once() -> str:
         import config as skill_config
@@ -1068,7 +1502,7 @@ def _model_call(
         else:
             LOG.warning("Lab model call failed: %s", exc)
 
-    text = call_with_backoff(_once, sleeper=pause, on_failure=_on_failure)
+    text = call_with_backoff(_once, sleeper=_bounded_pause, on_failure=_on_failure)
     if last_exc is not None and _transient_llm_failure(last_exc):
         header = _retry_after_seconds(last_exc)
         raise LLMUnavailable(30.0 if header is None else max(header, 1.0), "llm_unavailable")
@@ -1156,7 +1590,41 @@ def finalize_night(
         "generations": {tab: row.get("generations") for tab, row in tabs_out.items()},
         "tabs": tabs_out,
         "source_sortino": _primary_source_sortino(tabs_out),
+        "usage": _usage_report(state, budget, config),
         "note": "Shadow only. Live prompts change later, through the governor, after live samples.",
+    }
+
+
+def _usage_report(state: dict[str, Any], budget: Budget, config: LabConfig) -> dict[str, Any]:
+    """Baseline versus generation time, calls, cache, and spend for the morning report."""
+    phases = state.get("phases") if isinstance(state.get("phases"), dict) else {}
+    baseline = phases.get("baseline") if isinstance(phases.get("baseline"), dict) else {}
+    generations = phases.get("generations") if isinstance(phases.get("generations"), dict) else {}
+    baseline_calls = int(baseline.get("calls") or 0)
+    generation_calls = int(generations.get("calls") or 0)
+    baseline_seconds = float(baseline.get("seconds") or 0.0)
+    generation_seconds = float(generations.get("seconds") or 0.0)
+    call_total = baseline_calls + generation_calls
+    second_total = baseline_seconds + generation_seconds
+    sample = state.get("baseline_sample")
+    return {
+        "baseline_seconds": round(baseline_seconds, 3),
+        "generation_seconds": round(generation_seconds, 3),
+        "baseline_tokens": int(baseline.get("tokens") or 0),
+        "generation_tokens": int(generations.get("tokens") or 0),
+        "baseline_calls": baseline_calls,
+        "generation_calls": generation_calls,
+        "baseline_cache_hits": int(baseline.get("cache_hits") or 0),
+        "baseline_cache_misses": int(baseline.get("cache_misses") or 0),
+        "baseline_cache_resumes": int(baseline.get("cache_resumes") or 0),
+        "baseline_sample": int(sample) if sample is not None else config.baseline_sample,
+        "baseline_sample_ids": state.get("baseline_sample_ids")
+        if isinstance(state.get("baseline_sample_ids"), dict)
+        else {},
+        "baseline_call_share": round(baseline_calls / call_total, 4) if call_total else 0.0,
+        "baseline_time_share": round(baseline_seconds / second_total, 4) if second_total else 0.0,
+        "tokens": budget.tokens,
+        "spend_usd": budget.spend_usd,
     }
 
 
@@ -1265,6 +1733,27 @@ def render_report_md(report: dict[str, Any]) -> str:
         f"Tokens: {report.get('tokens')} spend_usd={report.get('spend_usd')} cap={report.get('token_cap')}",
         f"Orders touched: {report.get('orders_touched')}",
     ]
+    usage = report.get("usage") if isinstance(report.get("usage"), dict) else {}
+    if usage:
+        lines.append(
+            "Baseline: "
+            f"{usage.get('baseline_seconds')}s calls={usage.get('baseline_calls')} "
+            f"tokens={usage.get('baseline_tokens')} "
+            f"call_share={usage.get('baseline_call_share')} "
+            f"time_share={usage.get('baseline_time_share')}"
+        )
+        lines.append(
+            "Generations: "
+            f"{usage.get('generation_seconds')}s calls={usage.get('generation_calls')} "
+            f"tokens={usage.get('generation_tokens')}"
+        )
+        lines.append(
+            "Baseline cache: "
+            f"hits={usage.get('baseline_cache_hits')} "
+            f"misses={usage.get('baseline_cache_misses')} "
+            f"resumes={usage.get('baseline_cache_resumes')} "
+            f"sample={usage.get('baseline_sample')}"
+        )
     if report.get("status"):
         lines.append(f"Status: {report.get('status')}")
     if report.get("stopped_early"):
