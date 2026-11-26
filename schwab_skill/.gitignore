@@ -74,6 +74,9 @@ decision_packets.json
 strategy_state.json
 strategy_chat_log.jsonl
 
+# Shadow setup-filter observations (append-only, local). Lost on ephemeral deploys.
+data/shadow_setup_filter/
+
 # Per-tenant runtime skill dirs (created on demand for SaaS user sandboxes).
 tenants/
 .tenant_runtime_cache/

@@ -1500,6 +1500,23 @@ def _scan_stage_a_one(
         except Exception as _e:
             LOG.debug("Stale-bar gate check failed for %s: %s", ticker, _e)
         df = add_indicators(df)
+        breadth_probe: dict[str, Any] | None = None
+        try:
+            from config import get_shadow_setup_filter_enabled
+
+            if get_shadow_setup_filter_enabled(skill_dir):
+                from core.shadow_setup_filter import sma50_probe
+
+                breadth_probe = sma50_probe(ticker, df)
+        except Exception as _e:
+            LOG.debug("Shadow setup breadth probe skipped for %s: %s", ticker, _e)
+            breadth_probe = None
+
+        def _stamp_breadth(payload: dict[str, Any]) -> dict[str, Any]:
+            if breadth_probe is not None:
+                payload["_shadow_breadth_probe"] = breadth_probe
+            return payload
+
         stage2_ok = bool(is_stage_2(df, skill_dir)) if want_stage2 else False
 
         pead_mode_eff = "off"
@@ -1558,19 +1575,21 @@ def _scan_stage_a_one(
         if not stage2_ok and not pead_ok and not horizon_ok:
             # Preserve legacy stage2_fail counter; PEAD miss is tracked separately.
             pead_ran = bool(want_pead) and pead_mode_eff != "off"
-            return {
-                "ok": False,
-                "reason": "stage2_fail",
-                "provider": provider,
-                "used_fallback": used_fallback,
-                "fallback_reason": history_meta.get("fallback_reason"),
-                "pead_primary_evaluated": pead_ran,
-                "pead_primary_fail": pead_ran,
-                "pead_primary_eval": pead_eval,
-                "strategy_pead_primary_mode": pead_configured,
-                "strategy_pead_primary_effective_mode": pead_mode_eff,
-                "horizon_hits": horizon_hits,
-            }
+            return _stamp_breadth(
+                {
+                    "ok": False,
+                    "reason": "stage2_fail",
+                    "provider": provider,
+                    "used_fallback": used_fallback,
+                    "fallback_reason": history_meta.get("fallback_reason"),
+                    "pead_primary_evaluated": pead_ran,
+                    "pead_primary_fail": pead_ran,
+                    "pead_primary_eval": pead_eval,
+                    "strategy_pead_primary_mode": pead_configured,
+                    "strategy_pead_primary_effective_mode": pead_mode_eff,
+                    "horizon_hits": horizon_hits,
+                }
+            )
 
         entry_family = tag_entry_family(stage2_ok=stage2_ok, pead_ok=pead_ok, horizon_ok=horizon_ok) or (
             "stage2" if stage2_ok else "pead_primary" if pead_ok else "horizon"
@@ -1596,7 +1615,7 @@ def _scan_stage_a_one(
                 payload["pead_primary_eval"] = pead_eval
             payload["strategy_pead_primary_mode"] = pead_configured
             payload["strategy_pead_primary_effective_mode"] = pead_mode_eff
-            return payload
+            return _stamp_breadth(payload)
 
         vcp_ok = bool(check_vcp_volume(df, skill_dir))
         # Match backtest: VCP hard gate applies only to Stage-2 family admits.
@@ -1612,6 +1631,8 @@ def _scan_stage_a_one(
             )
 
         sector_etf = get_ticker_sector_etf(ticker, skill_dir=skill_dir)
+        if breadth_probe is not None:
+            breadth_probe["sector_etf"] = sector_etf
         sector_unresolved = sector_etf is None
         sector_winning = sector_etf in winning_etfs if sector_etf is not None else False
         apply_sector_hard = sector_gate_mode == "hard" and not shadow_only_admit
@@ -1967,6 +1988,51 @@ def _note_shadow_ticker(diagnostics: dict[str, Any], tag: str, ticker: str) -> N
     note_shadow_ticker(diagnostics, tag, ticker)
 
 
+def _collect_shadow_breadth(diagnostics: dict[str, Any], ticker: str, out: dict[str, Any]) -> None:
+    """Pull the breadth probe off a Stage A result before it is checkpointed."""
+    if not isinstance(out, dict) or "_shadow_breadth_probe" not in out:
+        return
+    try:
+        from core.shadow_setup_filter import take_breadth_probe
+
+        samples = diagnostics.get("_shadow_breadth_samples")
+        if not isinstance(samples, dict):
+            samples = {}
+            diagnostics["_shadow_breadth_samples"] = samples
+        take_breadth_probe(out, samples, ticker)
+    except Exception:
+        LOG.debug("Shadow setup breadth collect skipped for %s", ticker)
+
+
+def _collect_shadow_bar_features(diagnostics: dict[str, Any], ticker: str, out: dict[str, Any]) -> None:
+    if not isinstance(out, dict) or "shadow_setup_probe" not in out:
+        return
+    try:
+        from core.shadow_setup_filter import take_bar_probe
+
+        features = diagnostics.get("_shadow_bar_features")
+        if not isinstance(features, dict):
+            features = {}
+            diagnostics["_shadow_bar_features"] = features
+        take_bar_probe(out, features, ticker)
+    except Exception:
+        LOG.debug("Shadow setup bar probe collect skipped for %s", ticker)
+
+
+def _mark_shadow_regime_block(diagnostics: dict[str, Any], skill_dir: Path, reason: str) -> None:
+    try:
+        from core.shadow_setup_filter import log_regime_block
+
+        log_regime_block(skill_dir, diagnostics, reason=reason)
+    except Exception:
+        LOG.debug("Shadow setup regime marker skipped")
+
+
+def _drop_shadow_setup_scratch(diagnostics: dict[str, Any]) -> None:
+    diagnostics.pop("_shadow_breadth_samples", None)
+    diagnostics.pop("_shadow_bar_features", None)
+
+
 def _persist_stage_a_shadow_row(skill_dir: Path, scan_id: str, ticker: str, out: dict[str, Any]) -> None:
     """Write a JSONL row when a Stage A admit trips a shadow filter."""
     from core.shadow_tags import append_shadow_tag_rows
@@ -2015,6 +2081,7 @@ def _note_stage_a_outcome(
     count_decision: bool = True,
 ) -> None:
     """Count one Stage A decision. Does not admit the candidate into the shortlist."""
+    _collect_shadow_breadth(diagnostics, ticker, out)
     if not count_decision:
         out = dict(out)
     if count_decision and out.get("pead_primary_evaluated"):
@@ -2332,7 +2399,7 @@ def _run_coverage_stage_a(
             executor_cls=cf.ThreadPoolExecutor,
             as_completed=cf.as_completed,
             timeout_error=cf.TimeoutError,
-            on_result=None,
+            on_result=lambda ticker, out: _collect_shadow_breadth(diagnostics, ticker, out),
             on_wave=lambda results, _pending: _save(executable_results, results, True),
             prior_results=resumed_horizon,
         )
@@ -2943,7 +3010,19 @@ def _scan_stage_b_enrich(
             )
         except Exception as volume_exc:
             LOG.debug("Completed-session volume note skipped for %s: %s", ticker, volume_exc)
-        return {"ok": True, "signal": signal_row, "diag": diag_delta}
+        result = {"ok": True, "signal": signal_row, "diag": diag_delta}
+        try:
+            from config import get_shadow_setup_filter_enabled
+
+            if get_shadow_setup_filter_enabled(skill_dir):
+                from core.shadow_setup_filter import bar_features
+
+                probe = bar_features(df)
+                if probe is not None:
+                    result["shadow_setup_probe"] = probe
+        except Exception as _e:
+            LOG.debug("Shadow setup bar features skipped for %s: %s", ticker, _e)
+        return result
     except Exception as e:
         diag_delta["stage_b_exceptions"] += 1
         return {"ok": False, "error": f"{ticker}: {e}", "diag": diag_delta}
@@ -4435,6 +4514,11 @@ def scan_for_signals_detailed(
                 )
                 send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
                 LOG.info("Regime gate blocked scan: SPY below 200 SMA")
+            _mark_shadow_regime_block(
+                diagnostics,
+                skill_dir,
+                str(diagnostics.get("scan_blocked_reason") or ""),
+            )
             return [], diagnostics
         if not regime_bullish and (allow_bear_regime or counter_trend_bypass):
             if counter_trend_bypass and not allow_bear_regime:
@@ -4454,6 +4538,7 @@ def scan_for_signals_detailed(
             msg = f"Scan blocked: regime gate failed and fail-closed mode is enabled (error={type(e).__name__}: {e})."
             send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
             LOG.warning(msg)
+            _mark_shadow_regime_block(diagnostics, skill_dir, "regime_check_failed_data_unavailable")
             return [], diagnostics
         LOG.warning(
             "Regime check failed but continuing because RISK_FAIL_CLOSED_ON_DATA_OUTAGE=false: %s",
@@ -4741,6 +4826,7 @@ def scan_for_signals_detailed(
                 kind="regime_bearish",
                 env_path=skill_dir / ".env",
             )
+            _mark_shadow_regime_block(diagnostics, skill_dir, "regime_v2_unavailable")
             return [], diagnostics
         if regime_v2_mode == "live" and float(regime_v2_snapshot.get("score", 0) or 0) < float(
             regime_v2_entry_min_score
@@ -4754,12 +4840,14 @@ def scan_for_signals_detailed(
                 kind="regime_bearish",
                 env_path=skill_dir / ".env",
             )
+            _mark_shadow_regime_block(diagnostics, skill_dir, "regime_v2_below_entry_min")
             return [], diagnostics
     except Exception as e:
         LOG.warning("Regime v2 scan diagnostics failed: %s", e)
         diagnostics["regime_v2_unavailable"] = 1
         if regime_v2_mode == "live":
             diagnostics["regime_v2_blocked"] = 1
+            _mark_shadow_regime_block(diagnostics, skill_dir, "regime_v2_live_exception")
             return [], diagnostics
 
     # Stage A: executable coverage first, then a horizon sidecar that cannot cancel it.
@@ -4965,6 +5053,8 @@ def scan_for_signals_detailed(
                 ticker = future_map_b[fut]
                 try:
                     out = fut.result()
+                    if isinstance(out, dict):
+                        _collect_shadow_bar_features(diagnostics, ticker, out)
                     diag_delta = out.get("diag") or {}
                     for k, v in diag_delta.items():
                         diagnostics[k] += int(v or 0)
@@ -5112,6 +5202,19 @@ def scan_for_signals_detailed(
             "Company name enrichment failed: %s",
             e,
         )
+
+    try:
+        from core.shadow_setup_filter import record_final_candidates
+
+        record_final_candidates(signals, diagnostics, skill_dir=skill_dir)
+    except Exception as e:
+        _record_nonfatal(
+            "shadow_setup_filter_failures",
+            "Shadow setup filter log skipped: %s",
+            e,
+        )
+    finally:
+        _drop_shadow_setup_scratch(diagnostics)
 
     return signals, diagnostics
 
