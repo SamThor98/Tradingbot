@@ -101,7 +101,8 @@ def test_run_local_backfill_writes_labels_and_skips_same_utc_day(tmp_path) -> No
 
 
 def test_failed_label_of_old_pending_is_retried_same_day(tmp_path) -> None:
-    created = datetime.now(timezone.utc) - timedelta(days=40)
+    now = datetime(2026, 11, 3, 18, 0, tzinfo=timezone.utc)
+    created = now - timedelta(days=40)
     decision_packet.overwrite_packets(tmp_path, [_pending("AAPL", created)])
     calls = {"n": 0}
 
@@ -109,7 +110,6 @@ def test_failed_label_of_old_pending_is_retried_same_day(tmp_path) -> None:
         calls["n"] += 1
         return pd.DataFrame({"close": []})
 
-    now = datetime(2026, 11, 3, 18, 0, tzinfo=timezone.utc)
     first = outcome_backfill.run_local_backfill(
         tmp_path, history_provider=provider, horizon_days=10, now=now, force=True
     )
