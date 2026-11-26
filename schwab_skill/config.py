@@ -903,6 +903,77 @@ def get_pead_extension_drop_min(skill_dir: Path | None = None) -> float:
     return max(0.0, min(2.0, val))
 
 
+def get_shadow_setup_filter_enabled(skill_dir: Path | None = None) -> bool:
+    """Log shadow setup-filter rows. Default on. Does not change scan output."""
+    return _get_bool("SHADOW_SETUP_FILTER_ENABLED", True, skill_dir)
+
+
+def get_shadow_setup_filter_max_signal_score(skill_dir: Path | None = None) -> float:
+    """R1 keeps a name when ``signal_score`` is at or below this value."""
+    return _get_float("SHADOW_SETUP_FILTER_MAX_SIGNAL_SCORE", 36.0, skill_dir)
+
+
+def get_shadow_setup_filter_min_pct_below_52w(skill_dir: Path | None = None) -> float:
+    """R1b keeps a name at least this fraction below the 52-week high.
+
+    0.03 means 3% below the high. The value is clamped to 0..1.
+    """
+    val = _get_float("SHADOW_SETUP_FILTER_MIN_PCT_BELOW_52W", 0.03, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_shadow_setup_filter_max_sector_breadth50(skill_dir: Path | None = None) -> float:
+    """R2 keeps a sector when the share of names above their 50-day average is at or below this.
+
+    0.75 means 75% of the sector. The value is clamped to 0..1.
+    """
+    val = _get_float("SHADOW_SETUP_FILTER_MAX_SECTOR_BREADTH50", 0.75, skill_dir)
+    return max(0.0, min(1.0, val))
+
+
+def get_shadow_setup_filter_min_atr_pct(skill_dir: Path | None = None) -> float:
+    """R4 keeps a name when ATR(14) is at least this percent of close.
+
+    2.14 means 2.14% of price, not a fraction. Values below 0 are raised to 0.
+    """
+    return max(0.0, _get_float("SHADOW_SETUP_FILTER_MIN_ATR_PCT", 2.14, skill_dir))
+
+
+def _parse_float_csv(key: str, default: tuple[float, ...], skill_dir: Path | None) -> tuple[float, ...]:
+    env = _load_env(skill_dir)
+    raw = _env_value(key, env).strip()
+    if not raw:
+        return default
+    parsed: list[float] = []
+    for part in raw.split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            parsed.append(float(text))
+        except (TypeError, ValueError):
+            return default
+    return tuple(parsed) if parsed else default
+
+
+def get_shadow_setup_filter_forward_horizons(skill_dir: Path | None = None) -> tuple[int, ...]:
+    """Trading-day horizons the on-demand resolver fills. Default 5, 10, 20."""
+    parsed = _parse_float_csv("SHADOW_SETUP_FILTER_FORWARD_HORIZONS", (5.0, 10.0, 20.0), skill_dir)
+    horizons = tuple(int(value) for value in parsed if int(value) > 0)
+    return horizons or (5, 10, 20)
+
+
+def get_shadow_setup_filter_stop_pcts(skill_dir: Path | None = None) -> tuple[float, ...]:
+    """Hypothetical stops for the resolver, as fractions of the entry price.
+
+    0.05, 0.08, and 0.12 are a 5%, 8%, and 12% stop. This does not change the
+    stop the scanner already computed.
+    """
+    parsed = _parse_float_csv("SHADOW_SETUP_FILTER_STOP_PCTS", (0.05, 0.08, 0.12), skill_dir)
+    stops = tuple(value for value in parsed if 0.0 < value < 1.0)
+    return stops or (0.05, 0.08, 0.12)
+
+
 def get_confidence_rank_artifact(skill_dir: Path | None = None) -> str:
     """Optional override path for ``research_store/models/scan_confidence.json``."""
     env = _load_env(skill_dir)
