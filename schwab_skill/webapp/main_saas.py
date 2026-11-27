@@ -14,6 +14,7 @@ import stripe
 from celery.result import AsyncResult
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -212,6 +213,7 @@ app = FastAPI(
 
 allowed_origins = build_allowed_origins()
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
