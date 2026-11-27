@@ -24,6 +24,13 @@ baseline scores live in ``.tab_agent_lab/baseline_cache.json``, keyed by the
 prompt, the sample, and the lab model. A partial pass checkpoints after each
 decided case and resumes. The window end and the nightly token cap are checked
 between calls, and spend is written to ``state.json`` as each call is charged.
+
+Before the prompt generations, the night runs an offline setup-rule search on
+the stored trade pool (``core.setup_rule_search``). That phase does not call
+the model unless ``SETUP_RULE_SEARCH_LLM`` is on, does not spend the $50 cap
+when it is off, and does not change orders or the live scan. Passing entry
+filters are written into the morning report and, as recommendations only, into
+``data/shadow_setup_filter/recommended_rules.json``.
 """
 
 from __future__ import annotations
@@ -756,6 +763,116 @@ def _blocked_report(night: str, plan: Any, *, prior_tokens: int) -> dict[str, An
     }
 
 
+def _ensure_setup_rules(skill_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Offline search. A finished payload is reused if the night resumes."""
+    from config import get_setup_rule_search_enabled
+
+    existing = state.get("setup_rules")
+    if isinstance(existing, dict) and existing.get("complete") and not existing.get("pending_hypotheses"):
+        return state
+    if not get_setup_rule_search_enabled(skill_dir):
+        state["setup_rules"] = {
+            "complete": True,
+            "skipped": True,
+            "reason": "disabled",
+            "cost_usd": 0.0,
+            "orders_touched": False,
+            "live_scan_changed": False,
+            "rules": [],
+            "passing": [],
+        }
+        save_state(skill_dir, state)
+        return state
+    try:
+        from core.setup_rule_search import run_setup_rule_phase
+
+        payload = run_setup_rule_phase(skill_dir)
+    except Exception as exc:
+        LOG.exception("Setup-rule phase failed")
+        payload = {
+            "complete": True,
+            "ok": False,
+            "reason": "search_failed",
+            "error": str(exc),
+            "cost_usd": 0.0,
+            "orders_touched": False,
+            "live_scan_changed": False,
+            "stops_changed": False,
+            "rules": [],
+            "passing": [],
+        }
+    payload["complete"] = True
+    payload.setdefault("orders_touched", False)
+    payload.setdefault("live_scan_changed", False)
+    payload.setdefault("cost_usd", 0.0)
+    state["setup_rules"] = payload
+    save_state(skill_dir, state)
+    return state
+
+
+def _maybe_llm_hypotheses(
+    skill_dir: Path,
+    state: dict[str, Any],
+    *,
+    config: LabConfig,
+    budget: Budget,
+    guard: ModelFailureGuard,
+    clock: Callable[[], datetime],
+    sleeper: Callable[[float], None],
+    use_llm: bool,
+) -> None:
+    """Optional proposals. Default off. Evaluation stays the deterministic search."""
+    from config import get_setup_rule_search_llm
+
+    current = state.get("setup_rules") if isinstance(state.get("setup_rules"), dict) else {}
+    if not use_llm or not get_setup_rule_search_llm(skill_dir) or current.get("llm_applied"):
+        return
+    if current.get("reason") in {"pool_missing", "pool_empty", "disabled"}:
+        current["llm_applied"] = True
+        state["setup_rules"] = current
+        return
+    from core.setup_rule_search import hypothesis_prompt, parse_hypotheses, run_setup_rule_phase
+
+    features = current.get("features") if isinstance(current.get("features"), dict) else {}
+    present = [str(name) for name in (features.get("features_present") or [])]
+    grids_raw = current.get("feature_grids") if isinstance(current.get("feature_grids"), dict) else {}
+    grids = {
+        str(feature): tuple(float(value) for value in values)
+        for feature, values in grids_raw.items()
+        if isinstance(values, list)
+    }
+    system = "You propose entry-filter hypotheses. You do not place orders, change stops, or change the live scan."
+    user = hypothesis_prompt(present, grids)
+    try:
+        text = _model_call(skill_dir, config, system, user, budget, sleeper, guard, clock)
+    except NightBoundary:
+        raise
+    except Exception as exc:
+        LOG.warning("Setup-rule hypothesis call failed: %s", exc)
+        current["llm_applied"] = True
+        current["llm_error"] = str(exc)
+        state["setup_rules"] = current
+        save_state(skill_dir, state)
+        return
+    extras = parse_hypotheses(text, allowed=set(present))
+    if extras:
+        try:
+            payload = run_setup_rule_phase(skill_dir, extra_rules=extras)
+        except Exception as exc:
+            LOG.warning("Setup-rule hypothesis evaluation failed: %s", exc)
+            payload = current
+            payload["llm_error"] = str(exc)
+        payload["complete"] = True
+        payload["llm_applied"] = True
+        payload["llm_hypotheses"] = [rule.rule_id for rule in extras]
+        state["setup_rules"] = payload
+    else:
+        current["llm_applied"] = True
+        current["llm_hypotheses"] = []
+        state["setup_rules"] = current
+    save_state(skill_dir, state)
+
+
 def run_night(
     skill_dir: Path | str,
     *,
@@ -778,6 +895,18 @@ def run_night(
     cfg = config or LabConfig.load(root)
     now_fn = clock or (lambda: datetime.now(CHICAGO))
     started = now_fn()
+    if not in_lab_window(started):
+        LOG.info("Lab not started: outside 18:00-07:00 America/Chicago")
+        return {
+            "night_id": night_id(started),
+            "started": False,
+            "stop_reason": "outside_window",
+            "orders_touched": False,
+            "tokens": 0,
+            "spend_usd": 0.0,
+            "live_scan_changed": False,
+            "note": "The lab does not start outside 18:00-07:00 America/Chicago.",
+        }
     night = night_id(started)
     state = load_state(root)
     if state.get("night_id") != night or not isinstance(state.get("tabs"), dict):
@@ -786,6 +915,7 @@ def run_night(
         LOG.info("Lab night %s already finished", night)
         return state["report"]
 
+    state = _ensure_setup_rules(root, state)
     objective_cfg = objective or objective_for(root)
     loaded, fixtures_excluded, duplicates_removed, source_name = _load_night_cases(
         root,
@@ -803,6 +933,7 @@ def run_night(
     if not plan.ok:
         LOG.warning("Lab trust gate blocked the night: %s", plan.reason)
         report = _blocked_report(night, plan, prior_tokens=int(state.get("tokens") or 0))
+        report["setup_rules"] = state.get("setup_rules")
         state["finished"] = True
         state["tokens"] = 0
         state["report"] = report
@@ -1067,6 +1198,17 @@ def run_night(
             "cache": "scored",
         }
         _persist_state()
+
+    _maybe_llm_hypotheses(
+        root,
+        state,
+        config=cfg,
+        budget=budget,
+        guard=guard,
+        clock=now_fn,
+        sleeper=pause,
+        use_llm=use_llm,
+    )
 
     try:
         while in_lab_window(now_fn()) and not budget.exhausted and not halt["reason"]:
@@ -1591,6 +1733,7 @@ def finalize_night(
         "tabs": tabs_out,
         "source_sortino": _primary_source_sortino(tabs_out),
         "usage": _usage_report(state, budget, config),
+        "setup_rules": state.get("setup_rules"),
         "note": "Shadow only. Live prompts change later, through the governor, after live samples.",
     }
 
@@ -1787,6 +1930,12 @@ def render_report_md(report: dict[str, Any]) -> str:
             lines.append(f"Gate failures: {row.get('gate_failures')}")
         if row.get("errors"):
             lines.append(f"Errors: {row.get('errors')}")
+        lines.append("")
+    setup = report.get("setup_rules")
+    if isinstance(setup, dict):
+        from core.setup_rule_search import render_setup_rules_md
+
+        lines.append(render_setup_rules_md(setup).rstrip())
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -2005,6 +2154,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Print the date split and trust gate for stored cases. No model calls.",
     )
     parser.add_argument("--until-window-end", action="store_true", help="Run until 7:00 AM America/Chicago.")
+    parser.add_argument(
+        "--setup-rules",
+        action="store_true",
+        help="Offline setup-rule search only. Does not start the night and does not trade.",
+    )
+    parser.add_argument(
+        "--trades",
+        type=Path,
+        default=None,
+        help="With --setup-rules, a chunk directory, JSON list, or JSONL file.",
+    )
     parser.add_argument("--tab", default="", help="Dry-run one tab. Default: today.")
     parser.add_argument("--candidates", type=int, default=4)
     parser.add_argument("--generations", type=int, default=1)
@@ -2014,6 +2174,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.plan:
             report = plan_night(args.skill_dir)
             print(json.dumps(report, indent=2, default=str))
+            return 0
+        if args.setup_rules:
+            from core.setup_rule_search import render_setup_rules_md, run_setup_rule_phase
+
+            report = run_setup_rule_phase(args.skill_dir, trades_path=args.trades, write_shadow=True)
+            text = render_setup_rules_md(report)
+            directory = Path(args.skill_dir) / REPORT_DIR
+            directory.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(CHICAGO).date().isoformat()
+            md_path = directory / f"setup-rules-{stamp}.md"
+            json_path = directory / f"setup-rules-{stamp}.json"
+            md_path.write_text(text, encoding="utf-8")
+            json_path.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+            print(text)
+            print(f"wrote {md_path}")
             return 0
         if args.dry_run:
             report = run_dry(

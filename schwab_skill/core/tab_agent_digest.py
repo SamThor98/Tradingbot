@@ -327,6 +327,13 @@ def _lab_markdown(lab: Any) -> list[str]:
             f"best_holdout_sortino={holdout.get('sortino_adj')} "
             f"shadow={shadow.get('installed')} versions={shadow.get('version_ids')}"
         )
+    setup = lab.get("setup_rules") if isinstance(lab.get("setup_rules"), dict) else None
+    if setup is not None:
+        passing = setup.get("passing") if isinstance(setup.get("passing"), list) else []
+        lines.append(
+            f"Setup rules: trials={setup.get('n_trials')} passing={len(passing)} "
+            f"cost_usd={setup.get('cost_usd')} live_scan_changed={setup.get('live_scan_changed')}"
+        )
     lines.append("")
     return lines
 

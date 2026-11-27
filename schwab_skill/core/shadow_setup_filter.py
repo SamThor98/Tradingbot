@@ -38,6 +38,7 @@ LOG = logging.getLogger(__name__)
 
 STORE_DIR = Path("data") / "shadow_setup_filter"
 STORE_NAME = "observations.jsonl"
+RECOMMENDED_NAME = "recommended_rules.json"
 _ET = ZoneInfo("America/New_York")
 _LOCK = threading.Lock()
 _TRADING_DAYS_52W = 252
@@ -443,6 +444,73 @@ def append_rows(skill_dir: Path | None, rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
+def recommended_rules_path(skill_dir: Path | None) -> Path | None:
+    if skill_dir is None:
+        return None
+    return Path(skill_dir) / STORE_DIR / RECOMMENDED_NAME
+
+
+def load_recommended_rules(skill_dir: Path | None) -> list[dict[str, Any]]:
+    """Passing setup-search rules, if the operator turned the log on.
+
+    A missing file or a disabled flag returns []. This does not change the
+    scan's signal list.
+    """
+    from config import get_shadow_setup_filter_recommended
+
+    if not get_shadow_setup_filter_recommended(skill_dir):
+        return []
+    path = recommended_rules_path(skill_dir)
+    if path is None or not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        LOG.warning("Shadow setup recommended rules were unreadable")
+        return []
+    rules = payload.get("rules") if isinstance(payload, dict) else None
+    if not isinstance(rules, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for rule in rules:
+        if isinstance(rule, dict) and isinstance(rule.get("clauses"), list):
+            out.append(rule)
+    return out
+
+
+def _recommended_keep(row: dict[str, Any], rule: dict[str, Any]) -> bool | None:
+    clauses = rule.get("clauses")
+    if not isinstance(clauses, list) or not clauses:
+        return None
+    for clause in clauses:
+        if not isinstance(clause, dict):
+            return None
+        value = _float(row.get(str(clause.get("feature") or "")))
+        threshold = _float(clause.get("threshold"))
+        op = str(clause.get("op") or "")
+        if value is None or threshold is None or op not in {"<=", ">="}:
+            return None
+        if op == "<=" and value > threshold:
+            return False
+        if op == ">=" and value < threshold:
+            return False
+    return True
+
+
+def stamp_recommended_rules(rows: list[dict[str, Any]], rules: list[dict[str, Any]]) -> None:
+    """Add ``recommended_keep`` ids. Does not drop or reorder rows."""
+    for row in rows:
+        kept: list[str] = []
+        for rule in rules:
+            rule_id = str(rule.get("rule_id") or rule.get("name") or "")
+            if not rule_id:
+                continue
+            flag = _recommended_keep(row, rule)
+            if flag:
+                kept.append(rule_id)
+        row["recommended_keep"] = kept
+
+
 def record_final_candidates(
     signals: list[dict[str, Any]],
     diagnostics: dict[str, Any],
@@ -470,6 +538,13 @@ def record_final_candidates(
         breadth=breadth,
         bar_features_by_ticker=bars if isinstance(bars, dict) else {},
     )
+    recommended = load_recommended_rules(skill_dir)
+    if recommended:
+        stamp_recommended_rules(rows, recommended)
+        diagnostics["shadow_setup_filter_recommended_rules"] = len(recommended)
+        diagnostics["shadow_setup_filter_recommended_would_keep"] = sum(
+            1 for row in rows if row.get("recommended_keep")
+        )
     written = 0
     try:
         written = append_rows(skill_dir, rows)
