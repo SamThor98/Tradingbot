@@ -26,10 +26,14 @@ decided case and resumes. The window end and the nightly token cap are checked
 between calls, and spend is written to ``state.json`` as each call is charged.
 
 Before the prompt generations, the night runs an offline setup-rule search on
-the stored trade pool (``core.setup_rule_search``). That phase does not call
-the model unless ``SETUP_RULE_SEARCH_LLM`` is on, does not spend the $50 cap
-when it is off, and does not change orders or the live scan. Passing entry
-filters are written into the morning report and, as recommendations only, into
+the stored trade pool (``core.setup_rule_search``). If
+``.tab_agent_rebuild/bars.pkl`` is present it first fills
+``pct_below_52w_high``, ``atr_pct``, and ``sector_breadth50`` into a gitignored
+sidecar. A missing bar cache is reported as ``features_missing`` and does not
+stop the night. The phase does not call the model unless
+``SETUP_RULE_SEARCH_LLM`` is on, does not spend the $50 cap when it is off, and
+does not change orders or the live scan. Passing entry filters are written
+into the morning report and, as recommendations only, into
 ``data/shadow_setup_filter/recommended_rules.json``.
 """
 
