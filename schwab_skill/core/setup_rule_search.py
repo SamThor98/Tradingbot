@@ -230,27 +230,51 @@ def _flatten_trade(raw: dict[str, Any], era: str) -> dict[str, Any]:
     return out
 
 
-def load_trade_records(path: Path) -> list[dict[str, Any]]:
-    """Read a chunk directory, a JSON list, or JSONL. Missing path yields []."""
+def load_trade_records(
+    path: Path,
+    *,
+    sidecar: Path | None = None,
+    merge_features: bool = True,
+) -> list[dict[str, Any]]:
+    """Read a chunk directory, a JSON list, or JSONL. Missing path yields [].
+
+    When ``merge_features`` is set, a sidecar of setup features is applied
+    in memory. Chunk files are not rewritten. Pass ``merge_features=False``
+    while building that sidecar.
+    """
     target = Path(path)
     if not target.exists():
         return []
     rows: list[dict[str, Any]] = []
     if target.is_file():
-        return _read_trade_file(target, era="")
-    files = sorted(target.rglob("chunk_*.json"))
-    if not files and target.suffix.lower() in {".json", ".jsonl"}:
-        return _read_trade_file(target, era="")
-    for file in files:
-        if file.name.endswith("_tickers.json"):
-            continue
-        era = file.parent.name if file.parent.name in KNOWN_ERAS else ""
-        rows.extend(_read_trade_file(file, era=era))
-    if rows:
-        return rows
-    for file in sorted(target.rglob("*.jsonl")):
-        rows.extend(_read_trade_file(file, era=""))
+        rows = _read_trade_file(target, era="")
+    else:
+        files = sorted(target.rglob("chunk_*.json"))
+        if not files and target.suffix.lower() in {".json", ".jsonl"}:
+            rows = _read_trade_file(target, era="")
+        else:
+            for file in files:
+                if file.name.endswith("_tickers.json"):
+                    continue
+                era = file.parent.name if file.parent.name in KNOWN_ERAS else ""
+                rows.extend(_read_trade_file(file, era=era))
+            if not rows:
+                for file in sorted(target.rglob("*.jsonl")):
+                    rows.extend(_read_trade_file(file, era=""))
+    if merge_features and rows:
+        _merge_feature_sidecar(target, rows, sidecar)
     return rows
+
+
+def _merge_feature_sidecar(pool: Path, rows: list[dict[str, Any]], sidecar: Path | None) -> None:
+    from core.setup_rule_features import discover_sidecar, merge_sidecar, read_sidecar
+
+    path = sidecar if sidecar is not None else discover_sidecar(pool)
+    if path is None or not Path(path).is_file():
+        return
+    loaded, _meta = read_sidecar(Path(path))
+    if loaded:
+        merge_sidecar(rows, loaded)
 
 
 def _read_trade_file(path: Path, *, era: str) -> list[dict[str, Any]]:
@@ -1343,6 +1367,17 @@ def render_setup_rules_md(report: dict[str, Any]) -> str:
         features = issues.get("features") if isinstance(issues.get("features"), dict) else {}
         if features.get("features_missing"):
             lines.append(f"- Features missing from this pool: {features.get('features_missing')}")
+        coverage = issues.get("feature_coverage") if isinstance(issues.get("feature_coverage"), dict) else {}
+        if coverage:
+            bits = []
+            for name in ("pct_below_52w_high", "atr_pct", "sector_breadth50"):
+                block = coverage.get(name) if isinstance(coverage.get(name), dict) else {}
+                bits.append(f"{name}={block.get('pct')}% ({block.get('n')}/{coverage.get('n')})")
+            lines.append("- Feature coverage: " + ", ".join(bits))
+        if issues.get("features_note"):
+            lines.append(f"- {issues.get('features_note')}")
+        if issues.get("breadth_note"):
+            lines.append(f"- {issues.get('breadth_note')}")
         if features.get("ignored_columns"):
             lines.append(f"- Numeric columns not searched: {features.get('ignored_columns')}")
         if features.get("atr_pct_scale"):
@@ -1513,6 +1548,9 @@ def run_setup_rule_phase(
         report["data_issues"]["quality_floor"] = floor
         report["data_issues"]["exit_reason"] = audit_exit_reasons(pd.DataFrame())
         return report
+    from core.setup_rule_features import ensure_setup_features, feature_coverage
+
+    feature_run = ensure_setup_features(root, path)
     records = load_trade_records(path)
     if not records:
         report = _empty_report(limits, reason="pool_empty", path=path, run_id=run_id)
@@ -1533,6 +1571,11 @@ def run_setup_rule_phase(
         "quality_floor": floor,
         "exit_reason": report.get("exit_reason_audit") or {},
         "features": report.get("features") or {},
+        "feature_coverage": feature_coverage(records),
+        "features_note": feature_run.get("note"),
+        "breadth_note": feature_run.get("breadth_note"),
+        "feature_sidecar": feature_run.get("path"),
+        "feature_status": feature_run.get("status"),
         "pool": f"n={report.get('n_trades')} path={path}",
         "stops": "not searched; ADAPTIVE_STOP_ATR_MULT default 2.5 and ADAPTIVE_STOP_MIN_PCT default 0.05 left unchanged",
     }

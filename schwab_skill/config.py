@@ -1029,6 +1029,16 @@ def get_setup_rule_search_llm(skill_dir: Path | None = None) -> bool:
     return _get_bool("SETUP_RULE_SEARCH_LLM", False, skill_dir)
 
 
+def get_setup_rule_search_features_path(skill_dir: Path | None = None) -> str:
+    """Sidecar of pct_below_52w_high, atr_pct, and sector_breadth50. Empty uses the default."""
+    return _env_value("SETUP_RULE_SEARCH_FEATURES_PATH", _load_env(skill_dir)).strip()
+
+
+def get_setup_rule_features_bars(skill_dir: Path | None = None) -> str:
+    """Pickled daily bars. Empty uses ``.tab_agent_rebuild/bars.pkl``."""
+    return _env_value("SETUP_RULE_FEATURES_BARS", _load_env(skill_dir)).strip()
+
+
 def get_confidence_rank_artifact(skill_dir: Path | None = None) -> str:
     """Optional override path for ``research_store/models/scan_confidence.json``."""
     env = _load_env(skill_dir)
