@@ -974,6 +974,61 @@ def get_shadow_setup_filter_stop_pcts(skill_dir: Path | None = None) -> tuple[fl
     return stops or (0.05, 0.08, 0.12)
 
 
+def get_shadow_setup_filter_recommended(skill_dir: Path | None = None) -> bool:
+    """Log keep/drop for setup rules the nightly search recommended.
+
+    Default off. When on, the shadow log gains a ``recommended_keep`` list.
+    Scan output, ranking, and orders stay unchanged either way.
+    """
+    return _get_bool("SHADOW_SETUP_FILTER_RECOMMENDED", False, skill_dir)
+
+
+def get_setup_rule_search_enabled(skill_dir: Path | None = None) -> bool:
+    """Run the offline setup-rule search during the nightly lab. Default on."""
+    return _get_bool("SETUP_RULE_SEARCH_ENABLED", True, skill_dir)
+
+
+def get_setup_rule_search_run_id(skill_dir: Path | None = None) -> str:
+    """Trade-pool directory under ``validation_artifacts/multi_era_chunks``."""
+    raw = _env_value("SETUP_RULE_SEARCH_RUN_ID", _load_env(skill_dir)).strip()
+    return raw or "control_legacy_aug_sp1500_full"
+
+
+def get_setup_rule_search_trades_path(skill_dir: Path | None = None) -> str:
+    """Optional file or directory of trades. Empty uses the run-id chunks."""
+    return _env_value("SETUP_RULE_SEARCH_TRADES_PATH", _load_env(skill_dir)).strip()
+
+
+def get_setup_rule_search_min_oos_n(skill_dir: Path | None = None) -> int:
+    """Minimum kept trades on the 2022+ holdout before a rule can pass."""
+    return max(1, min(100_000, _get_int("SETUP_RULE_SEARCH_MIN_OOS_N", 200, skill_dir)))
+
+
+def get_setup_rule_search_min_discovery_n(skill_dir: Path | None = None) -> int:
+    """Minimum kept trades before 2022 before a rule can pass."""
+    return max(1, min(100_000, _get_int("SETUP_RULE_SEARCH_MIN_DISCOVERY_N", 150, skill_dir)))
+
+
+def get_setup_rule_search_min_era_n(skill_dir: Path | None = None) -> int:
+    """Minimum kept trades in an era before that era casts a pass/fail vote."""
+    return max(1, min(100_000, _get_int("SETUP_RULE_SEARCH_MIN_ERA_N", 80, skill_dir)))
+
+
+def get_setup_rule_search_era_majority(skill_dir: Path | None = None) -> float:
+    """Share of voting eras that must beat the baseline. Default 0.60."""
+    val = _get_float("SETUP_RULE_SEARCH_ERA_MAJORITY", 0.6, skill_dir)
+    return max(0.5, min(1.0, val))
+
+
+def get_setup_rule_search_llm(skill_dir: Path | None = None) -> bool:
+    """Ask the lab model for extra thresholds. Default off, so the phase costs nothing.
+
+    Evaluation of any proposal is still the deterministic search. The model
+    does not see 2022+ results and cannot change orders or the live scan.
+    """
+    return _get_bool("SETUP_RULE_SEARCH_LLM", False, skill_dir)
+
+
 def get_confidence_rank_artifact(skill_dir: Path | None = None) -> str:
     """Optional override path for ``research_store/models/scan_confidence.json``."""
     env = _load_env(skill_dir)
