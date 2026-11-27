@@ -56,9 +56,7 @@ def _install_common_modules(monkeypatch, *, regime_fn):
     monkeypatch.setitem(
         sys.modules,
         "data_health",
-        types.SimpleNamespace(
-            assess_scan_session_data_health=lambda *_a, **_k: {"data_quality": "ok", "reasons": []}
-        ),
+        types.SimpleNamespace(assess_scan_session_data_health=lambda *_a, **_k: {"data_quality": "ok", "reasons": []}),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -68,9 +66,7 @@ def _install_common_modules(monkeypatch, *, regime_fn):
             get_winning_sector_etfs=lambda *_a, **_k: {"XLK"},
             get_regime_v2_snapshot=lambda *_a, **_k: {"score": 99.0, "bucket": "high"},
             regime_v2_is_unavailable=lambda snap: (
-                not isinstance(snap, dict)
-                or snap.get("score") is None
-                or snap.get("bucket") == "unavailable"
+                not isinstance(snap, dict) or snap.get("score") is None or snap.get("bucket") == "unavailable"
             ),
             get_unresolved_sector_symbols=lambda **_k: [],
         ),
@@ -323,3 +319,14 @@ def test_exception_and_fallback_accounting(monkeypatch) -> None:
     assert diagnostics["exceptions"] >= 1
     assert diagnostics["fallback_reason_missing_count"] >= 1
     assert diagnostics["fallback_inconsistent_count"] >= 1
+
+
+def test_release_candidate_frames_drops_histories() -> None:
+    frame = _sample_df()
+    kept = {"ticker": "AAA", "df": frame, "price": 1.0}
+    empty = {"ticker": "BBB"}
+    rows: list[Any] = [kept, empty, "nope"]
+    released = signal_scanner.release_candidate_frames(rows)
+    assert released == 1
+    assert "df" not in kept
+    assert kept["price"] == 1.0

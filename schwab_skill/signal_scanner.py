@@ -841,9 +841,7 @@ def evaluate_event_risk_policy(
     elif earnings_distance is not None:
         earnings_lookup = "measured"
     earnings_near = (
-        earnings_lookup == "measured"
-        and earnings_distance is not None
-        and earnings_distance <= max(0, earnings_days)
+        earnings_lookup == "measured" and earnings_distance is not None and earnings_distance <= max(0, earnings_days)
     )
 
     macro_blackout = False
@@ -882,9 +880,9 @@ def _apply_event_risk_policy_to_signals(
         ticker = str(sig.get("ticker") or "")
         policy = evaluate_event_risk_policy(ticker, skill_dir=skill_dir)
         if policy.get("earnings_lookup") == "unavailable":
-            diagnostics["event_risk_earnings_unavailable"] = int(
-                diagnostics.get("event_risk_earnings_unavailable", 0)
-            ) + 1
+            diagnostics["event_risk_earnings_unavailable"] = (
+                int(diagnostics.get("event_risk_earnings_unavailable", 0)) + 1
+            )
         mode = policy.get("mode", "off")
         action = policy.get("action", "block")
         flagged = bool(policy.get("flagged"))
@@ -1383,6 +1381,20 @@ def _partition_stage_a_by_entry_family(
             for c in shadow_names
         ],
     }
+
+
+def release_candidate_frames(candidates: list[dict[str, Any]] | None) -> int:
+    """Drop price histories once Stage B has finished with them.
+
+    Signals are already copied out. The candidate dict is the last reference
+    to each frame, so removing it lets the process return that working set
+    after the scan. Returns how many frames were released.
+    """
+    released = 0
+    for candidate in candidates or []:
+        if isinstance(candidate, dict) and candidate.pop("df", None) is not None:
+            released += 1
+    return released
 
 
 def _shutdown_executor_safe(executor: Any, *, wait: bool, cancel_futures: bool) -> None:
@@ -1954,9 +1966,7 @@ def _scan_stage_a_one(
         try:
             from core.debate_grade import stamp_checklist_fields
 
-            stamped = stamp_checklist_fields(
-                df, skill_dir, include_points=False, include_vcp=False
-            )
+            stamped = stamp_checklist_fields(df, skill_dir, include_points=False, include_vcp=False)
             candidate["vcp_present"] = bool(vcp_ok)
             for key in ("trend_stack_ok", "sma200_rising"):
                 if key in stamped:
@@ -5092,6 +5102,7 @@ def scan_for_signals_detailed(
             wait=not stage_b_timed_out,
             cancel_futures=stage_b_timed_out,
         )
+        release_candidate_frames(shortlist)
     diagnostics["scan_stage_b_ms"] = int((time.perf_counter() - stage_b_start) * 1000)
     diagnostics["prediction_market"] = {
         "enabled": bool((diagnostics.get("prediction_market") or {}).get("enabled", False)),
@@ -5215,6 +5226,12 @@ def scan_for_signals_detailed(
         )
     finally:
         _drop_shadow_setup_scratch(diagnostics)
+    try:
+        from core.process_memory import release_process_memory
+
+        release_process_memory()
+    except Exception:
+        LOG.debug("Scan memory release skipped", exc_info=True)
 
     return signals, diagnostics
 
