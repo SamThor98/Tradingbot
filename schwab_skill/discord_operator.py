@@ -140,6 +140,9 @@ def help_text() -> str:
         "`pending` — open confirmations\n"
         "`pause buys` / `resume buys` — halt or resume new buys\n"
         "`status` `sectors` `ping` `help`\n"
+        "`/top [n]` — ranked names from the latest scan (read-only)\n"
+        "`/picks [days]` — past scan picks vs SPY (read-only)\n"
+        "`/levels TICKER` — price, 50d/200d, ATR14, and the scan stop (read-only)\n"
         "Signal cards: Approve, Reject, or Check.\n"
         "`report TICKER` is the long desktop report."
     )
