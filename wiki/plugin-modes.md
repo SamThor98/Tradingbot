@@ -1,7 +1,7 @@
 ---
 source: Brain/Strategies/Plugin Modes.md
 created: 2026-04-13
-updated: 2026-10-15
+updated: 2026-11-16
 tags: [strategy, plugins, risk]
 ---
 
@@ -24,6 +24,8 @@ tags: [strategy, plugins, risk]
 3. **Event Risk** (`EVENT_RISK_MODE`) — earnings/macro blackouts
 4. **Regime v2** (`REGIME_V2_MODE`) — score-based sizing
 5. **Correlation Guard** (`CORRELATION_GUARD_MODE`) — pairwise limits
+
+`SECTOR_MAP_OVERRIDE_MODE` is config-ready and defaults to `off`. It is not part of the rollout sequence above. The map is a point-in-time sponsor classification (not historical). Shadow records disagreements; live uses the sponsor ETF. See [[sector-strength]].
 
 ## Recommended Rollout Sequence
 
@@ -60,7 +62,8 @@ backtest-only (not wired into `execution.py`) for the same reason.
 - [[scan-catalog]] — Scan studio can filter shadow sleeves without promoting them to LIVE
 - [[horizon-strategies]] — new timeframe sleeves stay shadow/research
 - [[grok-agent-orchestration]] — `GROK_AGENT_MODE` defaults off and does not place orders
+- [[sector-strength]] — `SECTOR_MAP_OVERRIDE_MODE` ticker ETF map
 
 ---
 
-*Last compiled: 2026-04-13*
+*Last compiled: 2026-10-28*
