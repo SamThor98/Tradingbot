@@ -179,8 +179,9 @@ def _harvest_scan(
 
     Counts a session only when ``data_quality == ok``, the scan is during
     weekday Regular Trading Hours (09:30–16:00 ET), and at least one wired
-    plugin is not off. Same ET date replaces the prior row, except a
-    non-RTH scan never overwrites an RTH row.
+    plugin is not off. A SPY 200-SMA regime block is ``regime_blocked`` and
+    is not counted. Same ET date replaces the prior row, except a non-RTH
+    scan never overwrites an RTH row.
     """
     from config import get_experiment_collector_enabled
 
@@ -255,6 +256,10 @@ def _harvest_scan(
         signals_found=found,
         scan_label=scan_label,
     )
+    if _spy_sma_regime_blocked(diag):
+        result["reason"] = "regime_blocked"
+        _write_json(harvest_state_path(skill_dir), result)
+        return result
     if record is None:
         result["reason"] = "plugins_off"
         _write_json(harvest_state_path(skill_dir), result)
@@ -293,7 +298,7 @@ def harvest_scan(
     """Harvest one scan. A failure is stored as ``harvest_failed`` and returned.
 
     Callers keep scanning. The 16:15 brief pings when the stored reason is
-    neither ``plugins_off`` nor ``disabled``.
+    neither ``plugins_off``, ``disabled``, nor ``regime_blocked``.
     """
     try:
         return _harvest_scan(
@@ -340,22 +345,51 @@ def load_harvest_state(skill_dir: Path) -> dict[str, Any]:
     return _read_json(harvest_state_path(skill_dir))
 
 
+def _spy_sma_regime_blocked(diag: dict[str, Any]) -> bool:
+    """True when the scan returned before plugins ran because SPY is under its 200 SMA."""
+    return str(diag.get("scan_blocked_reason") or "") == "bear_regime_spy_below_200sma"
+
+
+def _r7_row(
+    records: list[dict[str, Any]],
+    *,
+    sleeve_id: str,
+    horizon: str,
+    min_n: int,
+) -> dict[str, Any]:
+    from core.r7_promotion import day_clustered_mean_ci, summarize_sleeve_local
+
+    row = summarize_sleeve_local(records, sleeve_id=sleeve_id, horizon=horizon)
+    row["min_n"] = int(min_n)
+    row["mean_ci95"] = day_clustered_mean_ci(records, sleeve_id=sleeve_id, horizon=horizon)
+    return row
+
+
 def _r7_snapshot(skill_dir: Path) -> dict[str, Any] | None:
-    """Sleeve-local T+5 progress. None when the ledger cannot be read."""
+    """Sleeve-local T+5 progress. None when the ledger cannot be read.
+
+    S0 is the top ``TOP_N_S0`` names per ET date by signal score, so the
+    brief matches S1's daily cardinality. ``S0 all`` keeps every S0 row.
+    """
     try:
-        from core.multi_sleeve_constitution import R7_MIN_N, R7_PRIMARY_HORIZON
-        from core.r7_promotion import summarize_sleeve_local
+        from core.multi_sleeve_constitution import R7_MIN_N, R7_PRIMARY_HORIZON, TOP_N_S0
+        from core.r7_promotion import select_top_n_per_et_date
         from hypothesis_ledger import load_ledger_data
 
         data = load_ledger_data(skill_dir)
         records = [r for r in (data.get("records") or []) if isinstance(r, dict)]
         horizon = str(R7_PRIMARY_HORIZON)
-        out: dict[str, Any] = {}
-        for sleeve in ("S0", "S1"):
-            row = summarize_sleeve_local(records, sleeve_id=sleeve, horizon=horizon)
-            row["min_n"] = int(R7_MIN_N)
-            out[sleeve] = row
-        return out
+        min_n = int(R7_MIN_N)
+        top_n = int(TOP_N_S0)
+        s0_book = select_top_n_per_et_date(records, sleeve_id="S0", top_n=top_n)
+        s0 = _r7_row(s0_book, sleeve_id="S0", horizon=horizon, min_n=min_n)
+        s0["top_n"] = top_n
+        s0["selection"] = "top_n_per_et_date"
+        s0_all = _r7_row(records, sleeve_id="S0", horizon=horizon, min_n=min_n)
+        s0_all["selection"] = "all_signals"
+        s1 = _r7_row(records, sleeve_id="S1", horizon=horizon, min_n=min_n)
+        s1["selection"] = "recorded_names"
+        return {"S0": s0, "S0 all": s0_all, "S1": s1}
     except Exception:
         LOG.warning("R7 snapshot failed", exc_info=True)
         return None
@@ -377,7 +411,8 @@ def build_brief_packet(
     reason = str(harvest.get("reason") or "missing_harvest")
     if not scan_today:
         reason = "missing_harvest"
-    ping = (not scan_today) or (scan_today and not counted and reason != "plugins_off" and reason != "disabled")
+    quiet = reason in {"plugins_off", "disabled", "regime_blocked"}
+    ping = (not scan_today) or (scan_today and not counted and not quiet)
     complete = bool(plugins) and all(bool(p.get("ok")) for p in plugins)
     key = campaign_key(plugins)
     prior = _read_json(campaign_state_path(skill_dir))
@@ -449,6 +484,26 @@ def format_daily_brief(packet: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_r7_row(label: str, row: dict[str, Any]) -> str:
+    from core.multi_sleeve_constitution import R7_MIN_N
+
+    n = int(row.get("n") or 0)
+    need = int(row.get("min_n") or R7_MIN_N)
+    hit = row.get("hit_rate")
+    exp = row.get("expectancy")
+    hit_s = "n/a" if hit is None else f"{float(hit):.0%}"
+    exp_s = "n/a" if exp is None else f"{float(exp):+.2f}%"
+    card = ""
+    top_n = row.get("top_n")
+    if top_n:
+        card = f" (top {int(top_n)}/day)"
+    ci_s = ""
+    ci = row.get("mean_ci95")
+    if isinstance(ci, dict) and ci.get("low") is not None and ci.get("high") is not None:
+        ci_s = f" CI [{float(ci['low']):+.2f}%, {float(ci['high']):+.2f}%]"
+    return f"{label} T+5{card} **{n}/{need}** hit {hit_s} mean {exp_s}{ci_s}"
+
+
 def _r7_brief_lines(r7: Any) -> list[str]:
     lines = [
         "Open question: sleeve-local T+5 expectancy. One change. Do not promote.",
@@ -456,15 +511,12 @@ def _r7_brief_lines(r7: Any) -> list[str]:
     if not isinstance(r7, dict):
         lines.append("R7: unread")
         return lines
-    for sleeve in ("S0", "S1"):
-        row = r7.get(sleeve) if isinstance(r7.get(sleeve), dict) else {}
-        n = int(row.get("n") or 0)
-        need = int(row.get("min_n") or 40)
-        hit = row.get("hit_rate")
-        exp = row.get("expectancy")
-        hit_s = "n/a" if hit is None else f"{float(hit):.0%}"
-        exp_s = "n/a" if exp is None else f"{float(exp):+.2f}%"
-        lines.append(f"{sleeve} T+5 **{n}/{need}** hit {hit_s} mean {exp_s}")
+    for sleeve in ("S0", "S0 all", "S1"):
+        raw = r7.get(sleeve)
+        if sleeve == "S0 all" and not isinstance(raw, dict):
+            continue
+        row = raw if isinstance(raw, dict) else {}
+        lines.append(_format_r7_row(sleeve, row))
     return lines
 
 

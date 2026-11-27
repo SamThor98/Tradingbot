@@ -2019,6 +2019,44 @@ def _collect_shadow_bar_features(diagnostics: dict[str, Any], ticker: str, out: 
         LOG.debug("Shadow setup bar probe collect skipped for %s", ticker)
 
 
+def _stamp_plugin_modes_for_shadow(diagnostics: dict[str, Any], skill_dir: Path) -> None:
+    """Write wired plugin modes before the SPY 200-SMA early return.
+
+    ``build_plugin_shadow_record`` treats a missing mode as off. This gate
+    returns before the later mode writes, which labeled the harvest
+    ``plugins_off``. The regime decision itself is unchanged.
+    """
+    try:
+        from config import (
+            get_correlation_guard_mode,
+            get_entry_timing_shadow_mode,
+            get_prob_rank_mode,
+            get_rank_filter_v2_mode,
+            get_regime_v2_mode,
+            get_strategy_pead_primary_effective_mode,
+            get_strategy_pead_primary_mode,
+        )
+    except Exception as exc:
+        LOG.warning("Plugin mode stamp import failed: %s", exc)
+        diagnostics["shadow_record_reason"] = "regime_blocked"
+        return
+    getters = (
+        ("regime_v2_mode", get_regime_v2_mode),
+        ("correlation_guard_mode", get_correlation_guard_mode),
+        ("strategy_pead_primary_mode", get_strategy_pead_primary_mode),
+        ("strategy_pead_primary_effective_mode", get_strategy_pead_primary_effective_mode),
+        ("entry_timing_shadow_mode", get_entry_timing_shadow_mode),
+        ("rank_filter_v2_mode", get_rank_filter_v2_mode),
+        ("prob_rank_mode", get_prob_rank_mode),
+    )
+    for key, getter in getters:
+        try:
+            diagnostics[key] = getter(skill_dir)
+        except Exception as exc:
+            LOG.warning("Plugin mode stamp failed for %s: %s", key, exc)
+    diagnostics["shadow_record_reason"] = "regime_blocked"
+
+
 def _mark_shadow_regime_block(diagnostics: dict[str, Any], skill_dir: Path, reason: str) -> None:
     try:
         from core.shadow_setup_filter import log_regime_block
@@ -4514,6 +4552,7 @@ def scan_for_signals_detailed(
                 )
                 send_alert(msg, kind="regime_bearish", env_path=skill_dir / ".env")
                 LOG.info("Regime gate blocked scan: SPY below 200 SMA")
+                _stamp_plugin_modes_for_shadow(diagnostics, skill_dir)
             _mark_shadow_regime_block(
                 diagnostics,
                 skill_dir,

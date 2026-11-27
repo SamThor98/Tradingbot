@@ -299,6 +299,60 @@ def test_harvest_appends_s1_canary_hypotheses(tmp_path: Path, monkeypatch: pytes
     assert s1[0]["raw_context"]["executable"] is False
 
 
+def test_harvest_spy_sma_block_is_regime_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "config.get_experiment_collector_enabled",
+        lambda _skill=None: True,
+    )
+    diag = {
+        **_OK_DIAG,
+        "scan_blocked": 1,
+        "scan_blocked_reason": "bear_regime_spy_below_200sma",
+        "shadow_record_reason": "regime_blocked",
+        "rank_filter_v2_mode": "shadow",
+        "entry_timing_shadow_mode": "live",
+    }
+    result = harvest_scan(
+        tmp_path,
+        diag,
+        signals=[],
+        signals_found=0,
+        scan_at="2026-08-25T14:00:00+00:00",
+        persist_last_scan=False,
+        now=datetime(2026, 8, 25, 10, 0, tzinfo=TZ_NY),
+    )
+    assert result["reason"] == "regime_blocked"
+    assert result["counted"] is False
+    assert load_plugin_shadow_records(tmp_path) == []
+    packet = build_brief_packet(tmp_path, now=datetime(2026, 8, 25, 16, 15, tzinfo=TZ_NY))
+    assert packet["ping"] is False
+    assert packet["reason"] == "regime_blocked"
+    assert "regime_blocked" in format_daily_brief(packet)
+
+
+def test_data_unavailable_block_is_not_called_regime_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "config.get_experiment_collector_enabled",
+        lambda _skill=None: True,
+    )
+    diag = {
+        **_OK_DIAG,
+        "scan_blocked": 1,
+        "scan_blocked_reason": "regime_check_failed_data_unavailable",
+    }
+    result = harvest_scan(
+        tmp_path,
+        diag,
+        signals=[],
+        signals_found=0,
+        scan_at="2026-08-25T14:00:00+00:00",
+        persist_last_scan=False,
+        now=datetime(2026, 8, 25, 10, 0, tzinfo=TZ_NY),
+    )
+    assert result["reason"] != "regime_blocked"
+    assert result["counted"] is True
+
+
 def test_harvest_hypotheses_when_plugins_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "config.get_experiment_collector_enabled",
