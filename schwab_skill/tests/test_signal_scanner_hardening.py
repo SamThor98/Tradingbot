@@ -114,6 +114,64 @@ def test_regime_data_unavailable_not_labeled_bear(monkeypatch) -> None:
     assert diagnostics["scan_blocked_reason"] == "regime_check_failed_data_unavailable"
     assert diagnostics["regime_data_unavailable"] == 1
     assert diagnostics["regime_check_failed"] == 1
+    assert "shadow_record_reason" not in diagnostics
+
+
+def test_bear_sma_regime_records_plugin_modes(monkeypatch, tmp_path) -> None:
+    """SPY-under-200-SMA returns before the later mode writes. Stamp them first."""
+    _install_common_modules(
+        monkeypatch,
+        regime_fn=lambda *_a, **_k: (
+            False,
+            {
+                "spy_price": 400.0,
+                "spy_sma_200": 420.0,
+                "data_unavailable": False,
+                "regime_history_bars": 260,
+                "regime_history_provider": "schwab",
+            },
+        ),
+    )
+    patched = {
+        "get_regime_v2_mode": "shadow",
+        "get_correlation_guard_mode": "shadow",
+        "get_strategy_pead_primary_mode": "shadow",
+        "get_strategy_pead_primary_effective_mode": "shadow",
+        "get_entry_timing_shadow_mode": "live",
+        "get_rank_filter_v2_mode": "shadow",
+        "get_prob_rank_mode": "off",
+    }
+    for name, mode in patched.items():
+        monkeypatch.setattr("config." + name, lambda _skill=None, _mode=mode: _mode)
+    monkeypatch.setattr("config.get_scan_allow_bear_regime", lambda _skill=None: False)
+
+    signals, diagnostics = signal_scanner.scan_for_signals_detailed(
+        skill_dir=tmp_path,
+        watchlist_override=[],
+    )
+    assert signals == []
+    assert diagnostics["scan_blocked"] == 1
+    assert diagnostics["scan_blocked_reason"] == "bear_regime_spy_below_200sma"
+    assert diagnostics["scan_allow_bear_regime"] is False
+    assert diagnostics["regime_v2_mode"] == "shadow"
+    assert diagnostics["correlation_guard_mode"] == "shadow"
+    assert diagnostics["strategy_pead_primary_mode"] == "shadow"
+    assert diagnostics["strategy_pead_primary_effective_mode"] == "shadow"
+    assert diagnostics["entry_timing_shadow_mode"] == "live"
+    assert diagnostics["rank_filter_v2_mode"] == "shadow"
+    assert diagnostics["prob_rank_mode"] == "off"
+    assert diagnostics["shadow_record_reason"] == "regime_blocked"
+
+    from core.plugin_shadow_evidence import build_plugin_shadow_record
+
+    record = build_plugin_shadow_record(
+        diagnostics,
+        scan_at="2026-08-25T14:00:00+00:00",
+        signals_found=0,
+    )
+    assert record is not None
+    assert record["regime_v2"]["mode"] == "shadow"
+    assert record["entry_timing"]["mode"] == "live"
 
 
 def test_regime_failure_can_fail_open_with_env_override(monkeypatch) -> None:
