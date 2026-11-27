@@ -1148,6 +1148,340 @@ def _horizon_stage_a_sort_key(cand: dict[str, Any]) -> tuple[float, str]:
     return (-best, ticker)
 
 
+# Compact post-admit drop log stored on scan diagnostics. One small row per
+# name; the cap keeps last_scan from growing with full signal payloads.
+_PRUNED_ADMITS_LIMIT = 500
+
+_FILTER_STATUS_FIELDS: dict[str, tuple[str, str, str]] = {
+    "filtered_self_study": ("self_study", "mirofish_conviction", "mirofish_conviction"),
+    "filtered_quality_gates": ("quality_gates", "signal_score", "signal_score"),
+    "filtered_confluence": ("confluence", "signal_score", "signal_score"),
+    "filtered_event_risk": ("event_risk", "signal_score", "signal_score"),
+    "filtered_ensemble": ("ensemble", "ensemble_score", "ensemble_score"),
+    "filtered_meta_policy": ("meta_policy", "signal_score", "signal_score"),
+    "filtered_rank_v2": ("rank_v2", "rank_score_v2", "rank_score_v2"),
+    "filtered_prob_rank": ("prob_rank", "expected_return_40d", "expected_return_40d"),
+}
+
+
+def _finite_score(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if out != out or out in {float("inf"), float("-inf")}:
+        return None
+    return round(out, 4)
+
+
+def _admitting_strategy(row: dict[str, Any]) -> str:
+    """Strategy that admitted the name, preferring the highest plugin raw score."""
+    best_name = ""
+    best_score: float | None = None
+    for key in ("horizon_plugin_hits", "strategy_plugins"):
+        hits = row.get(key)
+        if not isinstance(hits, list):
+            continue
+        for hit in hits:
+            if not isinstance(hit, dict) or hit.get("triggered") is False:
+                continue
+            name = str(hit.get("name") or "").strip().lower()
+            if not name or name == "trend_breakout":
+                continue
+            try:
+                score = float(hit.get("raw_score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if best_score is None or score > best_score:
+                best_score = score
+                best_name = name
+    if best_name:
+        return best_name
+    family = str(row.get("entry_family") or "").strip().lower()
+    if family in {"stage2", "both"}:
+        return "trend_breakout"
+    if family == "pead_primary":
+        return "pead_primary"
+    if family == "horizon":
+        hits = row.get("horizon_hits")
+        if isinstance(hits, list) and hits:
+            name = str(hits[0] or "").strip().lower()
+            if name:
+                return name
+        return "horizon"
+    return family or "unknown"
+
+
+def _plugin_sort_score(cand: dict[str, Any]) -> float | None:
+    return _finite_score(-_horizon_stage_a_sort_key(cand)[0])
+
+
+def _edge_sort_score(cand: dict[str, Any]) -> float | None:
+    raw = cand.get("edge_score")
+    if raw is None:
+        raw = cand.get("stage_a_score")
+    return _finite_score(raw)
+
+
+def _stage_a_sort_score(cand: dict[str, Any]) -> float | None:
+    return _finite_score(cand.get("stage_a_score"))
+
+
+def _pruned_admit_row(
+    source: dict[str, Any],
+    *,
+    stage: str,
+    reason: str,
+    sort_key: str,
+    score: float | None,
+    strategy: str | None = None,
+) -> dict[str, Any] | None:
+    ticker = str(source.get("ticker") or source.get("symbol") or "").strip().upper()
+    if not ticker:
+        return None
+    chosen = strategy if strategy else _admitting_strategy(source)
+    return {
+        "ticker": ticker,
+        "strategy": str(chosen or "unknown")[:64],
+        "stage": str(stage or "unknown")[:64],
+        "reason": str(reason or stage or "dropped")[:160],
+        "score": score,
+        "sort_key": str(sort_key or "")[:80],
+    }
+
+
+def _append_pruned_admits(
+    diagnostics: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    limit: int = _PRUNED_ADMITS_LIMIT,
+) -> None:
+    """Append compact drop rows. Does not alter signals or shortlist membership.
+
+    Failures are logged and swallowed so a diagnostics write cannot change
+    which names the scan keeps.
+    """
+    if not rows:
+        return
+    try:
+        current = diagnostics.get("pruned_admits")
+        if not isinstance(current, list):
+            current = []
+            diagnostics["pruned_admits"] = current
+        try:
+            omitted_n = int(diagnostics.get("pruned_admits_omitted") or 0)
+        except (TypeError, ValueError):
+            omitted_n = 0
+        cap = max(0, int(limit))
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("ticker"):
+                continue
+            if len(current) >= cap:
+                omitted_n += 1
+                continue
+            current.append(row)
+        diagnostics["pruned_admits_omitted"] = omitted_n
+        diagnostics["pruned_admits_count"] = len(current) + omitted_n
+    except Exception:
+        LOG.debug("Pruned-admit log skipped")
+
+
+def _shortlist_prune_reason(*, total: int, limit: int, top_n: int, cap: int, nocap_limit: int) -> str:
+    """Label which existing limit dropped the tail. Does not recompute the limit."""
+    if int(total) <= int(limit):
+        return "stage_a_shortlist_limit"
+    if int(top_n) <= 0 and int(nocap_limit) > 0 and int(limit) == min(int(total), int(nocap_limit)):
+        return "stage_a_nocap_limit"
+    if int(cap) > 0 and int(limit) == int(cap):
+        return "stage_a_shortlist_cap"
+    return "stage_a_shortlist_limit"
+
+
+def _split_primary_provider(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for cand in candidates:
+        if bool(cand.get("data_provider_primary")):
+            kept.append(cand)
+        else:
+            dropped.append(cand)
+    return kept, dropped
+
+
+def _primary_provider_rows(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for cand in dropped:
+        row = _pruned_admit_row(
+            cand,
+            stage="primary_provider",
+            reason="non_primary_provider",
+            sort_key="stage_a_score_desc,ticker_asc",
+            score=_stage_a_sort_score(cand),
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _horizon_cross_section_rows(
+    before: list[dict[str, Any]],
+    capped: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Name the admits ``cap_cross_section_horizon`` already removed."""
+    from core.horizon_strategies import CROSS_SECTION_RANK
+
+    if len(capped) >= len(before):
+        return []
+    keep = {str(c.get("ticker") or "") for c in capped}
+    rows: list[dict[str, Any]] = []
+    for cand in before:
+        if str(cand.get("ticker") or "") in keep:
+            continue
+        strategy = "horizon"
+        sort_key = "cross_section_rank"
+        score: float | None = None
+        hits = cand.get("horizon_plugin_hits") if isinstance(cand.get("horizon_plugin_hits"), list) else []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            name = str(hit.get("name") or "")
+            meta_key = CROSS_SECTION_RANK.get(name)
+            if not meta_key:
+                continue
+            meta = hit.get("meta") if isinstance(hit.get("meta"), dict) else {}
+            strategy = name
+            sort_key = meta_key
+            score = _finite_score(meta.get(meta_key))
+            break
+        row = _pruned_admit_row(
+            cand,
+            stage="horizon_cross_section",
+            reason="cross_section_keep",
+            sort_key=sort_key,
+            score=score,
+            strategy=strategy,
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _cap_horizon_cross_section(
+    horizon_only: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply the existing cross-section keep and list the names it removed."""
+    from core.horizon_strategies import cap_cross_section_horizon
+
+    capped = cap_cross_section_horizon(horizon_only)
+    return list(capped), _horizon_cross_section_rows(horizon_only, capped)
+
+
+def _candidate_stage_b_row(cand: dict[str, Any], reason: str) -> dict[str, Any] | None:
+    family = str(cand.get("entry_family") or "").strip().lower()
+    if family == "horizon":
+        return _pruned_admit_row(
+            cand,
+            stage="stage_b",
+            reason=reason,
+            sort_key="plugin_raw_score_desc,ticker_asc",
+            score=_plugin_sort_score(cand),
+            strategy=_admitting_strategy(cand),
+        )
+    if family == "pead_primary":
+        return _pruned_admit_row(
+            cand,
+            stage="stage_b",
+            reason=reason,
+            sort_key="edge_score_desc,ticker_asc",
+            score=_edge_sort_score(cand),
+            strategy="pead_primary",
+        )
+    return _pruned_admit_row(
+        cand,
+        stage="stage_b",
+        reason=reason,
+        sort_key="stage_a_score_desc,ticker_asc",
+        score=_stage_a_sort_score(cand),
+        strategy="trend_breakout",
+    )
+
+
+def _row_for_filter_status(signal: dict[str, Any], status: str) -> dict[str, Any] | None:
+    if status == "trimmed_top_n":
+        family = str(signal.get("entry_family") or "").strip().lower()
+        if family in {"horizon", "pead_primary"}:
+            score = signal.get("research_score")
+            if score is None:
+                score = signal.get("sort_score")
+            return _pruned_admit_row(
+                signal,
+                stage="top_n",
+                reason="trimmed_top_n",
+                sort_key="research_score_desc,signal_score_desc,ticker_asc",
+                score=_finite_score(score),
+            )
+        score = signal.get("sort_score")
+        if score is None:
+            score = signal.get("signal_score")
+        return _pruned_admit_row(
+            signal,
+            stage="top_n",
+            reason="trimmed_top_n",
+            sort_key="sort_score_desc,signal_score_desc,ticker_asc",
+            score=_finite_score(score),
+        )
+    stage, field, sort_key = _FILTER_STATUS_FIELDS.get(status, ("filter", "signal_score", "signal_score"))
+    score = signal.get(field)
+    if score is None:
+        score = signal.get("signal_score")
+    return _pruned_admit_row(
+        signal,
+        stage=stage,
+        reason=status,
+        sort_key=sort_key,
+        score=_finite_score(score),
+    )
+
+
+def _quality_gate_row(signal: dict[str, Any], reasons: list[str]) -> dict[str, Any] | None:
+    reason = ",".join(str(item) for item in reasons if str(item)) or "quality_gates"
+    return _pruned_admit_row(
+        signal,
+        stage="quality_gates",
+        reason=reason,
+        sort_key="signal_score",
+        score=_finite_score(signal.get("signal_score")),
+    )
+
+
+def record_strategy_selection_drops(
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
+) -> None:
+    """Record signals removed by the scan-studio strategy filter. Membership of ``after`` is unchanged."""
+    kept = {id(row) for row in after}
+    rows: list[dict[str, Any]] = []
+    for sig in before:
+        if not isinstance(sig, dict) or id(sig) in kept:
+            continue
+        score = sig.get("sort_score")
+        if score is None:
+            score = sig.get("signal_score")
+        row = _pruned_admit_row(
+            sig,
+            stage="strategy_id_filter",
+            reason="strategy_not_selected",
+            sort_key="signal_score",
+            score=_finite_score(score),
+        )
+        if row is not None:
+            rows.append(row)
+    _append_pruned_admits(diagnostics, rows)
+
+
 def _assemble_stage_a_shortlist(
     *,
     executable: list[dict[str, Any]],
@@ -1168,11 +1502,15 @@ def _assemble_stage_a_shortlist(
     live book, per selected family. Mixed Stage 2 + horizon keeps a sidecar cap
     so research does not steal Stage 2 slots. Dedicated PEAD joins Stage B;
     mixed PEAD stays shadow-only beside the live book.
+
+    ``pruned_admits`` names the admitted rows this function did not keep.
+    Shortlist membership and order are the same as before that log existed.
     """
     horizon_pool = list(horizon_only) if want_horizon else []
     horizon_pool.sort(key=_horizon_stage_a_sort_key)
     pead_pool = list(pead_only) if want_pead else []
     pead_pool.sort(key=_pead_shadow_sort_key)
+    pruned_admits: list[dict[str, Any]] = []
 
     def _limit_for(pool: list[dict[str, Any]]) -> int:
         return _compute_stage_a_shortlist_limit(
@@ -1181,6 +1519,57 @@ def _assemble_stage_a_shortlist(
             multiplier=multiplier,
             cap=cap,
             nocap_limit=nocap_limit,
+        )
+
+    def _remember(
+        cand: dict[str, Any],
+        *,
+        stage: str,
+        reason: str,
+        sort_key: str,
+        score: float | None,
+        strategy: str,
+    ) -> None:
+        row = _pruned_admit_row(
+            cand,
+            stage=stage,
+            reason=reason,
+            sort_key=sort_key,
+            score=score,
+            strategy=strategy,
+        )
+        if row is not None:
+            pruned_admits.append(row)
+
+    def _remember_family_tail(
+        pool: list[dict[str, Any]],
+        *,
+        limit: int,
+        stage: str,
+        reason: str,
+        sort_key: str,
+        score_of: Any,
+        strategy_of: Any,
+    ) -> None:
+        for cand in pool[max(0, int(limit)) :]:
+            _remember(
+                cand,
+                stage=stage,
+                reason=reason,
+                sort_key=sort_key,
+                score=score_of(cand),
+                strategy=strategy_of(cand),
+            )
+
+    if not want_horizon:
+        _remember_family_tail(
+            list(horizon_only),
+            limit=0,
+            stage="horizon_shortlist",
+            reason="horizon_not_selected",
+            sort_key="plugin_raw_score_desc,ticker_asc",
+            score_of=_plugin_sort_score,
+            strategy_of=_admitting_strategy,
         )
 
     if not want_stage2:
@@ -1194,9 +1583,41 @@ def _assemble_stage_a_shortlist(
             nonlocal pruned
             limit = _limit_for(pool)
             pruned += max(0, len(pool) - limit)
+            horizon_family = pool is horizon_pool
+            stage = "horizon_shortlist" if horizon_family else "pead_shortlist"
+            sort_key = "plugin_raw_score_desc,ticker_asc" if horizon_family else "edge_score_desc,ticker_asc"
+            reason = _shortlist_prune_reason(
+                total=len(pool),
+                limit=limit,
+                top_n=top_n,
+                cap=cap,
+                nocap_limit=nocap_limit,
+            )
+            score_of = _plugin_sort_score if horizon_family else _edge_sort_score
+
+            def _strategy_of(cand: dict[str, Any]) -> str:
+                return _admitting_strategy(cand) if horizon_family else "pead_primary"
+
+            _remember_family_tail(
+                pool,
+                limit=limit,
+                stage=stage,
+                reason=reason,
+                sort_key=sort_key,
+                score_of=score_of,
+                strategy_of=_strategy_of,
+            )
             for cand in pool[:limit]:
                 ticker = str(cand.get("ticker") or "").upper()
                 if ticker and ticker in seen:
+                    _remember(
+                        cand,
+                        stage="shortlist_dedupe",
+                        reason="duplicate_ticker",
+                        sort_key=sort_key,
+                        score=score_of(cand),
+                        strategy=_strategy_of(cand),
+                    )
                     continue
                 if ticker:
                     seen.add(ticker)
@@ -1207,6 +1628,16 @@ def _assemble_stage_a_shortlist(
             _take(horizon_pool, horizon_extra)
         if want_pead:
             _take(pead_pool, pead_stage_b)
+        elif pead_only:
+            _remember_family_tail(
+                list(pead_only),
+                limit=0,
+                stage="pead_shortlist",
+                reason="pead_not_selected",
+                sort_key="edge_score_desc,ticker_asc",
+                score_of=_edge_sort_score,
+                strategy_of=lambda _cand: "pead_primary",
+            )
         return {
             "shortlist": shortlist,
             "shortlist_limit": len(shortlist),
@@ -1214,14 +1645,62 @@ def _assemble_stage_a_shortlist(
             "pead_stage_b": pead_stage_b,
             "dedicated_research": True,
             "stage_a_pruned": pruned,
+            "pruned_admits": pruned_admits,
         }
 
     exec_limit = _limit_for(executable)
+    exec_reason = _shortlist_prune_reason(
+        total=len(executable),
+        limit=exec_limit,
+        top_n=top_n,
+        cap=cap,
+        nocap_limit=nocap_limit,
+    )
+    _remember_family_tail(
+        executable,
+        limit=exec_limit,
+        stage="executable_shortlist",
+        reason=exec_reason,
+        sort_key="stage_a_score_desc,ticker_asc",
+        score_of=_stage_a_sort_score,
+        strategy_of=lambda _cand: "trend_breakout",
+    )
     shortlist = list(executable[:exec_limit])
-    horizon_extra = []
-    if want_horizon and horizon_sidecar_cap > 0:
-        horizon_extra = horizon_pool[: int(horizon_sidecar_cap)]
+    horizon_extra: list[dict[str, Any]] = []
+    if want_horizon and int(horizon_sidecar_cap) > 0:
+        sidecar = int(horizon_sidecar_cap)
+        horizon_extra = horizon_pool[:sidecar]
+        _remember_family_tail(
+            horizon_pool,
+            limit=sidecar,
+            stage="horizon_shortlist",
+            reason="horizon_stage_b_cap",
+            sort_key="plugin_raw_score_desc,ticker_asc",
+            score_of=_plugin_sort_score,
+            strategy_of=_admitting_strategy,
+        )
         shortlist = shortlist + horizon_extra
+    elif want_horizon:
+        _remember_family_tail(
+            horizon_pool,
+            limit=0,
+            stage="horizon_shortlist",
+            reason="horizon_stage_b_cap",
+            sort_key="plugin_raw_score_desc,ticker_asc",
+            score_of=_plugin_sort_score,
+            strategy_of=_admitting_strategy,
+        )
+    pead_reason = "mixed_scan_shadow_only" if want_pead else "pead_not_selected"
+    if pead_only:
+        _remember_family_tail(
+            list(pead_only),
+            limit=0,
+            stage="pead_shortlist",
+            reason=pead_reason,
+            sort_key="edge_score_desc,ticker_asc",
+            score_of=_edge_sort_score,
+            strategy_of=lambda _cand: "pead_primary",
+        )
     return {
         "shortlist": shortlist,
         "shortlist_limit": exec_limit,
@@ -1229,6 +1708,7 @@ def _assemble_stage_a_shortlist(
         "pead_stage_b": [],
         "dedicated_research": False,
         "stage_a_pruned": max(0, len(executable) - len(executable[:exec_limit])),
+        "pruned_admits": pruned_admits,
     }
 
 
@@ -3501,20 +3981,30 @@ def _apply_post_stage_b_chain(
         status: str,
         reasons_by_ticker: dict[str, list[str]] | None = None,
     ) -> None:
-        if capture_shortlist is None or not _shortlist_snapshot:
-            return
-        prev_tickers = {str(s.get("ticker", "")) for s in prev if s.get("ticker")}
         current_tickers = {str(s.get("ticker", "")) for s in current if s.get("ticker")}
-        for ticker in prev_tickers - current_tickers:
-            idx = _shortlist_index_by_ticker.get(ticker)
-            if idx is None:
+        seen: set[str] = set()
+        dropped_rows: list[dict[str, Any]] = []
+        for sig in prev:
+            ticker = str(sig.get("ticker") or "")
+            if not ticker or ticker in current_tickers or ticker in seen:
                 continue
-            snap = _shortlist_snapshot[idx]
-            if snap.get("_filter_status") != "kept":
+            seen.add(ticker)
+            if capture_shortlist is not None and _shortlist_snapshot:
+                idx = _shortlist_index_by_ticker.get(ticker)
+                if idx is not None:
+                    snap = _shortlist_snapshot[idx]
+                    if snap.get("_filter_status") == "kept":
+                        snap["_filter_status"] = status
+                        if reasons_by_ticker and ticker in reasons_by_ticker:
+                            snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
+            try:
+                row = _row_for_filter_status(sig, status)
+            except Exception:
+                LOG.debug("Pruned-admit row skipped for %s", ticker)
                 continue
-            snap["_filter_status"] = status
-            if reasons_by_ticker and ticker in reasons_by_ticker:
-                snap["_filter_reasons"] = list(reasons_by_ticker[ticker])
+            if row is not None:
+                dropped_rows.append(row)
+        _append_pruned_admits(diagnostics, dropped_rows)
 
     # Self-study: optionally filter by learned min conviction (live) or count
     # would-filter only (shadow). Demo / under-sampled floors are refused.
@@ -3628,6 +4118,12 @@ def _apply_post_stage_b_chain(
                         str(s.get("ticker", "")),
                         e,
                     )
+                try:
+                    quality_row = _quality_gate_row(s, list(reasons))
+                    if quality_row is not None:
+                        _append_pruned_admits(diagnostics, [quality_row])
+                except Exception:
+                    LOG.debug("Pruned-admit quality row skipped for %s", s.get("ticker"))
                 continue
             diagnostics["quality_gates_would_filter"] += 1
             gated.append(s)
@@ -4106,6 +4602,9 @@ def scan_for_signals_detailed(
         The dashboard uses this to render the full shortlist with disposition
         badges instead of just the post-filter survivors. Existing callers
         that only use the 2-tuple return are unaffected.
+    diagnostics["pruned_admits"] lists names a strategy already admitted that a
+        later cap, shortlist, or filter removed (ticker, strategy, stage,
+        reason, score, sort_key). It does not change ranking or membership.
     """
     if env_overrides:
         from env_overrides import temporary_env
@@ -4234,6 +4733,9 @@ def scan_for_signals_detailed(
             "early_stop_gate_blocked": 0,
             "horizon_admitted": 0,
             "horizon_shortlisted": 0,
+            "pruned_admits": [],
+            "pruned_admits_count": 0,
+            "pruned_admits_omitted": 0,
             "stage_a_history_days": 300,
             "strategy_pead_primary_mode": "off",
             "strategy_pead_primary_effective_mode": "off",
@@ -4903,8 +5405,12 @@ def scan_for_signals_detailed(
     diagnostics["scan_primary_provider_mode"] = provider_mode
     if provider_mode == "hard":
         before_primary_filter = len(stage_a_candidates)
-        stage_a_candidates = [c for c in stage_a_candidates if bool(c.get("data_provider_primary"))]
+        stage_a_candidates, dropped_primary = _split_primary_provider(stage_a_candidates)
         diagnostics["primary_provider_filtered"] = max(0, before_primary_filter - len(stage_a_candidates))
+        try:
+            _append_pruned_admits(diagnostics, _primary_provider_rows(dropped_primary))
+        except Exception:
+            LOG.debug("Pruned-admit primary-provider log skipped")
 
     pead_shadow_max = 50
     pead_capacity_top_n = 5
@@ -4949,6 +5455,7 @@ def scan_for_signals_detailed(
     # dedicated PEAD / research sleeve (no Stage 2 arm).
     executable_candidates = list(pead_partition["executable"])
     horizon_only = [c for c in stage_a_candidates if str(c.get("entry_family") or "") == "horizon"]
+    horizon_before_cross = horizon_only
     try:
         from core.horizon_strategies import cap_cross_section_horizon
 
@@ -4964,6 +5471,14 @@ def scan_for_signals_detailed(
             ]
     except Exception as e:
         LOG.debug("Horizon cross-section cap skipped: %s", e)
+    else:
+        try:
+            _append_pruned_admits(
+                diagnostics,
+                _horizon_cross_section_rows(horizon_before_cross, capped),
+            )
+        except Exception:
+            LOG.debug("Pruned-admit cross-section log skipped")
     assembled = _assemble_stage_a_shortlist(
         executable=executable_candidates,
         horizon_only=horizon_only,
@@ -4986,6 +5501,10 @@ def scan_for_signals_detailed(
     diagnostics["dedicated_research_scan"] = int(bool(assembled.get("dedicated_research")))
     diagnostics["stage_a_shortlisted"] = len(shortlist)
     diagnostics["stage_a_pruned"] = int(assembled.get("stage_a_pruned") or 0)
+    try:
+        _append_pruned_admits(diagnostics, list(assembled.get("pruned_admits") or []))
+    except Exception:
+        LOG.debug("Pruned-admit shortlist log skipped")
 
     # Free the per-ticker DataFrames carried on pruned (non-shortlisted)
     # candidates before Stage B. On a broad universe this releases ~1500 frames
@@ -4999,11 +5518,24 @@ def scan_for_signals_detailed(
     # Stage B: expensive enrichment/ranking on shortlist only.
     stage_b_start = time.perf_counter()
     future_map_b: dict[cf.Future[Any], str] = {}
+    shortlist_by_ticker: dict[str, dict[str, Any]] = {}
     stage_b_timed_out = False
     ex = cf.ThreadPoolExecutor(max_workers=max(1, stage_b_workers))
+
+    def _note_stage_b_drop(ticker: str, reason: str) -> None:
+        try:
+            cand = shortlist_by_ticker.get(str(ticker).upper()) or {"ticker": ticker}
+            row = _candidate_stage_b_row(cand, reason)
+            if row is not None:
+                _append_pruned_admits(diagnostics, [row])
+        except Exception:
+            LOG.debug("Pruned-admit stage B row skipped for %s", ticker)
+
     try:
         for candidate in shortlist:
             ticker = str(candidate.get("ticker") or "")
+            if ticker:
+                shortlist_by_ticker.setdefault(ticker.upper(), candidate)
             fut = ex.submit(
                 _scan_stage_b_enrich,
                 candidate,
@@ -5071,10 +5603,12 @@ def scan_for_signals_detailed(
                         diagnostics["stage_b_exceptions"] += 1
                         if out.get("error"):
                             data_failures.append(str(out["error"]))
+                        _note_stage_b_drop(ticker, "stage_b_exception")
                 except Exception as e:
                     diagnostics["exceptions"] += 1
                     diagnostics["stage_b_exceptions"] += 1
                     data_failures.append(f"{ticker}: {e}")
+                    _note_stage_b_drop(ticker, "stage_b_exception")
         except cf.TimeoutError:
             stage_b_timed_out = True
             pending = [future_map_b[f] for f in future_map_b if not f.done()]
@@ -5083,6 +5617,8 @@ def scan_for_signals_detailed(
             diagnostics["stage_b_exceptions"] += len(pending)
             for ticker in pending[:10]:
                 data_failures.append(f"{ticker}: stage_b timeout")
+            for ticker in pending:
+                _note_stage_b_drop(str(ticker), "stage_b_timeout")
             for fut in future_map_b:
                 if not fut.done():
                     _cancel_future_safe(fut)
