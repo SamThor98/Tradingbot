@@ -1549,17 +1549,28 @@ def _plan_exit_manager_for_entry(
     *,
     entry_price: float | None = None,
     evaluate_entry_bar: bool = False,
+    mode: str | None = None,
 ) -> tuple[int | None, str | None]:
     """Run the exit-manager simulator once per entry.
 
-    ``off`` does not call it, so the counter stays 0. ``shadow`` records a
-    comparison and leaves the bar-loop exit unchanged. ``live`` returns the
-    managed exit index so the bar loop can take it when no earlier stop fired.
-    Hold-day settings stay on the existing getters.
-    """
-    from config import get_exit_manager_mode
+    ``mode`` is the run's intelligence-overlay exit-manager setting. When the
+    caller passes it, that value replaces the env lookup. When ``mode`` is
+    omitted, ``EXIT_MANAGER_MODE`` still decides, which is what env-driven
+    backtests and direct callers use.
 
-    mode = str(get_exit_manager_mode(skill_dir) or "off").strip().lower()
+    ``off`` does not call the simulator, so the counter stays 0. ``shadow``
+    records a comparison and leaves the bar-loop exit unchanged. ``live``
+    returns the managed exit index so the bar loop can take it when no
+    earlier stop fired. Hold-day settings stay on the existing getters.
+    """
+    if mode is None:
+        from config import get_exit_manager_mode
+
+        mode = str(get_exit_manager_mode(skill_dir) or "off").strip().lower()
+    else:
+        mode = str(mode or "off").strip().lower()
+        if mode not in {"off", "shadow", "live"}:
+            mode = "off"
     if mode == "off":
         return None, None
     from backtest_intelligence import simulate_exit_with_manager
@@ -3021,6 +3032,7 @@ def _run_backtest_core(
                     diagnostics,
                     entry_price=float(candidate.entry_price),
                     evaluate_entry_bar=entry_fill == "next_open",
+                    mode=overlay_cfg.exit_manager,
                 )
                 pos.exit_manager_exit_idx = exit_idx
                 pos.exit_manager_reason = mgr_reason
