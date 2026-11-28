@@ -451,6 +451,7 @@ class ActivePosition:
     highest_close: float
     exit_manager_exit_idx: int | None = None
     exit_manager_reason: str | None = None
+    exit_manager_plan: dict[str, Any] | None = None
 
 
 def _fetch_history(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -1539,6 +1540,152 @@ def _simulate_exit(
     return float(df["close"].iloc[last_idx]), df.index[last_idx], "time_exit"
 
 
+def _bar_day(ts: Any) -> pd.Timestamp:
+    t = pd.Timestamp(ts)
+    if t.tzinfo is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    return t.normalize()
+
+
+def _exit_manager_leg_settings(skill_dir: Path) -> dict[str, Any]:
+    """Partial, breakeven, trail grace, and time-stop settings used live.
+
+    The numbers match ``execution._get_exit_manager_settings`` and the
+    existing config getters. This does not read or change order routing.
+    """
+    partial_r = 1.5
+    partial_fraction = 0.5
+    breakeven_after_partial = True
+    max_hold_days = 40
+    min_hold_days_before_trail = 15
+    try:
+        from config import (
+            get_exit_breakeven_after_partial,
+            get_exit_max_hold_days,
+            get_exit_min_hold_days_before_trail,
+            get_exit_partial_tp_fraction,
+            get_exit_partial_tp_r_mult,
+        )
+
+        partial_r = float(get_exit_partial_tp_r_mult(skill_dir))
+        partial_fraction = float(get_exit_partial_tp_fraction(skill_dir))
+        breakeven_after_partial = bool(get_exit_breakeven_after_partial(skill_dir))
+        max_hold_days = int(get_exit_max_hold_days(skill_dir))
+        min_hold_days_before_trail = int(get_exit_min_hold_days_before_trail(skill_dir))
+    except Exception:
+        LOG.debug("Exit manager leg settings fell back to live defaults", exc_info=True)
+    return {
+        "partial_r_mult": max(0.1, partial_r),
+        "partial_fraction": max(0.05, min(0.95, partial_fraction)),
+        "breakeven_after_partial": breakeven_after_partial,
+        "max_hold_days": max(1, max_hold_days),
+        "min_hold_days_before_trail": max(0, min_hold_days_before_trail),
+    }
+
+
+def _walk_exit_manager_legs(
+    df: pd.DataFrame,
+    entry_idx: int,
+    hold_days: int,
+    stop_pct: float,
+    skill_dir: Path,
+    *,
+    entry_price: float | None = None,
+    evaluate_entry_bar: bool = False,
+) -> dict[str, Any]:
+    """Replay the live exit manager on daily closes.
+
+    During the calendar-day grace, only the initial hard stop is active.
+    After grace, a dollar trail (offset = entry * stop) runs. A close at or
+    above entry * (1 + R * stop) sells ``partial_fraction`` at that close.
+    The next bar floors that trail at breakeven when the live flag says so.
+    The remainder exits on the trail, the breakeven floor, or the time stop.
+    """
+    settings = _exit_manager_leg_settings(skill_dir)
+    if entry_price is None:
+        entry_price = float(df["close"].iloc[entry_idx])
+    else:
+        entry_price = float(entry_price)
+    stop_pct = max(0.0, float(stop_pct))
+    partial_fraction = float(settings["partial_fraction"])
+    breakeven = bool(settings["breakeven_after_partial"])
+    grace = int(settings["min_hold_days_before_trail"])
+    max_hold = int(settings["max_hold_days"])
+    trigger = entry_price * (1.0 + float(settings["partial_r_mult"]) * stop_pct)
+    hard_stop = entry_price * (1.0 - stop_pct)
+    trail_offset = entry_price * stop_pct
+    last_idx = min(int(entry_idx) + max(0, int(hold_days)), len(df) - 1)
+    entry_day = _bar_day(df.index[int(entry_idx)])
+    highest = entry_price
+    partial_idx: int | None = None
+    partial_price: float | None = None
+    first_j = int(entry_idx) if evaluate_entry_bar else int(entry_idx) + 1
+
+    def _pack(exit_idx: int, reason: str) -> dict[str, Any]:
+        took_partial = partial_idx is not None and partial_price is not None
+        return {
+            "exit_idx": int(exit_idx),
+            "reason": reason,
+            "partial_idx": partial_idx if took_partial else None,
+            "partial_price": float(partial_price) if took_partial else None,
+            "partial_fraction": partial_fraction if took_partial else None,
+            "partial_date": df.index[partial_idx] if took_partial else None,
+        }
+
+    if first_j > last_idx:
+        return _pack(max(int(entry_idx), last_idx), "time_exit")
+
+    for j in range(first_j, last_idx + 1):
+        px = float(df["close"].iloc[j])
+        held_days = int((_bar_day(df.index[j]) - entry_day).days)
+        if held_days < grace:
+            if px <= hard_stop:
+                return _pack(j, "trailing_stop")
+            continue
+        # The live trail is armed when grace ends, so earlier spikes do not
+        # set its high-water mark.
+        highest = max(highest, px)
+        trail_stop = highest - trail_offset
+        if partial_idx is not None and breakeven:
+            stop_level = max(entry_price, trail_stop)
+        else:
+            stop_level = max(hard_stop, trail_stop)
+        if px <= stop_level:
+            reason = "trailing_stop_after_partial" if partial_idx is not None else "trailing_stop"
+            return _pack(j, reason)
+        if partial_idx is None and px >= trigger:
+            partial_idx = j
+            partial_price = px
+        if held_days >= max_hold:
+            reason = "partial_then_time_exit" if partial_idx is not None else "time_exit"
+            return _pack(j, reason)
+    reason = "partial_then_time_exit" if partial_idx is not None else "time_exit"
+    return _pack(last_idx, reason)
+
+
+def _exit_manager_trade_fill(pos: ActivePosition, idx: int, px: float) -> tuple[float, dict[str, Any]]:
+    """Blend a reached partial with the remainder close.
+
+    Exits that happen before the partial, and runs with the manager off,
+    keep the day's close.
+    """
+    plan = pos.exit_manager_plan or {}
+    partial_idx = plan.get("partial_idx")
+    if partial_idx is None or int(idx) < int(partial_idx):
+        return float(px), {"exit_manager_partial_done": False}
+    fraction = float(plan.get("partial_fraction") or 0.0)
+    partial_px = float(plan["partial_price"])
+    blended = fraction * partial_px + (1.0 - fraction) * float(px)
+    partial_ts = plan.get("partial_date")
+    return blended, {
+        "exit_manager_partial_done": True,
+        "exit_manager_partial_date": None if partial_ts is None else pd.Timestamp(partial_ts).isoformat(),
+        "exit_manager_partial_price": round(partial_px, 4),
+        "exit_manager_partial_fraction": fraction,
+        "exit_manager_remainder_price": round(float(px), 4),
+    }
+
+
 def _plan_exit_manager_for_entry(
     df: pd.DataFrame,
     entry_idx: int,
@@ -1550,6 +1697,7 @@ def _plan_exit_manager_for_entry(
     entry_price: float | None = None,
     evaluate_entry_bar: bool = False,
     mode: str | None = None,
+    plan_out: dict[str, Any] | None = None,
 ) -> tuple[int | None, str | None]:
     """Run the exit-manager simulator once per entry.
 
@@ -1560,8 +1708,8 @@ def _plan_exit_manager_for_entry(
 
     ``off`` does not call the simulator, so the counter stays 0. ``shadow``
     records a comparison and leaves the bar-loop exit unchanged. ``live``
-    returns the managed exit index so the bar loop can take it when no
-    earlier stop fired. Hold-day settings stay on the existing getters.
+    walks the same partial, breakeven, and trail rules as the live manager
+    and stores that plan on ``plan_out`` for the trade record.
     """
     if mode is None:
         from config import get_exit_manager_mode
@@ -1576,7 +1724,7 @@ def _plan_exit_manager_for_entry(
     from backtest_intelligence import simulate_exit_with_manager
 
     try:
-        _px, exit_ts, reason, info = simulate_exit_with_manager(
+        _sim_px, _sim_ts, _sim_reason, info = simulate_exit_with_manager(
             df,
             int(entry_idx),
             int(hold_days),
@@ -1585,6 +1733,19 @@ def _plan_exit_manager_for_entry(
             mode=mode,
             entry_price=entry_price,
             evaluate_entry_bar=evaluate_entry_bar,
+        )
+        legs = (
+            _walk_exit_manager_legs(
+                df,
+                int(entry_idx),
+                int(hold_days),
+                float(stop_pct),
+                skill_dir,
+                entry_price=entry_price,
+                evaluate_entry_bar=evaluate_entry_bar,
+            )
+            if mode == "live"
+            else None
         )
     except Exception:
         diagnostics["exit_manager_simulated_errors"] = int(diagnostics.get("exit_manager_simulated_errors", 0) or 0) + 1
@@ -1595,17 +1756,12 @@ def _plan_exit_manager_for_entry(
         diagnostics["exit_manager_shadow_would_differ"] = (
             int(diagnostics.get("exit_manager_shadow_would_differ", 0) or 0) + 1
         )
-    if mode != "live":
+    if mode != "live" or not legs:
         return None, None
-    exit_idx = None
-    if exit_ts is not None:
-        for i, ts in enumerate(df.index):
-            if ts == exit_ts:
-                exit_idx = i
-                break
-    if exit_idx is None:
-        return None, None
-    return int(exit_idx), str(reason or "exit_manager")
+    if plan_out is not None:
+        plan_out.clear()
+        plan_out.update(legs)
+    return int(legs["exit_idx"]), str(legs.get("reason") or "exit_manager")
 
 
 def _resolve_stop_pct_for_entry(df: pd.DataFrame, entry_idx: int, skill_dir: Path | None = None) -> float:
@@ -2437,15 +2593,20 @@ def _run_backtest_core(
             if not exit_reason:
                 continue
 
+            exit_px, partial_fields = _exit_manager_trade_fill(pos, int(idx), float(px))
+            if partial_fields["exit_manager_partial_done"]:
+                diagnostics["exit_manager_partial_done"] = int(diagnostics.get("exit_manager_partial_done", 0) or 0) + 1
             net_ret, cost_ctx = _net_return_after_costs(
                 entry_price=float(pos.entry_price),
-                exit_price=float(px),
+                exit_price=float(exit_px),
                 qty=int(pos.qty),
                 slippage_bps_per_side=float(pos.effective_slippage_bps),
                 fee_per_share=fee_per_share,
                 min_fee_per_order=min_fee_per_order,
             )
-            gross_ret = (float(px) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+            gross_ret = (
+                (float(exit_px) - float(pos.entry_price)) / float(pos.entry_price) if pos.entry_price > 0 else 0.0
+            )
             current_cash += float(pos.entry_price) * float(pos.qty) * (1.0 + float(net_ret))
             mfe, mae = _compute_mfe_mae(
                 df,
@@ -2465,7 +2626,7 @@ def _run_backtest_core(
                     "entry_fill": entry_fill,
                     "signal_date": pos.signal.get("entry_date"),
                     "entry_price": round(float(pos.entry_price), 4),
-                    "exit_price": round(float(px), 4),
+                    "exit_price": round(float(exit_px), 4),
                     "return": float(gross_ret),
                     "net_return": float(net_ret),
                     "mfe": mfe,
@@ -2501,7 +2662,7 @@ def _run_backtest_core(
                     "meta_policy_size_multiplier": float(pos.meta_size_mult),
                     "event_risk_action": (pos.event_policy or {}).get("action") if pos.event_policy else None,
                     "event_risk_size_multiplier": float(pos.event_size_mult),
-                    "exit_manager_partial_done": False,
+                    **partial_fields,
                     "exec_quality_regime": pos.exec_info.get("regime"),
                     "exec_quality_effective_slippage_bps": pos.exec_info.get("effective_slippage_bps"),
                     "telemetry": pos.telemetry,
@@ -3023,6 +3184,7 @@ def _run_backtest_core(
                 highest_close=float(candidate.entry_price),
             )
             if entry_df is not None and not entry_df.empty:
+                exit_plan: dict[str, Any] = {}
                 exit_idx, mgr_reason = _plan_exit_manager_for_entry(
                     entry_df,
                     int(candidate.idx),
@@ -3033,9 +3195,11 @@ def _run_backtest_core(
                     entry_price=float(candidate.entry_price),
                     evaluate_entry_bar=entry_fill == "next_open",
                     mode=overlay_cfg.exit_manager,
+                    plan_out=exit_plan,
                 )
                 pos.exit_manager_exit_idx = exit_idx
                 pos.exit_manager_reason = mgr_reason
+                pos.exit_manager_plan = exit_plan or None
             active_positions[candidate.ticker] = pos
             if size_by_risk is not None:
                 diagnostics["risk_sized_entries"] = int(diagnostics["risk_sized_entries"]) + 1
@@ -3059,9 +3223,12 @@ def _run_backtest_core(
             exit_idx = len(df) - 1
         if exit_idx <= pos.entry_idx:
             exit_idx = min(len(df) - 1, pos.entry_idx + 1)
-        exit_price = float(df["close"].iloc[exit_idx])
+        close_px = float(df["close"].iloc[exit_idx])
         exit_date = pd.Timestamp(df.index[exit_idx])
         diagnostics["exits_final_liquidation"] = int(diagnostics["exits_final_liquidation"]) + 1
+        exit_price, partial_fields = _exit_manager_trade_fill(pos, int(exit_idx), close_px)
+        if partial_fields["exit_manager_partial_done"]:
+            diagnostics["exit_manager_partial_done"] = int(diagnostics.get("exit_manager_partial_done", 0) or 0) + 1
         net_ret, cost_ctx = _net_return_after_costs(
             entry_price=float(pos.entry_price),
             exit_price=float(exit_price),
@@ -3127,7 +3294,7 @@ def _run_backtest_core(
                 "meta_policy_size_multiplier": float(pos.meta_size_mult),
                 "event_risk_action": (pos.event_policy or {}).get("action") if pos.event_policy else None,
                 "event_risk_size_multiplier": float(pos.event_size_mult),
-                "exit_manager_partial_done": False,
+                **partial_fields,
                 "exec_quality_regime": pos.exec_info.get("regime"),
                 "exec_quality_effective_slippage_bps": pos.exec_info.get("effective_slippage_bps"),
                 "telemetry": pos.telemetry,
